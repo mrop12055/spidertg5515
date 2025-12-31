@@ -560,6 +560,18 @@ TelegramCRM Bulk Message Sender
                 <p className="text-xs text-muted-foreground mt-1">→ Run: <code>pip install telethon supabase</code> again</p>
               </div>
               <div className="p-3 rounded-lg bg-accent/50 border">
+                <p className="font-medium text-sm">Processing account: + (or phone number looks wrong)</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  → Your <code>.session</code> file name must contain the phone number (digits) like <code>+15551234567.session</code> or <code>15551234567.session</code>. Rename the file and upload again, then delete the broken account.
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-accent/50 border">
+                <p className="font-medium text-sm">"Please set TELEGRAM_API_ID and TELEGRAM_API_HASH"</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  → You must run Step 7 in the <strong>same CMD/Terminal window</strong> where you run <code>python telegram_sender.py</code>. If you close the window, you must set them again.
+                </p>
+              </div>
+              <div className="p-3 rounded-lg bg-accent/50 border">
                 <p className="font-medium text-sm">Script says "No session data for..."</p>
                 <p className="text-xs text-muted-foreground mt-1">→ Upload your .session files on the Accounts page first</p>
               </div>
