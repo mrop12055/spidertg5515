@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.verify-sessions]
 verify_jwt = false
+
+[functions.test-proxies]
+verify_jwt = false
