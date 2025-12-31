@@ -275,7 +275,7 @@ const Chat: React.FC = () => {
                         <div className="flex items-center justify-between mb-0.5">
                           <span className={cn(
                             "font-medium truncate",
-                            conv.unreadCount > 0 ? "text-foreground" : "text-foreground/90"
+                            conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
                           )}>
                             {conv.recipientName || conv.recipientPhone}
                           </span>
@@ -405,10 +405,10 @@ const Chat: React.FC = () => {
                                   className={cn(
                                     "px-3 py-2 shadow-sm relative",
                                     msg.status === 'failed'
-                                      ? "bg-destructive/10 border border-destructive/30"
+                                      ? "bg-destructive/10 border border-destructive/30 text-foreground"
                                       : isOutgoing
-                                        ? "bg-[#DCF8C6] dark:bg-[#005C4B] text-foreground"
-                                        : "bg-card text-foreground",
+                                        ? "bg-[#DCF8C6] text-[#111B21] dark:bg-[#005C4B] dark:text-[#E9EDEF]"
+                                        : "bg-card text-foreground border border-border/30",
                                     // Rounded corners based on position
                                     isFirstInGroup && isLastInGroup && (isOutgoing 
                                       ? "rounded-2xl rounded-br-md" 
@@ -437,7 +437,7 @@ const Chat: React.FC = () => {
                                       msg.status === 'failed'
                                         ? "text-destructive"
                                         : isOutgoing 
-                                          ? "text-foreground/60" 
+                                          ? "text-[#111B21]/70 dark:text-[#E9EDEF]/70" 
                                           : "text-muted-foreground"
                                     )}>
                                       {format(msg.timestamp, 'HH:mm')}
@@ -502,12 +502,12 @@ const Chat: React.FC = () => {
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center bg-background/30">
+            <div className="flex-1 flex items-center justify-center bg-card/50">
               <div className="text-center">
-                <div className="w-32 h-32 rounded-full bg-primary/5 flex items-center justify-center mx-auto mb-6">
-                  <MessageSquare className="w-16 h-16 text-primary/40" />
+                <div className="w-32 h-32 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
+                  <MessageSquare className="w-16 h-16 text-primary" />
                 </div>
-                <h3 className="text-xl font-medium text-foreground/80 mb-2">Telegram Hub Chat</h3>
+                <h3 className="text-xl font-medium text-foreground mb-2">Telegram Hub Chat</h3>
                 <p className="text-muted-foreground max-w-sm mb-4">
                   Send and receive messages from your Telegram accounts
                 </p>
