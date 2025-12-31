@@ -32,7 +32,6 @@ const navItems: NavItem[] = [
   { icon: Sparkles, label: 'Maturation', path: '/maturation' },
   { icon: MessageSquare, label: 'Chat', path: '/chat' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
-  { icon: Shield, label: 'Admin Management', path: '/admins', superAdminOnly: true },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
