@@ -27,15 +27,17 @@ const SetupGuide: React.FC = () => {
 TelegramCRM Bulk Message Sender & Receiver
 Run this script on your PC to send queued messages and receive incoming replies.
 Session files are downloaded from the database (base64 encoded).
+Supports sending and receiving images.
 """
 
 import asyncio
 import os
 import base64
 import tempfile
+import httpx
 from datetime import datetime, timezone
 
-# Install: pip install telethon supabase
+# Install: pip install telethon supabase httpx
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, UserPrivacyRestrictedError, UsernameNotOccupiedError
 from supabase import create_client
@@ -52,10 +54,10 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 
 # Message delay (seconds between messages to avoid spam detection)
-MESSAGE_DELAY = 10
+MESSAGE_DELAY = 2
 
 # Check interval (seconds between checking for new messages)
-CHECK_INTERVAL = 10
+CHECK_INTERVAL = 2
 
 # ===================================
 
@@ -115,7 +117,38 @@ async def update_message_status(message_id: str, status: str, error: str = None)
         update_data["failed_reason"] = error
     supabase.table("messages").update(update_data).eq("id", message_id).execute()
 
-async def save_incoming_message(account_id: str, sender_id: int, sender_name: str, sender_username: str, content: str):
+async def download_media(url: str) -> bytes:
+    """Download media from URL"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url, follow_redirects=True)
+            response.raise_for_status()
+            return response.content
+    except Exception as e:
+        print(f"    ⚠ Failed to download media: {e}")
+        return None
+
+async def upload_media_to_supabase(file_bytes: bytes, file_name: str, content_type: str) -> str:
+    """Upload media to Supabase storage and return public URL"""
+    try:
+        import uuid
+        unique_name = f"{uuid.uuid4()}_{file_name}"
+        
+        # Upload to Supabase storage
+        result = supabase.storage.from_("message-attachments").upload(
+            unique_name,
+            file_bytes,
+            {"content-type": content_type}
+        )
+        
+        # Get public URL
+        public_url = supabase.storage.from_("message-attachments").get_public_url(unique_name)
+        return public_url
+    except Exception as e:
+        print(f"    ⚠ Failed to upload media: {e}")
+        return None
+
+async def save_incoming_message(account_id: str, sender_id: int, sender_name: str, sender_username: str, content: str, media_url: str = None, media_type: str = None):
     """Save incoming message to database"""
     try:
         # Find or create conversation
@@ -168,8 +201,8 @@ async def save_incoming_message(account_id: str, sender_id: int, sender_name: st
             }).execute()
             conv_id = new_conv.data[0]["id"]
         
-        # Save message
-        supabase.table("messages").insert({
+        # Save message with media if present
+        message_data = {
             "account_id": account_id,
             "conversation_id": conv_id,
             "content": content,
@@ -177,16 +210,23 @@ async def save_incoming_message(account_id: str, sender_id: int, sender_name: st
             "status": "delivered",
             "telegram_message_id": None,
             "delivered_at": datetime.now(timezone.utc).isoformat()
-        }).execute()
+        }
         
-        print(f"    📩 Saved incoming message from {sender_name or sender_username or sender_id}")
+        if media_url:
+            message_data["media_url"] = media_url
+            message_data["media_type"] = media_type
+        
+        supabase.table("messages").insert(message_data).execute()
+        
+        media_info = f" [with {media_type}]" if media_type else ""
+        print(f"    📩 Saved incoming message from {sender_name or sender_username or sender_id}{media_info}")
         return True
     except Exception as e:
         print(f"    ⚠ Failed to save incoming message: {e}")
         return False
 
-async def send_message(client: TelegramClient, recipient: str, content: str):
-    """Send a message to a phone number or username"""
+async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None, media_type: str = None):
+    """Send a message (with optional media) to a phone number or username"""
     try:
         # Handle username (starts with @) or phone number
         if recipient.startswith("@"):
@@ -195,7 +235,34 @@ async def send_message(client: TelegramClient, recipient: str, content: str):
             # Try phone number
             entity = await client.get_entity(recipient)
         
-        await client.send_message(entity, content)
+        # Check if we need to send media
+        if media_url and media_type == "image":
+            print(f"    📷 Downloading image from {media_url[:50]}...")
+            media_bytes = await download_media(media_url)
+            
+            if media_bytes:
+                # Create a temporary file for the image
+                import tempfile
+                with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp_file:
+                    tmp_file.write(media_bytes)
+                    tmp_path = tmp_file.name
+                
+                try:
+                    # Send with caption
+                    await client.send_file(entity, tmp_path, caption=content if content else None)
+                finally:
+                    # Clean up temp file
+                    os.unlink(tmp_path)
+            else:
+                # If media download failed, send text only
+                if content:
+                    await client.send_message(entity, content + "\\n\\n[Image could not be sent]")
+                else:
+                    return False, "Failed to download image"
+        else:
+            # Text only message
+            await client.send_message(entity, content)
+        
         return True, None
     except UserPrivacyRestrictedError:
         return False, "PERMANENT: User privacy settings prevent messaging"
@@ -225,14 +292,52 @@ async def setup_message_handler(client: TelegramClient, account_id: str):
                 sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
                 sender_username = sender.username
                 sender_id = sender.id
-                content = event.message.text or "[Media message]"
+                
+                # Check for media
+                media_url = None
+                media_type = None
+                content = event.message.text or ""
+                
+                if event.message.photo:
+                    # Download photo
+                    print(f"    📷 Receiving photo from {sender_name or sender_username or sender_id}...")
+                    photo_bytes = await client.download_media(event.message.photo, file=bytes)
+                    if photo_bytes:
+                        # Upload to Supabase storage
+                        media_url = await upload_media_to_supabase(photo_bytes, "photo.jpg", "image/jpeg")
+                        media_type = "image"
+                        if not content:
+                            content = "[Photo]"
+                
+                elif event.message.document:
+                    # Check if it's an image document
+                    doc = event.message.document
+                    mime_type = doc.mime_type or ""
+                    
+                    if mime_type.startswith("image/"):
+                        print(f"    📷 Receiving image from {sender_name or sender_username or sender_id}...")
+                        doc_bytes = await client.download_media(event.message.document, file=bytes)
+                        if doc_bytes:
+                            ext = mime_type.split("/")[1] if "/" in mime_type else "jpg"
+                            media_url = await upload_media_to_supabase(doc_bytes, f"image.{ext}", mime_type)
+                            media_type = "image"
+                            if not content:
+                                content = "[Image]"
+                    else:
+                        # Other document types
+                        content = content or f"[Document: {doc.mime_type}]"
+                
+                elif not content:
+                    content = "[Media message]"
                 
                 await save_incoming_message(
                     account_id=account_id,
                     sender_id=sender_id,
                     sender_name=sender_name,
                     sender_username=sender_username,
-                    content=content
+                    content=content,
+                    media_url=media_url,
+                    media_type=media_type
                 )
         except Exception as e:
             print(f"    ⚠ Error handling incoming message: {e}")
@@ -318,8 +423,16 @@ async def process_account(account: dict, messages: list):
                 await update_message_status(msg["id"], "failed", "No recipient phone/username")
                 continue
             
-            print(f"    → Sending to {recipient}...")
-            success, error = await send_message(client, recipient, msg["content"])
+            # Get media info from message
+            media_url = msg.get("media_url")
+            media_type = msg.get("media_type")
+            
+            if media_url:
+                print(f"    → Sending image to {recipient}...")
+            else:
+                print(f"    → Sending to {recipient}...")
+            
+            success, error = await send_message(client, recipient, msg["content"], media_url, media_type)
             
             if success:
                 await update_message_status(msg["id"], "sent")
@@ -345,6 +458,7 @@ async def main():
     print("=" * 50)
     print("TelegramCRM Message Sender & Receiver")
     print(f"Session folder: {SESSION_FOLDER}")
+    print("Supports: Text messages, Images")
     print("=" * 50)
     
     while True:
@@ -373,6 +487,7 @@ async def shutdown():
 
 if __name__ == "__main__":
     print("Starting sender & receiver... Press Ctrl+C to stop.")
+    print("Required: pip install telethon supabase httpx")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
