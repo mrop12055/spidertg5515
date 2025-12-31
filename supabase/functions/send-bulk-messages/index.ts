@@ -14,6 +14,19 @@ interface RecipientData {
   name?: string;
 }
 
+// Normalize phone number - add + prefix if missing, strip formatting
+function normalizePhoneNumber(phone: string): string {
+  // Remove all non-digit characters except +
+  let normalized = phone.replace(/[^\d+]/g, '');
+  
+  // If it doesn't start with +, add it
+  if (!normalized.startsWith('+')) {
+    normalized = '+' + normalized;
+  }
+  
+  return normalized;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -40,12 +53,97 @@ serve(async (req) => {
 
       console.log(`[send-bulk-messages] Uploading ${recipients.length} recipients to campaign ${campaign_id}`);
 
-      // Insert recipients
-      const recipientRecords = recipients.map(r => ({
+      // Normalize all phone numbers
+      const normalizedRecipients = recipients.map(r => ({
+        ...r,
+        phone_number: normalizePhoneNumber(r.phone_number)
+      }));
+
+      // Get unique normalized phone numbers from upload
+      const uploadedPhones = [...new Set(normalizedRecipients.map(r => r.phone_number))];
+      console.log(`[send-bulk-messages] Unique phone numbers after normalization: ${uploadedPhones.length}`);
+
+      // Check for duplicates in existing conversations
+      const { data: existingConversations, error: convError } = await supabase
+        .from('conversations')
+        .select('recipient_phone')
+        .in('recipient_phone', uploadedPhones);
+
+      if (convError) {
+        console.error(`[send-bulk-messages] Error checking conversations:`, convError);
+      }
+
+      const existingConvPhones = new Set(
+        (existingConversations || []).map((c: any) => c.recipient_phone)
+      );
+      console.log(`[send-bulk-messages] Found ${existingConvPhones.size} existing conversations`);
+
+      // Check for duplicates in this campaign's existing recipients
+      const { data: existingRecipients, error: recError } = await supabase
+        .from('campaign_recipients')
+        .select('phone_number')
+        .eq('campaign_id', campaign_id);
+
+      if (recError) {
+        console.error(`[send-bulk-messages] Error checking recipients:`, recError);
+      }
+
+      const existingRecipientPhones = new Set(
+        (existingRecipients || []).map((r: any) => r.phone_number)
+      );
+      console.log(`[send-bulk-messages] Found ${existingRecipientPhones.size} existing campaign recipients`);
+
+      // Filter out duplicates
+      const seenPhones = new Set<string>();
+      const duplicates: string[] = [];
+      const validRecipients: RecipientData[] = [];
+
+      for (const recipient of normalizedRecipients) {
+        const phone = recipient.phone_number;
+        
+        // Skip if already seen in this upload (dedupe within upload)
+        if (seenPhones.has(phone)) {
+          duplicates.push(phone);
+          continue;
+        }
+        seenPhones.add(phone);
+
+        // Skip if exists in conversations
+        if (existingConvPhones.has(phone)) {
+          duplicates.push(phone);
+          continue;
+        }
+
+        // Skip if already in this campaign
+        if (existingRecipientPhones.has(phone)) {
+          duplicates.push(phone);
+          continue;
+        }
+
+        validRecipients.push(recipient);
+      }
+
+      console.log(`[send-bulk-messages] Valid recipients: ${validRecipients.length}, Duplicates skipped: ${duplicates.length}`);
+
+      if (validRecipients.length === 0) {
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            inserted: 0, 
+            duplicates: duplicates.length,
+            duplicateNumbers: duplicates.slice(0, 20), // Return first 20 for reference
+            message: 'All recipients were duplicates'
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Insert valid recipients with 'validating' status (Python will validate)
+      const recipientRecords = validRecipients.map(r => ({
         campaign_id,
         phone_number: r.phone_number,
         name: r.name || null,
-        status: 'pending',
+        status: 'validating', // Will be updated by Python script after Telegram check
       }));
 
       const { data, error } = await supabase
@@ -55,14 +153,29 @@ serve(async (req) => {
 
       if (error) throw error;
 
-      // Update campaign recipient count
+      // Update campaign recipient count (add to existing)
+      const { data: campaign } = await supabase
+        .from('campaigns')
+        .select('recipient_count')
+        .eq('id', campaign_id)
+        .single();
+
+      const newCount = (campaign?.recipient_count || 0) + data.length;
       await supabase
         .from('campaigns')
-        .update({ recipient_count: recipients.length })
+        .update({ recipient_count: newCount })
         .eq('id', campaign_id);
 
       return new Response(
-        JSON.stringify({ success: true, count: data.length }),
+        JSON.stringify({ 
+          success: true, 
+          inserted: data.length,
+          duplicates: duplicates.length,
+          duplicateNumbers: duplicates.slice(0, 20),
+          message: duplicates.length > 0 
+            ? `Uploaded ${data.length} recipients. ${duplicates.length} duplicates skipped.`
+            : `Uploaded ${data.length} recipients.`
+        }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
@@ -93,7 +206,7 @@ serve(async (req) => {
         );
       }
 
-      // Get pending recipients
+      // Get pending recipients (only those marked as 'pending' - validated by Python)
       const { data: recipients, error: recipientError } = await supabase
         .from('campaign_recipients')
         .select('*')
@@ -147,7 +260,7 @@ serve(async (req) => {
           .select('id')
           .eq('account_id', account.id)
           .eq('recipient_phone', recipient.phone_number)
-          .single();
+          .maybeSingle();
 
         if (existingConv) {
           conversation = existingConv;

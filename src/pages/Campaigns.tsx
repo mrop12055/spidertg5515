@@ -137,6 +137,19 @@ const Campaigns: React.FC = () => {
     setIsCreateOpen(false);
   };
 
+  // Normalize phone number - add + prefix if missing, strip formatting
+  const normalizePhoneNumber = (phone: string): string => {
+    // Remove all non-digit characters except +
+    let normalized = phone.replace(/[^\d+]/g, '');
+    
+    // If it doesn't start with +, add it
+    if (!normalized.startsWith('+')) {
+      normalized = '+' + normalized;
+    }
+    
+    return normalized;
+  };
+
   const handleUploadRecipients = useCallback(async () => {
     if (!selectedCampaignId || !recipientText.trim()) {
       toast.error('Please enter recipient phone numbers');
@@ -145,19 +158,27 @@ const Campaigns: React.FC = () => {
 
     const lines = recipientText.split('\n').filter(l => l.trim());
     const recipients = lines.map(line => {
-      const parts = line.split(',').map(p => p.trim());
+      // Support: just phone, phone,name, or phone name formats
+      const parts = line.split(/[,\t]/).map(p => p.trim());
+      const rawPhone = parts[0];
+      
+      // Normalize phone number - add + prefix automatically
+      const normalizedPhone = normalizePhoneNumber(rawPhone);
+      
       return {
-        phone_number: parts[0],
-        name: parts[1] || undefined
+        phone_number: normalizedPhone,
+        name: parts[1] || undefined // Name is optional - Python will auto-fetch from Telegram
       };
-    }).filter(r => r.phone_number);
+    }).filter(r => r.phone_number && r.phone_number.length >= 8); // Basic length validation
 
     if (recipients.length === 0) {
       toast.error('No valid phone numbers found');
       return;
     }
 
-    await uploadRecipients(selectedCampaignId, recipients);
+    const result = await uploadRecipients(selectedCampaignId, recipients);
+    
+    // Toast is already shown by context, just close the dialog
     setRecipientText('');
     setIsUploadOpen(false);
     refreshData();

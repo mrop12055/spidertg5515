@@ -336,6 +336,85 @@ async def get_pending_messages():
     return result.data or []
 
 
+async def get_validating_recipients():
+    """Get recipients that need Telegram validation"""
+    result = supabase.table("campaign_recipients").select("*").eq("status", "validating").limit(50).execute()
+    return result.data or []
+
+
+async def validate_telegram_contact(client: TelegramClient, phone_number: str) -> Tuple[bool, Optional[str], Optional[int]]:
+    """
+    Validate if a phone number exists on Telegram and get their name.
+    Returns: (exists: bool, name: str or None, telegram_id: int or None)
+    """
+    try:
+        # Try to get the entity (contact) by phone number
+        entity = await client.get_entity(phone_number)
+        
+        if entity:
+            # Build the name from first_name and last_name
+            first_name = getattr(entity, 'first_name', '') or ''
+            last_name = getattr(entity, 'last_name', '') or ''
+            full_name = f"{first_name} {last_name}".strip()
+            
+            telegram_id = getattr(entity, 'id', None)
+            
+            print(f"    ✓ Found on Telegram: {phone_number} -> {full_name or 'No name'}")
+            return True, full_name if full_name else None, telegram_id
+    except ValueError as e:
+        # "Cannot find any entity corresponding to..." means not on Telegram
+        if "Cannot find any entity" in str(e):
+            print(f"    ✗ Not on Telegram: {phone_number}")
+            return False, None, None
+        print(f"    ⚠ Error validating {phone_number}: {e}")
+        return False, None, None
+    except Exception as e:
+        print(f"    ⚠ Error validating {phone_number}: {e}")
+        return False, None, None
+    
+    return False, None, None
+
+
+async def update_recipient_validation(recipient_id: str, status: str, name: str = None):
+    """Update recipient validation status and name"""
+    update_data = {"status": status}
+    if name:
+        update_data["name"] = name
+    supabase.table("campaign_recipients").update(update_data).eq("id", recipient_id).execute()
+
+
+async def validate_recipients(client: TelegramClient):
+    """Validate pending recipients - check if they exist on Telegram and get their names"""
+    recipients = await get_validating_recipients()
+    
+    if not recipients:
+        return
+    
+    print(f"\\n  📋 Validating {len(recipients)} recipients...")
+    
+    valid_count = 0
+    invalid_count = 0
+    
+    for recipient in recipients:
+        phone = recipient["phone_number"]
+        
+        exists, name, telegram_id = await validate_telegram_contact(client, phone)
+        
+        if exists:
+            # Update to pending (ready to send) with auto-fetched name
+            await update_recipient_validation(recipient["id"], "pending", name)
+            valid_count += 1
+        else:
+            # Mark as invalid - not on Telegram
+            await update_recipient_validation(recipient["id"], "invalid")
+            invalid_count += 1
+        
+        # Small delay to avoid rate limiting
+        await asyncio.sleep(0.5)
+    
+    print(f"  ✓ Validation complete: {valid_count} valid, {invalid_count} invalid")
+
+
 async def update_message_status(message_id: str, status: str, error: str = None):
     """Update message status in database"""
     update_data = {"status": status}
@@ -785,20 +864,22 @@ async def main():
     print("=" * 60)
     print("TelegramCRM Message Sender & Receiver with Account Scheduler")
     print(f"Session folder: {SESSION_FOLDER}")
-    print("Supports: Text messages, Images, Auto-rotation")
+    print("Supports: Text messages, Images, Auto-rotation, Contact Validation")
     print("=" * 60)
     
     # Load scheduler settings
     load_scheduler_settings()
     
     while True:
-        print(f"\\n[{datetime.now().strftime('%H:%M:%S')}] Checking for pending messages...")
+        print(f"\\n[{datetime.now().strftime('%H:%M:%S')}] Checking for pending tasks...")
         
         accounts = await load_accounts()
         messages = await get_pending_messages()
+        validating_recipients = await get_validating_recipients()
         
         print(f"  Active accounts: {len(accounts)}")
         print(f"  Pending messages: {len(messages)}")
+        print(f"  Recipients to validate: {len(validating_recipients)}")
         
         # Print scheduler status
         print_scheduler_status()
@@ -806,14 +887,22 @@ async def main():
         # Initialize current account if needed
         if scheduler_settings.enabled and (current_account_id is None or should_rotate_account()):
             new_account = rotate_account()
-            if not new_account and messages:
-                print("  ⚠ No accounts available to send messages!")
+            if not new_account and (messages or validating_recipients):
+                print("  ⚠ No accounts available!")
                 # Wait before retrying
                 await asyncio.sleep(60)
                 continue
         
         for account in accounts:
             print(f"\\nProcessing account: {account['phone_number']}")
+            
+            # First, validate any pending recipients using this account
+            if validating_recipients and account["id"] in active_clients:
+                client = active_clients[account["id"]]
+                await validate_recipients(client)
+                # Only validate once per cycle
+                validating_recipients = []
+            
             await process_account(account, messages)
         
         # Keep clients running to receive messages
@@ -833,6 +922,12 @@ async def shutdown():
 if __name__ == "__main__":
     print("Starting sender & receiver with scheduler... Press Ctrl+C to stop.")
     print("Required: pip install telethon supabase httpx")
+    print("")
+    print("Features:")
+    print("  • Auto-validates phone numbers on Telegram")
+    print("  • Auto-fetches recipient names from Telegram")
+    print("  • Skips invalid numbers (not on Telegram)")
+    print("  • Detects duplicates before uploading")
     print("")
     print("TIP: Create 'scheduler_settings.json' with your campaign settings:")
     print('  {"enabled": true, "maxMessagesBeforeRotation": 5, "cooldownDuration": 30, ...}')

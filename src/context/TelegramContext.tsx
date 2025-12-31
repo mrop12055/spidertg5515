@@ -54,7 +54,7 @@ interface TelegramContextType {
   createCampaign: (campaign: Partial<Campaign>) => void;
   updateCampaign: (id: string, updates: Partial<Campaign>) => void;
   deleteCampaign: (id: string) => void;
-  uploadRecipients: (campaignId: string, recipients: { phone_number: string; name?: string }[]) => Promise<void>;
+  uploadRecipients: (campaignId: string, recipients: { phone_number: string; name?: string }[]) => Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined>;
   startCampaign: (campaignId: string) => Promise<void>;
   
   // Refresh
@@ -957,18 +957,28 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [refreshData]);
 
-  const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string }[]) => {
+  const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string }[]): Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined> => {
     try {
       const { data, error } = await supabase.functions.invoke('send-bulk-messages/upload-recipients', {
         body: { campaign_id: campaignId, recipients }
       });
 
       if (error) throw error;
-      toast.success(`Uploaded ${recipients.length} recipients`);
+      
+      const result = data as { success: boolean; inserted: number; duplicates: number; duplicateNumbers?: string[]; message?: string };
+      
+      if (result.duplicates > 0) {
+        toast.success(result.message || `Uploaded ${result.inserted} recipients. ${result.duplicates} duplicates skipped.`);
+      } else {
+        toast.success(`Uploaded ${result.inserted} recipients`);
+      }
+      
       refreshData();
+      return { inserted: result.inserted, duplicates: result.duplicates, duplicateNumbers: result.duplicateNumbers };
     } catch (error) {
       console.error('Error uploading recipients:', error);
       toast.error('Failed to upload recipients');
+      return undefined;
     }
   }, [refreshData]);
 
