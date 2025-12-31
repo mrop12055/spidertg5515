@@ -53,14 +53,14 @@ const Campaigns: React.FC = () => {
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
     { id: '1', message: '', accountCount: 10 }
   ]);
-  const [messagesPerAccount, setMessagesPerAccount] = useState(5);
-  const [messageInterval, setMessageInterval] = useState(30); // seconds between messages
-  const [accountSwitchDelay, setAccountSwitchDelay] = useState(60); // seconds before next account
+  const [messagesPerAccount, setMessagesPerAccount] = useState(10);
+  const [messageInterval, setMessageInterval] = useState(3); // seconds between messages (fast default)
+  const [accountSwitchDelay, setAccountSwitchDelay] = useState(5); // seconds before next account (fast default)
   const [showScheduler, setShowScheduler] = useState(false);
   const [schedulerSettings, setSchedulerSettings] = useState({
     enabled: true,
-    maxMessagesBeforeRotation: 5,
-    cooldownDuration: 30,
+    maxMessagesBeforeRotation: 10,
+    cooldownDuration: 10, // minutes (faster default)
     prioritizeHighMaturity: true,
     autoSkipRestricted: true,
     balanceLoad: true
@@ -220,6 +220,31 @@ const Campaigns: React.FC = () => {
     URL.revokeObjectURL(url);
     
     toast.success('Report exported');
+  };
+
+  // Export scheduler settings as JSON file for Python script
+  const handleExportSchedulerSettings = () => {
+    const settings = {
+      enabled: schedulerSettings.enabled,
+      maxMessagesBeforeRotation: schedulerSettings.maxMessagesBeforeRotation,
+      cooldownDuration: schedulerSettings.cooldownDuration,
+      prioritizeHighMaturity: schedulerSettings.prioritizeHighMaturity,
+      autoSkipRestricted: schedulerSettings.autoSkipRestricted,
+      balanceLoad: schedulerSettings.balanceLoad,
+      messagesPerAccount: messagesPerAccount,
+      messageInterval: messageInterval,
+      accountSwitchDelay: accountSwitchDelay,
+    };
+    
+    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'scheduler_settings.json';
+    a.click();
+    URL.revokeObjectURL(url);
+    
+    toast.success('Settings exported! Place scheduler_settings.json in the same folder as the Python script.');
   };
 
   const getStatusColor = (status: Campaign['status']) => {
@@ -476,15 +501,15 @@ const Campaigns: React.FC = () => {
                         <Slider
                           value={[messageInterval]}
                           onValueChange={([v]) => setMessageInterval(v)}
-                          min={10}
-                          max={300}
-                          step={5}
+                          min={1}
+                          max={120}
+                          step={1}
                           className="flex-1"
                         />
                         <span className="w-12 text-center font-medium">{messageInterval}s</span>
                       </div>
                       <p className="text-xs text-muted-foreground">
-                        Wait time between each message sent by the same account
+                        Wait time between each message. Lower = faster but higher risk.
                       </p>
                     </div>
                     
@@ -494,9 +519,9 @@ const Campaigns: React.FC = () => {
                         <Slider
                           value={[accountSwitchDelay]}
                           onValueChange={([v]) => setAccountSwitchDelay(v)}
-                          min={30}
-                          max={600}
-                          step={10}
+                          min={1}
+                          max={120}
+                          step={1}
                           className="flex-1"
                         />
                         <span className="w-12 text-center font-medium">{accountSwitchDelay}s</span>
@@ -514,11 +539,22 @@ const Campaigns: React.FC = () => {
                         <h4 className="text-sm font-medium text-yellow-600">Important</h4>
                         <p className="text-xs text-muted-foreground mt-1">
                           These settings help avoid Telegram restrictions. Lower values = faster but higher risk.
-                          Recommended to start conservative and adjust based on results.
                         </p>
                       </div>
                     </div>
                   </div>
+                  
+                  <Button 
+                    variant="outline" 
+                    onClick={handleExportSchedulerSettings}
+                    className="w-full"
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    Export Settings for Python Script
+                  </Button>
+                  <p className="text-xs text-muted-foreground text-center">
+                    Place the downloaded <code className="bg-muted px-1 rounded">scheduler_settings.json</code> in the same folder as the Python script
+                  </p>
                 </TabsContent>
               </Tabs>
 
