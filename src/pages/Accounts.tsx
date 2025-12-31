@@ -599,24 +599,45 @@ const Accounts: React.FC = () => {
                     />
 
                     {/* Avatar */}
-                    <div className={cn(
-                      "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0",
-                      verifyResult?.status === 'active' && "bg-green-500/20",
-                      verifyResult?.status === 'disconnected' && "bg-destructive/20",
-                      verifyResult?.status === 'banned' && "bg-destructive/20",
-                      verifyResult?.status === 'checking' && "bg-primary/20",
-                      !verifyResult && account.status === 'active' && "bg-green-500/10",
-                      !verifyResult && account.status === 'banned' && "bg-destructive/10",
-                      !verifyResult && account.status !== 'active' && account.status !== 'banned' && "bg-primary/10"
-                    )}>
-                      {verifyResult?.status === 'checking' ? (
-                        <Loader2 className="w-5 h-5 text-primary animate-spin" />
-                      ) : verifyResult?.status === 'active' ? (
-                        <Check className="w-5 h-5 text-green-500" />
-                      ) : verifyResult?.status === 'disconnected' || verifyResult?.status === 'banned' ? (
-                        <XCircle className="w-5 h-5 text-destructive" />
+                    <div className="relative w-12 h-12 flex-shrink-0">
+                      {account.avatar ? (
+                        <img 
+                          src={account.avatar} 
+                          alt={account.firstName || account.phoneNumber}
+                          className="w-12 h-12 rounded-full object-cover"
+                        />
                       ) : (
-                        <Phone className="w-5 h-5 text-primary" />
+                        <div className={cn(
+                          "w-12 h-12 rounded-full flex items-center justify-center",
+                          verifyResult?.status === 'active' && "bg-green-500/20",
+                          verifyResult?.status === 'disconnected' && "bg-destructive/20",
+                          verifyResult?.status === 'banned' && "bg-destructive/20",
+                          verifyResult?.status === 'checking' && "bg-primary/20",
+                          !verifyResult && account.status === 'active' && "bg-green-500/10",
+                          !verifyResult && account.status === 'banned' && "bg-destructive/10",
+                          !verifyResult && account.status !== 'active' && account.status !== 'banned' && "bg-primary/10"
+                        )}>
+                          {verifyResult?.status === 'checking' ? (
+                            <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                          ) : account.firstName ? (
+                            <span className="text-lg font-medium text-primary">
+                              {account.firstName.charAt(0).toUpperCase()}
+                            </span>
+                          ) : (
+                            <Phone className="w-5 h-5 text-primary" />
+                          )}
+                        </div>
+                      )}
+                      {/* Status indicator overlay */}
+                      {(verifyResult?.status === 'active' || account.status === 'active') && (
+                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-green-500 rounded-full border-2 border-card flex items-center justify-center">
+                          <Check className="w-2.5 h-2.5 text-white" />
+                        </div>
+                      )}
+                      {(verifyResult?.status === 'disconnected' || verifyResult?.status === 'banned') && (
+                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-destructive rounded-full border-2 border-card flex items-center justify-center">
+                          <XCircle className="w-2.5 h-2.5 text-white" />
+                        </div>
                       )}
                     </div>
                     

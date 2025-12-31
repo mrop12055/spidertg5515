@@ -168,7 +168,40 @@ async def process_account(account: dict, messages: list):
             supabase.table("telegram_accounts").update({"status": "disconnected"}).eq("id", account["id"]).execute()
             return
         
-        print(f"  ✓ Connected as {account['phone_number']}")
+        # Get account info and update in database
+        me = await client.get_me()
+        if me:
+            update_data = {
+                "status": "active",
+                "last_active": datetime.utcnow().isoformat()
+            }
+            if me.first_name:
+                update_data["first_name"] = me.first_name
+            if me.last_name:
+                update_data["last_name"] = me.last_name
+            if me.username:
+                update_data["username"] = me.username
+            if me.id:
+                update_data["telegram_id"] = me.id
+            if me.phone:
+                update_data["phone_number"] = f"+{me.phone}"
+            
+            # Try to get profile photo
+            try:
+                photos = await client.get_profile_photos(me, limit=1)
+                if photos:
+                    # Download the photo
+                    import io
+                    photo_bytes = await client.download_media(photos[0], file=bytes)
+                    if photo_bytes:
+                        photo_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+                        update_data["avatar_url"] = f"data:image/jpeg;base64,{photo_base64}"
+            except Exception as photo_err:
+                print(f"    Could not get profile photo: {photo_err}")
+            
+            supabase.table("telegram_accounts").update(update_data).eq("id", account["id"]).execute()
+            display_name = me.first_name or me.username or me.phone
+            print(f"  ✓ Connected as {display_name} (@{me.username or 'no username'})")
         
         # Process ALL messages (not just for this account) - useful when you have few accounts
         # In production, filter by account_id: [m for m in messages if m["account_id"] == account["id"]]
