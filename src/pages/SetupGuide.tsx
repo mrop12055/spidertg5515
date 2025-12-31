@@ -37,7 +37,7 @@ from datetime import datetime
 
 # Install: pip install telethon supabase
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
+from telethon.errors import FloodWaitError, UserPrivacyRestrictedError, UsernameNotOccupiedError
 from supabase import create_client
 
 # ========== CONFIGURATION ==========
@@ -118,11 +118,22 @@ async def send_message(client: TelegramClient, phone: str, content: str):
         await client.send_message(entity, content)
         return True, None
     except UserPrivacyRestrictedError:
-        return False, "User privacy settings prevent messaging"
+        return False, "PERMANENT: User privacy settings prevent messaging"
+    except UsernameNotOccupiedError:
+        return False, "PERMANENT: Username/phone not found on Telegram"
+    except ValueError as e:
+        # "Cannot find any entity corresponding to..." is a ValueError
+        if "Cannot find any entity" in str(e):
+            return False, "PERMANENT: User not found - not on Telegram or privacy restricted"
+        return False, f"PERMANENT: {str(e)}"
     except FloodWaitError as e:
-        return False, f"Rate limited, wait {e.seconds} seconds"
+        return False, f"RATE_LIMITED: Wait {e.seconds} seconds"
     except Exception as e:
-        return False, str(e)
+        error_str = str(e)
+        # Mark as permanent if it's clearly not retryable
+        if "banned" in error_str.lower() or "deactivated" in error_str.lower():
+            return False, f"PERMANENT: {error_str}"
+        return False, error_str
 
 async def process_account(account: dict, messages: list):
     """Process messages for a single account"""
