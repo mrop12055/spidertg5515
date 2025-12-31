@@ -7,13 +7,10 @@ import { AuthProvider } from "./context/AuthContext";
 import { TelegramProvider } from "./context/TelegramContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import Dashboard from "./pages/Dashboard";
-import Accounts from "./pages/Accounts";
-import Proxies from "./pages/Proxies";
-import Maturation from "./pages/Maturation";
-import Chat from "./pages/Chat";
+import Contacts from "./pages/Contacts";
+import Conversations from "./pages/Conversations";
 import Campaigns from "./pages/Campaigns";
 import Settings from "./pages/Settings";
-import VPSGuide from "./pages/VPSGuide";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -30,13 +27,10 @@ const App = () => (
               <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/accounts" element={<Accounts />} />
-                <Route path="/proxies" element={<Proxies />} />
-                <Route path="/maturation" element={<Maturation />} />
-                <Route path="/chat" element={<Chat />} />
+                <Route path="/contacts" element={<Contacts />} />
+                <Route path="/conversations" element={<Conversations />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/settings" element={<Settings />} />
-                <Route path="/vps-guide" element={<VPSGuide />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>
