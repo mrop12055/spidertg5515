@@ -10,6 +10,7 @@ import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { useToast } from '@/hooks/use-toast';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
 import { 
   Settings as SettingsIcon, 
   Bell, 
@@ -19,19 +20,26 @@ import {
   Save,
   Download,
   Zap,
-  RotateCcw
+  RotateCcw,
+  Trash2,
+  Calendar,
+  Loader2
 } from 'lucide-react';
 
 const Settings: React.FC = () => {
   const { toast: showToast } = useToast();
+  const [isCleaningUp, setIsCleaningUp] = useState(false);
+  
   const [settings, setSettings] = useState({
-    dailyMessageLimit: 25,
+    dailyMessageLimit: 10,
     messageCooldown: 60,
     autoRestartBanned: false,
     notifyOnReply: true,
     notifyOnBan: true,
     maturationAutoRun: false,
     proxyRotation: false,
+    autoCleanupDays: 7,
+    warmupDays: 5,
   });
 
   // Python script scheduler settings
@@ -47,37 +55,63 @@ const Settings: React.FC = () => {
     accountSwitchDelay: 5,
   });
 
-  // Load scheduler settings from localStorage on mount
+  // Load settings from localStorage
   useEffect(() => {
-    const saved = localStorage.getItem('python_scheduler_settings');
-    if (saved) {
+    const savedSettings = localStorage.getItem('app_settings');
+    if (savedSettings) {
       try {
-        setSchedulerSettings(prev => ({ ...prev, ...JSON.parse(saved) }));
+        setSettings(prev => ({ ...prev, ...JSON.parse(savedSettings) }));
+      } catch (e) {
+        console.error('Failed to load settings');
+      }
+    }
+
+    const savedScheduler = localStorage.getItem('python_scheduler_settings');
+    if (savedScheduler) {
+      try {
+        setSchedulerSettings(prev => ({ ...prev, ...JSON.parse(savedScheduler) }));
       } catch (e) {
         console.error('Failed to load scheduler settings');
       }
     }
   }, []);
 
-  // Save scheduler settings to localStorage when changed
+  // Save settings to localStorage
+  const updateSettings = (updates: Partial<typeof settings>) => {
+    const newSettings = { ...settings, ...updates };
+    setSettings(newSettings);
+    localStorage.setItem('app_settings', JSON.stringify(newSettings));
+  };
+
   const updateSchedulerSettings = (updates: Partial<typeof schedulerSettings>) => {
     const newSettings = { ...schedulerSettings, ...updates };
     setSchedulerSettings(newSettings);
     localStorage.setItem('python_scheduler_settings', JSON.stringify(newSettings));
   };
 
-  // Export settings as JSON file for Python script
+  // Manual cleanup trigger
+  const handleManualCleanup = async () => {
+    setIsCleaningUp(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('cleanup-old-chats');
+      
+      if (error) throw error;
+      
+      toast.success(`Cleanup complete: ${data.deleted?.conversations || 0} chats deleted`);
+    } catch (error) {
+      console.error('Cleanup failed:', error);
+      toast.error('Cleanup failed');
+    } finally {
+      setIsCleaningUp(false);
+    }
+  };
+
+  // Export settings as JSON
   const handleExportSettings = () => {
     const exportSettings = {
-      enabled: schedulerSettings.enabled,
-      maxMessagesBeforeRotation: schedulerSettings.maxMessagesBeforeRotation,
-      cooldownDuration: schedulerSettings.cooldownDuration,
-      prioritizeHighMaturity: schedulerSettings.prioritizeHighMaturity,
-      autoSkipRestricted: schedulerSettings.autoSkipRestricted,
-      balanceLoad: schedulerSettings.balanceLoad,
-      messagesPerAccount: schedulerSettings.messagesPerAccount,
-      messageInterval: schedulerSettings.messageInterval,
-      accountSwitchDelay: schedulerSettings.accountSwitchDelay,
+      ...schedulerSettings,
+      dailyLimit: settings.dailyMessageLimit,
+      warmupDays: settings.warmupDays,
     };
     
     const blob = new Blob([JSON.stringify(exportSettings, null, 2)], { type: 'application/json' });
@@ -88,10 +122,12 @@ const Settings: React.FC = () => {
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success('Settings exported! Place scheduler_settings.json next to the Python script.');
+    toast.success('Settings exported!');
   };
 
   const handleSave = () => {
+    localStorage.setItem('app_settings', JSON.stringify(settings));
+    localStorage.setItem('python_scheduler_settings', JSON.stringify(schedulerSettings));
     showToast({
       title: "Settings saved",
       description: "Your settings have been updated successfully.",
@@ -111,10 +147,10 @@ const Settings: React.FC = () => {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Zap className="w-5 h-5 text-primary" />
-              Python Script Speed Settings
+              Message Sending Settings
             </CardTitle>
             <CardDescription>
-              Configure message intervals and account rotation for the Python script
+              Configure message intervals and account rotation
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -122,7 +158,7 @@ const Settings: React.FC = () => {
               <div>
                 <Label>Enable Auto-Rotation</Label>
                 <p className="text-sm text-muted-foreground">
-                  Automatically rotate between accounts while sending
+                  Automatically rotate between accounts
                 </p>
               </div>
               <Switch
@@ -163,9 +199,6 @@ const Settings: React.FC = () => {
                   max={120}
                   step={1}
                 />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Seconds to wait before switching to next account
-                </p>
               </div>
               
               <div>
@@ -180,9 +213,6 @@ const Settings: React.FC = () => {
                   max={50}
                   step={1}
                 />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Messages to send before rotating to next account
-                </p>
               </div>
               
               <div>
@@ -197,9 +227,6 @@ const Settings: React.FC = () => {
                   max={60}
                   step={1}
                 />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Minutes to rest an account after it finishes its turn
-                </p>
               </div>
             </div>
             
@@ -231,23 +258,14 @@ const Settings: React.FC = () => {
             
             <Separator />
             
-            <div className="space-y-2">
-              <Button 
-                variant="outline" 
-                onClick={handleExportSettings}
-                className="w-full"
-              >
-                <Download className="w-4 h-4 mr-2" />
-                Export Settings for Python Script
-              </Button>
-              <p className="text-xs text-muted-foreground text-center">
-                Place <code className="bg-muted px-1 rounded">scheduler_settings.json</code> in the same folder as your Python script
-              </p>
-            </div>
+            <Button variant="outline" onClick={handleExportSettings} className="w-full">
+              <Download className="w-4 h-4 mr-2" />
+              Export Settings for Python Script
+            </Button>
           </CardContent>
         </Card>
 
-        {/* Messaging Settings */}
+        {/* Account Limits */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -259,21 +277,88 @@ const Settings: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-6">
-            <div className="space-y-4">
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <Label>Daily Message Limit (per account)</Label>
-                  <span className="text-sm font-medium">{settings.dailyMessageLimit} messages</span>
-                </div>
-                <Slider
-                  value={[settings.dailyMessageLimit]}
-                  onValueChange={([value]) => setSettings(prev => ({ ...prev, dailyMessageLimit: value }))}
-                  min={5}
-                  max={100}
-                  step={5}
-                />
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Daily Message Limit (per account)</Label>
+                <span className="text-sm font-medium">{settings.dailyMessageLimit}</span>
               </div>
+              <Slider
+                value={[settings.dailyMessageLimit]}
+                onValueChange={([value]) => updateSettings({ dailyMessageLimit: value })}
+                min={5}
+                max={50}
+                step={1}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Max messages per account per day. Lower = safer.
+              </p>
             </div>
+            
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Warm-up Days</Label>
+                <span className="text-sm font-medium">{settings.warmupDays} days</span>
+              </div>
+              <Slider
+                value={[settings.warmupDays]}
+                onValueChange={([value]) => updateSettings({ warmupDays: value })}
+                min={1}
+                max={14}
+                step={1}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Days before new accounts can join campaigns
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Auto Cleanup */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5" />
+              Auto Cleanup
+            </CardTitle>
+            <CardDescription>
+              Automatically delete old conversations to reduce ban risk
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Auto-delete chats older than</Label>
+                <span className="text-sm font-medium">{settings.autoCleanupDays} days</span>
+              </div>
+              <Slider
+                value={[settings.autoCleanupDays]}
+                onValueChange={([value]) => updateSettings({ autoCleanupDays: value })}
+                min={3}
+                max={30}
+                step={1}
+              />
+            </div>
+            
+            <Separator />
+            
+            <Button 
+              variant="destructive" 
+              onClick={handleManualCleanup}
+              disabled={isCleaningUp}
+              className="w-full"
+            >
+              {isCleaningUp ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Cleaning up...
+                </>
+              ) : (
+                <>
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Run Cleanup Now
+                </>
+              )}
+            </Button>
           </CardContent>
         </Card>
 
@@ -293,12 +378,12 @@ const Settings: React.FC = () => {
               <div>
                 <Label>Auto-restart banned accounts</Label>
                 <p className="text-sm text-muted-foreground">
-                  Automatically attempt to reconnect banned accounts after 24h
+                  Attempt to reconnect banned accounts after 24h
                 </p>
               </div>
               <Switch
                 checked={settings.autoRestartBanned}
-                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, autoRestartBanned: checked }))}
+                onCheckedChange={(checked) => updateSettings({ autoRestartBanned: checked })}
               />
             </div>
             <Separator />
@@ -306,39 +391,36 @@ const Settings: React.FC = () => {
               <div>
                 <Label>Proxy Rotation</Label>
                 <p className="text-sm text-muted-foreground">
-                  Rotate proxies periodically for better anonymity
+                  Rotate proxies periodically
                 </p>
               </div>
               <Switch
                 checked={settings.proxyRotation}
-                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, proxyRotation: checked }))}
+                onCheckedChange={(checked) => updateSettings({ proxyRotation: checked })}
               />
             </div>
           </CardContent>
         </Card>
 
-        {/* Notification Settings */}
+        {/* Notifications */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Bell className="w-5 h-5" />
               Notifications
             </CardTitle>
-            <CardDescription>
-              Configure alerts and notifications
-            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
                 <Label>Notify on reply</Label>
                 <p className="text-sm text-muted-foreground">
-                  Get notified when someone replies to your messages
+                  Get notified when someone replies
                 </p>
               </div>
               <Switch
                 checked={settings.notifyOnReply}
-                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, notifyOnReply: checked }))}
+                onCheckedChange={(checked) => updateSettings({ notifyOnReply: checked })}
               />
             </div>
             <Separator />
@@ -346,39 +428,36 @@ const Settings: React.FC = () => {
               <div>
                 <Label>Notify on ban</Label>
                 <p className="text-sm text-muted-foreground">
-                  Get notified when an account gets banned or restricted
+                  Get notified when an account gets banned
                 </p>
               </div>
               <Switch
                 checked={settings.notifyOnBan}
-                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, notifyOnBan: checked }))}
+                onCheckedChange={(checked) => updateSettings({ notifyOnBan: checked })}
               />
             </div>
           </CardContent>
         </Card>
 
-        {/* Maturation Settings */}
+        {/* Maturation */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="w-5 h-5" />
-              Maturation
+              Account Maturation
             </CardTitle>
-            <CardDescription>
-              Automatic account maturation settings
-            </CardDescription>
           </CardHeader>
           <CardContent>
             <div className="flex items-center justify-between">
               <div>
                 <Label>Auto-run maturation</Label>
                 <p className="text-sm text-muted-foreground">
-                  Automatically mature new accounts in the background
+                  Automatically mature new accounts
                 </p>
               </div>
               <Switch
                 checked={settings.maturationAutoRun}
-                onCheckedChange={(checked) => setSettings(prev => ({ ...prev, maturationAutoRun: checked }))}
+                onCheckedChange={(checked) => updateSettings({ maturationAutoRun: checked })}
               />
             </div>
           </CardContent>

@@ -398,6 +398,48 @@ serve(async (req) => {
         break;
       }
 
+      case "change_photo": {
+        const { task_id, account_id, success, error, avatar_url } = result;
+
+        if (success && avatar_url) {
+          await supabase
+            .from("telegram_accounts")
+            .update({
+              avatar_url: avatar_url,
+              last_active: new Date().toISOString(),
+            })
+            .eq("id", account_id);
+        }
+
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: success ? "completed" : "failed",
+            result: success ? "Photo changed" : error,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Photo change ${success ? "completed" : "failed"} for ${account_id}`);
+        break;
+      }
+
+      case "account_restricted": {
+        const { account_id, reason, restricted_until } = result;
+
+        await supabase
+          .from("telegram_accounts")
+          .update({
+            status: "restricted",
+            ban_reason: reason,
+            restricted_until: restricted_until || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          })
+          .eq("id", account_id);
+
+        console.log(`[report-task-result] Account ${account_id} restricted: ${reason}`);
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }
