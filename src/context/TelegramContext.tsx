@@ -9,60 +9,143 @@ import {
   UploadProgress 
 } from '@/types/telegram';
 
-// Generate mock data
-const generateMockAccounts = (count: number): TelegramAccount[] => {
-  const statuses: TelegramAccount['status'][] = ['active', 'active', 'active', 'banned', 'restricted', 'disconnected', 'cooldown'];
-  
-  return Array.from({ length: count }, (_, i) => ({
-    id: `acc-${i + 1}`,
-    phoneNumber: `+1${Math.floor(1000000000 + Math.random() * 9000000000)}`,
-    username: Math.random() > 0.3 ? `user_${i + 1}` : undefined,
-    firstName: ['Alex', 'Jordan', 'Morgan', 'Taylor', 'Casey', 'Riley', 'Quinn', 'Avery'][i % 8],
-    lastName: ['Smith', 'Johnson', 'Williams', 'Brown', 'Jones', 'Garcia', 'Miller', 'Davis'][i % 8],
-    status: statuses[Math.floor(Math.random() * statuses.length)],
-    proxyId: Math.random() > 0.2 ? `proxy-${Math.floor(Math.random() * 50) + 1}` : undefined,
-    createdAt: new Date(Date.now() - Math.random() * 30 * 24 * 60 * 60 * 1000),
-    lastActive: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000),
-    messagesSentToday: Math.floor(Math.random() * 20),
+// Minimal mock data - just 2 examples
+const initialAccounts: TelegramAccount[] = [
+  {
+    id: 'acc-1',
+    phoneNumber: '+14155551234',
+    username: 'alex_demo',
+    firstName: 'Alex',
+    lastName: 'Johnson',
+    status: 'active',
+    proxyId: 'proxy-1',
+    createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
+    lastActive: new Date(),
+    messagesSentToday: 5,
     dailyLimit: 25,
-    maturityScore: Math.floor(Math.random() * 100),
-    maturityDays: Math.floor(Math.random() * 30),
-    restrictedUntil: Math.random() > 0.8 ? new Date(Date.now() + 24 * 60 * 60 * 1000) : undefined,
-  }));
-};
+    maturityScore: 75,
+    maturityDays: 15,
+  },
+  {
+    id: 'acc-2',
+    phoneNumber: '+14155559876',
+    username: 'jordan_test',
+    firstName: 'Jordan',
+    lastName: 'Smith',
+    status: 'restricted',
+    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
+    lastActive: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    messagesSentToday: 12,
+    dailyLimit: 25,
+    maturityScore: 30,
+    maturityDays: 5,
+    restrictedUntil: new Date(Date.now() + 20 * 60 * 60 * 1000),
+  }
+];
 
-const generateMockProxies = (count: number): Proxy[] => {
-  const types: Proxy['type'][] = ['http', 'https', 'socks4', 'socks5'];
-  const countries = ['US', 'UK', 'DE', 'NL', 'FR', 'CA', 'AU', 'JP'];
-  
-  return Array.from({ length: count }, (_, i) => ({
-    id: `proxy-${i + 1}`,
-    host: `${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 255)}`,
-    port: [8080, 3128, 1080, 9050, 8888][Math.floor(Math.random() * 5)],
-    username: Math.random() > 0.5 ? `user_${i}` : undefined,
-    password: Math.random() > 0.5 ? '********' : undefined,
-    type: types[Math.floor(Math.random() * types.length)],
-    status: ['active', 'active', 'active', 'inactive', 'error'][Math.floor(Math.random() * 5)] as Proxy['status'],
-    lastChecked: new Date(Date.now() - Math.random() * 60 * 60 * 1000),
-    responseTime: Math.floor(Math.random() * 500) + 50,
-    country: countries[Math.floor(Math.random() * countries.length)],
-  }));
-};
+const initialProxies: Proxy[] = [
+  {
+    id: 'proxy-1',
+    host: '192.168.1.100',
+    port: 8080,
+    username: 'proxyuser',
+    password: '********',
+    type: 'socks5',
+    status: 'active',
+    assignedAccountId: 'acc-1',
+    lastChecked: new Date(),
+    responseTime: 120,
+    country: 'US',
+  },
+  {
+    id: 'proxy-2',
+    host: '10.0.0.50',
+    port: 1080,
+    type: 'http',
+    status: 'active',
+    lastChecked: new Date(),
+    responseTime: 85,
+    country: 'DE',
+  }
+];
 
-const generateMockConversations = (accounts: TelegramAccount[]): Conversation[] => {
-  const names = ['John Doe', 'Jane Smith', 'Mike Wilson', 'Sarah Connor', 'Tom Hardy', 'Emma Watson'];
-  
-  return Array.from({ length: 50 }, (_, i) => ({
-    id: `conv-${i + 1}`,
-    accountId: accounts[Math.floor(Math.random() * accounts.length)]?.id || 'acc-1',
-    recipientPhone: `+1${Math.floor(1000000000 + Math.random() * 9000000000)}`,
-    recipientName: names[Math.floor(Math.random() * names.length)],
-    unreadCount: Math.floor(Math.random() * 5),
-    isActive: Math.random() > 0.3,
-    createdAt: new Date(Date.now() - Math.random() * 7 * 24 * 60 * 60 * 1000),
-    updatedAt: new Date(Date.now() - Math.random() * 24 * 60 * 60 * 1000),
-  }));
-};
+const initialConversations: Conversation[] = [
+  {
+    id: 'conv-1',
+    accountId: 'acc-1',
+    recipientPhone: '+14155550001',
+    recipientName: 'John Doe',
+    unreadCount: 2,
+    isActive: true,
+    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+    updatedAt: new Date(),
+  },
+  {
+    id: 'conv-2',
+    accountId: 'acc-1',
+    recipientPhone: '+14155550002',
+    recipientName: 'Jane Smith',
+    unreadCount: 0,
+    isActive: true,
+    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+  }
+];
+
+const initialMessages: Message[] = [
+  {
+    id: 'msg-1',
+    accountId: 'acc-1',
+    recipientId: '+14155550001',
+    recipientPhone: '+14155550001',
+    recipientName: 'John Doe',
+    content: 'Hi! I wanted to reach out about our services.',
+    direction: 'outgoing',
+    status: 'delivered',
+    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
+    threadId: 'thread-1',
+  },
+  {
+    id: 'msg-2',
+    accountId: 'acc-1',
+    recipientId: '+14155550001',
+    recipientPhone: '+14155550001',
+    recipientName: 'John Doe',
+    content: 'Sure, tell me more about what you offer.',
+    direction: 'incoming',
+    status: 'read',
+    timestamp: new Date(Date.now() - 1 * 60 * 60 * 1000),
+    threadId: 'thread-1',
+  },
+  {
+    id: 'msg-3',
+    accountId: 'acc-1',
+    recipientId: '+14155550001',
+    recipientPhone: '+14155550001',
+    recipientName: 'John Doe',
+    content: 'Great! We provide comprehensive solutions for...',
+    direction: 'outgoing',
+    status: 'sent',
+    timestamp: new Date(Date.now() - 30 * 60 * 1000),
+    threadId: 'thread-1',
+  }
+];
+
+const initialCampaigns: Campaign[] = [
+  {
+    id: 'campaign-1',
+    name: 'Welcome Campaign',
+    messageTemplate: 'Hi {name}! We have exciting news for you...',
+    status: 'draft',
+    recipientCount: 100,
+    sentCount: 0,
+    failedCount: 0,
+    replyCount: 0,
+    accountIds: ['acc-1'],
+    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+    updatedAt: new Date(),
+  }
+];
 
 interface TelegramContextType {
   accounts: TelegramAccount[];
@@ -93,6 +176,7 @@ interface TelegramContextType {
   // Campaign actions
   createCampaign: (campaign: Partial<Campaign>) => void;
   updateCampaign: (id: string, updates: Partial<Campaign>) => void;
+  deleteCampaign: (id: string) => void;
   
   // Refresh
   refreshStats: () => void;
@@ -101,11 +185,11 @@ interface TelegramContextType {
 const TelegramContext = createContext<TelegramContextType | undefined>(undefined);
 
 export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [accounts, setAccounts] = useState<TelegramAccount[]>(() => generateMockAccounts(150));
-  const [proxies, setProxies] = useState<Proxy[]>(() => generateMockProxies(80));
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [accounts, setAccounts] = useState<TelegramAccount[]>(initialAccounts);
+  const [proxies, setProxies] = useState<Proxy[]>(initialProxies);
+  const [conversations, setConversations] = useState<Conversation[]>(initialConversations);
+  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
     total: 0,
     processed: 0,
@@ -113,11 +197,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     failed: 0,
     status: 'idle',
     errors: []
-  });
-
-  // Initialize conversations after accounts
-  useState(() => {
-    setConversations(generateMockConversations(accounts));
   });
 
   const stats: DashboardStats = {
@@ -159,7 +238,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const uploadAccounts = useCallback(async (files: File[]) => {
     setUploadProgress({
-      total: files.length * 50, // Assume ~50 accounts per file
+      total: files.length * 50,
       processed: 0,
       successful: 0,
       failed: 0,
@@ -168,16 +247,16 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     });
 
     // Simulate upload processing
-    for (let i = 0; i < 150; i++) {
-      await new Promise(resolve => setTimeout(resolve, 50));
-      const success = Math.random() > 0.05;
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      const success = Math.random() > 0.1;
       
       setUploadProgress(prev => ({
         ...prev,
         processed: i + 1,
         successful: prev.successful + (success ? 1 : 0),
         failed: prev.failed + (success ? 0 : 1),
-        status: i === 149 ? 'completed' : 'processing',
+        status: i === 9 ? 'completed' : 'processing',
         errors: success ? prev.errors : [...prev.errors, `Account ${i + 1}: Invalid session file`]
       }));
     }
@@ -234,11 +313,13 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, []);
 
   const sendMessage = useCallback((accountId: string, recipientPhone: string, content: string) => {
+    const conv = conversations.find(c => c.recipientPhone === recipientPhone);
     const newMessage: Message = {
       id: `msg-${Date.now()}`,
       accountId,
       recipientId: recipientPhone,
       recipientPhone,
+      recipientName: conv?.recipientName,
       content,
       direction: 'outgoing',
       status: 'sent',
@@ -247,7 +328,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     };
     setMessages(prev => [...prev, newMessage]);
     
-    // Update conversation
     setConversations(prev => {
       const existing = prev.find(c => c.recipientPhone === recipientPhone);
       if (existing) {
@@ -268,7 +348,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         updatedAt: new Date()
       }];
     });
-  }, []);
+  }, [conversations]);
 
   const getConversationMessages = useCallback((conversationId: string) => {
     const conv = conversations.find(c => c.id === conversationId);
@@ -300,9 +380,11 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     ));
   }, []);
 
-  const refreshStats = useCallback(() => {
-    // Trigger re-render with updated stats
+  const deleteCampaign = useCallback((id: string) => {
+    setCampaigns(prev => prev.filter(c => c.id !== id));
   }, []);
+
+  const refreshStats = useCallback(() => {}, []);
 
   const value: TelegramContextType = {
     accounts,
@@ -325,6 +407,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     getConversationMessages,
     createCampaign,
     updateCampaign,
+    deleteCampaign,
     refreshStats
   };
 

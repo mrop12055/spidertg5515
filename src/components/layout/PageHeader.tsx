@@ -6,6 +6,7 @@ interface PageHeaderProps {
   title: string;
   description?: string;
   icon?: LucideIcon;
+  action?: React.ReactNode;
   children?: React.ReactNode;
   className?: string;
 }
@@ -14,6 +15,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   title,
   description,
   icon: Icon,
+  action,
   children,
   className
 }) => {
@@ -32,8 +34,9 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
           )}
         </div>
       </div>
-      {children && (
+      {(action || children) && (
         <div className="flex items-center gap-3">
+          {action}
           {children}
         </div>
       )}

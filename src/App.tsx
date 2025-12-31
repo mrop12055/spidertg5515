@@ -7,6 +7,11 @@ import { AuthProvider } from "./context/AuthContext";
 import { TelegramProvider } from "./context/TelegramContext";
 import Dashboard from "./pages/Dashboard";
 import Accounts from "./pages/Accounts";
+import Proxies from "./pages/Proxies";
+import Maturation from "./pages/Maturation";
+import Chat from "./pages/Chat";
+import Campaigns from "./pages/Campaigns";
+import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -24,12 +29,11 @@ const App = () => (
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/accounts" element={<Accounts />} />
-                <Route path="/proxies" element={<Dashboard />} />
-                <Route path="/maturation" element={<Dashboard />} />
-                <Route path="/chat" element={<Dashboard />} />
-                <Route path="/campaigns" element={<Dashboard />} />
-                <Route path="/admins" element={<Dashboard />} />
-                <Route path="/settings" element={<Dashboard />} />
+                <Route path="/proxies" element={<Proxies />} />
+                <Route path="/maturation" element={<Maturation />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/campaigns" element={<Campaigns />} />
+                <Route path="/settings" element={<Settings />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>
