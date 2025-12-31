@@ -4,7 +4,6 @@ import {
   LayoutDashboard, 
   Users, 
   MessageSquare, 
-  Shield, 
   Settings, 
   Server,
   Sparkles,
@@ -16,6 +15,7 @@ import {
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { useState } from 'react';
 
 interface NavItem {
@@ -100,7 +100,15 @@ export const Sidebar: React.FC = () => {
       </nav>
 
       {/* User Section */}
-      <div className="p-3 border-t border-sidebar-border">
+      <div className="p-3 border-t border-sidebar-border space-y-2">
+        {/* Theme Toggle */}
+        <div className={cn(
+          "flex items-center justify-center",
+          !collapsed && "justify-end px-2"
+        )}>
+          <ThemeToggle />
+        </div>
+
         <div className={cn(
           "flex items-center gap-3 p-2 rounded-lg bg-sidebar-accent/50",
           collapsed && "justify-center"
