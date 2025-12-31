@@ -17,8 +17,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Plus, Play, Pause, Trash2, Edit, Send, Users, CheckCircle, XCircle, 
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
-  AlertCircle
+  AlertCircle, RotateCcw
 } from 'lucide-react';
+import AccountScheduler from '@/components/campaigns/AccountScheduler';
 import { format } from 'date-fns';
 import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
@@ -55,6 +56,15 @@ const Campaigns: React.FC = () => {
   const [messagesPerAccount, setMessagesPerAccount] = useState(5);
   const [messageInterval, setMessageInterval] = useState(30); // seconds between messages
   const [accountSwitchDelay, setAccountSwitchDelay] = useState(60); // seconds before next account
+  const [showScheduler, setShowScheduler] = useState(false);
+  const [schedulerSettings, setSchedulerSettings] = useState({
+    enabled: true,
+    maxMessagesBeforeRotation: 5,
+    cooldownDuration: 30,
+    prioritizeHighMaturity: true,
+    autoSkipRestricted: true,
+    balanceLoad: true
+  });
   
   const [newCampaign, setNewCampaign] = useState({
     name: '',
@@ -118,6 +128,7 @@ const Campaigns: React.FC = () => {
       messagesPerAccount,
       messageInterval,
       accountSwitchDelay,
+      schedulerSettings,
     };
     localStorage.setItem(`campaign_settings_${newCampaign.name}`, JSON.stringify(campaignSettings));
     
@@ -274,9 +285,10 @@ const Campaigns: React.FC = () => {
               </DialogHeader>
               
               <Tabs defaultValue="messages" className="mt-4">
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-4">
                   <TabsTrigger value="messages">Messages</TabsTrigger>
                   <TabsTrigger value="accounts">Accounts</TabsTrigger>
+                  <TabsTrigger value="scheduler">Scheduler</TabsTrigger>
                   <TabsTrigger value="settings">Settings</TabsTrigger>
                 </TabsList>
                 
@@ -404,6 +416,17 @@ const Campaigns: React.FC = () => {
                       </ul>
                     </div>
                   )}
+                </TabsContent>
+
+                <TabsContent value="scheduler" className="mt-4">
+                  <AccountScheduler
+                    accounts={accounts}
+                    selectedAccountIds={newCampaign.accountIds}
+                    onAccountRotation={(accountId) => {
+                      console.log('Rotated to account:', accountId);
+                    }}
+                    onSettingsChange={(settings) => setSchedulerSettings(settings)}
+                  />
                 </TabsContent>
                 
                 <TabsContent value="settings" className="space-y-6 mt-4">
