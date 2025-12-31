@@ -497,6 +497,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      increment_campaign_failed_count: {
+        Args: { cid: string }
+        Returns: undefined
+      }
+      increment_campaign_sent_count: {
+        Args: { cid: string }
+        Returns: undefined
+      }
       reset_daily_message_counts: { Args: never; Returns: undefined }
     }
     Enums: {

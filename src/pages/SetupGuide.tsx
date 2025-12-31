@@ -451,9 +451,14 @@ async def update_campaign_recipient_status(phone_number: str, account_id: str, s
     Matches by phone number and account to find the correct recipient.
     """
     try:
+        # Normalize phone number for matching (remove spaces, ensure + prefix)
+        normalized_phone = phone_number.strip()
+        if not normalized_phone.startswith('+') and not normalized_phone.startswith('@'):
+            normalized_phone = '+' + normalized_phone
+        
         # Find campaign recipients with this phone number assigned to this account
         result = supabase.table("campaign_recipients").select("id, campaign_id").eq(
-            "phone_number", phone_number
+            "phone_number", normalized_phone
         ).eq("sent_by_account_id", account_id).eq("status", "pending").limit(1).execute()
         
         if result.data and len(result.data) > 0:
@@ -465,12 +470,20 @@ async def update_campaign_recipient_status(phone_number: str, account_id: str, s
             # Update the recipient status
             supabase.table("campaign_recipients").update(update_data).eq("id", recipient["id"]).execute()
             
-            # Also update campaign sent_count or failed_count
+            # Also update campaign sent_count or failed_count directly
             campaign_id = recipient["campaign_id"]
-            if status == "sent":
-                supabase.rpc("increment_campaign_sent_count", {"cid": campaign_id}).execute()
-            elif status == "failed":
-                supabase.rpc("increment_campaign_failed_count", {"cid": campaign_id}).execute()
+            try:
+                # Get current counts
+                campaign_result = supabase.table("campaigns").select("sent_count, failed_count").eq("id", campaign_id).single().execute()
+                if campaign_result.data:
+                    if status == "sent":
+                        new_sent = (campaign_result.data.get("sent_count") or 0) + 1
+                        supabase.table("campaigns").update({"sent_count": new_sent}).eq("id", campaign_id).execute()
+                    elif status == "failed":
+                        new_failed = (campaign_result.data.get("failed_count") or 0) + 1
+                        supabase.table("campaigns").update({"failed_count": new_failed}).eq("id", campaign_id).execute()
+            except Exception as count_err:
+                print(f"    ⚠ Could not update campaign counts: {count_err}")
             
             print(f"    📊 Updated campaign recipient status: {status}")
     except Exception as e:
