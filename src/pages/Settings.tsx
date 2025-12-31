@@ -80,12 +80,12 @@ const Settings: React.FC = () => {
                 <Slider
                   value={[settings.messageCooldown]}
                   onValueChange={([value]) => setSettings(prev => ({ ...prev, messageCooldown: value }))}
-                  min={10}
-                  max={300}
-                  step={10}
+                  min={1}
+                  max={60}
+                  step={1}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Time between messages to avoid rate limiting
+                  Time between messages to avoid rate limiting (1-60 seconds)
                 </p>
               </div>
             </div>
