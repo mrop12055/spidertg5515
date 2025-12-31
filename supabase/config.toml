@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.send-bulk-messages]
 verify_jwt = false
+
+[functions.verify-sessions]
+verify_jwt = false
