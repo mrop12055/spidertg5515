@@ -131,20 +131,27 @@ const Accounts: React.FC = () => {
         { event: '*', schema: 'public', table: 'account_check_tasks' },
         (payload) => {
           const task = payload.new as any;
-          if (task && (task.status === 'completed' || task.status === 'failed')) {
+          if (task && (task.status === 'completed' || task.status === 'failed' || task.status === 'skipped')) {
             setSpamBotProgress(prev => {
               const newResults = new Map(prev.results);
               newResults.set(task.account_id, { status: task.status, result: task.result });
-              const completed = Array.from(newResults.values()).filter(r => r.status === 'completed' || r.status === 'failed').length;
+              const processed = Array.from(newResults.values()).filter(r => 
+                r.status === 'completed' || r.status === 'failed' || r.status === 'skipped'
+              ).length;
               
               // Check if all done
-              if (completed >= prev.total) {
+              if (processed >= prev.total) {
+                const results = Array.from(newResults.values());
+                const successCount = results.filter(r => r.status === 'completed').length;
+                const failedCount = results.filter(r => r.status === 'failed').length;
+                const skippedCount = results.filter(r => r.status === 'skipped').length;
+                
                 setIsSpamBotChecking(false);
-                toast.success(`SpamBot check complete: ${completed} account(s) checked`);
+                toast.success(`SpamBot check complete: ${successCount} OK, ${failedCount} failed, ${skippedCount} skipped (96h cooldown)`);
                 refreshData();
               }
               
-              return { ...prev, completed, results: newResults };
+              return { ...prev, completed: processed, results: newResults };
             });
           }
         }
@@ -938,8 +945,21 @@ const Accounts: React.FC = () => {
             <Loader2 className="w-5 h-5 animate-spin text-yellow-500" />
             <div className="flex-1">
               <p className="text-sm font-medium">
-                SpamBot Check: {spamBotProgress.completed}/{spamBotProgress.total} accounts checked
+                SpamBot Check: {spamBotProgress.completed}/{spamBotProgress.total} processed
               </p>
+              {spamBotProgress.completed > 0 && (() => {
+                const results = Array.from(spamBotProgress.results.values());
+                const okCount = results.filter(r => r.status === 'completed' && r.result?.toLowerCase().includes('no limit')).length;
+                const restrictedCount = results.filter(r => r.status === 'completed' && (r.result?.toLowerCase().includes('restricted') || r.result?.toLowerCase().includes('limited'))).length;
+                const bannedCount = results.filter(r => r.status === 'completed' && r.result?.toLowerCase().includes('banned')).length;
+                const failedCount = results.filter(r => r.status === 'failed').length;
+                const skippedCount = results.filter(r => r.status === 'skipped').length;
+                return (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    ✓ OK: {okCount} | ⚠ Restricted: {restrictedCount} | ✗ Banned: {bannedCount} | Failed: {failedCount} | ⏭ Skipped (96h): {skippedCount}
+                  </p>
+                );
+              })()}
               <p className="text-xs text-muted-foreground mt-1">
                 Run the Python script to process the check queue
               </p>
@@ -958,6 +978,7 @@ const Accounts: React.FC = () => {
                 const account = accounts.find(a => a.id === accountId);
                 const isCompleted = result.status === 'completed';
                 const isFailed = result.status === 'failed';
+                const isSkipped = result.status === 'skipped';
                 return (
                   <Badge 
                     key={accountId} 
@@ -965,16 +986,18 @@ const Accounts: React.FC = () => {
                     className={cn(
                       "text-xs",
                       isCompleted && result.result?.toLowerCase().includes('no limit') && "bg-green-500/20 text-green-600 border-green-500/30",
-                      isCompleted && result.result?.toLowerCase().includes('restricted') && "bg-yellow-500/20 text-yellow-600 border-yellow-500/30",
+                      isCompleted && (result.result?.toLowerCase().includes('restricted') || result.result?.toLowerCase().includes('limited')) && "bg-yellow-500/20 text-yellow-600 border-yellow-500/30",
                       isCompleted && result.result?.toLowerCase().includes('banned') && "bg-destructive/20 text-destructive border-destructive/30",
-                      isFailed && "bg-muted text-muted-foreground"
+                      isFailed && "bg-muted text-muted-foreground",
+                      isSkipped && "bg-blue-500/20 text-blue-600 border-blue-500/30"
                     )}
                   >
                     {account?.phoneNumber || accountId.slice(0, 8)}
                     {isCompleted && result.result?.toLowerCase().includes('no limit') && <CheckCircle className="w-3 h-3 ml-1" />}
-                    {isCompleted && result.result?.toLowerCase().includes('restricted') && <AlertTriangle className="w-3 h-3 ml-1" />}
+                    {isCompleted && (result.result?.toLowerCase().includes('restricted') || result.result?.toLowerCase().includes('limited')) && <AlertTriangle className="w-3 h-3 ml-1" />}
                     {isCompleted && result.result?.toLowerCase().includes('banned') && <XCircle className="w-3 h-3 ml-1" />}
                     {isFailed && <XCircle className="w-3 h-3 ml-1" />}
+                    {isSkipped && <Clock className="w-3 h-3 ml-1" />}
                   </Badge>
                 );
               })}
