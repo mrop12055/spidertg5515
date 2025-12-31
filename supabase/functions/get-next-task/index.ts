@@ -71,6 +71,13 @@ serve(async (req) => {
         const account = accounts.find((a: { id: string }) => a.id === msg.account_id);
 
         if (account) {
+          // Mark message as "sending" to prevent duplicate tasks
+          await supabase
+            .from("messages")
+            .update({ status: "sending" })
+            .eq("id", msg.id)
+            .eq("status", "pending"); // Only update if still pending (avoid race)
+
           console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)}`);
           return new Response(JSON.stringify({
             task: "send",
@@ -153,6 +160,13 @@ serve(async (req) => {
           console.log(`[get-next-task] Account ${account.phone_number} at daily limit`);
           continue;
         }
+
+        // Mark message as "sending" to prevent duplicate tasks
+        await supabase
+          .from("messages")
+          .update({ status: "sending" })
+          .eq("id", msg.id)
+          .eq("status", "pending"); // Only update if still pending
 
         console.log(`[get-next-task] Campaign task: message ${msg.id.slice(0, 8)}`);
         return new Response(JSON.stringify({
