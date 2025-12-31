@@ -527,15 +527,64 @@ const Accounts: React.FC = () => {
   };
 
   // SpamBot check - queue tasks for Python script to process
+  // Implements 96-hour cooldown - accounts checked within last 96 hours are skipped
   const handleSpamBotCheck = async () => {
     if (selectedIds.size === 0) return;
     
+    const now = new Date();
+    const cooldownHours = 96;
+    
+    // Fetch last_spambot_check for selected accounts
+    const { data: accountsData, error: fetchError } = await supabase
+      .from('telegram_accounts')
+      .select('id, last_spambot_check, phone_number')
+      .in('id', Array.from(selectedIds));
+    
+    if (fetchError) {
+      toast.error('Failed to fetch account data');
+      return;
+    }
+    
+    // Separate accounts into eligible and skipped
+    const eligibleIds: string[] = [];
+    const skippedIds: string[] = [];
+    
+    accountsData?.forEach((acc: any) => {
+      if (acc.last_spambot_check) {
+        const lastCheck = new Date(acc.last_spambot_check);
+        const hoursSinceCheck = differenceInHours(now, lastCheck);
+        
+        if (hoursSinceCheck < cooldownHours) {
+          skippedIds.push(acc.id);
+        } else {
+          eligibleIds.push(acc.id);
+        }
+      } else {
+        // Never checked - eligible
+        eligibleIds.push(acc.id);
+      }
+    });
+    
+    // Show summary message
+    if (skippedIds.length > 0 && eligibleIds.length === 0) {
+      toast.warning(`All ${skippedIds.length} account(s) were checked within 96 hours. No checks queued.`);
+      return;
+    }
+    
+    if (skippedIds.length > 0) {
+      toast.info(`${skippedIds.length} account(s) skipped (checked within 96 hours), ${eligibleIds.length} account(s) queued for checking`);
+    }
+    
+    if (eligibleIds.length === 0) {
+      return;
+    }
+    
     setIsSpamBotChecking(true);
-    setSpamBotProgress({ total: selectedIds.size, completed: 0, results: new Map() });
+    setSpamBotProgress({ total: eligibleIds.length, completed: 0, results: new Map() });
     
     try {
-      // Insert tasks for each selected account
-      const tasks = Array.from(selectedIds).map(accountId => ({
+      // Insert tasks only for eligible accounts
+      const tasks = eligibleIds.map(accountId => ({
         account_id: accountId,
         task_type: 'spambot_check',
         status: 'pending',
@@ -547,7 +596,7 @@ const Accounts: React.FC = () => {
       
       if (error) throw error;
       
-      toast.info(`Queued ${selectedIds.size} account(s) for SpamBot check. Run the Python script to process.`);
+      toast.success(`Queued ${eligibleIds.length} account(s) for SpamBot check. Run the Python script to process.`);
     } catch (error) {
       console.error('Error queuing SpamBot check:', error);
       toast.error('Failed to queue SpamBot check');
