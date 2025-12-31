@@ -10,7 +10,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Phone,
-  BookOpen
+  BookOpen,
+  Globe
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -28,6 +29,7 @@ interface NavItem {
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
   { icon: Phone, label: 'Accounts', path: '/accounts' },
+  { icon: Globe, label: 'Proxies', path: '/proxies' },
   { icon: MessageSquare, label: 'Conversations', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
