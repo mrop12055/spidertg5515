@@ -159,18 +159,21 @@ async def process_account(account: dict, messages: list):
         
         if not await client.is_user_authorized():
             print(f"  ⚠ Session expired for {account['phone_number']}")
+            # Update account status
+            supabase.table("telegram_accounts").update({"status": "disconnected"}).eq("id", account["id"]).execute()
             return
         
         print(f"  ✓ Connected as {account['phone_number']}")
         
-        account_messages = [m for m in messages if m["account_id"] == account["id"]]
-        
-        for msg in account_messages:
-            conv = msg.get("conversations", {})
+        # Process ALL messages (not just for this account) - useful when you have few accounts
+        # In production, filter by account_id: [m for m in messages if m["account_id"] == account["id"]]
+        for msg in messages:
+            conv = msg.get("conversations", {}) or {}
             phone = conv.get("recipient_phone")
             
             if not phone:
-                await update_message_status(msg["id"], "failed")
+                print(f"    ⚠ No recipient phone for message {msg['id']}")
+                await update_message_status(msg["id"], "failed", "No recipient phone number")
                 continue
             
             print(f"    → Sending to {phone}...")
@@ -185,6 +188,12 @@ async def process_account(account: dict, messages: list):
             
             # Wait between messages
             await asyncio.sleep(MESSAGE_DELAY)
+            
+            # Only process one message per cycle to avoid spam detection
+            break
+    
+    except Exception as e:
+        print(f"  ⚠ Error processing account: {e}")
     
     finally:
         await client.disconnect()
