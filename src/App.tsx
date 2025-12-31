@@ -7,10 +7,11 @@ import { AuthProvider } from "./context/AuthContext";
 import { TelegramProvider } from "./context/TelegramContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import Dashboard from "./pages/Dashboard";
-import Contacts from "./pages/Contacts";
+import Accounts from "./pages/Accounts";
 import Conversations from "./pages/Conversations";
 import Campaigns from "./pages/Campaigns";
 import Settings from "./pages/Settings";
+import SetupGuide from "./pages/SetupGuide";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -27,10 +28,11 @@ const App = () => (
               <Routes>
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/contacts" element={<Contacts />} />
+                <Route path="/accounts" element={<Accounts />} />
                 <Route path="/conversations" element={<Conversations />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/setup" element={<SetupGuide />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>

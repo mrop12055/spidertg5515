@@ -9,7 +9,8 @@ import {
   LogOut,
   ChevronLeft,
   ChevronRight,
-  Contact
+  Phone,
+  BookOpen
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -26,9 +27,10 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
-  { icon: Contact, label: 'Contacts', path: '/contacts' },
+  { icon: Phone, label: 'Accounts', path: '/accounts' },
   { icon: MessageSquare, label: 'Conversations', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
+  { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
