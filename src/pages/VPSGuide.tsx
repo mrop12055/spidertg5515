@@ -140,13 +140,13 @@ const VPSGuide: React.FC = () => {
             <Step
               number={1}
               title="Create a VPS"
-              description="Get a server from DigitalOcean or Linode"
+              description="Get a server from DigitalOcean, Linode, or COIN.HOST (crypto)"
               completed={completedSteps.includes(1)}
               onToggle={() => toggleStep(1)}
               defaultOpen={true}
             >
               <div className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <Card className="p-4">
                     <div className="flex items-center gap-2 mb-2">
                       <Server className="w-5 h-5 text-primary" />
@@ -187,6 +187,29 @@ const VPSGuide: React.FC = () => {
                       <a href="https://linode.com" target="_blank" rel="noopener noreferrer">
                         <ExternalLink className="w-4 h-4" />
                         Open Linode
+                      </a>
+                    </Button>
+                  </Card>
+
+                  <Card className="p-4 border-primary/50 bg-primary/5">
+                    <div className="flex items-center gap-2 mb-2 flex-wrap">
+                      <Server className="w-5 h-5 text-primary" />
+                      <span className="font-medium">COIN.HOST</span>
+                      <Badge variant="outline">€4.50/mo</Badge>
+                      <Badge className="bg-amber-500/20 text-amber-600 border-amber-500/30">Crypto</Badge>
+                    </div>
+                    <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
+                      <li>Go to coin.host</li>
+                      <li>Click Cloud VPS</li>
+                      <li>Select Ubuntu 22.04 LTS</li>
+                      <li>Choose SSD-1 plan (1GB RAM)</li>
+                      <li>Pay with BTC, ETH, LTC, XMR</li>
+                      <li>Copy your IP address</li>
+                    </ol>
+                    <Button variant="outline" size="sm" className="mt-3 gap-2" asChild>
+                      <a href="https://coin.host" target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="w-4 h-4" />
+                        Open COIN.HOST
                       </a>
                     </Button>
                   </Card>

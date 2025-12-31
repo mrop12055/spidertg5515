@@ -26,6 +26,26 @@ This guide walks you through setting up a VPS from scratch to run your Telegram 
 4. Click **Create Linode**
 5. Copy the **IP Address** shown
 
+### Option C: COIN.HOST (€4.50/month - Crypto Payment) ⭐ RECOMMENDED
+> **Perfect if your card isn't working!** COIN.HOST accepts Bitcoin, Ethereum, Litecoin, Monero, and other cryptocurrencies.
+
+1. Go to [coin.host](https://coin.host)
+2. Click **Cloud VPS** in the menu
+3. Choose:
+   - **Location**: Pick one closest to you (Switzerland, Netherlands, etc.)
+   - **OS**: Ubuntu 22.04 LTS
+   - **Plan**: SSD-1 (€4.50/mo - 1GB RAM, 1 vCPU, 25GB SSD)
+4. Click **Order Now**
+5. At checkout, select your cryptocurrency (BTC, ETH, LTC, XMR, etc.)
+6. Complete payment via your crypto wallet
+7. After deployment, copy the **IP Address** from your dashboard
+
+**Benefits of COIN.HOST:**
+- ✅ No credit card needed
+- ✅ Privacy-friendly (crypto payment)
+- ✅ Swiss quality hosting
+- ✅ Accepts 50+ cryptocurrencies
+
 ---
 
 ## Step 2: Connect to Your VPS
