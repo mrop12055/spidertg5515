@@ -20,10 +20,17 @@ import {
   PlayCircle,
   Loader2,
   ArrowRight,
-  BookOpen
+  BookOpen,
+  Globe,
+  Users,
+  AlertTriangle,
+  TrendingUp,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
+import { cn } from '@/lib/utils';
 
 interface MessageQueueStats {
   pending: number;
@@ -32,18 +39,39 @@ interface MessageQueueStats {
   total: number;
 }
 
+interface AccountStats {
+  active: number;
+  banned: number;
+  restricted: number;
+  disconnected: number;
+  cooldown: number;
+}
+
 const Dashboard: React.FC = () => {
-  const { campaigns, conversations, accounts, stats, refreshData } = useTelegram();
+  const { campaigns, conversations, accounts, proxies, stats, refreshData } = useTelegram();
   const navigate = useNavigate();
   const [queueStats, setQueueStats] = useState<MessageQueueStats>({ pending: 0, sent: 0, failed: 0, total: 0 });
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [messages24h, setMessages24h] = useState(0);
+  const [replies24h, setReplies24h] = useState(0);
+
+  const accountStats: AccountStats = {
+    active: accounts.filter(a => a.status === 'active').length,
+    banned: accounts.filter(a => a.status === 'banned').length,
+    restricted: accounts.filter(a => a.status === 'restricted').length,
+    disconnected: accounts.filter(a => a.status === 'disconnected').length,
+    cooldown: accounts.filter(a => a.status === 'cooldown').length,
+  };
 
   const fetchQueueStats = async () => {
     try {
+      const yesterday = new Date();
+      yesterday.setHours(yesterday.getHours() - 24);
+
       // Fetch message counts by status
       const { data: messages, error } = await supabase
         .from('messages')
-        .select('status')
+        .select('status, direction, created_at')
         .eq('direction', 'outgoing');
 
       if (error) throw error;
@@ -52,12 +80,25 @@ const Dashboard: React.FC = () => {
       const sent = messages?.filter(m => m.status === 'sent' || m.status === 'delivered').length || 0;
       const failed = messages?.filter(m => m.status === 'failed').length || 0;
       
+      // Messages in last 24h
+      const msgs24h = messages?.filter(m => new Date(m.created_at) > yesterday).length || 0;
+      setMessages24h(msgs24h);
+      
       setQueueStats({
         pending,
         sent,
         failed,
         total: pending + sent + failed
       });
+
+      // Fetch incoming messages (replies) in last 24h
+      const { data: incomingMessages } = await supabase
+        .from('messages')
+        .select('id')
+        .eq('direction', 'incoming')
+        .gte('created_at', yesterday.toISOString());
+      
+      setReplies24h(incomingMessages?.length || 0);
     } catch (error) {
       console.error('Error fetching queue stats:', error);
     }
@@ -65,6 +106,8 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     fetchQueueStats();
+    const interval = setInterval(fetchQueueStats, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
   }, []);
 
   const handleRefresh = async () => {
@@ -75,6 +118,7 @@ const Dashboard: React.FC = () => {
 
   const activeAccounts = accounts.filter(a => a.status === 'active').length;
   const runningCampaigns = campaigns.filter(c => c.status === 'running').length;
+  const activeProxies = proxies.filter(p => p.status === 'active').length;
 
   return (
     <DashboardLayout>
@@ -95,32 +139,102 @@ const Dashboard: React.FC = () => {
       />
       
       {/* Main Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
         <StatCard
-          title="Active Accounts"
-          value={activeAccounts}
+          title="Total Accounts"
+          value={accounts.length}
           icon={Phone}
           variant="primary"
         />
         <StatCard
-          title="Running Campaigns"
-          value={runningCampaigns}
-          icon={Send}
+          title="Active Accounts"
+          value={activeAccounts}
+          icon={Users}
           variant="success"
         />
         <StatCard
-          title="Messages Pending"
-          value={queueStats.pending}
-          icon={Clock}
+          title="Active Proxies"
+          value={activeProxies}
+          icon={Globe}
+          variant="default"
+        />
+        <StatCard
+          title="Messages (24h)"
+          value={messages24h}
+          icon={Send}
           variant="warning"
         />
         <StatCard
-          title="Messages Sent"
-          value={queueStats.sent}
-          icon={CheckCircle2}
+          title="Replies (24h)"
+          value={replies24h}
+          icon={MessageSquare}
           variant="default"
         />
       </div>
+
+      {/* Account Status Overview */}
+      <Card className="mb-8">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Phone className="w-5 h-5 text-primary" />
+            Account Status Overview
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-5 gap-4">
+            <div 
+              className="p-4 rounded-lg bg-green-500/10 border border-green-500/30 cursor-pointer hover:bg-green-500/20 transition-colors"
+              onClick={() => navigate('/accounts')}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Wifi className="w-5 h-5 text-green-600" />
+                <span className="text-sm text-muted-foreground">Active</span>
+              </div>
+              <p className="text-2xl font-bold text-green-600">{accountStats.active}</p>
+            </div>
+            <div 
+              className="p-4 rounded-lg bg-destructive/10 border border-destructive/30 cursor-pointer hover:bg-destructive/20 transition-colors"
+              onClick={() => navigate('/accounts')}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <XCircle className="w-5 h-5 text-destructive" />
+                <span className="text-sm text-muted-foreground">Banned</span>
+              </div>
+              <p className="text-2xl font-bold text-destructive">{accountStats.banned}</p>
+            </div>
+            <div 
+              className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 cursor-pointer hover:bg-yellow-500/20 transition-colors"
+              onClick={() => navigate('/accounts')}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className="w-5 h-5 text-yellow-600" />
+                <span className="text-sm text-muted-foreground">Restricted</span>
+              </div>
+              <p className="text-2xl font-bold text-yellow-600">{accountStats.restricted}</p>
+            </div>
+            <div 
+              className="p-4 rounded-lg bg-muted cursor-pointer hover:bg-muted/80 transition-colors"
+              onClick={() => navigate('/accounts')}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <WifiOff className="w-5 h-5 text-muted-foreground" />
+                <span className="text-sm text-muted-foreground">Disconnected</span>
+              </div>
+              <p className="text-2xl font-bold">{accountStats.disconnected}</p>
+            </div>
+            <div 
+              className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/30 cursor-pointer hover:bg-orange-500/20 transition-colors"
+              onClick={() => navigate('/accounts')}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-5 h-5 text-orange-600" />
+                <span className="text-sm text-muted-foreground">Cooldown</span>
+              </div>
+              <p className="text-2xl font-bold text-orange-600">{accountStats.cooldown}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Message Queue Monitor */}
       <Card className="mb-8 border-primary/30">
@@ -200,6 +314,45 @@ const Dashboard: React.FC = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Running Campaigns */}
+      {runningCampaigns > 0 && (
+        <Card className="mb-8 border-green-500/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-green-600" />
+              Running Campaigns ({runningCampaigns})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {campaigns.filter(c => c.status === 'running').map(campaign => (
+                <div 
+                  key={campaign.id}
+                  className="p-4 rounded-lg bg-green-500/5 border border-green-500/20 flex items-center justify-between cursor-pointer hover:bg-green-500/10 transition-colors"
+                  onClick={() => navigate('/campaigns')}
+                >
+                  <div>
+                    <p className="font-medium">{campaign.name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {campaign.sentCount} / {campaign.recipientCount} sent
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Progress 
+                      value={(campaign.sentCount / (campaign.recipientCount || 1)) * 100} 
+                      className="w-32 h-2"
+                    />
+                    <span className="text-sm font-medium">
+                      {Math.round((campaign.sentCount / (campaign.recipientCount || 1)) * 100)}%
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Quick Actions */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">

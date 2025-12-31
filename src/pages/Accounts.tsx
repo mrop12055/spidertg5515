@@ -1,24 +1,30 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { 
   Plus, Upload, Trash2, Phone, FileText, 
   CheckCircle, XCircle, Loader2, Search, Filter, RefreshCw, 
-  Check, Shield, Globe, Link2, Unlink
+  Check, Shield, Globe, Link2, Unlink, Download, MoreVertical,
+  Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
+  Clock, MessageSquare
 } from 'lucide-react';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useDropzone } from 'react-dropzone';
 import { cn } from '@/lib/utils';
+import JSZip from 'jszip';
 
 const statusOptions: { value: AccountStatus; label: string; color: string }[] = [
   { value: 'active', label: 'Active', color: 'bg-green-500/20 text-green-600 border-green-500/30' },
@@ -39,6 +45,12 @@ interface VerifyResult {
   reason?: string;
 }
 
+interface AccountGroup {
+  id: string;
+  name: string;
+  accountIds: string[];
+}
+
 const Accounts: React.FC = () => {
   const { accounts, proxies, uploadProgress, refreshData, isLoading } = useTelegram();
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -53,14 +65,59 @@ const Accounts: React.FC = () => {
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isBulkChecking, setIsBulkChecking] = useState(false);
   const [verifyResults, setVerifyResults] = useState<Map<string, VerifyResult>>(new Map());
+  
+  // Bulk operations dialogs
+  const [isBulkNameOpen, setIsBulkNameOpen] = useState(false);
+  const [bulkNames, setBulkNames] = useState('');
+  const [isBulkPhotoOpen, setIsBulkPhotoOpen] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [isGroupDialogOpen, setIsGroupDialogOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [groups, setGroups] = useState<AccountGroup[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState<string>('all');
+  
+  // Messages sent today tracking
+  const [messagesSentLast24h, setMessagesSentLast24h] = useState<Map<string, number>>(new Map());
+  
+  // Auto-refresh for status checking
+  useEffect(() => {
+    const interval = setInterval(() => {
+      refreshData();
+    }, 30000); // Refresh every 30 seconds
+    return () => clearInterval(interval);
+  }, [refreshData]);
+  
+  // Fetch messages sent in last 24 hours per account
+  useEffect(() => {
+    const fetchMessageCounts = async () => {
+      const yesterday = new Date();
+      yesterday.setHours(yesterday.getHours() - 24);
+      
+      const { data, error } = await supabase
+        .from('messages')
+        .select('account_id')
+        .eq('direction', 'outgoing')
+        .gte('created_at', yesterday.toISOString());
+      
+      if (data && !error) {
+        const counts = new Map<string, number>();
+        data.forEach((msg: any) => {
+          counts.set(msg.account_id, (counts.get(msg.account_id) || 0) + 1);
+        });
+        setMessagesSentLast24h(counts);
+      }
+    };
+    
+    fetchMessageCounts();
+    const interval = setInterval(fetchMessageCounts, 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
     const baseName = filename.replace(/\.session$/i, '');
-    // Keep digits only; many session files are named like 5493416219301.session
     const digits = baseName.replace(/\D/g, '');
     if (!digits) {
-      // Fallback so we never store just "+" which breaks matching/debugging
       return `+unknown_${Date.now()}`;
     }
     return `+${digits}`;
@@ -113,7 +170,8 @@ const Accounts: React.FC = () => {
       'application/x-sqlite3': ['.session'],
       'application/octet-stream': ['.session'],
     },
-    disabled: isUploading
+    disabled: isUploading,
+    multiple: true
   });
 
   const handleUploadSessions = async () => {
@@ -219,6 +277,105 @@ const Accounts: React.FC = () => {
     }
   };
 
+  // Export sessions
+  const handleExportSessions = async () => {
+    if (selectedIds.size === 0) return;
+    
+    setIsExporting(true);
+    try {
+      const { data: accountsData, error } = await supabase
+        .from('telegram_accounts')
+        .select('phone_number, session_data, first_name, last_name, username')
+        .in('id', Array.from(selectedIds));
+      
+      if (error) throw error;
+      
+      const zip = new JSZip();
+      
+      accountsData?.forEach((acc: any) => {
+        if (acc.session_data) {
+          const filename = `${acc.phone_number.replace(/\+/g, '')}.session`;
+          const binaryData = atob(acc.session_data);
+          const bytes = new Uint8Array(binaryData.length);
+          for (let i = 0; i < binaryData.length; i++) {
+            bytes[i] = binaryData.charCodeAt(i);
+          }
+          zip.file(filename, bytes);
+          
+          // Also add metadata JSON
+          const metadata = {
+            phone_number: acc.phone_number,
+            first_name: acc.first_name,
+            last_name: acc.last_name,
+            username: acc.username,
+          };
+          zip.file(`${acc.phone_number.replace(/\+/g, '')}.json`, JSON.stringify(metadata, null, 2));
+        }
+      });
+      
+      const blob = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `telegram_sessions_${Date.now()}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      toast.success(`Exported ${selectedIds.size} session(s)`);
+    } catch (error) {
+      console.error('Error exporting sessions:', error);
+      toast.error('Failed to export sessions');
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Bulk name change
+  const handleBulkNameChange = async () => {
+    if (selectedIds.size === 0 || !bulkNames.trim()) return;
+    
+    const names = bulkNames.split(/[,\n]/).map(n => n.trim()).filter(n => n);
+    const selectedAccounts = Array.from(selectedIds);
+    
+    try {
+      for (let i = 0; i < selectedAccounts.length; i++) {
+        const name = names[i % names.length] || names[0];
+        const parts = name.split(' ');
+        const firstName = parts[0] || '';
+        const lastName = parts.slice(1).join(' ') || '';
+        
+        await supabase
+          .from('telegram_accounts')
+          .update({ first_name: firstName, last_name: lastName || null })
+          .eq('id', selectedAccounts[i]);
+      }
+      
+      toast.success(`Updated names for ${selectedAccounts.length} account(s)`);
+      setBulkNames('');
+      setIsBulkNameOpen(false);
+      refreshData();
+    } catch (error) {
+      console.error('Error updating names:', error);
+      toast.error('Failed to update names');
+    }
+  };
+
+  // Create group from selected accounts
+  const handleCreateGroup = () => {
+    if (selectedIds.size === 0 || !newGroupName.trim()) return;
+    
+    const newGroup: AccountGroup = {
+      id: `group_${Date.now()}`,
+      name: newGroupName,
+      accountIds: Array.from(selectedIds),
+    };
+    
+    setGroups(prev => [...prev, newGroup]);
+    setNewGroupName('');
+    setIsGroupDialogOpen(false);
+    toast.success(`Created group "${newGroupName}" with ${selectedIds.size} account(s)`);
+  };
+
   // Real session verification via edge function
   const handleBulkCheck = async () => {
     if (selectedIds.size === 0) return;
@@ -226,7 +383,6 @@ const Accounts: React.FC = () => {
     setIsBulkChecking(true);
     const newResults = new Map<string, VerifyResult>();
     
-    // Set all to checking
     selectedIds.forEach(id => newResults.set(id, { status: 'checking' }));
     setVerifyResults(new Map(newResults));
 
@@ -237,7 +393,6 @@ const Accounts: React.FC = () => {
 
       if (error) throw error;
 
-      // Update results from edge function response
       for (const result of data.results || []) {
         newResults.set(result.id, { 
           status: result.status, 
@@ -251,7 +406,6 @@ const Accounts: React.FC = () => {
     } catch (error) {
       console.error('Error checking accounts:', error);
       toast.error('Failed to verify accounts');
-      // Reset results on error
       selectedIds.forEach(id => newResults.set(id, { status: 'disconnected', reason: 'Verification failed' }));
       setVerifyResults(new Map(newResults));
     } finally {
@@ -268,7 +422,14 @@ const Accounts: React.FC = () => {
     );
   };
 
-  const filteredAccounts = accounts.filter(acc => {
+  const getAccountsByGroup = () => {
+    if (selectedGroup === 'all') return accounts;
+    const group = groups.find(g => g.id === selectedGroup);
+    if (!group) return accounts;
+    return accounts.filter(a => group.accountIds.includes(a.id));
+  };
+
+  const filteredAccounts = getAccountsByGroup().filter(acc => {
     const matchesSearch = 
       acc.phoneNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (acc.firstName?.toLowerCase().includes(searchQuery.toLowerCase())) ||
@@ -283,7 +444,6 @@ const Accounts: React.FC = () => {
     setSessionFiles(prev => prev.filter((_, i) => i !== index));
   };
 
-  // Selection handlers
   const toggleSelect = (id: string) => {
     const newSelected = new Set(selectedIds);
     if (newSelected.has(id)) {
@@ -309,6 +469,12 @@ const Accounts: React.FC = () => {
     const proxy = proxies.find(p => p.id === proxyId);
     return proxy ? `${proxy.host}:${proxy.port}` : null;
   };
+  
+  const getProxyStatus = (proxyId?: string) => {
+    if (!proxyId) return null;
+    const proxy = proxies.find(p => p.id === proxyId);
+    return proxy?.status || null;
+  };
 
   return (
     <DashboardLayout>
@@ -332,6 +498,9 @@ const Accounts: React.FC = () => {
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>Upload Session Files</DialogTitle>
+                <DialogDescription>
+                  Select one or multiple .session files to upload
+                </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 pt-4">
                 {/* Drop Zone */}
@@ -362,7 +531,7 @@ const Accounts: React.FC = () => {
                       {isDragActive ? 'Drop files here' : 'Drop .session files here'}
                     </p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      or click to browse
+                      Select multiple files at once
                     </p>
                   </div>
                 </div>
@@ -441,11 +610,12 @@ const Accounts: React.FC = () => {
 
       {/* Bulk Actions Bar */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-4 mb-4 p-4 rounded-lg bg-primary/10 border border-primary/30 animate-fade-in">
+        <div className="flex items-center gap-2 mb-4 p-4 rounded-lg bg-primary/10 border border-primary/30 animate-fade-in flex-wrap">
           <span className="text-sm font-medium">
             {selectedIds.size} account{selectedIds.size !== 1 ? 's' : ''} selected
           </span>
           <div className="flex-1" />
+          
           <Button
             variant="outline"
             size="sm"
@@ -453,27 +623,50 @@ const Accounts: React.FC = () => {
             disabled={isBulkChecking}
             className="gap-2"
           >
-            {isBulkChecking ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Shield className="w-4 h-4" />
-            )}
-            Verify Sessions
+            {isBulkChecking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Shield className="w-4 h-4" />}
+            Verify
           </Button>
+          
           <Button
-            variant="destructive"
+            variant="outline"
             size="sm"
-            onClick={handleBulkDelete}
-            disabled={isBulkDeleting}
+            onClick={handleExportSessions}
+            disabled={isExporting}
             className="gap-2"
           >
-            {isBulkDeleting ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <Trash2 className="w-4 h-4" />
-            )}
-            Delete Selected
+            {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            Export Sessions
           </Button>
+          
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-2">
+                <MoreVertical className="w-4 h-4" />
+                Bulk Actions
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={() => setIsBulkNameOpen(true)}>
+                <UserCircle className="w-4 h-4 mr-2" />
+                Change Names
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsBulkPhotoOpen(true)}>
+                <Image className="w-4 h-4 mr-2" />
+                Change Photos
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setIsGroupDialogOpen(true)}>
+                <Users className="w-4 h-4 mr-2" />
+                Create Group
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-destructive" onClick={handleBulkDelete}>
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete Selected
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          
           <Button
             variant="ghost"
             size="sm"
@@ -487,8 +680,88 @@ const Accounts: React.FC = () => {
         </div>
       )}
 
+      {/* Bulk Name Change Dialog */}
+      <Dialog open={isBulkNameOpen} onOpenChange={setIsBulkNameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Bulk Change Names</DialogTitle>
+            <DialogDescription>
+              Enter names separated by commas or new lines. Names will be assigned to accounts in order.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <Textarea
+              placeholder="John Doe, Jane Smith, Bob Wilson&#10;or&#10;John Doe&#10;Jane Smith"
+              value={bulkNames}
+              onChange={(e) => setBulkNames(e.target.value)}
+              rows={6}
+            />
+            <p className="text-xs text-muted-foreground">
+              {bulkNames.split(/[,\n]/).filter(n => n.trim()).length} name(s) for {selectedIds.size} account(s)
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsBulkNameOpen(false)}>Cancel</Button>
+              <Button onClick={handleBulkNameChange}>Apply Names</Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Photo Change Dialog */}
+      <Dialog open={isBulkPhotoOpen} onOpenChange={setIsBulkPhotoOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Bulk Change Profile Photos</DialogTitle>
+            <DialogDescription>
+              This feature requires the Python script to update profile photos on Telegram.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="p-4 rounded-lg bg-accent/50 border">
+              <p className="text-sm">
+                To change profile photos, upload photos to the sender script's photo folder and run:
+              </p>
+              <pre className="mt-2 p-2 bg-card rounded text-xs font-mono">
+                python sender.py --update-photos
+              </pre>
+            </div>
+            <Button variant="outline" className="w-full" onClick={() => setIsBulkPhotoOpen(false)}>
+              Close
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create Group Dialog */}
+      <Dialog open={isGroupDialogOpen} onOpenChange={setIsGroupDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Account Group</DialogTitle>
+            <DialogDescription>
+              Create a group with the {selectedIds.size} selected account(s)
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="space-y-2">
+              <Label>Group Name</Label>
+              <Input
+                placeholder="Enter group name"
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsGroupDialogOpen(false)}>Cancel</Button>
+              <Button onClick={handleCreateGroup} disabled={!newGroupName.trim()}>
+                Create Group
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Filters */}
-      <div className="flex gap-4 mb-6">
+      <div className="flex gap-4 mb-6 flex-wrap">
         <div className="relative flex-1 max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
@@ -510,6 +783,20 @@ const Accounts: React.FC = () => {
             ))}
           </SelectContent>
         </Select>
+        {groups.length > 0 && (
+          <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+            <SelectTrigger className="w-40">
+              <Users className="w-4 h-4 mr-2" />
+              <SelectValue placeholder="Group" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Accounts</SelectItem>
+              {groups.map(g => (
+                <SelectItem key={g.id} value={g.id}>{g.name} ({g.accountIds.length})</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Button variant="outline" onClick={() => refreshData()} className="gap-2">
           <RefreshCw className="w-4 h-4" />
           Refresh
@@ -580,6 +867,8 @@ const Accounts: React.FC = () => {
           {filteredAccounts.map((account) => {
             const verifyResult = verifyResults.get(account.id);
             const proxyLabel = getProxyLabel(account.proxyId);
+            const proxyStatus = getProxyStatus(account.proxyId);
+            const msgSent24h = messagesSentLast24h.get(account.id) || 0;
             
             return (
               <Card 
@@ -628,15 +917,20 @@ const Accounts: React.FC = () => {
                           )}
                         </div>
                       )}
-                      {/* Status indicator overlay */}
-                      {(verifyResult?.status === 'active' || account.status === 'active') && (
+                      {/* Online/Offline Status */}
+                      {account.status === 'active' && (
                         <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-green-500 rounded-full border-2 border-card flex items-center justify-center">
-                          <Check className="w-2.5 h-2.5 text-white" />
+                          <Wifi className="w-2 h-2 text-white" />
                         </div>
                       )}
-                      {(verifyResult?.status === 'disconnected' || verifyResult?.status === 'banned') && (
+                      {account.status === 'disconnected' && (
+                        <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-muted-foreground rounded-full border-2 border-card flex items-center justify-center">
+                          <WifiOff className="w-2 h-2 text-white" />
+                        </div>
+                      )}
+                      {(account.status === 'banned' || account.status === 'restricted') && (
                         <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 bg-destructive rounded-full border-2 border-card flex items-center justify-center">
-                          <XCircle className="w-2.5 h-2.5 text-white" />
+                          <AlertTriangle className="w-2 h-2 text-white" />
                         </div>
                       )}
                     </div>
@@ -651,13 +945,14 @@ const Accounts: React.FC = () => {
                             Verified
                           </span>
                         )}
-                        {verifyResult?.status === 'disconnected' && (
-                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-destructive/20 text-destructive border border-destructive/30">
-                            {verifyResult.reason || 'Invalid'}
+                        {account.status === 'restricted' && account.restrictedUntil && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-600 border border-yellow-500/30 flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            Until {account.restrictedUntil.toLocaleDateString()}
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1 flex-wrap">
                         {account.firstName && (
                           <span>{account.firstName} {account.lastName || ''}</span>
                         )}
@@ -665,9 +960,14 @@ const Accounts: React.FC = () => {
                           <span>@{account.username}</span>
                         )}
                         {proxyLabel && (
-                          <span className="flex items-center gap-1 text-xs">
+                          <span className={cn(
+                            "flex items-center gap-1 text-xs px-1.5 py-0.5 rounded",
+                            proxyStatus === 'active' ? "bg-green-500/10 text-green-600" : 
+                            proxyStatus === 'error' ? "bg-destructive/10 text-destructive" : "bg-muted"
+                          )}>
                             <Globe className="w-3 h-3" />
                             {proxyLabel}
+                            {proxyStatus === 'active' && <Check className="w-3 h-3" />}
                           </span>
                         )}
                       </div>
@@ -676,8 +976,11 @@ const Accounts: React.FC = () => {
                     {/* Stats */}
                     <div className="hidden md:flex items-center gap-6 text-sm">
                       <div className="text-center">
-                        <div className="font-medium">{account.messagesSentToday || 0}</div>
-                        <div className="text-xs text-muted-foreground">Sent</div>
+                        <div className="font-medium flex items-center gap-1">
+                          <MessageSquare className="w-3 h-3 text-muted-foreground" />
+                          {msgSent24h}
+                        </div>
+                        <div className="text-xs text-muted-foreground">24h Sent</div>
                       </div>
                       <div className="text-center">
                         <div className="font-medium">{account.dailyLimit || 25}</div>
