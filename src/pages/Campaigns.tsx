@@ -90,33 +90,35 @@ const Campaigns: React.FC = () => {
       );
 
       if (pending.length > 0) {
-        const phonesSet = new Set(pending.map((r) => r.phone_number));
-        const accountIds = Array.from(new Set(pending.map((r) => r.sent_by_account_id!)));
-
-        const { data: sentMsgs } = await supabase
+        // 1) Best-effort: direct link (new campaigns) via messages.campaign_recipient_id
+        const pendingIds = pending.map((r) => r.id);
+        const { data: linkedMsgs } = await supabase
           .from('messages')
-          .select('status, delivered_at, account_id, created_at, conversations!inner(recipient_phone)')
+          .select('status, delivered_at, created_at, campaign_recipient_id')
           .eq('direction', 'outgoing')
           .in('status', ['sent', 'failed'])
-          .in('account_id', accountIds)
+          .in('campaign_recipient_id', pendingIds)
           .order('created_at', { ascending: false })
           .limit(200);
 
-        const msgIndex = new Map<string, { status: string; delivered_at: string | null }>();
-        (sentMsgs || []).forEach((m: any) => {
-          const phone = m?.conversations?.recipient_phone;
-          if (!phone || !phonesSet.has(phone)) return;
-          const key = `${m.account_id}|${phone}`;
-          if (!msgIndex.has(key)) {
-            msgIndex.set(key, { status: m.status, delivered_at: m.delivered_at ?? null });
+        const byRecipientId = new Map<string, { status: string; delivered_at: string | null }>();
+        (linkedMsgs || []).forEach((m: any) => {
+          const rid = m.campaign_recipient_id as string | null;
+          if (!rid) return;
+          if (!byRecipientId.has(rid)) {
+            byRecipientId.set(rid, { status: m.status, delivered_at: m.delivered_at ?? null });
           }
         });
 
+        // Apply direct updates first
+        const remaining: typeof pending = [];
         await Promise.all(
           pending.map(async (r) => {
-            const key = `${r.sent_by_account_id}|${r.phone_number}`;
-            const match = msgIndex.get(key);
-            if (!match) return;
+            const match = byRecipientId.get(r.id);
+            if (!match) {
+              remaining.push(r);
+              return;
+            }
 
             const nextStatus = match.status === 'sent' ? 'sent' : 'failed';
             await supabase
@@ -127,10 +129,53 @@ const Campaigns: React.FC = () => {
               })
               .eq('id', r.id);
 
-            // Update local copy immediately so report is correct even before next fetch
             r.status = nextStatus as any;
           }),
         );
+
+        // 2) Fallback (older campaigns): match by account + phone
+        if (remaining.length > 0) {
+          const phonesSet = new Set(remaining.map((r) => r.phone_number));
+          const accountIds = Array.from(new Set(remaining.map((r) => r.sent_by_account_id!)));
+
+          const { data: sentMsgs } = await supabase
+            .from('messages')
+            .select('status, delivered_at, account_id, created_at, conversations!inner(recipient_phone)')
+            .eq('direction', 'outgoing')
+            .in('status', ['sent', 'failed'])
+            .in('account_id', accountIds)
+            .order('created_at', { ascending: false })
+            .limit(500);
+
+          const msgIndex = new Map<string, { status: string; delivered_at: string | null }>();
+          (sentMsgs || []).forEach((m: any) => {
+            const phone = m?.conversations?.recipient_phone;
+            if (!phone || !phonesSet.has(phone)) return;
+            const key = `${m.account_id}|${phone}`;
+            if (!msgIndex.has(key)) {
+              msgIndex.set(key, { status: m.status, delivered_at: m.delivered_at ?? null });
+            }
+          });
+
+          await Promise.all(
+            remaining.map(async (r) => {
+              const key = `${r.sent_by_account_id}|${r.phone_number}`;
+              const match = msgIndex.get(key);
+              if (!match) return;
+
+              const nextStatus = match.status === 'sent' ? 'sent' : 'failed';
+              await supabase
+                .from('campaign_recipients')
+                .update({
+                  status: nextStatus,
+                  sent_at: nextStatus === 'sent' ? match.delivered_at : null,
+                })
+                .eq('id', r.id);
+
+              r.status = nextStatus as any;
+            }),
+          );
+        }
       }
 
       const report: CampaignReport = {
@@ -146,6 +191,15 @@ const Campaigns: React.FC = () => {
 
   useEffect(() => {
     if (campaigns.length > 0) fetchReports();
+  }, [campaigns.length, fetchReports]);
+
+  // Keep progress fresh while viewing this page
+  useEffect(() => {
+    if (campaigns.length === 0) return;
+    const interval = window.setInterval(() => {
+      fetchReports();
+    }, 5000);
+    return () => window.clearInterval(interval);
   }, [campaigns.length, fetchReports]);
 
   const handleCreateCampaign = async () => {
