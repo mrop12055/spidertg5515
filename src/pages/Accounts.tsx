@@ -2,17 +2,17 @@ import React, { useState, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Progress } from '@/components/ui/progress';
 import { 
   Plus, Upload, Trash2, Phone, FileText, 
-  CheckCircle, XCircle, Loader2, Search, Filter, RefreshCw, Check
+  CheckCircle, XCircle, Loader2, Search, Filter, RefreshCw, 
+  Check, Shield, Globe, Link2, Unlink
 } from 'lucide-react';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
 import { toast } from 'sonner';
@@ -21,11 +21,11 @@ import { useDropzone } from 'react-dropzone';
 import { cn } from '@/lib/utils';
 
 const statusOptions: { value: AccountStatus; label: string; color: string }[] = [
-  { value: 'active', label: 'Active', color: 'bg-status-active text-status-active-foreground' },
-  { value: 'banned', label: 'Banned', color: 'bg-destructive text-destructive-foreground' },
-  { value: 'restricted', label: 'Restricted', color: 'bg-status-warning text-status-warning-foreground' },
-  { value: 'disconnected', label: 'Disconnected', color: 'bg-muted text-muted-foreground' },
-  { value: 'cooldown', label: 'Cooldown', color: 'bg-status-warning text-status-warning-foreground' },
+  { value: 'active', label: 'Active', color: 'bg-green-500/20 text-green-600 border-green-500/30' },
+  { value: 'banned', label: 'Banned', color: 'bg-destructive/20 text-destructive border-destructive/30' },
+  { value: 'restricted', label: 'Restricted', color: 'bg-yellow-500/20 text-yellow-600 border-yellow-500/30' },
+  { value: 'disconnected', label: 'Disconnected', color: 'bg-muted text-muted-foreground border-border' },
+  { value: 'cooldown', label: 'Cooldown', color: 'bg-orange-500/20 text-orange-600 border-orange-500/30' },
 ];
 
 interface SessionFile {
@@ -34,8 +34,13 @@ interface SessionFile {
   base64Data: string;
 }
 
+interface VerifyResult {
+  status: 'checking' | 'active' | 'disconnected' | 'banned';
+  reason?: string;
+}
+
 const Accounts: React.FC = () => {
-  const { accounts, uploadProgress, refreshData, isLoading } = useTelegram();
+  const { accounts, proxies, uploadProgress, refreshData, isLoading } = useTelegram();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -47,7 +52,7 @@ const Accounts: React.FC = () => {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [isBulkChecking, setIsBulkChecking] = useState(false);
-  const [checkResults, setCheckResults] = useState<Map<string, 'checking' | 'valid' | 'invalid'>>(new Map());
+  const [verifyResults, setVerifyResults] = useState<Map<string, VerifyResult>>(new Map());
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
@@ -181,6 +186,22 @@ const Accounts: React.FC = () => {
     }
   };
 
+  const handleProxyChange = async (accountId: string, proxyId: string | null) => {
+    try {
+      const { error } = await supabase
+        .from('telegram_accounts')
+        .update({ proxy_id: proxyId })
+        .eq('id', accountId);
+
+      if (error) throw error;
+      toast.success(proxyId ? 'Proxy assigned' : 'Proxy removed');
+      refreshData();
+    } catch (error) {
+      console.error('Error updating proxy:', error);
+      toast.error('Failed to update proxy');
+    }
+  };
+
   // Bulk delete
   const handleBulkDelete = async () => {
     if (selectedIds.size === 0) return;
@@ -205,60 +226,41 @@ const Accounts: React.FC = () => {
     }
   };
 
-  // Bulk check status - checks if session_data exists
+  // Real session verification via edge function
   const handleBulkCheck = async () => {
     if (selectedIds.size === 0) return;
     
     setIsBulkChecking(true);
-    const newResults = new Map<string, 'checking' | 'valid' | 'invalid'>();
+    const newResults = new Map<string, VerifyResult>();
     
     // Set all to checking
-    selectedIds.forEach(id => newResults.set(id, 'checking'));
-    setCheckResults(new Map(newResults));
+    selectedIds.forEach(id => newResults.set(id, { status: 'checking' }));
+    setVerifyResults(new Map(newResults));
 
     try {
-      // Get accounts with their session data
-      const { data: accountsData, error } = await supabase
-        .from('telegram_accounts')
-        .select('id, session_data, status')
-        .in('id', Array.from(selectedIds));
+      const { data, error } = await supabase.functions.invoke('verify-sessions', {
+        body: { account_ids: Array.from(selectedIds) }
+      });
 
       if (error) throw error;
 
-      let validCount = 0;
-      let invalidCount = 0;
-
-      for (const account of accountsData || []) {
-        // Check if session data exists and is not empty
-        const hasValidSession = account.session_data && account.session_data.length > 100;
-        
-        if (hasValidSession) {
-          newResults.set(account.id, 'valid');
-          validCount++;
-          // Update status to active if it has valid session
-          if (account.status !== 'active') {
-            await supabase
-              .from('telegram_accounts')
-              .update({ status: 'active' })
-              .eq('id', account.id);
-          }
-        } else {
-          newResults.set(account.id, 'invalid');
-          invalidCount++;
-          // Update status to disconnected if no valid session
-          await supabase
-            .from('telegram_accounts')
-            .update({ status: 'disconnected' })
-            .eq('id', account.id);
-        }
+      // Update results from edge function response
+      for (const result of data.results || []) {
+        newResults.set(result.id, { 
+          status: result.status, 
+          reason: result.reason 
+        });
       }
 
-      setCheckResults(new Map(newResults));
-      toast.success(`Check complete: ${validCount} valid, ${invalidCount} invalid`);
+      setVerifyResults(new Map(newResults));
+      toast.success(`Verified: ${data.summary?.valid || 0} active, ${data.summary?.invalid || 0} invalid`);
       refreshData();
     } catch (error) {
       console.error('Error checking accounts:', error);
-      toast.error('Failed to check accounts');
+      toast.error('Failed to verify accounts');
+      // Reset results on error
+      selectedIds.forEach(id => newResults.set(id, { status: 'disconnected', reason: 'Verification failed' }));
+      setVerifyResults(new Map(newResults));
     } finally {
       setIsBulkChecking(false);
     }
@@ -266,7 +268,11 @@ const Accounts: React.FC = () => {
 
   const getStatusBadge = (status: AccountStatus) => {
     const option = statusOptions.find(o => o.value === status);
-    return <Badge className={option?.color || 'bg-muted'}>{option?.label || status}</Badge>;
+    return (
+      <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium border", option?.color || 'bg-muted')}>
+        {option?.label || status}
+      </span>
+    );
   };
 
   const filteredAccounts = accounts.filter(acc => {
@@ -305,11 +311,17 @@ const Accounts: React.FC = () => {
 
   const isAllSelected = filteredAccounts.length > 0 && selectedIds.size === filteredAccounts.length;
 
+  const getProxyLabel = (proxyId?: string) => {
+    if (!proxyId) return null;
+    const proxy = proxies.find(p => p.id === proxyId);
+    return proxy ? `${proxy.host}:${proxy.port}` : null;
+  };
+
   return (
     <DashboardLayout>
       <PageHeader
         title="Telegram Accounts"
-        description="Upload your Telegram session files to manage accounts"
+        description="Upload session files and manage your accounts"
         action={
           <Dialog open={isAddOpen} onOpenChange={(open) => {
             setIsAddOpen(open);
@@ -359,12 +371,6 @@ const Accounts: React.FC = () => {
                     <p className="text-sm text-muted-foreground mt-1">
                       or click to browse
                     </p>
-                    
-                    <div className="flex flex-wrap gap-2 mt-4 justify-center">
-                      <span className="px-2 py-1 rounded-md bg-secondary text-xs font-medium text-muted-foreground">
-                        .session
-                      </span>
-                    </div>
                   </div>
                 </div>
 
@@ -457,9 +463,9 @@ const Accounts: React.FC = () => {
             {isBulkChecking ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <RefreshCw className="w-4 h-4" />
+              <Shield className="w-4 h-4" />
             )}
-            Check Status
+            Verify Sessions
           </Button>
           <Button
             variant="destructive"
@@ -480,7 +486,7 @@ const Accounts: React.FC = () => {
             size="sm"
             onClick={() => {
               setSelectedIds(new Set());
-              setCheckResults(new Map());
+              setVerifyResults(new Map());
             }}
           >
             Cancel
@@ -511,40 +517,34 @@ const Accounts: React.FC = () => {
             ))}
           </SelectContent>
         </Select>
+        <Button variant="outline" onClick={() => refreshData()} className="gap-2">
+          <RefreshCw className="w-4 h-4" />
+          Refresh
+        </Button>
       </div>
 
       {/* Stats */}
       <div className="grid grid-cols-5 gap-4 mb-6">
         {statusOptions.map(opt => (
-          <Card key={opt.value} className="hover:border-primary/30 transition-colors cursor-pointer" onClick={() => setStatusFilter(opt.value)}>
+          <Card 
+            key={opt.value} 
+            className={cn(
+              "hover:border-primary/30 transition-colors cursor-pointer",
+              statusFilter === opt.value && "border-primary/50"
+            )} 
+            onClick={() => setStatusFilter(statusFilter === opt.value ? 'all' : opt.value)}
+          >
             <CardContent className="p-4">
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">{opt.label}</span>
-                <Badge className={opt.color}>{accounts.filter(a => a.status === opt.value).length}</Badge>
+                <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium border", opt.color)}>
+                  {accounts.filter(a => a.status === opt.value).length}
+                </span>
               </div>
             </CardContent>
           </Card>
         ))}
       </div>
-
-      {/* Upload Progress */}
-      {uploadProgress.status !== 'idle' && uploadProgress.status !== 'completed' && (
-        <Card className="mb-6 border-primary/30">
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium">Processing accounts...</span>
-              <span className="text-sm text-muted-foreground">
-                {uploadProgress.processed}/{uploadProgress.total}
-              </span>
-            </div>
-            <Progress value={(uploadProgress.processed / uploadProgress.total) * 100} />
-            <div className="flex gap-4 mt-2 text-xs text-muted-foreground">
-              <span className="text-green-500">✓ {uploadProgress.successful} successful</span>
-              <span className="text-destructive">✗ {uploadProgress.failed} failed</span>
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* Accounts List */}
       {isLoading ? (
@@ -585,7 +585,8 @@ const Accounts: React.FC = () => {
 
           {/* Account Cards */}
           {filteredAccounts.map((account) => {
-            const checkStatus = checkResults.get(account.id);
+            const verifyResult = verifyResults.get(account.id);
+            const proxyLabel = getProxyLabel(account.proxyId);
             
             return (
               <Card 
@@ -606,17 +607,20 @@ const Accounts: React.FC = () => {
 
                     {/* Avatar */}
                     <div className={cn(
-                      "w-12 h-12 rounded-full flex items-center justify-center",
-                      checkStatus === 'valid' && "bg-green-500/20",
-                      checkStatus === 'invalid' && "bg-destructive/20",
-                      checkStatus === 'checking' && "bg-primary/20",
-                      !checkStatus && "bg-primary/10"
+                      "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0",
+                      verifyResult?.status === 'active' && "bg-green-500/20",
+                      verifyResult?.status === 'disconnected' && "bg-destructive/20",
+                      verifyResult?.status === 'banned' && "bg-destructive/20",
+                      verifyResult?.status === 'checking' && "bg-primary/20",
+                      !verifyResult && account.status === 'active' && "bg-green-500/10",
+                      !verifyResult && account.status === 'banned' && "bg-destructive/10",
+                      !verifyResult && account.status !== 'active' && account.status !== 'banned' && "bg-primary/10"
                     )}>
-                      {checkStatus === 'checking' ? (
+                      {verifyResult?.status === 'checking' ? (
                         <Loader2 className="w-5 h-5 text-primary animate-spin" />
-                      ) : checkStatus === 'valid' ? (
+                      ) : verifyResult?.status === 'active' ? (
                         <Check className="w-5 h-5 text-green-500" />
-                      ) : checkStatus === 'invalid' ? (
+                      ) : verifyResult?.status === 'disconnected' || verifyResult?.status === 'banned' ? (
                         <XCircle className="w-5 h-5 text-destructive" />
                       ) : (
                         <Phone className="w-5 h-5 text-primary" />
@@ -625,23 +629,31 @@ const Accounts: React.FC = () => {
                     
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium">{account.phoneNumber}</span>
                         {getStatusBadge(account.status)}
-                        {checkStatus === 'valid' && (
-                          <Badge className="bg-green-500/20 text-green-600 border-green-500/30">
-                            Session Valid
-                          </Badge>
+                        {verifyResult?.status === 'active' && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-600 border border-green-500/30">
+                            Verified
+                          </span>
                         )}
-                        {checkStatus === 'invalid' && (
-                          <Badge className="bg-destructive/20 text-destructive border-destructive/30">
-                            No Session
-                          </Badge>
+                        {verifyResult?.status === 'disconnected' && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-destructive/20 text-destructive border border-destructive/30">
+                            {verifyResult.reason || 'Invalid'}
+                          </span>
                         )}
                       </div>
-                      <div className="text-sm text-muted-foreground">
-                        {account.firstName && `${account.firstName} ${account.lastName || ''}`}
-                        {account.username && ` • @${account.username}`}
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+                        {account.firstName && (
+                          <span>{account.firstName} {account.lastName || ''}</span>
+                        )}
+                        {account.username && <span>@{account.username}</span>}
+                        {proxyLabel && (
+                          <span className="flex items-center gap-1 text-xs">
+                            <Globe className="w-3 h-3" />
+                            {proxyLabel}
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -649,42 +661,68 @@ const Accounts: React.FC = () => {
                     <div className="hidden md:flex items-center gap-6 text-sm">
                       <div className="text-center">
                         <div className="font-medium">{account.messagesSentToday || 0}</div>
-                        <div className="text-xs text-muted-foreground">Sent Today</div>
+                        <div className="text-xs text-muted-foreground">Sent</div>
                       </div>
                       <div className="text-center">
                         <div className="font-medium">{account.dailyLimit || 25}</div>
-                        <div className="text-xs text-muted-foreground">Daily Limit</div>
+                        <div className="text-xs text-muted-foreground">Limit</div>
                       </div>
                       <div className="text-center">
                         <div className="font-medium">{account.maturityDays || 0}d</div>
-                        <div className="text-xs text-muted-foreground">Maturity</div>
+                        <div className="text-xs text-muted-foreground">Age</div>
                       </div>
                     </div>
 
-                    {/* Actions */}
-                    <div className="flex items-center gap-2">
-                      <Select
-                        value={account.status}
-                        onValueChange={(value) => handleStatusChange(account.id, value as AccountStatus)}
-                      >
-                        <SelectTrigger className="w-32 h-8">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {statusOptions.map(opt => (
-                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDeleteAccount(account.id)}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </div>
+                    {/* Proxy Select */}
+                    <Select
+                      value={account.proxyId || 'none'}
+                      onValueChange={(value) => handleProxyChange(account.id, value === 'none' ? null : value)}
+                    >
+                      <SelectTrigger className="w-36 h-8">
+                        <Globe className="w-3 h-3 mr-1" />
+                        <SelectValue placeholder="Proxy" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">
+                          <span className="flex items-center gap-1">
+                            <Unlink className="w-3 h-3" /> No Proxy
+                          </span>
+                        </SelectItem>
+                        {proxies.filter(p => p.status === 'active').map(proxy => (
+                          <SelectItem key={proxy.id} value={proxy.id}>
+                            <span className="flex items-center gap-1">
+                              <Link2 className="w-3 h-3" />
+                              {proxy.host}:{proxy.port}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {/* Status Select */}
+                    <Select
+                      value={account.status}
+                      onValueChange={(value) => handleStatusChange(account.id, value as AccountStatus)}
+                    >
+                      <SelectTrigger className="w-32 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {statusOptions.map(opt => (
+                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+
+                    {/* Delete */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteAccount(account.id)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </div>
                 </CardContent>
               </Card>
