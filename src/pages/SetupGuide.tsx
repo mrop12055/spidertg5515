@@ -765,16 +765,15 @@ async def process_account(account: dict, messages: list):
             else:
                 print(f"  ✓ Connected as {display_name} (@{me.username or 'no username'})")
         
-        # Check if this is the current active account for sending
-        if scheduler_settings.enabled:
-            if current_account_id != account_id:
-                # This account is not the current sender, skip message processing
-                return
-            
-            # Check if we should rotate before sending
-            if should_rotate_account():
-                # Don't process messages with this account anymore
-                return
+        # CRITICAL FIX: Filter messages to only process those belonging to THIS account
+        # This ensures one contact = one account, no mixing of accounts per conversation
+        account_messages = [m for m in messages if m.get("account_id") == account_id]
+        
+        if not account_messages:
+            # No messages for this account
+            return
+        
+        print(f"    📬 {len(account_messages)} message(s) for this account")
         
         # Check account limits
         if account_id in account_states:
@@ -783,14 +782,11 @@ async def process_account(account: dict, messages: list):
                 print(f"    ⚠ Daily limit reached for {account['phone_number']}")
                 return
             
-            # Check messages per account setting
-            if state.messages_sent_this_session >= scheduler_settings.messages_per_account:
-                print(f"    ⚠ Session limit reached ({scheduler_settings.messages_per_account} messages)")
-                put_account_on_cooldown(account_id)
-                return
+            # Check messages per account setting (only for NEW campaign recipients, not follow-ups)
+            # Skip this check for follow-up messages in existing conversations
         
-        # Process outgoing messages (only one per cycle for scheduling)
-        for msg in messages:
+        # Process outgoing messages for THIS account only
+        for msg in account_messages:
             conv = msg.get("conversations", {}) or {}
             # Support both phone number and username
             recipient = conv.get("recipient_username") or conv.get("recipient_phone")
@@ -800,25 +796,26 @@ async def process_account(account: dict, messages: list):
                 await update_message_status(msg["id"], "failed", "No recipient phone/username")
                 continue
             
+            # Verify message belongs to this account (double-check)
+            if msg.get("account_id") != account_id:
+                print(f"    ⚠ Skipping message {msg['id']} - belongs to different account")
+                continue
+            
             # Get media info from message
             media_url = msg.get("media_url")
             media_type = msg.get("media_type")
             
             if media_url:
-                print(f"    → Sending image to {recipient}...")
+                print(f"    → Sending image to {recipient} (account: {account['phone_number']})...")
             else:
-                print(f"    → Sending to {recipient}...")
+                print(f"    → Sending to {recipient} (account: {account['phone_number']})...")
             
             success, error = await send_message(client, recipient, msg["content"], media_url, media_type)
             
             if success:
                 await update_message_status(msg["id"], "sent")
                 await increment_account_message_count(account_id)
-                print(f"    ✓ Sent!")
-                
-                # Check if we need to rotate after this message
-                if should_rotate_account():
-                    print(f"    🔄 Rotation threshold reached")
+                print(f"    ✓ Sent from {account['phone_number']}!")
             else:
                 await update_message_status(msg["id"], "failed", error)
                 print(f"    ✗ Failed: {error}")
