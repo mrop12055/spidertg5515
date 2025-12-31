@@ -90,11 +90,13 @@ const Chat: React.FC = () => {
     }
   };
 
-  const handleStartNewChat = () => {
+  const handleStartNewChat = async () => {
     if (!newChatPhone.trim() || !selectedAccountId) return;
     
-    const convId = startNewConversation(selectedAccountId, newChatPhone, newChatName || undefined);
-    setSelectedConversation(convId);
+    const convId = await startNewConversation(selectedAccountId, newChatPhone, newChatName || undefined);
+    if (convId) {
+      setSelectedConversation(convId);
+    }
     setIsNewChatOpen(false);
     setNewChatPhone('');
     setNewChatName('');
