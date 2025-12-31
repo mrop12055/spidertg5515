@@ -26,11 +26,13 @@ const SetupGuide: React.FC = () => {
 """
 TelegramCRM Bulk Message Sender
 Run this script on your PC to send queued messages via Telegram.
+Session files are downloaded from the database (base64 encoded).
 """
 
 import asyncio
 import os
-import time
+import base64
+import tempfile
 from datetime import datetime
 
 # Install: pip install telethon supabase
@@ -42,8 +44,12 @@ from supabase import create_client
 SUPABASE_URL = "${supabaseUrl}"
 SUPABASE_KEY = "${supabaseKey}"
 
-# Path to your session files folder
-SESSION_FOLDER = "./sessions"
+# Telegram API credentials (get from my.telegram.org)
+TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID", "YOUR_API_ID")
+TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "YOUR_API_HASH")
+
+# Temp folder for session files
+SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 
 # Message delay (seconds between messages to avoid spam detection)
 MESSAGE_DELAY = 30
@@ -52,10 +58,40 @@ MESSAGE_DELAY = 30
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+def decode_session_file(phone_number: str, base64_data: str) -> str:
+    """Decode base64 session data and save to temp file"""
+    session_path = os.path.join(SESSION_FOLDER, f"{phone_number}")
+    
+    try:
+        # Decode base64 and write to file
+        session_bytes = base64.b64decode(base64_data)
+        with open(session_path + ".session", "wb") as f:
+            f.write(session_bytes)
+        return session_path
+    except Exception as e:
+        print(f"  ⚠ Failed to decode session for {phone_number}: {e}")
+        return None
+
 async def load_accounts():
     """Load accounts with session data from database"""
     result = supabase.table("telegram_accounts").select("*").eq("status", "active").execute()
-    return result.data or []
+    accounts = result.data or []
+    
+    # Decode session files
+    valid_accounts = []
+    for account in accounts:
+        if account.get("session_data"):
+            session_path = decode_session_file(
+                account["phone_number"].replace("+", ""),
+                account["session_data"]
+            )
+            if session_path:
+                account["_session_path"] = session_path
+                valid_accounts.append(account)
+        else:
+            print(f"  ⚠ No session data for {account['phone_number']}")
+    
+    return valid_accounts
 
 async def get_pending_messages():
     """Get pending messages from the queue"""
@@ -87,20 +123,20 @@ async def send_message(client: TelegramClient, phone: str, content: str):
 
 async def process_account(account: dict, messages: list):
     """Process messages for a single account"""
-    session_file = os.path.join(SESSION_FOLDER, f"{account['phone_number']}.session")
+    session_path = account.get("_session_path")
     
-    if not os.path.exists(session_file):
-        print(f"  ⚠ Session file not found: {session_file}")
+    if not session_path:
+        print(f"  ⚠ No session path for {account['phone_number']}")
         return
     
-    api_id = account.get("api_id") or os.getenv("TELEGRAM_API_ID")
-    api_hash = account.get("api_hash") or os.getenv("TELEGRAM_API_HASH")
+    api_id = TELEGRAM_API_ID
+    api_hash = TELEGRAM_API_HASH
     
-    if not api_id or not api_hash:
-        print(f"  ⚠ Missing API credentials for {account['phone_number']}")
+    if api_id == "YOUR_API_ID" or api_hash == "YOUR_API_HASH":
+        print("  ⚠ Please set TELEGRAM_API_ID and TELEGRAM_API_HASH")
         return
     
-    client = TelegramClient(session_file, int(api_id), api_hash)
+    client = TelegramClient(session_path, int(api_id), api_hash)
     
     try:
         await client.connect()
@@ -140,6 +176,7 @@ async def process_account(account: dict, messages: list):
 async def main():
     print("=" * 50)
     print("TelegramCRM Bulk Message Sender")
+    print(f"Session folder: {SESSION_FOLDER}")
     print("=" * 50)
     
     while True:
@@ -284,32 +321,35 @@ if __name__ == "__main__":
           </CardContent>
         </Card>
 
-        {/* Step 3: Session Files */}
+        {/* Step 3: Upload Session Files */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Badge className="bg-primary text-primary-foreground">Step 3</Badge>
-              Prepare Session Files
+              Upload Session Files
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <p className="text-muted-foreground">
+              Go to the <strong>Accounts</strong> page and upload your <code className="bg-accent px-1 rounded">.session</code> files:
+            </p>
+            <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
+              <li>Click <strong>"Add Accounts"</strong> button</li>
+              <li>Drag and drop your .session files (e.g., <code className="bg-accent px-1 rounded">5493416219301.session</code>)</li>
+              <li>Phone number is auto-detected from filename</li>
+              <li>Click <strong>"Upload"</strong> to save to database</li>
+            </ol>
             <div className="p-4 rounded-lg bg-status-warning/10 border border-status-warning/30">
               <div className="flex gap-2">
                 <AlertTriangle className="w-5 h-5 text-status-warning flex-shrink-0" />
                 <div>
                   <h4 className="font-medium text-status-warning">Important</h4>
                   <p className="text-sm text-muted-foreground mt-1">
-                    You need valid Telegram session files (.session) created with Telethon. 
-                    These contain your logged-in account data.
+                    Your .session files must be valid Telethon SQLite sessions created with your logged-in Telegram accounts.
                   </p>
                 </div>
               </div>
             </div>
-            <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
-              <li>Create a folder called <code className="bg-accent px-1 rounded">sessions</code> next to the script</li>
-              <li>Place your <code className="bg-accent px-1 rounded">.session</code> files inside (named by phone number)</li>
-              <li>Example: <code className="bg-accent px-1 rounded">+14155551234.session</code></li>
-            </ol>
           </CardContent>
         </Card>
 
@@ -318,7 +358,7 @@ if __name__ == "__main__":
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Badge className="bg-primary text-primary-foreground">Step 4</Badge>
-              Get Telegram API Credentials
+              Configure Telegram API Credentials
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -328,8 +368,23 @@ if __name__ == "__main__":
               <li>Go to "API Development Tools"</li>
               <li>Create a new application</li>
               <li>Copy your <strong>api_id</strong> and <strong>api_hash</strong></li>
-              <li>Add them to your accounts in the Accounts page</li>
             </ol>
+            <div className="p-4 rounded-lg bg-accent/50 border mt-4">
+              <h4 className="font-medium mb-2">Set as environment variables before running:</h4>
+              <div className="space-y-2">
+                <div className="relative">
+                  <pre className="bg-background p-3 rounded-lg border text-xs overflow-x-auto">
+{`# Windows (PowerShell)
+$env:TELEGRAM_API_ID="12345678"
+$env:TELEGRAM_API_HASH="your_api_hash"
+
+# Linux/Mac
+export TELEGRAM_API_ID="12345678"
+export TELEGRAM_API_HASH="your_api_hash"`}
+                  </pre>
+                </div>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
