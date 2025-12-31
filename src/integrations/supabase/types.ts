@@ -386,6 +386,7 @@ export type Database = {
           id: string
           last_active: string | null
           last_name: string | null
+          last_spambot_check: string | null
           maturity_days: number | null
           maturity_score: number | null
           messages_sent_today: number | null
@@ -408,6 +409,7 @@ export type Database = {
           id?: string
           last_active?: string | null
           last_name?: string | null
+          last_spambot_check?: string | null
           maturity_days?: number | null
           maturity_score?: number | null
           messages_sent_today?: number | null
@@ -430,6 +432,7 @@ export type Database = {
           id?: string
           last_active?: string | null
           last_name?: string | null
+          last_spambot_check?: string | null
           maturity_days?: number | null
           maturity_score?: number | null
           messages_sent_today?: number | null

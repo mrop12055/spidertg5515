@@ -1161,8 +1161,11 @@ async def spambot_check_loop():
                     else:
                         print(f"    ? {phone}: Unknown response")
                     
-                    # Update account status in database
-                    update_data = {"status": new_status}
+                    # Update account status in database (including last_spambot_check timestamp)
+                    update_data = {
+                        "status": new_status,
+                        "last_spambot_check": datetime.now(timezone.utc).isoformat()
+                    }
                     if ban_reason:
                         update_data["ban_reason"] = ban_reason
                     if restricted_until:
@@ -1190,8 +1193,9 @@ async def spambot_check_loop():
                         "completed_at": datetime.now(timezone.utc).isoformat()
                     }).eq("id", task_id).execute()
                 
-                # Small delay between checks
-                await asyncio.sleep(2)
+                # Randomized delay between checks (3-8 seconds) to appear more human-like
+                import random
+                await asyncio.sleep(random.uniform(3, 8))
             
             # Wait before checking for more tasks
             await asyncio.sleep(5)
