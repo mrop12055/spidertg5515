@@ -24,10 +24,11 @@ const SetupGuide: React.FC = () => {
 
   const pythonScript = `#!/usr/bin/env python3
 """
-TelegramCRM Bulk Message Sender & Receiver
+TelegramCRM Bulk Message Sender & Receiver with Account Scheduling
 Run this script on your PC to send queued messages and receive incoming replies.
 Session files are downloaded from the database (base64 encoded).
 Supports sending and receiving images.
+Features automatic account rotation based on daily limits and cooldown.
 """
 
 import asyncio
@@ -35,7 +36,11 @@ import os
 import base64
 import tempfile
 import httpx
+import json
+import time
 from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 # Install: pip install telethon supabase httpx
 from telethon import TelegramClient, events
@@ -53,18 +58,220 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 # Temp folder for session files
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 
-# Message delay (seconds between messages to avoid spam detection)
-MESSAGE_DELAY = 2
+# Default settings (can be overridden by scheduler settings from localStorage)
+DEFAULT_MESSAGE_DELAY = 2
+DEFAULT_CHECK_INTERVAL = 2
 
-# Check interval (seconds between checking for new messages)
-CHECK_INTERVAL = 2
+# ========== SCHEDULER SETTINGS ==========
+@dataclass
+class SchedulerSettings:
+    enabled: bool = True
+    max_messages_before_rotation: int = 5
+    cooldown_duration: int = 30  # minutes
+    prioritize_high_maturity: bool = True
+    auto_skip_restricted: bool = True
+    balance_load: bool = True
+    messages_per_account: int = 5
+    message_interval: int = 30  # seconds between messages
+    account_switch_delay: int = 60  # seconds before next account
+
+@dataclass
+class AccountState:
+    id: str
+    phone_number: str
+    first_name: str = ""
+    messages_sent_today: int = 0
+    daily_limit: int = 25
+    maturity_score: int = 0
+    status: str = "active"
+    cooldown_until: float = 0  # timestamp when cooldown ends
+    messages_sent_this_session: int = 0
+    last_message_time: float = 0
+    priority: float = 0
 
 # ===================================
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # Store active clients for receiving messages
-active_clients = {}
+active_clients: Dict[str, TelegramClient] = {}
+
+# Account states for scheduling
+account_states: Dict[str, AccountState] = {}
+
+# Scheduler settings
+scheduler_settings = SchedulerSettings()
+
+# Current active account for sending
+current_account_id: Optional[str] = None
+
+# Message counter for rotation
+messages_sent_by_current: int = 0
+
+
+def load_scheduler_settings():
+    """Load scheduler settings from a JSON file (exported from the web app)"""
+    global scheduler_settings
+    
+    settings_file = os.path.join(SESSION_FOLDER, "scheduler_settings.json")
+    
+    # Check for settings file in current directory too
+    if not os.path.exists(settings_file):
+        settings_file = "scheduler_settings.json"
+    
+    if os.path.exists(settings_file):
+        try:
+            with open(settings_file, 'r') as f:
+                data = json.load(f)
+                scheduler_settings = SchedulerSettings(
+                    enabled=data.get('enabled', True),
+                    max_messages_before_rotation=data.get('maxMessagesBeforeRotation', 5),
+                    cooldown_duration=data.get('cooldownDuration', 30),
+                    prioritize_high_maturity=data.get('prioritizeHighMaturity', True),
+                    auto_skip_restricted=data.get('autoSkipRestricted', True),
+                    balance_load=data.get('balanceLoad', True),
+                    messages_per_account=data.get('messagesPerAccount', 5),
+                    message_interval=data.get('messageInterval', 30),
+                    account_switch_delay=data.get('accountSwitchDelay', 60),
+                )
+                print(f"  📋 Loaded scheduler settings from {settings_file}")
+        except Exception as e:
+            print(f"  ⚠ Failed to load scheduler settings: {e}")
+    else:
+        print(f"  ℹ Using default scheduler settings")
+        print(f"    Tip: Create scheduler_settings.json with your campaign settings")
+
+
+def calculate_account_priority(state: AccountState) -> float:
+    """Calculate priority score for an account"""
+    if state.status != 'active':
+        return -1000
+    
+    if state.messages_sent_today >= state.daily_limit:
+        return -500  # Exhausted
+    
+    if time.time() < state.cooldown_until:
+        return -100  # In cooldown
+    
+    priority = 100.0
+    messages_remaining = state.daily_limit - state.messages_sent_today
+    
+    # Higher maturity = higher priority
+    if scheduler_settings.prioritize_high_maturity:
+        priority += state.maturity_score * 0.5
+    
+    # More messages remaining = higher priority
+    priority += messages_remaining * 2
+    
+    # Balance load - lower usage today = higher priority
+    if scheduler_settings.balance_load:
+        priority += messages_remaining * 3
+    
+    return priority
+
+
+def get_next_available_account() -> Optional[str]:
+    """Get the next best account for sending messages"""
+    global current_account_id
+    
+    if not scheduler_settings.enabled:
+        # If scheduler disabled, just return first active account
+        for account_id, state in account_states.items():
+            if state.status == 'active' and state.messages_sent_today < state.daily_limit:
+                return account_id
+        return None
+    
+    # Calculate priorities and sort
+    available = []
+    now = time.time()
+    
+    for account_id, state in account_states.items():
+        # Skip restricted accounts if setting enabled
+        if scheduler_settings.auto_skip_restricted:
+            if state.status in ['banned', 'restricted', 'disconnected']:
+                continue
+        
+        # Skip if exhausted
+        if state.messages_sent_today >= state.daily_limit:
+            continue
+        
+        # Skip if in cooldown
+        if now < state.cooldown_until:
+            remaining = int(state.cooldown_until - now)
+            if remaining > 0:
+                continue
+        
+        priority = calculate_account_priority(state)
+        available.append((account_id, priority))
+    
+    if not available:
+        return None
+    
+    # Sort by priority (highest first)
+    available.sort(key=lambda x: x[1], reverse=True)
+    
+    return available[0][0]
+
+
+def put_account_on_cooldown(account_id: str):
+    """Put an account on cooldown"""
+    if account_id in account_states:
+        cooldown_seconds = scheduler_settings.cooldown_duration * 60
+        account_states[account_id].cooldown_until = time.time() + cooldown_seconds
+        print(f"    ⏸ Account {account_states[account_id].phone_number} on cooldown for {scheduler_settings.cooldown_duration}m")
+
+
+def should_rotate_account() -> bool:
+    """Check if we should rotate to a different account"""
+    global messages_sent_by_current, current_account_id
+    
+    if not scheduler_settings.enabled:
+        return False
+    
+    if current_account_id is None:
+        return True
+    
+    # Rotate if we've sent enough messages
+    if messages_sent_by_current >= scheduler_settings.max_messages_before_rotation:
+        return True
+    
+    # Rotate if current account is at daily limit
+    if current_account_id in account_states:
+        state = account_states[current_account_id]
+        if state.messages_sent_today >= state.daily_limit:
+            return True
+        
+        # Rotate if current account is no longer active
+        if state.status != 'active':
+            return True
+    
+    return False
+
+
+def rotate_account() -> Optional[str]:
+    """Rotate to the next best account"""
+    global current_account_id, messages_sent_by_current
+    
+    old_account = current_account_id
+    
+    # Put old account on cooldown if it was active
+    if old_account and old_account in account_states:
+        put_account_on_cooldown(old_account)
+    
+    # Get next account
+    new_account = get_next_available_account()
+    
+    if new_account:
+        current_account_id = new_account
+        messages_sent_by_current = 0
+        state = account_states[new_account]
+        print(f"  🔄 Rotated to account: {state.phone_number} (priority: {calculate_account_priority(state):.1f})")
+        return new_account
+    else:
+        print("  ⚠ No available accounts for rotation")
+        current_account_id = None
+        return None
+
 
 def decode_session_file(phone_number: str, base64_data: str) -> str:
     """Decode base64 session data and save to temp file"""
@@ -80,12 +287,15 @@ def decode_session_file(phone_number: str, base64_data: str) -> str:
         print(f"  ⚠ Failed to decode session for {phone_number}: {e}")
         return None
 
+
 async def load_accounts():
     """Load accounts with session data from database"""
+    global account_states
+    
     result = supabase.table("telegram_accounts").select("*").eq("status", "active").execute()
     accounts = result.data or []
     
-    # Decode session files
+    # Decode session files and update account states
     valid_accounts = []
     for account in accounts:
         if account.get("session_data"):
@@ -96,10 +306,27 @@ async def load_accounts():
             if session_path:
                 account["_session_path"] = session_path
                 valid_accounts.append(account)
+                
+                # Update or create account state
+                account_id = account["id"]
+                if account_id not in account_states:
+                    account_states[account_id] = AccountState(
+                        id=account_id,
+                        phone_number=account["phone_number"]
+                    )
+                
+                # Update state from database
+                state = account_states[account_id]
+                state.first_name = account.get("first_name", "")
+                state.messages_sent_today = account.get("messages_sent_today", 0)
+                state.daily_limit = account.get("daily_limit", 25)
+                state.maturity_score = account.get("maturity_score", 0)
+                state.status = account.get("status", "active")
         else:
             print(f"  ⚠ No session data for {account['phone_number']}")
     
     return valid_accounts
+
 
 async def get_pending_messages():
     """Get pending messages from the queue"""
@@ -107,6 +334,7 @@ async def get_pending_messages():
         "*, conversations(*)"
     ).eq("status", "pending").eq("direction", "outgoing").limit(50).execute()
     return result.data or []
+
 
 async def update_message_status(message_id: str, status: str, error: str = None):
     """Update message status in database"""
@@ -116,6 +344,25 @@ async def update_message_status(message_id: str, status: str, error: str = None)
     if error:
         update_data["failed_reason"] = error
     supabase.table("messages").update(update_data).eq("id", message_id).execute()
+
+
+async def increment_account_message_count(account_id: str):
+    """Increment the messages_sent_today counter for an account"""
+    global messages_sent_by_current
+    
+    if account_id in account_states:
+        account_states[account_id].messages_sent_today += 1
+        account_states[account_id].messages_sent_this_session += 1
+        account_states[account_id].last_message_time = time.time()
+        messages_sent_by_current += 1
+        
+        # Update in database too
+        new_count = account_states[account_id].messages_sent_today
+        supabase.table("telegram_accounts").update({
+            "messages_sent_today": new_count,
+            "last_active": datetime.now(timezone.utc).isoformat()
+        }).eq("id", account_id).execute()
+
 
 async def download_media(url: str) -> bytes:
     """Download media from URL"""
@@ -127,6 +374,7 @@ async def download_media(url: str) -> bytes:
     except Exception as e:
         print(f"    ⚠ Failed to download media: {e}")
         return None
+
 
 async def upload_media_to_supabase(file_bytes: bytes, file_name: str, content_type: str) -> str:
     """Upload media to Supabase storage and return public URL"""
@@ -147,6 +395,7 @@ async def upload_media_to_supabase(file_bytes: bytes, file_name: str, content_ty
     except Exception as e:
         print(f"    ⚠ Failed to upload media: {e}")
         return None
+
 
 async def save_incoming_message(account_id: str, sender_id: int, sender_name: str, sender_username: str, content: str, media_url: str = None, media_type: str = None):
     """Save incoming message to database"""
@@ -225,6 +474,7 @@ async def save_incoming_message(account_id: str, sender_id: int, sender_name: st
         print(f"    ⚠ Failed to save incoming message: {e}")
         return False
 
+
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None, media_type: str = None):
     """Send a message (with optional media) to a phone number or username"""
     try:
@@ -281,6 +531,7 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         if "banned" in error_str.lower() or "deactivated" in error_str.lower():
             return False, f"PERMANENT: {error_str}"
         return False, error_str
+
 
 async def setup_message_handler(client: TelegramClient, account_id: str):
     """Set up handler for incoming messages"""
@@ -344,8 +595,12 @@ async def setup_message_handler(client: TelegramClient, account_id: str):
     
     return handler
 
+
 async def process_account(account: dict, messages: list):
-    """Process messages for a single account"""
+    """Process messages for a single account with scheduling"""
+    global current_account_id, messages_sent_by_current
+    
+    account_id = account["id"]
     session_path = account.get("_session_path")
     
     if not session_path:
@@ -360,7 +615,7 @@ async def process_account(account: dict, messages: list):
         return
     
     # Check if we already have an active client for this account
-    client = active_clients.get(account["id"])
+    client = active_clients.get(account_id)
     
     if not client:
         client = TelegramClient(session_path, int(api_id), api_hash)
@@ -368,12 +623,14 @@ async def process_account(account: dict, messages: list):
         
         if not await client.is_user_authorized():
             print(f"  ⚠ Session expired for {account['phone_number']}")
-            supabase.table("telegram_accounts").update({"status": "disconnected"}).eq("id", account["id"]).execute()
+            supabase.table("telegram_accounts").update({"status": "disconnected"}).eq("id", account_id).execute()
+            if account_id in account_states:
+                account_states[account_id].status = "disconnected"
             return
         
         # Set up incoming message handler
-        await setup_message_handler(client, account["id"])
-        active_clients[account["id"]] = client
+        await setup_message_handler(client, account_id)
+        active_clients[account_id] = client
         print(f"  ✓ Connected and listening for messages")
     
     try:
@@ -408,11 +665,41 @@ async def process_account(account: dict, messages: list):
             except Exception as photo_err:
                 print(f"    Could not get profile photo: {photo_err}")
             
-            supabase.table("telegram_accounts").update(update_data).eq("id", account["id"]).execute()
+            supabase.table("telegram_accounts").update(update_data).eq("id", account_id).execute()
             display_name = me.first_name or me.username or me.phone
-            print(f"  ✓ Connected as {display_name} (@{me.username or 'no username'})")
+            
+            # Show scheduling info
+            if account_id in account_states:
+                state = account_states[account_id]
+                print(f"  ✓ {display_name} | {state.messages_sent_today}/{state.daily_limit} msgs | Priority: {calculate_account_priority(state):.1f}")
+            else:
+                print(f"  ✓ Connected as {display_name} (@{me.username or 'no username'})")
         
-        # Process outgoing messages
+        # Check if this is the current active account for sending
+        if scheduler_settings.enabled:
+            if current_account_id != account_id:
+                # This account is not the current sender, skip message processing
+                return
+            
+            # Check if we should rotate before sending
+            if should_rotate_account():
+                # Don't process messages with this account anymore
+                return
+        
+        # Check account limits
+        if account_id in account_states:
+            state = account_states[account_id]
+            if state.messages_sent_today >= state.daily_limit:
+                print(f"    ⚠ Daily limit reached for {account['phone_number']}")
+                return
+            
+            # Check messages per account setting
+            if state.messages_sent_this_session >= scheduler_settings.messages_per_account:
+                print(f"    ⚠ Session limit reached ({scheduler_settings.messages_per_account} messages)")
+                put_account_on_cooldown(account_id)
+                return
+        
+        # Process outgoing messages (only one per cycle for scheduling)
         for msg in messages:
             conv = msg.get("conversations", {}) or {}
             # Support both phone number and username
@@ -436,13 +723,23 @@ async def process_account(account: dict, messages: list):
             
             if success:
                 await update_message_status(msg["id"], "sent")
+                await increment_account_message_count(account_id)
                 print(f"    ✓ Sent!")
+                
+                # Check if we need to rotate after this message
+                if should_rotate_account():
+                    print(f"    🔄 Rotation threshold reached")
             else:
                 await update_message_status(msg["id"], "failed", error)
                 print(f"    ✗ Failed: {error}")
+                
+                # If rate limited, put account on cooldown
+                if "RATE_LIMITED" in str(error):
+                    put_account_on_cooldown(account_id)
             
-            # Wait between messages
-            await asyncio.sleep(MESSAGE_DELAY)
+            # Wait between messages (use scheduler setting)
+            message_delay = scheduler_settings.message_interval if scheduler_settings.enabled else DEFAULT_MESSAGE_DELAY
+            await asyncio.sleep(message_delay)
             
             # Only process one message per cycle to avoid spam detection
             break
@@ -450,16 +747,49 @@ async def process_account(account: dict, messages: list):
     except Exception as e:
         print(f"  ⚠ Error processing account: {e}")
         # Remove from active clients on error
-        if account["id"] in active_clients:
-            del active_clients[account["id"]]
+        if account_id in active_clients:
+            del active_clients[account_id]
             await client.disconnect()
 
+
+def print_scheduler_status():
+    """Print current scheduler status"""
+    if not scheduler_settings.enabled:
+        print("  📋 Scheduler: DISABLED (using sequential mode)")
+        return
+    
+    print(f"  📋 Scheduler: ENABLED")
+    print(f"     • Rotation after: {scheduler_settings.max_messages_before_rotation} messages")
+    print(f"     • Cooldown: {scheduler_settings.cooldown_duration} minutes")
+    print(f"     • Messages/account: {scheduler_settings.messages_per_account}")
+    print(f"     • Message interval: {scheduler_settings.message_interval}s")
+    
+    # Show account statuses
+    if account_states:
+        print(f"     • Accounts:")
+        now = time.time()
+        for acc_id, state in account_states.items():
+            status_icon = "✓" if state.status == "active" else "✗"
+            cooldown_info = ""
+            if now < state.cooldown_until:
+                remaining = int((state.cooldown_until - now) / 60)
+                cooldown_info = f" (cooldown: {remaining}m)"
+            priority = calculate_account_priority(state)
+            active = " 👈 ACTIVE" if acc_id == current_account_id else ""
+            print(f"       {status_icon} {state.phone_number}: {state.messages_sent_today}/{state.daily_limit} msgs, priority: {priority:.0f}{cooldown_info}{active}")
+
+
 async def main():
-    print("=" * 50)
-    print("TelegramCRM Message Sender & Receiver")
+    global current_account_id, messages_sent_by_current
+    
+    print("=" * 60)
+    print("TelegramCRM Message Sender & Receiver with Account Scheduler")
     print(f"Session folder: {SESSION_FOLDER}")
-    print("Supports: Text messages, Images")
-    print("=" * 50)
+    print("Supports: Text messages, Images, Auto-rotation")
+    print("=" * 60)
+    
+    # Load scheduler settings
+    load_scheduler_settings()
     
     while True:
         print(f"\\n[{datetime.now().strftime('%H:%M:%S')}] Checking for pending messages...")
@@ -470,13 +800,27 @@ async def main():
         print(f"  Active accounts: {len(accounts)}")
         print(f"  Pending messages: {len(messages)}")
         
+        # Print scheduler status
+        print_scheduler_status()
+        
+        # Initialize current account if needed
+        if scheduler_settings.enabled and (current_account_id is None or should_rotate_account()):
+            new_account = rotate_account()
+            if not new_account and messages:
+                print("  ⚠ No accounts available to send messages!")
+                # Wait before retrying
+                await asyncio.sleep(60)
+                continue
+        
         for account in accounts:
             print(f"\\nProcessing account: {account['phone_number']}")
             await process_account(account, messages)
         
         # Keep clients running to receive messages
-        print(f"\\n  Listening for incoming messages... (checking again in {CHECK_INTERVAL}s)")
-        await asyncio.sleep(CHECK_INTERVAL)
+        check_interval = scheduler_settings.message_interval if scheduler_settings.enabled else DEFAULT_CHECK_INTERVAL
+        print(f"\\n  Listening for incoming messages... (checking again in {check_interval}s)")
+        await asyncio.sleep(check_interval)
+
 
 async def shutdown():
     """Cleanup on shutdown"""
@@ -485,15 +829,18 @@ async def shutdown():
         await client.disconnect()
     print("Disconnected all clients.")
 
+
 if __name__ == "__main__":
-    print("Starting sender & receiver... Press Ctrl+C to stop.")
+    print("Starting sender & receiver with scheduler... Press Ctrl+C to stop.")
     print("Required: pip install telethon supabase httpx")
+    print("")
+    print("TIP: Create 'scheduler_settings.json' with your campaign settings:")
+    print('  {"enabled": true, "maxMessagesBeforeRotation": 5, "cooldownDuration": 30, ...}')
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         asyncio.run(shutdown())
 `;
-
   return (
     <DashboardLayout>
       <PageHeader
