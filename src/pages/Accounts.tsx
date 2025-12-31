@@ -57,8 +57,13 @@ const Accounts: React.FC = () => {
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
     const baseName = filename.replace(/\.session$/i, '');
-    const cleaned = baseName.replace(/[^\d+]/g, '');
-    return cleaned.startsWith('+') ? cleaned : `+${cleaned}`;
+    // Keep digits only; many session files are named like 5493416219301.session
+    const digits = baseName.replace(/\D/g, '');
+    if (!digits) {
+      // Fallback so we never store just "+" which breaks matching/debugging
+      return `+unknown_${Date.now()}`;
+    }
+    return `+${digits}`;
   };
 
   // Convert file to base64
