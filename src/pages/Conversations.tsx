@@ -103,7 +103,11 @@ const Chat: React.FC = () => {
       const matchesSearch = 
         c.recipientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         c.recipientPhone.includes(searchQuery);
-      return matchesTime && matchesSearch;
+      // Exclude SpamBot conversations from the chat list
+      const isNotSpamBot = 
+        c.recipientName?.toLowerCase() !== 'spam info bot' &&
+        !c.recipientPhone?.toLowerCase().includes('spambot');
+      return matchesTime && matchesSearch && isNotSpamBot;
     })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
