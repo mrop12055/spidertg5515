@@ -533,6 +533,7 @@ export type Database = {
       message_direction: "incoming" | "outgoing"
       message_status:
         | "pending"
+        | "sending"
         | "sent"
         | "delivered"
         | "read"
@@ -678,6 +679,7 @@ export const Constants = {
       message_direction: ["incoming", "outgoing"],
       message_status: [
         "pending",
+        "sending",
         "sent",
         "delivered",
         "read",
