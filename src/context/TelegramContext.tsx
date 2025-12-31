@@ -235,7 +235,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
               .select('recipient_phone')
               .eq('id', m.conversation_id)
               .single();
-            
+
             const newMessage: Message = {
               id: m.id,
               conversationId: m.conversation_id,
@@ -248,23 +248,31 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
               telegramMessageId: m.telegram_message_id || undefined,
               failedReason: m.failed_reason || undefined,
             };
-            
+
             setMessages(prev => {
-              // Check if already exists
               if (prev.some(msg => msg.id === m.id)) {
-                return prev.map(msg => msg.id === m.id ? newMessage : msg);
+                return prev.map(msg => (msg.id === m.id ? newMessage : msg));
               }
               return [newMessage, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const m = payload.new as any;
-            setMessages(prev => 
-              prev.map(msg => msg.id === m.id ? {
-                ...msg,
-                status: m.status as Message['status'],
-                failedReason: m.failed_reason || undefined,
-              } : msg)
+            setMessages(prev =>
+              prev.map(msg =>
+                msg.id === m.id
+                  ? {
+                      ...msg,
+                      status: m.status as Message['status'],
+                      failedReason: m.failed_reason || undefined,
+                    }
+                  : msg
+              )
             );
+          } else if (payload.eventType === 'DELETE') {
+            const oldRow = payload.old as any;
+            const deletedId = oldRow?.id;
+            if (!deletedId) return;
+            setMessages(prev => prev.filter(msg => msg.id !== deletedId));
           }
         }
       )
@@ -296,24 +304,37 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
               createdAt: new Date(c.created_at),
               updatedAt: new Date(c.updated_at || c.created_at),
             };
-            
+
             setConversations(prev => {
               if (prev.some(conv => conv.id === c.id)) {
-                return prev.map(conv => conv.id === c.id ? newConv : conv);
+                return prev.map(conv => (conv.id === c.id ? newConv : conv));
               }
               return [newConv, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const c = payload.new as any;
-            setConversations(prev => 
-              prev.map(conv => conv.id === c.id ? {
-                ...conv,
-                unreadCount: c.unread_count || 0,
-                updatedAt: new Date(c.updated_at || c.last_message_at || conv.updatedAt),
-                recipientName: c.recipient_name || conv.recipientName,
-                isActive: c.is_active ?? conv.isActive,
-              } : conv).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+            setConversations(prev =>
+              prev
+                .map(conv =>
+                  conv.id === c.id
+                    ? {
+                        ...conv,
+                        unreadCount: c.unread_count || 0,
+                        updatedAt: new Date(c.updated_at || c.last_message_at || conv.updatedAt),
+                        recipientName: c.recipient_name || conv.recipientName,
+                        isActive: c.is_active ?? conv.isActive,
+                      }
+                    : conv
+                )
+                .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
             );
+          } else if (payload.eventType === 'DELETE') {
+            const oldRow = payload.old as any;
+            const deletedId = oldRow?.id;
+            if (!deletedId) return;
+            setConversations(prev => prev.filter(conv => conv.id !== deletedId));
+            // Also remove orphaned messages for that conversation
+            setMessages(prev => prev.filter(m => m.conversationId !== deletedId));
           }
         }
       )
