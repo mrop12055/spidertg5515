@@ -2,3 +2,9 @@ project_id = "ismtbdcnbxyyvsacbeld"
 
 [functions.telegram-api]
 verify_jwt = false
+
+[functions.process-account-upload]
+verify_jwt = false
+
+[functions.send-bulk-messages]
+verify_jwt = false
