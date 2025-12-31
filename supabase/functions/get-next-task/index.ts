@@ -291,11 +291,10 @@ serve(async (req) => {
       }
     }
 
-    // No tasks - tell Python to wait and check for incoming messages
-    console.log("[get-next-task] No pending tasks, waiting");
+    // No tasks - tell Python to wait briefly and check for incoming messages
     return new Response(JSON.stringify({
       task: "wait",
-      seconds: 2,
+      seconds: 0.3,
       accounts: accounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
         id: a.id,
         phone_number: a.phone_number,
