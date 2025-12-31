@@ -291,10 +291,10 @@ serve(async (req) => {
       }
     }
 
-    // No tasks - tell Python to wait briefly and check for incoming messages
+    // No tasks - tell Python to wait very briefly (50ms) and check for incoming messages
     return new Response(JSON.stringify({
       task: "wait",
-      seconds: 0.3,
+      seconds: 0.05,
       accounts: accounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
         id: a.id,
         phone_number: a.phone_number,
