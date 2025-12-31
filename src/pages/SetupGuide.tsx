@@ -169,7 +169,7 @@ async def setup_message_handler(client: TelegramClient, account_id: str):
 async def get_next_task() -> dict:
     """Ask backend for next task"""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=5) as client:
             resp = await client.post(
                 f"{BACKEND_URL}/get-next-task",
                 headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
@@ -178,20 +178,23 @@ async def get_next_task() -> dict:
             return resp.json()
     except Exception as e:
         print(f"  ⚠ Failed to get task: {e}")
-        return {"task": "wait", "seconds": 0.5}
+        return {"task": "wait", "seconds": 0.05}
 
 
 async def report_result(task_type: str, result: dict):
-    """Report task result to backend (fire and forget)"""
+    """Report task result to backend (fire and forget, no wait)"""
+    asyncio.create_task(_report(task_type, result))
+
+async def _report(task_type: str, result: dict):
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=3) as client:
             await client.post(
                 f"{BACKEND_URL}/report-task-result",
                 headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
                 json={"task_type": task_type, "result": result}
             )
-    except Exception as e:
-        print(f"  ⚠ Failed to report result: {e}")
+    except:
+        pass
 
 
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
@@ -257,7 +260,7 @@ async def check_spambot(client: TelegramClient):
     try:
         spambot = await client.get_entity("@SpamBot")
         await client.send_message(spambot, "/start")
-        await asyncio.sleep(3)
+        await asyncio.sleep(1)
         messages = await client.get_messages(spambot, limit=1)
         response = messages[0].text if messages else "No response"
         
@@ -290,10 +293,11 @@ async def main_loop():
             task_type = task.get("task", "wait")
             
             if task_type == "wait":
-                seconds = task.get("seconds", 0.3)
-                # Keep clients alive during wait (parallel)
+                seconds = task.get("seconds", 0.05)
+                # Keep clients alive during wait (parallel, no block)
                 accounts = task.get("accounts", [])
-                await asyncio.gather(*[get_or_create_client(acc) for acc in accounts])
+                if accounts:
+                    asyncio.gather(*[get_or_create_client(acc) for acc in accounts])
                 await asyncio.sleep(seconds)
             
             elif task_type == "send":
@@ -334,13 +338,12 @@ async def main_loop():
                     print(f"  📋 Validating {len(recipients)} recipients...")
                     for r in recipients:
                         exists, name, telegram_id = await validate_contact(client, r["phone_number"])
-                        await report_result("validate", {
+                        report_result("validate", {
                             "recipient_id": r["id"],
                             "exists": exists,
                             "name": name,
                             "telegram_id": telegram_id
                         })
-                        await asyncio.sleep(0.1)
             
             elif task_type == "spambot_check":
                 task_id = task.get("task_id")
@@ -363,7 +366,7 @@ async def main_loop():
             break
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1)
 
 
 async def shutdown():
