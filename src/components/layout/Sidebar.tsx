@@ -5,13 +5,11 @@ import {
   Users, 
   MessageSquare, 
   Settings, 
-  Server,
-  Sparkles,
   Send,
   LogOut,
   ChevronLeft,
   ChevronRight,
-  BookOpen
+  Contact
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -28,13 +26,10 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
-  { icon: Users, label: 'Accounts', path: '/accounts' },
-  { icon: Server, label: 'Proxies', path: '/proxies' },
-  { icon: Sparkles, label: 'Maturation', path: '/maturation' },
-  { icon: MessageSquare, label: 'Chat', path: '/chat' },
+  { icon: Contact, label: 'Contacts', path: '/contacts' },
+  { icon: MessageSquare, label: 'Conversations', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: Settings, label: 'Settings', path: '/settings' },
-  { icon: BookOpen, label: 'VPS Guide', path: '/vps-guide' },
 ];
 
 export const Sidebar: React.FC = () => {
@@ -61,8 +56,8 @@ export const Sidebar: React.FC = () => {
           </div>
           {!collapsed && (
             <div className="animate-fade-in">
-              <h1 className="font-bold text-lg text-sidebar-foreground">TelegramHub</h1>
-              <p className="text-xs text-muted-foreground">Account Manager</p>
+              <h1 className="font-bold text-lg text-sidebar-foreground">TelegramCRM</h1>
+              <p className="text-xs text-muted-foreground">Contact Manager</p>
             </div>
           )}
         </div>
