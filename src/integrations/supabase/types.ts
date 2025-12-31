@@ -233,6 +233,7 @@ export type Database = {
           created_at: string | null
           delivered_at: string | null
           direction: Database["public"]["Enums"]["message_direction"]
+          failed_reason: string | null
           id: string
           read_at: string | null
           status: Database["public"]["Enums"]["message_status"] | null
@@ -245,6 +246,7 @@ export type Database = {
           created_at?: string | null
           delivered_at?: string | null
           direction: Database["public"]["Enums"]["message_direction"]
+          failed_reason?: string | null
           id?: string
           read_at?: string | null
           status?: Database["public"]["Enums"]["message_status"] | null
@@ -257,6 +259,7 @@ export type Database = {
           created_at?: string | null
           delivered_at?: string | null
           direction?: Database["public"]["Enums"]["message_direction"]
+          failed_reason?: string | null
           id?: string
           read_at?: string | null
           status?: Database["public"]["Enums"]["message_status"] | null
