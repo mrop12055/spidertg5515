@@ -171,21 +171,6 @@ const Accounts: React.FC = () => {
     }
   };
 
-  const handleStatusChange = async (id: string, status: AccountStatus) => {
-    try {
-      const { error } = await supabase
-        .from('telegram_accounts')
-        .update({ status })
-        .eq('id', id);
-
-      if (error) throw error;
-      refreshData();
-    } catch (error) {
-      console.error('Error updating status:', error);
-      toast.error('Failed to update status');
-    }
-  };
-
   const handleProxyChange = async (accountId: string, proxyId: string | null) => {
     try {
       const { error } = await supabase
@@ -695,21 +680,6 @@ const Accounts: React.FC = () => {
                               {proxy.host}:{proxy.port}
                             </span>
                           </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-
-                    {/* Status Select */}
-                    <Select
-                      value={account.status}
-                      onValueChange={(value) => handleStatusChange(account.id, value as AccountStatus)}
-                    >
-                      <SelectTrigger className="w-32 h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statusOptions.map(opt => (
-                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
