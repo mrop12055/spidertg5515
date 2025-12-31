@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useCallback } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect } from 'react';
 import { 
   TelegramAccount, 
   Proxy, 
@@ -86,7 +86,7 @@ const initialConversations: Conversation[] = [
     recipientPhone: '+14155550002',
     recipientName: 'Jane Smith',
     unreadCount: 0,
-    isActive: true,
+    isActive: false,
     createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
     updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
   }
@@ -101,7 +101,7 @@ const initialMessages: Message[] = [
     recipientName: 'John Doe',
     content: 'Hi! I wanted to reach out about our services.',
     direction: 'outgoing',
-    status: 'delivered',
+    status: 'read',
     timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
     threadId: 'thread-1',
   },
@@ -123,9 +123,9 @@ const initialMessages: Message[] = [
     recipientId: '+14155550001',
     recipientPhone: '+14155550001',
     recipientName: 'John Doe',
-    content: 'Great! We provide comprehensive solutions for...',
+    content: 'Great! We provide comprehensive solutions for businesses looking to scale their operations.',
     direction: 'outgoing',
-    status: 'sent',
+    status: 'delivered',
     timestamp: new Date(Date.now() - 30 * 60 * 1000),
     threadId: 'thread-1',
   }
@@ -155,6 +155,7 @@ interface TelegramContextType {
   campaigns: Campaign[];
   stats: DashboardStats;
   uploadProgress: UploadProgress;
+  typingUsers: Record<string, boolean>;
   
   // Account actions
   addAccount: (account: Partial<TelegramAccount>) => void;
@@ -172,6 +173,8 @@ interface TelegramContextType {
   // Message actions
   sendMessage: (accountId: string, recipientPhone: string, content: string) => void;
   getConversationMessages: (conversationId: string) => Message[];
+  markConversationAsRead: (conversationId: string) => void;
+  startNewConversation: (accountId: string, recipientPhone: string, recipientName?: string) => string;
   
   // Campaign actions
   createCampaign: (campaign: Partial<Campaign>) => void;
@@ -184,12 +187,23 @@ interface TelegramContextType {
 
 const TelegramContext = createContext<TelegramContextType | undefined>(undefined);
 
+// Auto-reply messages for simulation
+const autoReplies = [
+  "That sounds interesting! Can you tell me more?",
+  "Thanks for reaching out!",
+  "I'll think about it and get back to you.",
+  "Could you send me more details?",
+  "Interesting! What's the pricing like?",
+  "Let me check with my team first.",
+];
+
 export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [accounts, setAccounts] = useState<TelegramAccount[]>(initialAccounts);
   const [proxies, setProxies] = useState<Proxy[]>(initialProxies);
   const [conversations, setConversations] = useState<Conversation[]>(initialConversations);
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
+  const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
     total: 0,
     processed: 0,
@@ -246,7 +260,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       errors: []
     });
 
-    // Simulate upload processing
     for (let i = 0; i < 10; i++) {
       await new Promise(resolve => setTimeout(resolve, 100));
       const success = Math.random() > 0.1;
@@ -312,6 +325,44 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     ));
   }, []);
 
+  // Simulate typing and auto-reply
+  const simulateReply = useCallback((recipientPhone: string, recipientName?: string, accountId?: string) => {
+    // 50% chance of getting a reply
+    if (Math.random() > 0.5) return;
+
+    // Start typing indicator
+    setTypingUsers(prev => ({ ...prev, [recipientPhone]: true }));
+
+    // Reply after 2-4 seconds
+    const replyDelay = 2000 + Math.random() * 2000;
+    setTimeout(() => {
+      setTypingUsers(prev => ({ ...prev, [recipientPhone]: false }));
+      
+      const replyContent = autoReplies[Math.floor(Math.random() * autoReplies.length)];
+      const replyMessage: Message = {
+        id: `msg-${Date.now()}`,
+        accountId: accountId || 'acc-1',
+        recipientId: recipientPhone,
+        recipientPhone,
+        recipientName,
+        content: replyContent,
+        direction: 'incoming',
+        status: 'read',
+        timestamp: new Date(),
+        threadId: `thread-${recipientPhone}`
+      };
+
+      setMessages(prev => [...prev, replyMessage]);
+      
+      // Update conversation with unread count
+      setConversations(prev => prev.map(c => 
+        c.recipientPhone === recipientPhone 
+          ? { ...c, unreadCount: c.unreadCount + 1, updatedAt: new Date(), isActive: true }
+          : c
+      ));
+    }, replyDelay);
+  }, []);
+
   const sendMessage = useCallback((accountId: string, recipientPhone: string, content: string) => {
     const conv = conversations.find(c => c.recipientPhone === recipientPhone);
     const newMessage: Message = {
@@ -327,6 +378,19 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       threadId: `thread-${recipientPhone}`
     };
     setMessages(prev => [...prev, newMessage]);
+    
+    // Update message status after delays (simulating Telegram)
+    setTimeout(() => {
+      setMessages(prev => prev.map(m => 
+        m.id === newMessage.id ? { ...m, status: 'delivered' } : m
+      ));
+    }, 1000);
+
+    setTimeout(() => {
+      setMessages(prev => prev.map(m => 
+        m.id === newMessage.id ? { ...m, status: 'read' } : m
+      ));
+    }, 3000);
     
     setConversations(prev => {
       const existing = prev.find(c => c.recipientPhone === recipientPhone);
@@ -348,13 +412,40 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         updatedAt: new Date()
       }];
     });
-  }, [conversations]);
+
+    // Trigger auto-reply simulation
+    simulateReply(recipientPhone, conv?.recipientName, accountId);
+  }, [conversations, simulateReply]);
 
   const getConversationMessages = useCallback((conversationId: string) => {
     const conv = conversations.find(c => c.id === conversationId);
     if (!conv) return [];
     return messages.filter(m => m.recipientPhone === conv.recipientPhone);
   }, [conversations, messages]);
+
+  const markConversationAsRead = useCallback((conversationId: string) => {
+    setConversations(prev => prev.map(c => 
+      c.id === conversationId ? { ...c, unreadCount: 0 } : c
+    ));
+  }, []);
+
+  const startNewConversation = useCallback((accountId: string, recipientPhone: string, recipientName?: string) => {
+    const existing = conversations.find(c => c.recipientPhone === recipientPhone);
+    if (existing) return existing.id;
+
+    const newConvId = `conv-${Date.now()}`;
+    setConversations(prev => [...prev, {
+      id: newConvId,
+      accountId,
+      recipientPhone,
+      recipientName,
+      unreadCount: 0,
+      isActive: false,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }]);
+    return newConvId;
+  }, [conversations]);
 
   const createCampaign = useCallback((campaign: Partial<Campaign>) => {
     const newCampaign: Campaign = {
@@ -394,6 +485,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     campaigns,
     stats,
     uploadProgress,
+    typingUsers,
     addAccount,
     updateAccount,
     deleteAccount,
@@ -405,6 +497,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     assignProxy,
     sendMessage,
     getConversationMessages,
+    markConversationAsRead,
+    startNewConversation,
     createCampaign,
     updateCampaign,
     deleteCampaign,
