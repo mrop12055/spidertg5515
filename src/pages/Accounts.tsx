@@ -88,6 +88,10 @@ const Accounts: React.FC = () => {
   // Collapsed section for unavailable accounts
   const [showUnavailable, setShowUnavailable] = useState(false);
   
+  // SpamBot check state
+  const [isSpamBotChecking, setIsSpamBotChecking] = useState(false);
+  const [spamBotProgress, setSpamBotProgress] = useState<{ total: number; completed: number; results: Map<string, { status: string; result?: string }> }>({ total: 0, completed: 0, results: new Map() });
+  
   // Messages sent today tracking
   const [messagesSentLast24h, setMessagesSentLast24h] = useState<Map<string, number>>(new Map());
   
@@ -115,6 +119,42 @@ const Accounts: React.FC = () => {
       clearInterval(interval);
     };
   }, [refreshData]);
+  
+  // Realtime subscription for SpamBot check tasks
+  useEffect(() => {
+    if (!isSpamBotChecking) return;
+    
+    const channel = supabase
+      .channel('spambot-tasks')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'account_check_tasks' },
+        (payload) => {
+          const task = payload.new as any;
+          if (task && (task.status === 'completed' || task.status === 'failed')) {
+            setSpamBotProgress(prev => {
+              const newResults = new Map(prev.results);
+              newResults.set(task.account_id, { status: task.status, result: task.result });
+              const completed = Array.from(newResults.values()).filter(r => r.status === 'completed' || r.status === 'failed').length;
+              
+              // Check if all done
+              if (completed >= prev.total) {
+                setIsSpamBotChecking(false);
+                toast.success(`SpamBot check complete: ${completed} account(s) checked`);
+                refreshData();
+              }
+              
+              return { ...prev, completed, results: newResults };
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isSpamBotChecking, refreshData]);
   
   // Fetch messages sent in last 24 hours per account
   useEffect(() => {
@@ -486,6 +526,35 @@ const Accounts: React.FC = () => {
     return differenceInDays(new Date(), createdAt);
   };
 
+  // SpamBot check - queue tasks for Python script to process
+  const handleSpamBotCheck = async () => {
+    if (selectedIds.size === 0) return;
+    
+    setIsSpamBotChecking(true);
+    setSpamBotProgress({ total: selectedIds.size, completed: 0, results: new Map() });
+    
+    try {
+      // Insert tasks for each selected account
+      const tasks = Array.from(selectedIds).map(accountId => ({
+        account_id: accountId,
+        task_type: 'spambot_check',
+        status: 'pending',
+      }));
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasks);
+      
+      if (error) throw error;
+      
+      toast.info(`Queued ${selectedIds.size} account(s) for SpamBot check. Run the Python script to process.`);
+    } catch (error) {
+      console.error('Error queuing SpamBot check:', error);
+      toast.error('Failed to queue SpamBot check');
+      setIsSpamBotChecking(false);
+    }
+  };
+
   // Real session verification via edge function
   const handleBulkCheck = async () => {
     if (selectedIds.size === 0) return;
@@ -782,6 +851,11 @@ const Accounts: React.FC = () => {
                 Assign Proxy
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleSpamBotCheck} disabled={isSpamBotChecking}>
+                <Shield className="w-4 h-4 mr-2" />
+                Check SpamBot
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive" onClick={handleBulkDelete}>
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete Selected
@@ -799,6 +873,58 @@ const Accounts: React.FC = () => {
           >
             Cancel
           </Button>
+        </div>
+      )}
+      
+      {/* SpamBot Check Progress */}
+      {isSpamBotChecking && (
+        <div className="mb-4 p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 animate-fade-in">
+          <div className="flex items-center gap-3">
+            <Loader2 className="w-5 h-5 animate-spin text-yellow-500" />
+            <div className="flex-1">
+              <p className="text-sm font-medium">
+                SpamBot Check: {spamBotProgress.completed}/{spamBotProgress.total} accounts checked
+              </p>
+              <p className="text-xs text-muted-foreground mt-1">
+                Run the Python script to process the check queue
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setIsSpamBotChecking(false)}
+            >
+              Dismiss
+            </Button>
+          </div>
+          {spamBotProgress.completed > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {Array.from(spamBotProgress.results.entries()).map(([accountId, result]) => {
+                const account = accounts.find(a => a.id === accountId);
+                const isCompleted = result.status === 'completed';
+                const isFailed = result.status === 'failed';
+                return (
+                  <Badge 
+                    key={accountId} 
+                    variant="outline"
+                    className={cn(
+                      "text-xs",
+                      isCompleted && result.result?.toLowerCase().includes('no limit') && "bg-green-500/20 text-green-600 border-green-500/30",
+                      isCompleted && result.result?.toLowerCase().includes('restricted') && "bg-yellow-500/20 text-yellow-600 border-yellow-500/30",
+                      isCompleted && result.result?.toLowerCase().includes('banned') && "bg-destructive/20 text-destructive border-destructive/30",
+                      isFailed && "bg-muted text-muted-foreground"
+                    )}
+                  >
+                    {account?.phoneNumber || accountId.slice(0, 8)}
+                    {isCompleted && result.result?.toLowerCase().includes('no limit') && <CheckCircle className="w-3 h-3 ml-1" />}
+                    {isCompleted && result.result?.toLowerCase().includes('restricted') && <AlertTriangle className="w-3 h-3 ml-1" />}
+                    {isCompleted && result.result?.toLowerCase().includes('banned') && <XCircle className="w-3 h-3 ml-1" />}
+                    {isFailed && <XCircle className="w-3 h-3 ml-1" />}
+                  </Badge>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
