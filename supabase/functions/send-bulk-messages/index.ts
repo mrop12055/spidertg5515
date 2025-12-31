@@ -138,12 +138,13 @@ serve(async (req) => {
         );
       }
 
-      // Insert valid recipients with 'validating' status (Python will validate)
+      // Insert valid recipients - set to 'pending' directly for immediate sending
+      // (Python validation is optional - it will mark as 'invalid' if needed)
       const recipientRecords = validRecipients.map(r => ({
         campaign_id,
         phone_number: r.phone_number,
         name: r.name || null,
-        status: 'validating', // Will be updated by Python script after Telegram check
+        status: 'pending', // Ready to send immediately
       }));
 
       const { data, error } = await supabase
