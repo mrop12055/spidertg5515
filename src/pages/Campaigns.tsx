@@ -73,31 +73,80 @@ const Campaigns: React.FC = () => {
     accountIds: [] as string[]
   });
 
-  // Fetch campaign reports
-  useEffect(() => {
-    const fetchReports = async () => {
-      for (const campaign of campaigns) {
-        const { data, error } = await supabase
-          .from('campaign_recipients')
-          .select('status')
-          .eq('campaign_id', campaign.id);
-        
-        if (data && !error) {
-          const report: CampaignReport = {
-            successful: data.filter(r => r.status === 'sent').length,
-            failed: data.filter(r => r.status === 'failed').length,
-            pending: data.filter(r => r.status === 'pending').length,
-            total: data.length,
-          };
-          setCampaignReports(prev => new Map(prev).set(campaign.id, report));
-        }
+  // Fetch campaign reports + auto-sync pending recipients based on already-sent messages
+  const fetchReports = useCallback(async () => {
+    for (const campaign of campaigns) {
+      const { data: recipients, error } = await supabase
+        .from('campaign_recipients')
+        .select('id, status, phone_number, sent_by_account_id')
+        .eq('campaign_id', campaign.id);
+
+      if (!recipients || error) continue;
+
+      // Auto-sync: if a recipient is still "pending" but we already have a sent/failed outgoing message,
+      // update the recipient status so UI progress matches reality.
+      const pending = recipients.filter(
+        (r) => r.status === 'pending' && r.sent_by_account_id && r.phone_number,
+      );
+
+      if (pending.length > 0) {
+        const phonesSet = new Set(pending.map((r) => r.phone_number));
+        const accountIds = Array.from(new Set(pending.map((r) => r.sent_by_account_id!)));
+
+        const { data: sentMsgs } = await supabase
+          .from('messages')
+          .select('status, delivered_at, account_id, created_at, conversations!inner(recipient_phone)')
+          .eq('direction', 'outgoing')
+          .in('status', ['sent', 'failed'])
+          .in('account_id', accountIds)
+          .order('created_at', { ascending: false })
+          .limit(200);
+
+        const msgIndex = new Map<string, { status: string; delivered_at: string | null }>();
+        (sentMsgs || []).forEach((m: any) => {
+          const phone = m?.conversations?.recipient_phone;
+          if (!phone || !phonesSet.has(phone)) return;
+          const key = `${m.account_id}|${phone}`;
+          if (!msgIndex.has(key)) {
+            msgIndex.set(key, { status: m.status, delivered_at: m.delivered_at ?? null });
+          }
+        });
+
+        await Promise.all(
+          pending.map(async (r) => {
+            const key = `${r.sent_by_account_id}|${r.phone_number}`;
+            const match = msgIndex.get(key);
+            if (!match) return;
+
+            const nextStatus = match.status === 'sent' ? 'sent' : 'failed';
+            await supabase
+              .from('campaign_recipients')
+              .update({
+                status: nextStatus,
+                sent_at: nextStatus === 'sent' ? match.delivered_at : null,
+              })
+              .eq('id', r.id);
+
+            // Update local copy immediately so report is correct even before next fetch
+            r.status = nextStatus as any;
+          }),
+        );
       }
-    };
-    
-    if (campaigns.length > 0) {
-      fetchReports();
+
+      const report: CampaignReport = {
+        successful: recipients.filter((r) => r.status === 'sent').length,
+        failed: recipients.filter((r) => r.status === 'failed').length,
+        pending: recipients.filter((r) => r.status === 'pending').length,
+        total: recipients.length,
+      };
+
+      setCampaignReports((prev) => new Map(prev).set(campaign.id, report));
     }
   }, [campaigns]);
+
+  useEffect(() => {
+    if (campaigns.length > 0) fetchReports();
+  }, [campaigns.length, fetchReports]);
 
   const handleCreateCampaign = async () => {
     if (!newCampaign.name) {
@@ -187,6 +236,8 @@ const Campaigns: React.FC = () => {
   const handleStartCampaign = async (campaignId: string) => {
     setIsStarting(campaignId);
     await startCampaign(campaignId);
+    // Refresh counts quickly after queueing
+    await fetchReports();
     setIsStarting(null);
   };
 
