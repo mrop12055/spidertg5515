@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { TelegramProvider } from "./context/TelegramContext";
+import { ThemeProvider } from "./context/ThemeContext";
 import Dashboard from "./pages/Dashboard";
 import Accounts from "./pages/Accounts";
 import Proxies from "./pages/Proxies";
@@ -18,10 +19,10 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <AuthProvider>
-      <TelegramProvider>
-        <TooltipProvider>
-          <div className="dark">
+    <ThemeProvider>
+      <AuthProvider>
+        <TelegramProvider>
+          <TooltipProvider>
             <Toaster />
             <Sonner />
             <BrowserRouter>
@@ -37,10 +38,10 @@ const App = () => (
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>
-          </div>
-        </TooltipProvider>
-      </TelegramProvider>
-    </AuthProvider>
+          </TooltipProvider>
+        </TelegramProvider>
+      </AuthProvider>
+    </ThemeProvider>
   </QueryClientProvider>
 );
 

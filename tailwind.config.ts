@@ -67,10 +67,17 @@ export default {
         },
         status: {
           active: "hsl(var(--status-active))",
+          "active-foreground": "hsl(var(--status-active-foreground))",
           banned: "hsl(var(--status-banned))",
+          "banned-foreground": "hsl(var(--status-banned-foreground))",
           restricted: "hsl(var(--status-restricted))",
+          "restricted-foreground": "hsl(var(--status-restricted-foreground))",
+          warning: "hsl(var(--status-warning))",
+          "warning-foreground": "hsl(var(--status-warning-foreground))",
           disconnected: "hsl(var(--status-disconnected))",
+          "disconnected-foreground": "hsl(var(--status-disconnected-foreground))",
           cooldown: "hsl(var(--status-cooldown))",
+          "cooldown-foreground": "hsl(var(--status-cooldown-foreground))",
         },
       },
       borderRadius: {
