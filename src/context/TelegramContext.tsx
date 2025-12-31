@@ -178,6 +178,28 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         })));
       }
 
+      // Fetch messages
+      const { data: messagesData } = await supabase
+        .from('messages')
+        .select('*, conversations(recipient_phone)')
+        .order('created_at', { ascending: false })
+        .limit(500);
+
+      if (messagesData) {
+        setMessages(messagesData.map(m => ({
+          id: m.id,
+          conversationId: m.conversation_id,
+          accountId: m.account_id,
+          recipientPhone: m.conversations?.recipient_phone || '',
+          content: m.content,
+          direction: m.direction as Message['direction'],
+          status: m.status as Message['status'],
+          timestamp: new Date(m.created_at),
+          telegramMessageId: m.telegram_message_id || undefined,
+          failedReason: (m as any).failed_reason || undefined,
+        })));
+      }
+
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -583,14 +605,13 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       const newMessage: Message = {
         id: msgData.id,
         accountId,
-        recipientId: recipientPhone,
+        conversationId: msgData.conversation_id,
         recipientPhone,
         recipientName: conv?.recipientName,
         content,
         direction: 'outgoing',
-        status: 'sent',
+        status: 'pending',
         timestamp: new Date(),
-        threadId: `thread-${recipientPhone}`
       };
       setMessages(prev => [...prev, newMessage]);
       

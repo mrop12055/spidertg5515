@@ -38,14 +38,17 @@ export interface Proxy {
 export interface Message {
   id: string;
   accountId: string;
-  recipientId: string;
+  conversationId: string;
+  recipientId?: string;
   recipientPhone: string;
   recipientName?: string;
   content: string;
   direction: 'incoming' | 'outgoing';
-  status: 'sent' | 'delivered' | 'read' | 'failed';
+  status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
   timestamp: Date;
-  threadId: string;
+  threadId?: string;
+  telegramMessageId?: number;
+  failedReason?: string;
 }
 
 export interface Conversation {
