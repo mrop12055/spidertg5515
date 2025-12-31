@@ -24,11 +24,17 @@ const SetupGuide: React.FC = () => {
 
   const pythonScript = `#!/usr/bin/env python3
 """
-TelegramCRM Bulk Message Sender & Receiver with Account Scheduling
+TelegramCRM Dual-Mode Message Sender & Receiver
+===============================================
 Run this script on your PC to send queued messages and receive incoming replies.
 Session files are downloaded from the database (base64 encoded).
 Supports sending and receiving images.
-Features automatic account rotation based on daily limits and cooldown.
+
+DUAL MODE OPERATION:
+  • Campaign Mode: Controlled intervals for first-contact messages (uses account rotation)
+  • Live Chat Mode: Fast 1-2 second checks for active conversations (after customer replies)
+
+A conversation is "live" when the customer has replied within the last 5 minutes.
 """
 
 import asyncio
@@ -38,9 +44,9 @@ import tempfile
 import httpx
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 # Install: pip install telethon supabase httpx
 from telethon import TelegramClient, events
@@ -57,6 +63,11 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 
 # Temp folder for session files
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
+
+# ========== DUAL MODE CONFIGURATION ==========
+CAMPAIGN_CHECK_INTERVAL = 10  # seconds - for campaign messages
+LIVE_CHAT_CHECK_INTERVAL = 1  # seconds - for live conversations (customer replied)
+LIVE_CONVERSATION_TIMEOUT = 5  # minutes - conversation stays "live" after last incoming message
 
 # Default settings (can be overridden by scheduler settings from localStorage)
 DEFAULT_MESSAGE_DELAY = 2
@@ -858,57 +869,241 @@ def print_scheduler_status():
             print(f"       {status_icon} {state.phone_number}: {state.messages_sent_today}/{state.daily_limit} msgs, priority: {priority:.0f}{cooldown_info}{active}")
 
 
-async def main():
+async def get_live_conversations() -> Set[str]:
+    """
+    Get conversation IDs that are 'live' (have incoming messages in last 5 minutes).
+    A conversation is live when the customer has replied recently.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=LIVE_CONVERSATION_TIMEOUT)
+    
+    # Get conversations with recent incoming messages
+    result = supabase.table("messages").select(
+        "conversation_id"
+    ).eq("direction", "incoming").gte(
+        "created_at", cutoff.isoformat()
+    ).execute()
+    
+    return set(msg["conversation_id"] for msg in (result.data or []))
+
+
+async def get_live_pending_messages(live_conv_ids: Set[str]):
+    """Get pending messages ONLY for live conversations (fast send)"""
+    if not live_conv_ids:
+        return []
+    
+    result = supabase.table("messages").select(
+        "*, conversations(*)"
+    ).eq("status", "pending").eq("direction", "outgoing").execute()
+    
+    # Filter to only live conversations
+    return [
+        msg for msg in (result.data or [])
+        if msg.get("conversation_id") in live_conv_ids
+    ]
+
+
+async def get_campaign_pending_messages(live_conv_ids: Set[str]):
+    """Get pending messages for NON-live conversations (campaign mode)"""
+    result = supabase.table("messages").select(
+        "*, conversations(*)"
+    ).eq("status", "pending").eq("direction", "outgoing").limit(50).execute()
+    
+    # Filter OUT live conversations (handled by live loop)
+    return [
+        msg for msg in (result.data or [])
+        if msg.get("conversation_id") not in live_conv_ids
+    ]
+
+
+async def live_chat_loop():
+    """
+    Fast loop for live conversations - checks every 1-2 seconds.
+    Used when customer has replied and we need instant message delivery.
+    """
+    print("\\n🚀 Live Chat Mode: Checking every 1-2 seconds for active chats...")
+    
+    while True:
+        try:
+            live_conv_ids = await get_live_conversations()
+            
+            if live_conv_ids:
+                messages = await get_live_pending_messages(live_conv_ids)
+                
+                if messages:
+                    print(f"\\n⚡ Live: {len(messages)} message(s) to send immediately")
+                    
+                    for msg in messages:
+                        conv = msg.get("conversations", {}) or {}
+                        account_id = msg.get("account_id")
+                        
+                        if account_id and account_id in active_clients:
+                            client = active_clients[account_id]
+                            recipient = conv.get("recipient_username") or conv.get("recipient_phone")
+                            
+                            if not recipient:
+                                await update_message_status(msg["id"], "failed", "No recipient")
+                                continue
+                            
+                            media_url = msg.get("media_url")
+                            media_type = msg.get("media_type")
+                            
+                            success, error = await send_message(
+                                client, recipient, msg["content"], media_url, media_type
+                            )
+                            
+                            if success:
+                                await update_message_status(msg["id"], "sent")
+                                await increment_account_message_count(account_id)
+                                print(f"    ⚡ Sent instantly to {recipient}")
+                            else:
+                                await update_message_status(msg["id"], "failed", error)
+                                print(f"    ✗ Failed: {error}")
+                        else:
+                            # Account not connected, mark as pending for later
+                            pass
+            
+            await asyncio.sleep(LIVE_CHAT_CHECK_INTERVAL)
+        except Exception as e:
+            print(f"  ⚠ Live chat error: {e}")
+            await asyncio.sleep(2)
+
+
+async def campaign_loop():
+    """
+    Slower loop for campaign/first-contact messages.
+    Uses account rotation, cooldowns, and controlled intervals.
+    """
     global current_account_id, messages_sent_by_current
     
-    print("=" * 60)
-    print("TelegramCRM Message Sender & Receiver with Account Scheduler")
-    print(f"Session folder: {SESSION_FOLDER}")
-    print("Supports: Text messages, Images, Auto-rotation, Contact Validation")
-    print("=" * 60)
+    print("\\n📢 Campaign Mode: Using configured intervals for first-contact messages...")
+    
+    while True:
+        try:
+            # Get live conversations to exclude
+            live_conv_ids = await get_live_conversations()
+            
+            # Get only non-live pending messages
+            campaign_messages = await get_campaign_pending_messages(live_conv_ids)
+            validating_recipients = await get_validating_recipients()
+            
+            accounts = await load_accounts()
+            
+            if campaign_messages or validating_recipients:
+                print(f"\\n[{datetime.now().strftime('%H:%M:%S')}] Campaign check...")
+                print(f"  Campaign messages: {len(campaign_messages)} (excluding {len(live_conv_ids)} live convs)")
+                print(f"  Recipients to validate: {len(validating_recipients)}")
+                
+                print_scheduler_status()
+                
+                # Initialize current account if needed
+                if scheduler_settings.enabled and (current_account_id is None or should_rotate_account()):
+                    new_account = rotate_account()
+                    if not new_account and campaign_messages:
+                        print("  ⚠ No accounts available!")
+                        await asyncio.sleep(60)
+                        continue
+                
+                # Process each account
+                for account in accounts:
+                    # Validate recipients using first available account
+                    if validating_recipients and account["id"] in active_clients:
+                        client = active_clients[account["id"]]
+                        await validate_recipients(client)
+                        validating_recipients = []
+                    
+                    # Process campaign messages
+                    await process_account(account, campaign_messages)
+            
+            await asyncio.sleep(CAMPAIGN_CHECK_INTERVAL)
+        except Exception as e:
+            print(f"  ⚠ Campaign error: {e}")
+            await asyncio.sleep(5)
+
+
+async def initialize_clients():
+    """Initialize all Telegram clients and set up message handlers"""
+    print("\\n📱 Initializing Telegram clients...")
+    
+    accounts = await load_accounts()
+    
+    for account in accounts:
+        account_id = account["id"]
+        session_path = account.get("_session_path")
+        
+        if not session_path:
+            continue
+        
+        if account_id in active_clients:
+            continue
+        
+        try:
+            client = TelegramClient(session_path, int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+            await client.connect()
+            
+            if not await client.is_user_authorized():
+                print(f"  ⚠ Session expired for {account['phone_number']}")
+                supabase.table("telegram_accounts").update({"status": "disconnected"}).eq("id", account_id).execute()
+                continue
+            
+            # Set up incoming message handler
+            await setup_message_handler(client, account_id)
+            active_clients[account_id] = client
+            
+            # Get and update account info
+            me = await client.get_me()
+            if me:
+                update_data = {
+                    "status": "active",
+                    "last_active": datetime.now(timezone.utc).isoformat()
+                }
+                if me.first_name:
+                    update_data["first_name"] = me.first_name
+                if me.last_name:
+                    update_data["last_name"] = me.last_name
+                if me.username:
+                    update_data["username"] = me.username
+                if me.id:
+                    update_data["telegram_id"] = me.id
+                if me.phone:
+                    update_data["phone_number"] = f"+{me.phone}"
+                
+                supabase.table("telegram_accounts").update(update_data).eq("id", account_id).execute()
+                
+                display_name = me.first_name or me.username or me.phone
+                print(f"  ✓ {display_name} connected and listening")
+        except Exception as e:
+            print(f"  ⚠ Failed to connect {account['phone_number']}: {e}")
+    
+    print(f"  Total clients: {len(active_clients)}")
+
+
+async def main():
+    """Main entry point - runs both Campaign and Live Chat loops in parallel"""
+    print("=" * 70)
+    print("  TelegramCRM - DUAL MODE Message Sender & Receiver")
+    print("=" * 70)
+    print("  • Campaign Mode: Controlled intervals for first-contact messages")
+    print("  • Live Chat Mode: Instant delivery (1-2s) for active conversations")
+    print(f"  • Session folder: {SESSION_FOLDER}")
+    print("=" * 70)
     
     # Load scheduler settings
     load_scheduler_settings()
     
-    while True:
-        print(f"\\n[{datetime.now().strftime('%H:%M:%S')}] Checking for pending tasks...")
-        
-        accounts = await load_accounts()
-        messages = await get_pending_messages()
-        validating_recipients = await get_validating_recipients()
-        
-        print(f"  Active accounts: {len(accounts)}")
-        print(f"  Pending messages: {len(messages)}")
-        print(f"  Recipients to validate: {len(validating_recipients)}")
-        
-        # Print scheduler status
-        print_scheduler_status()
-        
-        # Initialize current account if needed
-        if scheduler_settings.enabled and (current_account_id is None or should_rotate_account()):
-            new_account = rotate_account()
-            if not new_account and (messages or validating_recipients):
-                print("  ⚠ No accounts available!")
-                # Wait before retrying
-                await asyncio.sleep(60)
-                continue
-        
-        for account in accounts:
-            print(f"\\nProcessing account: {account['phone_number']}")
-            
-            # First, validate any pending recipients using this account
-            if validating_recipients and account["id"] in active_clients:
-                client = active_clients[account["id"]]
-                await validate_recipients(client)
-                # Only validate once per cycle
-                validating_recipients = []
-            
-            await process_account(account, messages)
-        
-        # Keep clients running to receive messages
-        check_interval = scheduler_settings.message_interval if scheduler_settings.enabled else DEFAULT_CHECK_INTERVAL
-        print(f"\\n  Listening for incoming messages... (checking again in {check_interval}s)")
-        await asyncio.sleep(check_interval)
+    # Initialize all clients first
+    await initialize_clients()
+    
+    if not active_clients:
+        print("\\n❌ No active clients! Please check your session files.")
+        return
+    
+    print("\\n✓ Starting dual-mode operation...")
+    
+    # Run BOTH loops in parallel
+    await asyncio.gather(
+        live_chat_loop(),    # Fast - every 1-2 seconds for live chats
+        campaign_loop()      # Slow - with rotation/delays for campaigns
+    )
 
 
 async def shutdown():
@@ -920,14 +1115,12 @@ async def shutdown():
 
 
 if __name__ == "__main__":
-    print("Starting sender & receiver with scheduler... Press Ctrl+C to stop.")
+    print("Starting DUAL-MODE sender & receiver... Press Ctrl+C to stop.")
     print("Required: pip install telethon supabase httpx")
     print("")
-    print("Features:")
-    print("  • Auto-validates phone numbers on Telegram")
-    print("  • Auto-fetches recipient names from Telegram")
-    print("  • Skips invalid numbers (not on Telegram)")
-    print("  • Detects duplicates before uploading")
+    print("MODES:")
+    print("  📢 Campaign: First-contact messages with rotation & intervals")
+    print("  ⚡ Live Chat: Instant delivery when customer has replied")
     print("")
     print("TIP: Create 'scheduler_settings.json' with your campaign settings:")
     print('  {"enabled": true, "maxMessagesBeforeRotation": 5, "cooldownDuration": 30, ...}')
