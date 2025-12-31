@@ -1077,13 +1077,137 @@ async def initialize_clients():
     print(f"  Total clients: {len(active_clients)}")
 
 
+async def spambot_check_loop():
+    """
+    Process queued SpamBot check tasks.
+    Sends /start to @SpamBot and parses response to determine account status.
+    """
+    print("\\n🤖 SpamBot Check Loop: Monitoring for check tasks...")
+    
+    while True:
+        try:
+            # Fetch pending check tasks
+            result = supabase.table("account_check_tasks").select(
+                "*, telegram_accounts(*)"
+            ).eq("status", "pending").eq("task_type", "spambot_check").limit(10).execute()
+            
+            tasks = result.data or []
+            
+            for task in tasks:
+                account_id = task["account_id"]
+                task_id = task["id"]
+                
+                # Check if we have an active client for this account
+                if account_id not in active_clients:
+                    supabase.table("account_check_tasks").update({
+                        "status": "failed",
+                        "result": "Account not connected. Run the script to connect accounts first.",
+                        "completed_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", task_id).execute()
+                    continue
+                
+                client = active_clients[account_id]
+                phone = task.get("telegram_accounts", {}).get("phone_number", "Unknown")
+                
+                print(f"  🔍 Checking @SpamBot for {phone}...")
+                
+                # Update task to processing
+                supabase.table("account_check_tasks").update({
+                    "status": "processing"
+                }).eq("id", task_id).execute()
+                
+                try:
+                    # Get SpamBot entity
+                    spambot = await client.get_entity("@SpamBot")
+                    
+                    # Send /start
+                    await client.send_message(spambot, "/start")
+                    
+                    # Wait for response
+                    await asyncio.sleep(3)
+                    
+                    # Get last message from SpamBot
+                    messages = await client.get_messages(spambot, limit=1)
+                    response_text = messages[0].text if messages else "No response from SpamBot"
+                    
+                    # Parse response to determine status
+                    response_lower = response_text.lower()
+                    new_status = "active"
+                    ban_reason = None
+                    restricted_until = None
+                    
+                    if "no limits" in response_lower or "good news" in response_lower or "free to message" in response_lower:
+                        new_status = "active"
+                        print(f"    ✓ {phone}: No limits!")
+                    elif "limited" in response_lower or "restricted" in response_lower:
+                        new_status = "restricted"
+                        # Try to extract time info
+                        import re
+                        time_match = re.search(r'(\\d+)\\s*(hour|day|minute)', response_lower)
+                        if time_match:
+                            amount = int(time_match.group(1))
+                            unit = time_match.group(2)
+                            if unit == "hour":
+                                restricted_until = (datetime.now(timezone.utc) + timedelta(hours=amount)).isoformat()
+                            elif unit == "day":
+                                restricted_until = (datetime.now(timezone.utc) + timedelta(days=amount)).isoformat()
+                            elif unit == "minute":
+                                restricted_until = (datetime.now(timezone.utc) + timedelta(minutes=amount)).isoformat()
+                        print(f"    ⚠ {phone}: Restricted!")
+                    elif "banned" in response_lower or "cannot send" in response_lower:
+                        new_status = "banned"
+                        ban_reason = response_text[:200]
+                        print(f"    ✗ {phone}: Banned!")
+                    else:
+                        print(f"    ? {phone}: Unknown response")
+                    
+                    # Update account status in database
+                    update_data = {"status": new_status}
+                    if ban_reason:
+                        update_data["ban_reason"] = ban_reason
+                    if restricted_until:
+                        update_data["restricted_until"] = restricted_until
+                    
+                    supabase.table("telegram_accounts").update(update_data).eq("id", account_id).execute()
+                    
+                    # Update account state
+                    if account_id in account_states:
+                        account_states[account_id].status = new_status
+                    
+                    # Mark task completed
+                    supabase.table("account_check_tasks").update({
+                        "status": "completed",
+                        "result": response_text[:500],
+                        "completed_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", task_id).execute()
+                    
+                except Exception as e:
+                    error_msg = str(e)[:500]
+                    print(f"    ✗ Error checking {phone}: {error_msg}")
+                    supabase.table("account_check_tasks").update({
+                        "status": "failed",
+                        "result": error_msg,
+                        "completed_at": datetime.now(timezone.utc).isoformat()
+                    }).eq("id", task_id).execute()
+                
+                # Small delay between checks
+                await asyncio.sleep(2)
+            
+            # Wait before checking for more tasks
+            await asyncio.sleep(5)
+        except Exception as e:
+            print(f"  ⚠ SpamBot check error: {e}")
+            await asyncio.sleep(5)
+
+
 async def main():
-    """Main entry point - runs both Campaign and Live Chat loops in parallel"""
+    """Main entry point - runs Campaign, Live Chat, and SpamBot check loops in parallel"""
     print("=" * 70)
     print("  TelegramCRM - DUAL MODE Message Sender & Receiver")
     print("=" * 70)
     print("  • Campaign Mode: Controlled intervals for first-contact messages")
     print("  • Live Chat Mode: Instant delivery (1-2s) for active conversations")
+    print("  • SpamBot Check: Monitors for account restriction check tasks")
     print(f"  • Session folder: {SESSION_FOLDER}")
     print("=" * 70)
     
@@ -1097,12 +1221,13 @@ async def main():
         print("\\n❌ No active clients! Please check your session files.")
         return
     
-    print("\\n✓ Starting dual-mode operation...")
+    print("\\n✓ Starting triple-mode operation...")
     
-    # Run BOTH loops in parallel
+    # Run ALL loops in parallel
     await asyncio.gather(
-        live_chat_loop(),    # Fast - every 1-2 seconds for live chats
-        campaign_loop()      # Slow - with rotation/delays for campaigns
+        live_chat_loop(),       # Fast - every 1-2 seconds for live chats
+        campaign_loop(),        # Slow - with rotation/delays for campaigns
+        spambot_check_loop()    # SpamBot restriction checks
     )
 
 

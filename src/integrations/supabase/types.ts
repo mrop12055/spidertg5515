@@ -14,6 +14,36 @@ export type Database = {
   }
   public: {
     Tables: {
+      account_check_tasks: {
+        Row: {
+          account_id: string
+          completed_at: string | null
+          created_at: string | null
+          id: string
+          result: string | null
+          status: string
+          task_type: string
+        }
+        Insert: {
+          account_id: string
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          result?: string | null
+          status?: string
+          task_type?: string
+        }
+        Update: {
+          account_id?: string
+          completed_at?: string | null
+          created_at?: string | null
+          id?: string
+          result?: string | null
+          status?: string
+          task_type?: string
+        }
+        Relationships: []
+      }
       campaign_accounts: {
         Row: {
           account_id: string
