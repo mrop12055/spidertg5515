@@ -235,6 +235,8 @@ export type Database = {
           direction: Database["public"]["Enums"]["message_direction"]
           failed_reason: string | null
           id: string
+          media_type: string | null
+          media_url: string | null
           read_at: string | null
           status: Database["public"]["Enums"]["message_status"] | null
           telegram_message_id: number | null
@@ -248,6 +250,8 @@ export type Database = {
           direction: Database["public"]["Enums"]["message_direction"]
           failed_reason?: string | null
           id?: string
+          media_type?: string | null
+          media_url?: string | null
           read_at?: string | null
           status?: Database["public"]["Enums"]["message_status"] | null
           telegram_message_id?: number | null
@@ -261,6 +265,8 @@ export type Database = {
           direction?: Database["public"]["Enums"]["message_direction"]
           failed_reason?: string | null
           id?: string
+          media_type?: string | null
+          media_url?: string | null
           read_at?: string | null
           status?: Database["public"]["Enums"]["message_status"] | null
           telegram_message_id?: number | null

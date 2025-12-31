@@ -9,29 +9,34 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { 
   Send, 
   Search, 
   Phone, 
   MoreVertical, 
   Paperclip, 
-  Smile, 
   Check, 
   CheckCheck,
   MessageSquare,
   Clock,
   Plus,
   UserPlus,
-  XCircle
+  XCircle,
+  Image,
+  X,
+  Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, isToday, isYesterday, isSameDay } from 'date-fns';
+import { toast } from 'sonner';
 
 const Chat: React.FC = () => {
   const { 
     conversations, 
     messages, 
     sendMessage, 
+    sendMediaMessage,
     accounts, 
     typingUsers,
     markConversationAsRead,
@@ -47,7 +52,11 @@ const Chat: React.FC = () => {
   const [newChatPhone, setNewChatPhone] = useState('');
   const [newChatName, setNewChatName] = useState('');
   const [selectedAccountId, setSelectedAccountId] = useState(accounts[0]?.id || '');
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isSendingMedia, setIsSendingMedia] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedConv = conversations.find(c => c.id === selectedConversation);
   const conversationMessages = messages
@@ -74,11 +83,23 @@ const Chat: React.FC = () => {
     }
   }, [selectedConversation, markConversationAsRead]);
 
-  const handleSendMessage = () => {
-    if (!messageInput.trim() || !selectedConv) return;
+  const handleSendMessage = async () => {
+    if ((!messageInput.trim() && !selectedImage) || !selectedConv) return;
     
     const account = accounts.find(a => a.id === selectedConv.accountId) || accounts[0];
-    if (account) {
+    if (!account) return;
+
+    if (selectedImage) {
+      setIsSendingMedia(true);
+      try {
+        await sendMediaMessage(account.id, selectedConv.recipientPhone, selectedImage, messageInput || undefined);
+        setSelectedImage(null);
+        setImagePreview(null);
+        setMessageInput('');
+      } finally {
+        setIsSendingMedia(false);
+      }
+    } else {
       sendMessage(account.id, selectedConv.recipientPhone, messageInput);
       setMessageInput('');
     }
@@ -88,6 +109,36 @@ const Chat: React.FC = () => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
+    }
+  };
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        toast.error('Please select an image file');
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast.error('Image must be less than 10MB');
+        return;
+      }
+      setSelectedImage(file);
+      const reader = new FileReader();
+      reader.onload = (e) => setImagePreview(e.target?.result as string);
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    setMessageInput(prev => prev + emoji);
+  };
+
+  const clearSelectedImage = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
 
@@ -422,7 +473,21 @@ const Chat: React.FC = () => {
                                       : "rounded-r-2xl rounded-l-md")
                                   )}
                                 >
-                                  <p className="text-sm leading-relaxed break-words">{msg.content}</p>
+                                  {/* Display image if present */}
+                                  {msg.mediaUrl && msg.mediaType === 'image' && (
+                                    <div className="mb-2 -mx-1 -mt-1">
+                                      <img 
+                                        src={msg.mediaUrl} 
+                                        alt="Shared image" 
+                                        className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
+                                        style={{ maxHeight: '300px' }}
+                                        onClick={() => window.open(msg.mediaUrl, '_blank')}
+                                      />
+                                    </div>
+                                  )}
+                                  {msg.content && (
+                                    <p className="text-sm leading-relaxed break-words">{msg.content}</p>
+                                  )}
                                   {/* Show failed reason if message failed */}
                                   {msg.status === 'failed' && msg.failedReason && (
                                     <p className="text-xs text-destructive mt-1 pt-1 border-t border-destructive/20">
@@ -472,16 +537,49 @@ const Chat: React.FC = () => {
 
               {/* Message Input */}
               <div className="p-3 bg-card border-t border-border">
+                {/* Image Preview */}
+                {imagePreview && (
+                  <div className="max-w-3xl mx-auto mb-3">
+                    <div className="relative inline-block">
+                      <img 
+                        src={imagePreview} 
+                        alt="Preview" 
+                        className="h-24 rounded-lg object-cover border border-border"
+                      />
+                      <Button
+                        variant="destructive"
+                        size="icon"
+                        className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+                        onClick={clearSelectedImage}
+                      >
+                        <X className="w-3 h-3" />
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                
                 <div className="max-w-3xl mx-auto flex items-end gap-2">
-                  <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground h-10 w-10">
-                    <Smile className="w-6 h-6" />
+                  <EmojiPicker onEmojiSelect={handleEmojiSelect} className="h-10 w-10" />
+                  
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleImageSelect}
+                    accept="image/*"
+                    className="hidden"
+                  />
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="text-muted-foreground hover:text-foreground h-10 w-10"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Image className="w-6 h-6" />
                   </Button>
-                  <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground h-10 w-10">
-                    <Paperclip className="w-6 h-6" />
-                  </Button>
+                  
                   <div className="flex-1">
                     <Input
-                      placeholder="Type a message"
+                      placeholder={selectedImage ? "Add a caption..." : "Type a message"}
                       value={messageInput}
                       onChange={(e) => setMessageInput(e.target.value)}
                       onKeyDown={handleKeyPress}
@@ -490,11 +588,15 @@ const Chat: React.FC = () => {
                   </div>
                   <Button 
                     onClick={handleSendMessage} 
-                    disabled={!messageInput.trim()}
+                    disabled={(!messageInput.trim() && !selectedImage) || isSendingMedia}
                     size="icon"
                     className="h-10 w-10 rounded-full bg-primary hover:bg-primary/90"
                   >
-                    <Send className="w-5 h-5" />
+                    {isSendingMedia ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Send className="w-5 h-5" />
+                    )}
                   </Button>
                 </div>
               </div>
