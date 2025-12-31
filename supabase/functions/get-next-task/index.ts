@@ -24,6 +24,19 @@ serve(async (req) => {
 
     console.log(`[get-next-task] Request for account: ${account_id || 'any'}`);
 
+    // Reset any messages stuck in "sending" status for more than 2 minutes (Python may have crashed)
+    const sendingCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const { data: stuckMessages } = await supabase
+      .from("messages")
+      .update({ status: "pending" })
+      .eq("status", "sending")
+      .lt("created_at", sendingCutoff)
+      .select("id");
+    
+    if (stuckMessages && stuckMessages.length > 0) {
+      console.log(`[get-next-task] Reset ${stuckMessages.length} stuck messages`);
+    }
+
     // Get all active accounts
     const { data: accounts, error: accountsError } = await supabase
       .from("telegram_accounts")

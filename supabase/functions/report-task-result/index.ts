@@ -27,14 +27,15 @@ serve(async (req) => {
         const { message_id, success, error, campaign_recipient_id, account_id } = result;
 
         if (success) {
-          // Update message status
+          // Update message status (from pending or sending to sent)
           await supabase
             .from("messages")
             .update({
               status: "sent",
               delivered_at: new Date().toISOString(),
             })
-            .eq("id", message_id);
+            .eq("id", message_id)
+            .in("status", ["pending", "sending"]);
 
           // Increment account message count
           const { data: account } = await supabase
@@ -88,14 +89,15 @@ serve(async (req) => {
 
           console.log(`[report-task-result] Message ${message_id} sent successfully`);
         } else {
-          // Update message as failed
+          // Update message as failed (from pending or sending to failed)
           await supabase
             .from("messages")
             .update({
               status: "failed",
               failed_reason: error,
             })
-            .eq("id", message_id);
+            .eq("id", message_id)
+            .in("status", ["pending", "sending"]);
 
           // Update campaign recipient if applicable
           if (campaign_recipient_id) {
