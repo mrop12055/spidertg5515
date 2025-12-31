@@ -49,6 +49,8 @@ export interface Message {
   threadId?: string;
   telegramMessageId?: number;
   failedReason?: string;
+  mediaUrl?: string;
+  mediaType?: string;
 }
 
 export interface Conversation {

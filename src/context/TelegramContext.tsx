@@ -44,7 +44,8 @@ interface TelegramContextType {
   assignProxy: (accountId: string, proxyId: string) => void;
   
   // Message actions
-  sendMessage: (accountId: string, recipientPhone: string, content: string) => Promise<void>;
+  sendMessage: (accountId: string, recipientPhone: string, content: string, mediaUrl?: string, mediaType?: string) => Promise<void>;
+  sendMediaMessage: (accountId: string, recipientPhone: string, file: File, caption?: string) => Promise<void>;
   getConversationMessages: (conversationId: string) => Message[];
   markConversationAsRead: (conversationId: string) => Promise<void>;
   startNewConversation: (accountId: string, recipientPhone: string, recipientName?: string) => Promise<string>;
@@ -197,6 +198,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           timestamp: new Date(m.created_at),
           telegramMessageId: m.telegram_message_id || undefined,
           failedReason: (m as any).failed_reason || undefined,
+          mediaUrl: (m as any).media_url || undefined,
+          mediaType: (m as any).media_type || undefined,
         })));
       }
 
@@ -247,6 +250,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
               timestamp: new Date(m.created_at),
               telegramMessageId: m.telegram_message_id || undefined,
               failedReason: m.failed_reason || undefined,
+              mediaUrl: m.media_url || undefined,
+              mediaType: m.media_type || undefined,
             };
 
             setMessages(prev => {
@@ -697,7 +702,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [refreshData]);
 
-  const sendMessage = useCallback(async (accountId: string, recipientPhone: string, content: string) => {
+  const sendMessage = useCallback(async (accountId: string, recipientPhone: string, content: string, mediaUrl?: string, mediaType?: string) => {
     try {
       // Find or create conversation
       let conv = conversations.find(c => c.recipientPhone === recipientPhone && c.accountId === accountId);
@@ -729,6 +734,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           content,
           direction: 'outgoing',
           status: 'pending', // Python script will pick this up
+          media_url: mediaUrl,
+          media_type: mediaType,
         })
         .select()
         .single();
@@ -746,6 +753,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         direction: 'outgoing',
         status: 'pending',
         timestamp: new Date(),
+        mediaUrl,
+        mediaType,
       };
       setMessages(prev => [...prev, newMessage]);
       
@@ -756,6 +765,37 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       toast.error('Failed to send message');
     }
   }, [conversations, refreshData]);
+
+  const sendMediaMessage = useCallback(async (accountId: string, recipientPhone: string, file: File, caption?: string) => {
+    try {
+      // Upload file to storage
+      const fileName = `${Date.now()}_${file.name}`;
+      const filePath = `${accountId}/${fileName}`;
+      
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('message-attachments')
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('message-attachments')
+        .getPublicUrl(filePath);
+
+      // Determine media type
+      const mediaType = file.type.startsWith('image/') ? 'image' : 
+                        file.type.startsWith('video/') ? 'video' : 
+                        file.type.startsWith('audio/') ? 'audio' : 'document';
+
+      // Send message with media
+      await sendMessage(accountId, recipientPhone, caption || '', publicUrl, mediaType);
+      
+    } catch (error) {
+      console.error('Error sending media message:', error);
+      toast.error('Failed to send media');
+    }
+  }, [sendMessage]);
 
   const getConversationMessages = useCallback((conversationId: string) => {
     const conv = conversations.find(c => c.id === conversationId);
@@ -954,6 +994,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     deleteProxy,
     assignProxy,
     sendMessage,
+    sendMediaMessage,
     getConversationMessages,
     markConversationAsRead,
     startNewConversation,
