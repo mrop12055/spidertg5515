@@ -17,7 +17,7 @@ import {
   CheckCircle, XCircle, Loader2, Search, Filter, RefreshCw, 
   Check, Shield, Globe, Link2, Unlink, Download, MoreVertical,
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
-  Clock, MessageSquare
+  Clock, MessageSquare, ChevronDown, ChevronRight, Calendar
 } from 'lucide-react';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
 import { toast } from 'sonner';
@@ -25,6 +25,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useDropzone } from 'react-dropzone';
 import { cn } from '@/lib/utils';
 import JSZip from 'jszip';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { differenceInHours, differenceInMinutes, differenceInDays, formatDistanceToNow } from 'date-fns';
 
 const statusOptions: { value: AccountStatus; label: string; color: string }[] = [
   { value: 'active', label: 'Active', color: 'bg-green-500/20 text-green-600 border-green-500/30' },
@@ -75,6 +78,15 @@ const Accounts: React.FC = () => {
   const [newGroupName, setNewGroupName] = useState('');
   const [groups, setGroups] = useState<AccountGroup[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
+  
+  // Bulk proxy assignment
+  const [isBulkProxyOpen, setIsBulkProxyOpen] = useState(false);
+  const [selectedProxyId, setSelectedProxyId] = useState<string>('');
+  const [proxyRatio, setProxyRatio] = useState<'1' | '2' | '3'>('1');
+  const [isBulkProxyAssigning, setIsBulkProxyAssigning] = useState(false);
+  
+  // Collapsed section for unavailable accounts
+  const [showUnavailable, setShowUnavailable] = useState(false);
   
   // Messages sent today tracking
   const [messagesSentLast24h, setMessagesSentLast24h] = useState<Map<string, number>>(new Map());
@@ -376,6 +388,87 @@ const Accounts: React.FC = () => {
     toast.success(`Created group "${newGroupName}" with ${selectedIds.size} account(s)`);
   };
 
+  // Bulk proxy assignment
+  const handleBulkProxyAssign = async () => {
+    if (selectedIds.size === 0 || !selectedProxyId) return;
+    
+    setIsBulkProxyAssigning(true);
+    try {
+      const selectedAccountIds = Array.from(selectedIds);
+      const ratio = parseInt(proxyRatio);
+      
+      // Get available active proxies
+      const activeProxies = proxies.filter(p => p.status === 'active');
+      
+      if (activeProxies.length === 0) {
+        toast.error('No active proxies available');
+        return;
+      }
+      
+      // If single proxy selected, assign it based on ratio
+      if (selectedProxyId !== 'auto') {
+        for (let i = 0; i < selectedAccountIds.length; i++) {
+          await supabase
+            .from('telegram_accounts')
+            .update({ proxy_id: selectedProxyId })
+            .eq('id', selectedAccountIds[i]);
+        }
+        toast.success(`Assigned proxy to ${selectedAccountIds.length} account(s)`);
+      } else {
+        // Auto-assign proxies based on ratio
+        let proxyIndex = 0;
+        let accountsAssignedToCurrentProxy = 0;
+        
+        for (const accountId of selectedAccountIds) {
+          const proxyToAssign = activeProxies[proxyIndex % activeProxies.length];
+          
+          await supabase
+            .from('telegram_accounts')
+            .update({ proxy_id: proxyToAssign.id })
+            .eq('id', accountId);
+          
+          accountsAssignedToCurrentProxy++;
+          if (accountsAssignedToCurrentProxy >= ratio) {
+            proxyIndex++;
+            accountsAssignedToCurrentProxy = 0;
+          }
+        }
+        toast.success(`Auto-assigned ${activeProxies.length} proxy(s) to ${selectedAccountIds.length} account(s)`);
+      }
+      
+      setIsBulkProxyOpen(false);
+      setSelectedIds(new Set());
+      refreshData();
+    } catch (error) {
+      console.error('Error assigning proxies:', error);
+      toast.error('Failed to assign proxies');
+    } finally {
+      setIsBulkProxyAssigning(false);
+    }
+  };
+
+  // Get restriction time remaining
+  const getRestrictionTimeLeft = (restrictedUntil: Date | undefined) => {
+    if (!restrictedUntil) return null;
+    const now = new Date();
+    const diff = restrictedUntil.getTime() - now.getTime();
+    if (diff <= 0) return 'Expired';
+    
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    
+    if (hours > 24) {
+      const days = Math.floor(hours / 24);
+      return `${days}d ${hours % 24}h left`;
+    }
+    return `${hours}h ${minutes}m left`;
+  };
+
+  // Get account age in days
+  const getAccountAge = (createdAt: Date) => {
+    return differenceInDays(new Date(), createdAt);
+  };
+
   // Real session verification via edge function
   const handleBulkCheck = async () => {
     if (selectedIds.size === 0) return;
@@ -439,6 +532,14 @@ const Accounts: React.FC = () => {
     
     return matchesSearch && matchesStatus;
   });
+
+  // Split accounts into active and unavailable
+  const activeAccounts = filteredAccounts.filter(
+    a => !['banned', 'restricted'].includes(a.status)
+  );
+  const unavailableAccounts = filteredAccounts.filter(
+    a => ['banned', 'restricted'].includes(a.status)
+  );
 
   const removeSessionFile = (index: number) => {
     setSessionFiles(prev => prev.filter((_, i) => i !== index));
@@ -659,6 +760,10 @@ const Accounts: React.FC = () => {
                 <Users className="w-4 h-4 mr-2" />
                 Create Group
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsBulkProxyOpen(true)}>
+                <Globe className="w-4 h-4 mr-2" />
+                Assign Proxy
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive" onClick={handleBulkDelete}>
                 <Trash2 className="w-4 h-4 mr-2" />
@@ -754,6 +859,92 @@ const Accounts: React.FC = () => {
               <Button variant="outline" onClick={() => setIsGroupDialogOpen(false)}>Cancel</Button>
               <Button onClick={handleCreateGroup} disabled={!newGroupName.trim()}>
                 Create Group
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Proxy Assignment Dialog */}
+      <Dialog open={isBulkProxyOpen} onOpenChange={setIsBulkProxyOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Assign Proxy to {selectedIds.size} Account(s)</DialogTitle>
+            <DialogDescription>
+              Select a proxy and how many accounts each proxy should handle
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-4">
+            <div className="space-y-2">
+              <Label>Select Proxy</Label>
+              <Select value={selectedProxyId} onValueChange={setSelectedProxyId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose a proxy" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">
+                    <span className="flex items-center gap-2">
+                      <Globe className="w-4 h-4" />
+                      Auto-assign (rotate proxies)
+                    </span>
+                  </SelectItem>
+                  {proxies.filter(p => p.status === 'active').map(proxy => (
+                    <SelectItem key={proxy.id} value={proxy.id}>
+                      <span className="flex items-center gap-2">
+                        <Link2 className="w-4 h-4" />
+                        {proxy.host}:{proxy.port}
+                        {proxy.country && <span className="text-muted-foreground">({proxy.country})</span>}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <div className="space-y-2">
+              <Label>Accounts per Proxy</Label>
+              <RadioGroup value={proxyRatio} onValueChange={(v) => setProxyRatio(v as '1' | '2' | '3')}>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="1" id="ratio1" />
+                  <Label htmlFor="ratio1" className="cursor-pointer">1 proxy : 1 account</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="2" id="ratio2" />
+                  <Label htmlFor="ratio2" className="cursor-pointer">1 proxy : 2 accounts</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="3" id="ratio3" />
+                  <Label htmlFor="ratio3" className="cursor-pointer">1 proxy : 3 accounts</Label>
+                </div>
+              </RadioGroup>
+            </div>
+            
+            <div className="p-3 rounded-lg bg-accent/50 border text-sm">
+              <p className="text-muted-foreground">
+                {selectedProxyId === 'auto' 
+                  ? `Will assign ${Math.ceil(selectedIds.size / parseInt(proxyRatio))} proxy(s) to ${selectedIds.size} account(s)`
+                  : `Will assign the selected proxy to all ${selectedIds.size} account(s)`
+                }
+              </p>
+            </div>
+            
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setIsBulkProxyOpen(false)}>Cancel</Button>
+              <Button 
+                onClick={handleBulkProxyAssign} 
+                disabled={!selectedProxyId || isBulkProxyAssigning}
+              >
+                {isBulkProxyAssigning ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Assigning...
+                  </>
+                ) : (
+                  <>
+                    <Globe className="w-4 h-4 mr-2" />
+                    Assign Proxy
+                  </>
+                )}
               </Button>
             </div>
           </div>
@@ -948,7 +1139,7 @@ const Accounts: React.FC = () => {
                         {account.status === 'restricted' && account.restrictedUntil && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-500/20 text-yellow-600 border border-yellow-500/30 flex items-center gap-1">
                             <Clock className="w-3 h-3" />
-                            Until {account.restrictedUntil.toLocaleDateString()}
+                            {getRestrictionTimeLeft(account.restrictedUntil)}
                           </span>
                         )}
                       </div>
@@ -987,8 +1178,11 @@ const Accounts: React.FC = () => {
                         <div className="text-xs text-muted-foreground">Limit</div>
                       </div>
                       <div className="text-center">
-                        <div className="font-medium">{account.maturityDays || 0}d</div>
-                        <div className="text-xs text-muted-foreground">Age</div>
+                        <div className="font-medium flex items-center gap-1">
+                          <Calendar className="w-3 h-3 text-muted-foreground" />
+                          {getAccountAge(account.createdAt)}d
+                        </div>
+                        <div className="text-xs text-muted-foreground">Added</div>
                       </div>
                     </div>
 

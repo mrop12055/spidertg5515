@@ -34,8 +34,10 @@ import {
   Square
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { format, isToday, isYesterday, isSameDay } from 'date-fns';
+import { format, isToday, isYesterday, isSameDay, subDays } from 'date-fns';
 import { toast } from 'sonner';
+
+type TimeFilter = '24h' | '3d' | '7d';
 
 const Chat: React.FC = () => {
   const { 
@@ -74,17 +76,35 @@ const Chat: React.FC = () => {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isBlockDialogOpen, setIsBlockDialogOpen] = useState(false);
   const [singleActionConvId, setSingleActionConvId] = useState<string | null>(null);
+  
+  // Time filter state
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
 
   const selectedConv = conversations.find(c => c.id === selectedConversation);
   const conversationMessages = messages
     .filter(m => selectedConv && m.recipientPhone === selectedConv.recipientPhone)
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
+  // Filter conversations by time
+  const getTimeFilterCutoff = () => {
+    const now = new Date();
+    switch (timeFilter) {
+      case '24h': return subDays(now, 1);
+      case '3d': return subDays(now, 3);
+      case '7d': return subDays(now, 7);
+      default: return subDays(now, 1);
+    }
+  };
+
   const filteredConversations = conversations
-    .filter(c =>
-      c.recipientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.recipientPhone.includes(searchQuery)
-    )
+    .filter(c => {
+      const cutoff = getTimeFilterCutoff();
+      const matchesTime = new Date(c.updatedAt) >= cutoff;
+      const matchesSearch = 
+        c.recipientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        c.recipientPhone.includes(searchQuery);
+      return matchesTime && matchesSearch;
+    })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   const isTyping = selectedConv ? typingUsers[selectedConv.recipientPhone] : false;
@@ -392,7 +412,7 @@ const Chat: React.FC = () => {
               </>
             ) : (
               <>
-                <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center justify-between mb-2">
                   <h2 className="text-lg font-semibold">Chats</h2>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsSelectionMode(true)} title="Select chats">
@@ -452,6 +472,25 @@ const Chat: React.FC = () => {
                     </Dialog>
                   </div>
                 </div>
+                
+                {/* Time Filter Tabs */}
+                <div className="flex gap-1 mb-3 p-1 bg-secondary/50 rounded-lg">
+                  {(['24h', '3d', '7d'] as TimeFilter[]).map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => setTimeFilter(filter)}
+                      className={cn(
+                        "flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+                        timeFilter === filter 
+                          ? "bg-background shadow-sm text-foreground" 
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {filter === '24h' ? '24 Hours' : filter === '3d' ? '3 Days' : '7 Days'}
+                    </button>
+                  ))}
+                </div>
+                
                 <div className="relative">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                   <Input
@@ -522,12 +561,20 @@ const Chat: React.FC = () => {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-0.5">
-                            <span className={cn(
-                              "font-medium truncate",
-                              conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
-                            )}>
-                              {conv.recipientName || conv.recipientPhone}
-                            </span>
+                            <div className="flex items-center gap-2 truncate">
+                              <span className={cn(
+                                "font-medium truncate",
+                                conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
+                              )}>
+                                {conv.recipientName || conv.recipientPhone}
+                              </span>
+                              {conv.blockedByRecipient && (
+                                <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5">
+                                  <Ban className="w-2.5 h-2.5" />
+                                  Blocked
+                                </Badge>
+                              )}
+                            </div>
                             <span className={cn(
                               "text-xs flex-shrink-0 ml-2",
                               conv.unreadCount > 0 ? "text-primary font-medium" : "text-muted-foreground"
