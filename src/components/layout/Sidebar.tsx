@@ -10,7 +10,8 @@ import {
   Send,
   LogOut,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  BookOpen
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { icon: MessageSquare, label: 'Chat', path: '/chat' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: Settings, label: 'Settings', path: '/settings' },
+  { icon: BookOpen, label: 'VPS Guide', path: '/vps-guide' },
 ];
 
 export const Sidebar: React.FC = () => {
