@@ -4,47 +4,31 @@ This guide walks you through setting up a VPS from scratch to run your Telegram 
 
 ## Step 1: Create a VPS
 
-### Option A: DigitalOcean ($6/month)
-1. Go to [digitalocean.com](https://digitalocean.com) and create an account
-2. Click **Create** → **Droplets**
-3. Choose:
-   - **Region**: Pick one closest to you
-   - **Image**: Ubuntu 22.04 LTS
-   - **Size**: Basic → Regular → $6/mo (1GB RAM, 1 CPU)
-   - **Authentication**: Choose **Password** (easier) or SSH Key (more secure)
-4. Click **Create Droplet**
-5. Copy the **IP Address** shown (e.g., `165.232.xxx.xxx`)
+### Hostinger VPS ($4.99/month) ⭐ RECOMMENDED
 
-### Option B: Linode ($5/month)
-1. Go to [linode.com](https://linode.com) and create an account
-2. Click **Create Linode**
-3. Choose:
-   - **Image**: Ubuntu 22.04 LTS
-   - **Region**: Pick one closest to you
-   - **Plan**: Shared CPU → Nanode 1GB ($5/mo)
-   - Set a **Root Password**
-4. Click **Create Linode**
-5. Copy the **IP Address** shown
+**Best value VPS with crypto payment option!**
 
-### Option C: COIN.HOST (€4.50/month - Crypto Payment) ⭐ RECOMMENDED
-> **Perfect if your card isn't working!** COIN.HOST accepts Bitcoin, Ethereum, Litecoin, Monero, and other cryptocurrencies.
+**Specs:** 1 vCPU • 4GB RAM • 50GB NVMe SSD • 1TB Bandwidth
 
-1. Go to [coin.host](https://coin.host)
-2. Click **Cloud VPS** in the menu
-3. Choose:
-   - **Location**: Pick one closest to you (Switzerland, Netherlands, etc.)
-   - **OS**: Ubuntu 22.04 LTS
-   - **Plan**: SSD-1 (€4.50/mo - 1GB RAM, 1 vCPU, 25GB SSD)
-4. Click **Order Now**
-5. At checkout, select your cryptocurrency (BTC, ETH, LTC, XMR, etc.)
-6. Complete payment via your crypto wallet
-7. After deployment, copy the **IP Address** from your dashboard
+1. Go to [hostinger.com/vps-hosting](https://hostinger.com/vps-hosting)
+2. Choose the **KVM 1** plan ($4.99/month)
+3. Create an account or log in
+4. Choose:
+   - **Location**: Pick one closest to you (USA, Europe, Asia, etc.)
+   - **OS**: Ubuntu 22.04 64-bit
+5. Complete checkout:
+   - **Credit/Debit Card**: Direct payment
+   - **Crypto**: Pay via Coingate (BTC, ETH, LTC, etc.)
+6. Wait for VPS deployment (~2 minutes)
+7. Copy the **IP Address** from your Hostinger dashboard
 
-**Benefits of COIN.HOST:**
-- ✅ No credit card needed
-- ✅ Privacy-friendly (crypto payment)
-- ✅ Swiss quality hosting
-- ✅ Accepts 50+ cryptocurrencies
+**Why Hostinger VPS?**
+- ✅ Cheapest option at $4.99/month
+- ✅ Best specs: 4GB RAM (4x more than competitors at this price!)
+- ✅ Accepts crypto payments via Coingate
+- ✅ Simple control panel (hPanel)
+- ✅ 30-day money-back guarantee
+- ✅ 24/7 support
 
 ---
 

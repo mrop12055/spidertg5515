@@ -140,82 +140,44 @@ const VPSGuide: React.FC = () => {
             <Step
               number={1}
               title="Create a VPS"
-              description="Get a server from DigitalOcean, Linode, or COIN.HOST (crypto)"
+              description="Get a server from Hostinger VPS"
               completed={completedSteps.includes(1)}
               onToggle={() => toggleStep(1)}
               defaultOpen={true}
             >
               <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Server className="w-5 h-5 text-primary" />
-                      <span className="font-medium">DigitalOcean</span>
-                      <Badge variant="outline">$6/mo</Badge>
-                    </div>
-                    <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-                      <li>Go to digitalocean.com</li>
-                      <li>Create → Droplets</li>
-                      <li>Select Ubuntu 22.04 LTS</li>
-                      <li>Choose Basic $6/mo plan</li>
-                      <li>Set a password</li>
-                      <li>Create Droplet</li>
-                    </ol>
-                    <Button variant="outline" size="sm" className="mt-3 gap-2" asChild>
-                      <a href="https://digitalocean.com" target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="w-4 h-4" />
-                        Open DigitalOcean
-                      </a>
-                    </Button>
-                  </Card>
-                  
-                  <Card className="p-4">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Server className="w-5 h-5 text-primary" />
-                      <span className="font-medium">Linode</span>
-                      <Badge variant="outline">$5/mo</Badge>
-                    </div>
-                    <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-                      <li>Go to linode.com</li>
-                      <li>Click Create Linode</li>
-                      <li>Select Ubuntu 22.04 LTS</li>
-                      <li>Choose Nanode 1GB plan</li>
-                      <li>Set root password</li>
-                      <li>Create Linode</li>
-                    </ol>
-                    <Button variant="outline" size="sm" className="mt-3 gap-2" asChild>
-                      <a href="https://linode.com" target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="w-4 h-4" />
-                        Open Linode
-                      </a>
-                    </Button>
-                  </Card>
-
-                  <Card className="p-4 border-primary/50 bg-primary/5">
-                    <div className="flex items-center gap-2 mb-2 flex-wrap">
-                      <Server className="w-5 h-5 text-primary" />
-                      <span className="font-medium">COIN.HOST</span>
-                      <Badge variant="outline">€4.50/mo</Badge>
-                      <Badge className="bg-amber-500/20 text-amber-600 border-amber-500/30">Crypto</Badge>
-                    </div>
-                    <ol className="text-sm text-muted-foreground space-y-1 list-decimal list-inside">
-                      <li>Go to coin.host</li>
-                      <li>Click Cloud VPS</li>
-                      <li>Select Ubuntu 22.04 LTS</li>
-                      <li>Choose SSD-1 plan (1GB RAM)</li>
-                      <li>Pay with BTC, ETH, LTC, XMR</li>
-                      <li>Copy your IP address</li>
-                    </ol>
-                    <Button variant="outline" size="sm" className="mt-3 gap-2" asChild>
-                      <a href="https://coin.host" target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="w-4 h-4" />
-                        Open COIN.HOST
-                      </a>
-                    </Button>
-                  </Card>
-                </div>
+                <Card className="p-4 border-primary/50 bg-primary/5">
+                  <div className="flex items-center gap-2 mb-3 flex-wrap">
+                    <Server className="w-5 h-5 text-primary" />
+                    <span className="font-semibold text-lg">Hostinger VPS</span>
+                    <Badge variant="default">$4.99/mo</Badge>
+                    <Badge variant="outline">4GB RAM</Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Best value with crypto payment available via Coingate
+                  </p>
+                  <ol className="text-sm text-muted-foreground space-y-2 list-decimal list-inside">
+                    <li>Go to <strong>hostinger.com/vps-hosting</strong></li>
+                    <li>Choose <strong>KVM 1</strong> plan ($4.99/month)</li>
+                    <li>Select <strong>Ubuntu 22.04 64-bit</strong> as OS</li>
+                    <li>Complete checkout (Card or Crypto via Coingate)</li>
+                    <li>Wait for VPS to be deployed (~2 minutes)</li>
+                    <li>Copy your <strong>IP Address</strong> from the dashboard</li>
+                  </ol>
+                  <div className="mt-4 p-3 bg-muted/50 rounded-lg">
+                    <p className="text-xs text-muted-foreground">
+                      <strong>Specs:</strong> 1 vCPU • 4GB RAM • 50GB NVMe SSD • 1TB Bandwidth
+                    </p>
+                  </div>
+                  <Button variant="default" size="sm" className="mt-4 gap-2" asChild>
+                    <a href="https://hostinger.com/vps-hosting" target="_blank" rel="noopener noreferrer">
+                      <ExternalLink className="w-4 h-4" />
+                      Get Hostinger VPS
+                    </a>
+                  </Button>
+                </Card>
                 <p className="text-sm text-muted-foreground">
-                  After creating, copy your server's <strong>IP Address</strong> (e.g., 165.232.xxx.xxx)
+                  After creating, copy your server's <strong>IP Address</strong> from the Hostinger dashboard
                 </p>
               </div>
             </Step>
