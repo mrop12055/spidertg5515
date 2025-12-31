@@ -531,7 +531,13 @@ export type Database = {
         | "paused"
         | "completed"
       message_direction: "incoming" | "outgoing"
-      message_status: "pending" | "sent" | "delivered" | "read" | "failed"
+      message_status:
+        | "pending"
+        | "sent"
+        | "delivered"
+        | "read"
+        | "failed"
+        | "cancelled"
       proxy_status: "active" | "inactive" | "error"
       proxy_type: "http" | "https" | "socks4" | "socks5"
     }
@@ -670,7 +676,14 @@ export const Constants = {
       ],
       campaign_status: ["draft", "scheduled", "running", "paused", "completed"],
       message_direction: ["incoming", "outgoing"],
-      message_status: ["pending", "sent", "delivered", "read", "failed"],
+      message_status: [
+        "pending",
+        "sent",
+        "delivered",
+        "read",
+        "failed",
+        "cancelled",
+      ],
       proxy_status: ["active", "inactive", "error"],
       proxy_type: ["http", "https", "socks4", "socks5"],
     },

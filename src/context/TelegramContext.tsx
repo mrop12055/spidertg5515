@@ -937,13 +937,28 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const deleteCampaign = useCallback(async (id: string) => {
     try {
-      // Delete campaign accounts first
+      // First, get all campaign_recipient IDs for this campaign
+      const { data: recipientIds } = await supabase
+        .from('campaign_recipients')
+        .select('id')
+        .eq('campaign_id', id);
+
+      // Cancel all pending messages linked to these recipients
+      if (recipientIds?.length) {
+        await supabase
+          .from('messages')
+          .update({ status: 'cancelled', failed_reason: 'Campaign deleted' })
+          .in('campaign_recipient_id', recipientIds.map(r => r.id))
+          .eq('status', 'pending');
+      }
+
+      // Delete campaign accounts
       await supabase
         .from('campaign_accounts')
         .delete()
         .eq('campaign_id', id);
 
-      // Delete campaign recipients
+      // Delete campaign recipients (trigger will also cancel any remaining messages)
       await supabase
         .from('campaign_recipients')
         .delete()
