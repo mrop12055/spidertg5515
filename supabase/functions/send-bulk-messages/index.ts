@@ -281,7 +281,7 @@ serve(async (req) => {
           conversation = newConv;
         }
 
-        // Queue message with pending status
+        // Queue message with pending status - link to campaign recipient for direct status updates
         const { data: message, error: msgError } = await supabase
           .from('messages')
           .insert({
@@ -290,6 +290,7 @@ serve(async (req) => {
             content: personalizedMessage,
             direction: 'outgoing',
             status: 'pending',
+            campaign_recipient_id: recipient.id, // Link message to campaign recipient
           })
           .select()
           .single();
