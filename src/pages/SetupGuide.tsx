@@ -33,7 +33,7 @@ import asyncio
 import os
 import base64
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Install: pip install telethon supabase
 from telethon import TelegramClient
@@ -107,7 +107,7 @@ async def update_message_status(message_id: str, status: str, error: str = None)
     """Update message status in database"""
     update_data = {"status": status}
     if status == "sent":
-        update_data["delivered_at"] = datetime.utcnow().isoformat()
+        update_data["delivered_at"] = datetime.now(timezone.utc).isoformat()
     if error:
         update_data["failed_reason"] = error
     supabase.table("messages").update(update_data).eq("id", message_id).execute()
@@ -173,7 +173,7 @@ async def process_account(account: dict, messages: list):
         if me:
             update_data = {
                 "status": "active",
-                "last_active": datetime.utcnow().isoformat()
+                "last_active": datetime.now(timezone.utc).isoformat()
             }
             if me.first_name:
                 update_data["first_name"] = me.first_name
