@@ -209,99 +209,122 @@ if __name__ == "__main__":
     <DashboardLayout>
       <PageHeader
         title="Setup Guide"
-        description="Configure the Python sender script on your PC"
+        description="Complete beginner guide to run the sender script on your PC"
       />
 
       <div className="space-y-6">
-        {/* Requirements */}
-        <Card>
+        {/* Quick Overview */}
+        <Card className="border-primary/50 bg-primary/5">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Settings2 className="w-5 h-5 text-primary" />
-              Requirements
+              <Play className="w-5 h-5 text-primary" />
+              Quick Overview - What You'll Do
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid gap-4 md:grid-cols-3">
-              <div className="p-4 rounded-lg bg-accent/50 border">
-                <h4 className="font-medium mb-2">Python 3.8+</h4>
-                <p className="text-sm text-muted-foreground mb-2">Download from python.org</p>
-                <a 
-                  href="https://www.python.org/downloads/" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="text-primary text-sm flex items-center gap-1 hover:underline"
-                >
-                  Download Python <ExternalLink className="w-3 h-3" />
-                </a>
+          <CardContent>
+            <div className="grid gap-3 md:grid-cols-5">
+              <div className="text-center p-3">
+                <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center mx-auto mb-2 font-bold">1</div>
+                <p className="text-sm">Install Python</p>
               </div>
-              <div className="p-4 rounded-lg bg-accent/50 border">
-                <h4 className="font-medium mb-2">Telethon Library</h4>
-                <p className="text-sm text-muted-foreground mb-2">Telegram client for Python</p>
-                <code className="text-xs bg-background px-2 py-1 rounded">pip install telethon</code>
+              <div className="text-center p-3">
+                <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center mx-auto mb-2 font-bold">2</div>
+                <p className="text-sm">Create a folder</p>
               </div>
-              <div className="p-4 rounded-lg bg-accent/50 border">
-                <h4 className="font-medium mb-2">Supabase Library</h4>
-                <p className="text-sm text-muted-foreground mb-2">Database connection</p>
-                <code className="text-xs bg-background px-2 py-1 rounded">pip install supabase</code>
+              <div className="text-center p-3">
+                <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center mx-auto mb-2 font-bold">3</div>
+                <p className="text-sm">Download script</p>
+              </div>
+              <div className="text-center p-3">
+                <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center mx-auto mb-2 font-bold">4</div>
+                <p className="text-sm">Install libraries</p>
+              </div>
+              <div className="text-center p-3">
+                <div className="w-10 h-10 rounded-full bg-primary text-primary-foreground flex items-center justify-center mx-auto mb-2 font-bold">5</div>
+                <p className="text-sm">Run the script</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Step 1: Install Dependencies */}
+        {/* Step 1: Install Python */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Badge className="bg-primary text-primary-foreground">Step 1</Badge>
-              Install Dependencies
+              Install Python (if not installed)
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-muted-foreground">
-              Open your terminal/command prompt and run:
-            </p>
-            <div className="relative">
-              <pre className="bg-background p-4 rounded-lg border overflow-x-auto text-sm">
-                pip install telethon supabase
-              </pre>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="absolute top-2 right-2"
-                onClick={() => copyToClipboard('pip install telethon supabase', 'pip')}
-              >
-                {copied === 'pip' ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-              </Button>
+            <ol className="list-decimal list-inside space-y-3 text-muted-foreground">
+              <li>
+                Go to <a href="https://www.python.org/downloads/" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">
+                  python.org/downloads <ExternalLink className="w-3 h-3" />
+                </a>
+              </li>
+              <li>Click the big yellow <strong>"Download Python 3.x.x"</strong> button</li>
+              <li>Run the downloaded installer</li>
+              <li className="text-status-warning font-medium">
+                ⚠️ IMPORTANT: Check the box <strong>"Add Python to PATH"</strong> at the bottom!
+              </li>
+              <li>Click "Install Now" and wait for it to finish</li>
+            </ol>
+            
+            <div className="p-4 rounded-lg bg-accent/50 border">
+              <h4 className="font-medium mb-2">✅ Verify Installation</h4>
+              <p className="text-sm text-muted-foreground mb-2">Open CMD (Command Prompt) and type:</p>
+              <div className="relative">
+                <pre className="bg-background p-3 rounded-lg border text-sm">python --version</pre>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="absolute top-1 right-1"
+                  onClick={() => copyToClipboard('python --version', 'pyver')}
+                >
+                  {copied === 'pyver' ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">You should see something like: <code>Python 3.12.0</code></p>
             </div>
           </CardContent>
         </Card>
 
-        {/* Step 2: Download Script */}
+        {/* Step 2: Create Folder */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Badge className="bg-primary text-primary-foreground">Step 2</Badge>
-              Download the Sender Script
+              Create a Folder on Your PC
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ol className="list-decimal list-inside space-y-3 text-muted-foreground">
+              <li>Open <strong>File Explorer</strong> (Windows) or <strong>Finder</strong> (Mac)</li>
+              <li>Go to your <strong>Desktop</strong> or <strong>Documents</strong> folder</li>
+              <li>Right-click → <strong>New</strong> → <strong>Folder</strong></li>
+              <li>Name it something like: <code className="bg-accent px-2 py-1 rounded">telegram-sender</code></li>
+            </ol>
+            
+            <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">
+              <p className="text-sm">
+                📁 Your folder will look like: <code className="bg-background px-2 py-1 rounded">C:\Users\YourName\Desktop\telegram-sender</code>
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Step 3: Download Script */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Badge className="bg-primary text-primary-foreground">Step 3</Badge>
+              Download the Script
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-muted-foreground">
-              Save this Python script to your computer (e.g., <code className="bg-accent px-1 rounded">telegram_sender.py</code>):
+              Click the button below to download the script, then <strong>save it to your folder</strong> you created in Step 2:
             </p>
-            <div className="relative">
-              <pre className="bg-background p-4 rounded-lg border overflow-x-auto text-xs max-h-96">
-                {pythonScript}
-              </pre>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="absolute top-2 right-2"
-                onClick={() => copyToClipboard(pythonScript, 'script')}
-              >
-                {copied === 'script' ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
-              </Button>
-            </div>
             <Button 
               onClick={() => {
                 const blob = new Blob([pythonScript], { type: 'text/plain' });
@@ -311,41 +334,107 @@ if __name__ == "__main__":
                 a.download = 'telegram_sender.py';
                 a.click();
                 URL.revokeObjectURL(url);
-                toast.success('Script downloaded!');
+                toast.success('Script downloaded! Save it to your telegram-sender folder');
               }}
+              size="lg"
               className="gap-2"
             >
-              <Download className="w-4 h-4" />
-              Download Script
+              <Download className="w-5 h-5" />
+              Download telegram_sender.py
             </Button>
+            
+            <div className="p-4 rounded-lg bg-accent/50 border">
+              <p className="text-sm text-muted-foreground">
+                📁 After saving, your folder should have: <code className="bg-background px-2 py-1 rounded">telegram_sender.py</code>
+              </p>
+            </div>
           </CardContent>
         </Card>
 
-        {/* Step 3: Upload Session Files */}
+        {/* Step 4: Open CMD in Folder */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Badge className="bg-primary text-primary-foreground">Step 3</Badge>
-              Upload Session Files
+              <Badge className="bg-primary text-primary-foreground">Step 4</Badge>
+              Open CMD in Your Folder
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg bg-accent/50 border">
+                <h4 className="font-medium mb-2">🪟 Windows - Easy Method:</h4>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
+                  <li>Open your <strong>telegram-sender</strong> folder in File Explorer</li>
+                  <li>Click on the address bar at the top (where it shows the folder path)</li>
+                  <li>Type <code className="bg-background px-2 py-1 rounded">cmd</code> and press <strong>Enter</strong></li>
+                  <li>A black Command Prompt window will open in that folder!</li>
+                </ol>
+              </div>
+              
+              <div className="p-4 rounded-lg bg-accent/50 border">
+                <h4 className="font-medium mb-2">🍎 Mac - Easy Method:</h4>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
+                  <li>Open your <strong>telegram-sender</strong> folder in Finder</li>
+                  <li>Right-click the folder → <strong>Services</strong> → <strong>New Terminal at Folder</strong></li>
+                </ol>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Step 5: Install Libraries */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Badge className="bg-primary text-primary-foreground">Step 5</Badge>
+              Install Required Libraries
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-muted-foreground">
-              Go to the <strong>Accounts</strong> page and upload your <code className="bg-accent px-1 rounded">.session</code> files:
+              In the CMD/Terminal window, copy and paste this command and press <strong>Enter</strong>:
             </p>
-            <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
-              <li>Click <strong>"Add Accounts"</strong> button</li>
-              <li>Drag and drop your .session files (e.g., <code className="bg-accent px-1 rounded">5493416219301.session</code>)</li>
-              <li>Phone number is auto-detected from filename</li>
-              <li>Click <strong>"Upload"</strong> to save to database</li>
+            <div className="relative">
+              <pre className="bg-background p-4 rounded-lg border overflow-x-auto text-sm font-mono">pip install telethon supabase</pre>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="absolute top-2 right-2"
+                onClick={() => copyToClipboard('pip install telethon supabase', 'pip')}
+              >
+                {copied === 'pip' ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+              </Button>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Wait for it to finish (you'll see "Successfully installed..." messages)
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Step 6: Get Telegram API Credentials */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Badge className="bg-primary text-primary-foreground">Step 6</Badge>
+              Get Telegram API Credentials
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ol className="list-decimal list-inside space-y-3 text-muted-foreground">
+              <li>Go to <a href="https://my.telegram.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline inline-flex items-center gap-1">my.telegram.org <ExternalLink className="w-3 h-3" /></a></li>
+              <li>Log in with your phone number (any Telegram account)</li>
+              <li>Click <strong>"API development tools"</strong></li>
+              <li>Fill in any app name (e.g., "MySender") and short name</li>
+              <li>You'll get your <strong>api_id</strong> (numbers) and <strong>api_hash</strong> (letters+numbers)</li>
             </ol>
+            
             <div className="p-4 rounded-lg bg-status-warning/10 border border-status-warning/30">
               <div className="flex gap-2">
                 <AlertTriangle className="w-5 h-5 text-status-warning flex-shrink-0" />
                 <div>
-                  <h4 className="font-medium text-status-warning">Important</h4>
+                  <h4 className="font-medium text-status-warning">Keep These Safe!</h4>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Your .session files must be valid Telethon SQLite sessions created with your logged-in Telegram accounts.
+                    Save your api_id and api_hash somewhere - you'll need them in the next step.
                   </p>
                 </div>
               </div>
@@ -353,57 +442,73 @@ if __name__ == "__main__":
           </CardContent>
         </Card>
 
-        {/* Step 4: API Credentials */}
+        {/* Step 7: Set Environment Variables */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Badge className="bg-primary text-primary-foreground">Step 4</Badge>
-              Configure Telegram API Credentials
+              <Badge className="bg-primary text-primary-foreground">Step 7</Badge>
+              Set Your API Credentials
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
-              <li>Go to <a href="https://my.telegram.org" target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">my.telegram.org</a></li>
-              <li>Log in with your phone number</li>
-              <li>Go to "API Development Tools"</li>
-              <li>Create a new application</li>
-              <li>Copy your <strong>api_id</strong> and <strong>api_hash</strong></li>
-            </ol>
-            <div className="p-4 rounded-lg bg-accent/50 border mt-4">
-              <h4 className="font-medium mb-2">Set as environment variables before running:</h4>
-              <div className="space-y-2">
+            <p className="text-muted-foreground">
+              In the same CMD window, run these commands (replace with YOUR values):
+            </p>
+            
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg bg-accent/50 border">
+                <h4 className="font-medium mb-2">🪟 Windows (CMD):</h4>
                 <div className="relative">
-                  <pre className="bg-background p-3 rounded-lg border text-xs overflow-x-auto">
-{`# Windows (PowerShell)
-$env:TELEGRAM_API_ID="12345678"
-$env:TELEGRAM_API_HASH="your_api_hash"
-
-# Linux/Mac
-export TELEGRAM_API_ID="12345678"
-export TELEGRAM_API_HASH="your_api_hash"`}
+                  <pre className="bg-background p-3 rounded-lg border text-sm font-mono overflow-x-auto">
+{`set TELEGRAM_API_ID=12345678
+set TELEGRAM_API_HASH=your_api_hash_here`}
                   </pre>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="absolute top-1 right-1"
+                    onClick={() => copyToClipboard('set TELEGRAM_API_ID=12345678\nset TELEGRAM_API_HASH=your_api_hash_here', 'envwin')}
+                  >
+                    {copied === 'envwin' ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                  </Button>
+                </div>
+              </div>
+              
+              <div className="p-4 rounded-lg bg-accent/50 border">
+                <h4 className="font-medium mb-2">🍎 Mac/Linux (Terminal):</h4>
+                <div className="relative">
+                  <pre className="bg-background p-3 rounded-lg border text-sm font-mono overflow-x-auto">
+{`export TELEGRAM_API_ID=12345678
+export TELEGRAM_API_HASH=your_api_hash_here`}
+                  </pre>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="absolute top-1 right-1"
+                    onClick={() => copyToClipboard('export TELEGRAM_API_ID=12345678\nexport TELEGRAM_API_HASH=your_api_hash_here', 'envmac')}
+                  >
+                    {copied === 'envmac' ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                  </Button>
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Step 5: Run */}
-        <Card>
+        {/* Step 8: Run the Script */}
+        <Card className="border-green-500/50">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Badge className="bg-primary text-primary-foreground">Step 5</Badge>
-              Run the Script
+              <Badge className="bg-green-600 text-white">Step 8</Badge>
+              Run the Script! 🚀
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-muted-foreground">
-              Open terminal in the folder with your script and run:
+              Now run this command in the same CMD window:
             </p>
             <div className="relative">
-              <pre className="bg-background p-4 rounded-lg border overflow-x-auto text-sm">
-                python telegram_sender.py
-              </pre>
+              <pre className="bg-background p-4 rounded-lg border overflow-x-auto text-lg font-mono font-bold">python telegram_sender.py</pre>
               <Button
                 size="sm"
                 variant="ghost"
@@ -413,35 +518,82 @@ export TELEGRAM_API_HASH="your_api_hash"`}
                 {copied === 'run' ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
               </Button>
             </div>
-            <div className="p-4 rounded-lg bg-accent/50 border">
+            
+            <div className="p-4 rounded-lg bg-green-500/10 border border-green-500/30">
               <h4 className="font-medium mb-2 flex items-center gap-2">
                 <Terminal className="w-4 h-4" />
-                Expected Output
+                You Should See:
               </h4>
-              <pre className="text-xs text-muted-foreground">
+              <pre className="text-xs text-muted-foreground font-mono">
 {`==================================================
 TelegramCRM Bulk Message Sender
 ==================================================
 
 [14:30:00] Checking for pending messages...
-  Found 5 pending messages
-  Active accounts: 2
-
-Processing account: +14155551234
-  ✓ Connected as +14155551234
-    → Sending to +19876543210...
-    ✓ Sent!`}
+  No pending messages. Waiting 30 seconds...`}
               </pre>
+            </div>
+            
+            <p className="text-sm text-muted-foreground">
+              ✅ The script is now running! It will check for messages every 30 seconds. <br/>
+              ❌ To stop it, press <kbd className="bg-accent px-2 py-1 rounded">Ctrl</kbd> + <kbd className="bg-accent px-2 py-1 rounded">C</kbd>
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* Troubleshooting */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-status-warning" />
+              Common Issues
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-3">
+              <div className="p-3 rounded-lg bg-accent/50 border">
+                <p className="font-medium text-sm">"python" is not recognized</p>
+                <p className="text-xs text-muted-foreground mt-1">→ You didn't check "Add Python to PATH" during install. Reinstall Python and check that box!</p>
+              </div>
+              <div className="p-3 rounded-lg bg-accent/50 border">
+                <p className="font-medium text-sm">ModuleNotFoundError: No module named 'telethon'</p>
+                <p className="text-xs text-muted-foreground mt-1">→ Run: <code>pip install telethon supabase</code> again</p>
+              </div>
+              <div className="p-3 rounded-lg bg-accent/50 border">
+                <p className="font-medium text-sm">Script says "No session data for..."</p>
+                <p className="text-xs text-muted-foreground mt-1">→ Upload your .session files on the Accounts page first</p>
+              </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Workflow */}
+        {/* Upload Session Files Reminder */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Settings2 className="w-5 h-5 text-primary" />
+              Don't Forget: Upload Session Files
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-muted-foreground">
+              Before running the script, make sure you have uploaded your <code className="bg-accent px-1 rounded">.session</code> files on the Accounts page:
+            </p>
+            <ol className="list-decimal list-inside space-y-2 text-muted-foreground">
+              <li>Go to <strong>Accounts</strong> page</li>
+              <li>Click <strong>"Add Accounts"</strong></li>
+              <li>Drag and drop your .session files</li>
+              <li>Click <strong>"Upload"</strong></li>
+            </ol>
+          </CardContent>
+        </Card>
+
+        {/* Complete Workflow */}
         <Card className="border-primary/30">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Play className="w-5 h-5 text-primary" />
-              Complete Workflow
+              How It Works
             </CardTitle>
           </CardHeader>
           <CardContent>
