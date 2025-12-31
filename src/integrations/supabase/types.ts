@@ -269,6 +269,7 @@ export type Database = {
       messages: {
         Row: {
           account_id: string
+          campaign_recipient_id: string | null
           content: string
           conversation_id: string
           created_at: string | null
@@ -284,6 +285,7 @@ export type Database = {
         }
         Insert: {
           account_id: string
+          campaign_recipient_id?: string | null
           content: string
           conversation_id: string
           created_at?: string | null
@@ -299,6 +301,7 @@ export type Database = {
         }
         Update: {
           account_id?: string
+          campaign_recipient_id?: string | null
           content?: string
           conversation_id?: string
           created_at?: string | null
@@ -318,6 +321,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_campaign_recipient_id_fkey"
+            columns: ["campaign_recipient_id"]
+            isOneToOne: false
+            referencedRelation: "campaign_recipients"
             referencedColumns: ["id"]
           },
           {
