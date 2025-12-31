@@ -212,6 +212,119 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     refreshData();
   }, [refreshData]);
 
+  // Real-time subscriptions for messages and conversations
+  useEffect(() => {
+    // Subscribe to new messages
+    const messagesChannel = supabase
+      .channel('messages-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'messages'
+        },
+        async (payload) => {
+          console.log('Message change:', payload);
+          
+          if (payload.eventType === 'INSERT') {
+            const m = payload.new as any;
+            // Fetch the conversation to get recipient_phone
+            const { data: convData } = await supabase
+              .from('conversations')
+              .select('recipient_phone')
+              .eq('id', m.conversation_id)
+              .single();
+            
+            const newMessage: Message = {
+              id: m.id,
+              conversationId: m.conversation_id,
+              accountId: m.account_id,
+              recipientPhone: convData?.recipient_phone || '',
+              content: m.content,
+              direction: m.direction as Message['direction'],
+              status: m.status as Message['status'],
+              timestamp: new Date(m.created_at),
+              telegramMessageId: m.telegram_message_id || undefined,
+              failedReason: m.failed_reason || undefined,
+            };
+            
+            setMessages(prev => {
+              // Check if already exists
+              if (prev.some(msg => msg.id === m.id)) {
+                return prev.map(msg => msg.id === m.id ? newMessage : msg);
+              }
+              return [newMessage, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const m = payload.new as any;
+            setMessages(prev => 
+              prev.map(msg => msg.id === m.id ? {
+                ...msg,
+                status: m.status as Message['status'],
+                failedReason: m.failed_reason || undefined,
+              } : msg)
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to conversation changes
+    const conversationsChannel = supabase
+      .channel('conversations-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'conversations'
+        },
+        (payload) => {
+          console.log('Conversation change:', payload);
+          
+          if (payload.eventType === 'INSERT') {
+            const c = payload.new as any;
+            const newConv: Conversation = {
+              id: c.id,
+              accountId: c.account_id,
+              recipientPhone: c.recipient_phone || '',
+              recipientName: c.recipient_name || undefined,
+              recipientAvatar: c.recipient_avatar || undefined,
+              unreadCount: c.unread_count || 0,
+              isActive: c.is_active || false,
+              createdAt: new Date(c.created_at),
+              updatedAt: new Date(c.updated_at || c.created_at),
+            };
+            
+            setConversations(prev => {
+              if (prev.some(conv => conv.id === c.id)) {
+                return prev.map(conv => conv.id === c.id ? newConv : conv);
+              }
+              return [newConv, ...prev];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const c = payload.new as any;
+            setConversations(prev => 
+              prev.map(conv => conv.id === c.id ? {
+                ...conv,
+                unreadCount: c.unread_count || 0,
+                updatedAt: new Date(c.updated_at || c.last_message_at || conv.updatedAt),
+                recipientName: c.recipient_name || conv.recipientName,
+                isActive: c.is_active ?? conv.isActive,
+              } : conv).sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+            );
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(messagesChannel);
+      supabase.removeChannel(conversationsChannel);
+    };
+  }, []);
+
   const stats: DashboardStats = {
     totalAccounts: accounts.length,
     activeAccounts: accounts.filter(a => a.status === 'active').length,
