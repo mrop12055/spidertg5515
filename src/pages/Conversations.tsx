@@ -96,6 +96,19 @@ const Chat: React.FC = () => {
     }
   };
 
+  // Helper to check if user sent the first message in a conversation
+  const isUserInitiated = (conv: typeof conversations[0]) => {
+    const convMessages = messages
+      .filter(m => m.conversationId === conv.id)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    
+    // If no messages yet, assume user-initiated (new conversation)
+    if (convMessages.length === 0) return true;
+    
+    // Check if first message was outgoing
+    return convMessages[0]?.direction === 'outgoing';
+  };
+
   const filteredConversations = conversations
     .filter(c => {
       const cutoff = getTimeFilterCutoff();
@@ -105,9 +118,11 @@ const Chat: React.FC = () => {
         c.recipientPhone.includes(searchQuery);
       // Exclude SpamBot conversations from the chat list
       const isNotSpamBot = 
-        c.recipientName?.toLowerCase() !== 'spam info bot' &&
-        !c.recipientPhone?.toLowerCase().includes('spambot');
-      return matchesTime && matchesSearch && isNotSpamBot;
+        c.recipientPhone !== '@SpamBot' && 
+        c.recipientName?.toLowerCase() !== 'spam info bot';
+      // Only show conversations where user messaged first
+      const userStarted = isUserInitiated(c);
+      return matchesTime && matchesSearch && isNotSpamBot && userStarted;
     })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
