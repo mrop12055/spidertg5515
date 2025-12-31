@@ -318,9 +318,7 @@ const Chat: React.FC = () => {
         </div>
 
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col" style={{ 
-          backgroundImage: 'url("data:image/svg+xml,%3Csvg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"%3E%3Cg fill="none" fill-rule="evenodd"%3E%3Cg fill="%239C92AC" fill-opacity="0.03"%3E%3Cpath d="M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z"/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")'
-        }}>
+        <div className="flex-1 flex flex-col bg-secondary/30 dark:bg-background/50">
           {selectedConv ? (
             <>
               {/* Chat Header */}
@@ -407,8 +405,8 @@ const Chat: React.FC = () => {
                                     msg.status === 'failed'
                                       ? "bg-destructive/10 border border-destructive/30 text-foreground"
                                       : isOutgoing
-                                        ? "bg-[#DCF8C6] text-[#111B21] dark:bg-[#005C4B] dark:text-[#E9EDEF]"
-                                        : "bg-card text-foreground border border-border/30",
+                                        ? "bg-primary/90 text-primary-foreground dark:bg-primary/80 dark:text-primary-foreground"
+                                        : "bg-card text-card-foreground border border-border",
                                     // Rounded corners based on position
                                     isFirstInGroup && isLastInGroup && (isOutgoing 
                                       ? "rounded-2xl rounded-br-md" 
@@ -437,7 +435,7 @@ const Chat: React.FC = () => {
                                       msg.status === 'failed'
                                         ? "text-destructive"
                                         : isOutgoing 
-                                          ? "text-[#111B21]/70 dark:text-[#E9EDEF]/70" 
+                                          ? "text-primary-foreground/80" 
                                           : "text-muted-foreground"
                                     )}>
                                       {format(msg.timestamp, 'HH:mm')}
@@ -458,11 +456,11 @@ const Chat: React.FC = () => {
                   {/* Typing Indicator */}
                   {isTyping && (
                     <div className="flex justify-start mb-2">
-                      <div className="bg-card px-4 py-3 rounded-2xl rounded-bl-md shadow-sm">
+                      <div className="bg-card border border-border px-4 py-3 rounded-2xl rounded-bl-md shadow-sm">
                         <div className="flex gap-1">
-                          <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <span className="w-2 h-2 bg-muted-foreground/60 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                          <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                          <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                          <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                         </div>
                       </div>
                     </div>
