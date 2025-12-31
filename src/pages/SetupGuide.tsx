@@ -65,26 +65,26 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 
 # ========== DUAL MODE CONFIGURATION ==========
-CAMPAIGN_CHECK_INTERVAL = 10  # seconds - for campaign messages
+CAMPAIGN_CHECK_INTERVAL = 3  # seconds - for campaign messages (faster!)
 LIVE_CHAT_CHECK_INTERVAL = 1  # seconds - for live conversations (customer replied)
 LIVE_CONVERSATION_TIMEOUT = 5  # minutes - conversation stays "live" after last incoming message
 
 # Default settings (can be overridden by scheduler settings from localStorage)
-DEFAULT_MESSAGE_DELAY = 2
-DEFAULT_CHECK_INTERVAL = 2
+DEFAULT_MESSAGE_DELAY = 1  # faster default
+DEFAULT_CHECK_INTERVAL = 1  # faster default
 
 # ========== SCHEDULER SETTINGS ==========
 @dataclass
 class SchedulerSettings:
     enabled: bool = True
-    max_messages_before_rotation: int = 5
-    cooldown_duration: int = 30  # minutes
+    max_messages_before_rotation: int = 10  # more messages before rotating
+    cooldown_duration: int = 10  # minutes (reduced from 30)
     prioritize_high_maturity: bool = True
     auto_skip_restricted: bool = True
     balance_load: bool = True
-    messages_per_account: int = 5
-    message_interval: int = 30  # seconds between messages
-    account_switch_delay: int = 60  # seconds before next account
+    messages_per_account: int = 10  # more per account before switching
+    message_interval: int = 3  # seconds between messages (reduced from 30!)
+    account_switch_delay: int = 5  # seconds before next account (reduced from 60!)
 
 @dataclass
 class AccountState:
@@ -1000,7 +1000,8 @@ async def campaign_loop():
                         await asyncio.sleep(60)
                         continue
                 
-                # Process each account
+                # Process each account IN PARALLEL for speed
+                tasks = []
                 for account in accounts:
                     # Validate recipients using first available account
                     if validating_recipients and account["id"] in active_clients:
@@ -1008,8 +1009,12 @@ async def campaign_loop():
                         await validate_recipients(client)
                         validating_recipients = []
                     
-                    # Process campaign messages
-                    await process_account(account, campaign_messages)
+                    # Process campaign messages for this account (parallel)
+                    tasks.append(process_account(account, campaign_messages))
+                
+                # Run all account processing in parallel
+                if tasks:
+                    await asyncio.gather(*tasks, return_exceptions=True)
             
             await asyncio.sleep(CAMPAIGN_CHECK_INTERVAL)
         except Exception as e:
