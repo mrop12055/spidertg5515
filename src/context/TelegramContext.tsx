@@ -8,144 +8,16 @@ import {
   DashboardStats,
   UploadProgress 
 } from '@/types/telegram';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
+import JSZip from 'jszip';
 
 // Minimal mock data - just 2 examples
-const initialAccounts: TelegramAccount[] = [
-  {
-    id: 'acc-1',
-    phoneNumber: '+14155551234',
-    username: 'alex_demo',
-    firstName: 'Alex',
-    lastName: 'Johnson',
-    status: 'active',
-    proxyId: 'proxy-1',
-    createdAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
-    lastActive: new Date(),
-    messagesSentToday: 5,
-    dailyLimit: 25,
-    maturityScore: 75,
-    maturityDays: 15,
-  },
-  {
-    id: 'acc-2',
-    phoneNumber: '+14155559876',
-    username: 'jordan_test',
-    firstName: 'Jordan',
-    lastName: 'Smith',
-    status: 'restricted',
-    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-    lastActive: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    messagesSentToday: 12,
-    dailyLimit: 25,
-    maturityScore: 30,
-    maturityDays: 5,
-    restrictedUntil: new Date(Date.now() + 20 * 60 * 60 * 1000),
-  }
-];
-
-const initialProxies: Proxy[] = [
-  {
-    id: 'proxy-1',
-    host: '192.168.1.100',
-    port: 8080,
-    username: 'proxyuser',
-    password: '********',
-    type: 'socks5',
-    status: 'active',
-    assignedAccountId: 'acc-1',
-    lastChecked: new Date(),
-    responseTime: 120,
-    country: 'US',
-  },
-  {
-    id: 'proxy-2',
-    host: '10.0.0.50',
-    port: 1080,
-    type: 'http',
-    status: 'active',
-    lastChecked: new Date(),
-    responseTime: 85,
-    country: 'DE',
-  }
-];
-
-const initialConversations: Conversation[] = [
-  {
-    id: 'conv-1',
-    accountId: 'acc-1',
-    recipientPhone: '+14155550001',
-    recipientName: 'John Doe',
-    unreadCount: 2,
-    isActive: true,
-    createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-    updatedAt: new Date(),
-  },
-  {
-    id: 'conv-2',
-    accountId: 'acc-1',
-    recipientPhone: '+14155550002',
-    recipientName: 'Jane Smith',
-    unreadCount: 0,
-    isActive: false,
-    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    updatedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
-  }
-];
-
-const initialMessages: Message[] = [
-  {
-    id: 'msg-1',
-    accountId: 'acc-1',
-    recipientId: '+14155550001',
-    recipientPhone: '+14155550001',
-    recipientName: 'John Doe',
-    content: 'Hi! I wanted to reach out about our services.',
-    direction: 'outgoing',
-    status: 'read',
-    timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000),
-    threadId: 'thread-1',
-  },
-  {
-    id: 'msg-2',
-    accountId: 'acc-1',
-    recipientId: '+14155550001',
-    recipientPhone: '+14155550001',
-    recipientName: 'John Doe',
-    content: 'Sure, tell me more about what you offer.',
-    direction: 'incoming',
-    status: 'read',
-    timestamp: new Date(Date.now() - 1 * 60 * 60 * 1000),
-    threadId: 'thread-1',
-  },
-  {
-    id: 'msg-3',
-    accountId: 'acc-1',
-    recipientId: '+14155550001',
-    recipientPhone: '+14155550001',
-    recipientName: 'John Doe',
-    content: 'Great! We provide comprehensive solutions for businesses looking to scale their operations.',
-    direction: 'outgoing',
-    status: 'delivered',
-    timestamp: new Date(Date.now() - 30 * 60 * 1000),
-    threadId: 'thread-1',
-  }
-];
-
-const initialCampaigns: Campaign[] = [
-  {
-    id: 'campaign-1',
-    name: 'Welcome Campaign',
-    messageTemplate: 'Hi {name}! We have exciting news for you...',
-    status: 'draft',
-    recipientCount: 100,
-    sentCount: 0,
-    failedCount: 0,
-    replyCount: 0,
-    accountIds: ['acc-1'],
-    createdAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
-    updatedAt: new Date(),
-  }
-];
+const initialAccounts: TelegramAccount[] = [];
+const initialProxies: Proxy[] = [];
+const initialConversations: Conversation[] = [];
+const initialMessages: Message[] = [];
+const initialCampaigns: Campaign[] = [];
 
 interface TelegramContextType {
   accounts: TelegramAccount[];
@@ -156,6 +28,7 @@ interface TelegramContextType {
   stats: DashboardStats;
   uploadProgress: UploadProgress;
   typingUsers: Record<string, boolean>;
+  isLoading: boolean;
   
   // Account actions
   addAccount: (account: Partial<TelegramAccount>) => void;
@@ -180,22 +53,15 @@ interface TelegramContextType {
   createCampaign: (campaign: Partial<Campaign>) => void;
   updateCampaign: (id: string, updates: Partial<Campaign>) => void;
   deleteCampaign: (id: string) => void;
+  uploadRecipients: (campaignId: string, recipients: { phone_number: string; name?: string }[]) => Promise<void>;
+  startCampaign: (campaignId: string) => Promise<void>;
   
   // Refresh
   refreshStats: () => void;
+  refreshData: () => Promise<void>;
 }
 
 const TelegramContext = createContext<TelegramContextType | undefined>(undefined);
-
-// Auto-reply messages for simulation
-const autoReplies = [
-  "That sounds interesting! Can you tell me more?",
-  "Thanks for reaching out!",
-  "I'll think about it and get back to you.",
-  "Could you send me more details?",
-  "Interesting! What's the pricing like?",
-  "Let me check with my team first.",
-];
 
 export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [accounts, setAccounts] = useState<TelegramAccount[]>(initialAccounts);
@@ -204,6 +70,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [messages, setMessages] = useState<Message[]>(initialMessages);
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
+  const [isLoading, setIsLoading] = useState(true);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
     total: 0,
     processed: 0,
@@ -212,6 +79,116 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     status: 'idle',
     errors: []
   });
+
+  // Fetch data from Supabase
+  const refreshData = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      
+      // Fetch accounts
+      const { data: accountsData } = await supabase
+        .from('telegram_accounts')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (accountsData) {
+        setAccounts(accountsData.map(acc => ({
+          id: acc.id,
+          phoneNumber: acc.phone_number,
+          username: acc.username || undefined,
+          firstName: acc.first_name || undefined,
+          lastName: acc.last_name || undefined,
+          status: acc.status as TelegramAccount['status'],
+          proxyId: acc.proxy_id || undefined,
+          sessionFile: acc.session_data || undefined,
+          createdAt: new Date(acc.created_at),
+          lastActive: acc.last_active ? new Date(acc.last_active) : undefined,
+          messagesSentToday: acc.messages_sent_today || 0,
+          dailyLimit: acc.daily_limit || 25,
+          maturityScore: acc.maturity_score || 0,
+          maturityDays: acc.maturity_days || 0,
+          restrictedUntil: acc.restricted_until ? new Date(acc.restricted_until) : undefined,
+          banReason: acc.ban_reason || undefined,
+          avatar: acc.avatar_url || undefined,
+        })));
+      }
+
+      // Fetch proxies
+      const { data: proxiesData } = await supabase
+        .from('proxies')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (proxiesData) {
+        setProxies(proxiesData.map(p => ({
+          id: p.id,
+          host: p.host,
+          port: p.port,
+          username: p.username || undefined,
+          password: p.password || undefined,
+          type: p.proxy_type as Proxy['type'],
+          status: p.status as Proxy['status'],
+          assignedAccountId: p.assigned_account_id || undefined,
+          lastChecked: p.last_checked ? new Date(p.last_checked) : undefined,
+          responseTime: p.response_time || undefined,
+          country: p.country || undefined,
+        })));
+      }
+
+      // Fetch campaigns
+      const { data: campaignsData } = await supabase
+        .from('campaigns')
+        .select('*, campaign_accounts(account_id)')
+        .order('created_at', { ascending: false });
+
+      if (campaignsData) {
+        setCampaigns(campaignsData.map(c => ({
+          id: c.id,
+          name: c.name,
+          messageTemplate: c.message_template,
+          status: c.status as Campaign['status'],
+          scheduledAt: c.scheduled_at ? new Date(c.scheduled_at) : undefined,
+          recipientCount: c.recipient_count || 0,
+          sentCount: c.sent_count || 0,
+          failedCount: c.failed_count || 0,
+          replyCount: c.reply_count || 0,
+          accountIds: c.campaign_accounts?.map((ca: any) => ca.account_id) || [],
+          createdAt: new Date(c.created_at),
+          updatedAt: new Date(c.updated_at),
+        })));
+      }
+
+      // Fetch conversations
+      const { data: conversationsData } = await supabase
+        .from('conversations')
+        .select('*')
+        .order('updated_at', { ascending: false });
+
+      if (conversationsData) {
+        setConversations(conversationsData.map(c => ({
+          id: c.id,
+          accountId: c.account_id,
+          recipientPhone: c.recipient_phone || '',
+          recipientName: c.recipient_name || undefined,
+          recipientAvatar: c.recipient_avatar || undefined,
+          unreadCount: c.unread_count || 0,
+          isActive: c.is_active || false,
+          createdAt: new Date(c.created_at),
+          updatedAt: new Date(c.updated_at),
+        })));
+      }
+
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  // Initial data fetch
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
 
   const stats: DashboardStats = {
     totalAccounts: accounts.length,
@@ -225,34 +202,75 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     campaignsRunning: campaigns.filter(c => c.status === 'running').length,
   };
 
-  const addAccount = useCallback((account: Partial<TelegramAccount>) => {
-    const newAccount: TelegramAccount = {
-      id: `acc-${Date.now()}`,
-      phoneNumber: account.phoneNumber || '',
-      status: 'active',
-      createdAt: new Date(),
-      messagesSentToday: 0,
-      dailyLimit: 25,
-      maturityScore: 0,
-      maturityDays: 0,
-      ...account
-    };
-    setAccounts(prev => [...prev, newAccount]);
-  }, []);
+  const addAccount = useCallback(async (account: Partial<TelegramAccount>) => {
+    try {
+      const { data, error } = await supabase
+        .from('telegram_accounts')
+        .insert({
+          phone_number: account.phoneNumber || '',
+          first_name: account.firstName,
+          last_name: account.lastName,
+          username: account.username,
+          status: 'active',
+          maturity_score: 0,
+          maturity_days: 0,
+          daily_limit: 25,
+          messages_sent_today: 0,
+        })
+        .select()
+        .single();
 
-  const updateAccount = useCallback((id: string, updates: Partial<TelegramAccount>) => {
-    setAccounts(prev => prev.map(acc => 
-      acc.id === id ? { ...acc, ...updates } : acc
-    ));
-  }, []);
+      if (error) throw error;
+      toast.success('Account added successfully');
+      refreshData();
+    } catch (error) {
+      console.error('Error adding account:', error);
+      toast.error('Failed to add account');
+    }
+  }, [refreshData]);
 
-  const deleteAccount = useCallback((id: string) => {
-    setAccounts(prev => prev.filter(acc => acc.id !== id));
-  }, []);
+  const updateAccount = useCallback(async (id: string, updates: Partial<TelegramAccount>) => {
+    try {
+      const { error } = await supabase
+        .from('telegram_accounts')
+        .update({
+          phone_number: updates.phoneNumber,
+          first_name: updates.firstName,
+          last_name: updates.lastName,
+          username: updates.username,
+          status: updates.status,
+          proxy_id: updates.proxyId,
+        })
+        .eq('id', id);
 
+      if (error) throw error;
+      refreshData();
+    } catch (error) {
+      console.error('Error updating account:', error);
+      toast.error('Failed to update account');
+    }
+  }, [refreshData]);
+
+  const deleteAccount = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('telegram_accounts')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      toast.success('Account deleted');
+      refreshData();
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      toast.error('Failed to delete account');
+    }
+  }, [refreshData]);
+
+  // Real ZIP file processing
   const uploadAccounts = useCallback(async (files: File[]) => {
     setUploadProgress({
-      total: files.length * 50,
+      total: 0,
       processed: 0,
       successful: 0,
       failed: 0,
@@ -260,108 +278,268 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       errors: []
     });
 
-    for (let i = 0; i < 10; i++) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-      const success = Math.random() > 0.1;
-      
+    const accountsToUpload: any[] = [];
+
+    try {
+      for (const file of files) {
+        if (file.name.endsWith('.zip')) {
+          // Process ZIP file
+          const zip = new JSZip();
+          const contents = await zip.loadAsync(file);
+          
+          const jsonFiles: Record<string, any> = {};
+          const sessionFiles: Record<string, string> = {};
+
+          // First pass: read all files
+          for (const [filename, zipEntry] of Object.entries(contents.files)) {
+            if (zipEntry.dir) continue;
+            
+            const basename = filename.replace(/\.[^/.]+$/, '');
+            
+            if (filename.endsWith('.json')) {
+              const content = await zipEntry.async('string');
+              try {
+                jsonFiles[basename] = JSON.parse(content);
+              } catch {
+                console.warn(`Invalid JSON: ${filename}`);
+              }
+            } else if (filename.endsWith('.session')) {
+              const content = await zipEntry.async('base64');
+              sessionFiles[basename] = content;
+            }
+          }
+
+          // Second pass: match session files with JSON metadata
+          for (const [basename, sessionData] of Object.entries(sessionFiles)) {
+            const metadata = jsonFiles[basename] || {};
+            
+            accountsToUpload.push({
+              phone_number: metadata.phone_number || basename.replace(/[^0-9+]/g, ''),
+              first_name: metadata.first_name || metadata.firstName,
+              last_name: metadata.last_name || metadata.lastName,
+              username: metadata.username,
+              session_data: sessionData,
+              api_id: metadata.api_id,
+              api_hash: metadata.api_hash,
+            });
+          }
+
+          // Also process standalone JSON files (in case they contain session_string)
+          for (const [basename, metadata] of Object.entries(jsonFiles)) {
+            if (sessionFiles[basename]) continue; // Already processed
+            
+            if (metadata.session_string || metadata.session_data) {
+              accountsToUpload.push({
+                phone_number: metadata.phone_number || basename.replace(/[^0-9+]/g, ''),
+                first_name: metadata.first_name || metadata.firstName,
+                last_name: metadata.last_name || metadata.lastName,
+                username: metadata.username,
+                session_data: metadata.session_string || metadata.session_data,
+                api_id: metadata.api_id,
+                api_hash: metadata.api_hash,
+              });
+            }
+          }
+        } else if (file.name.endsWith('.json')) {
+          // Single JSON file
+          const content = await file.text();
+          try {
+            const data = JSON.parse(content);
+            
+            // Handle array of accounts
+            const accountsArray = Array.isArray(data) ? data : [data];
+            
+            for (const acc of accountsArray) {
+              if (acc.session_string || acc.session_data) {
+                accountsToUpload.push({
+                  phone_number: acc.phone_number,
+                  first_name: acc.first_name || acc.firstName,
+                  last_name: acc.last_name || acc.lastName,
+                  username: acc.username,
+                  session_data: acc.session_string || acc.session_data,
+                  api_id: acc.api_id,
+                  api_hash: acc.api_hash,
+                });
+              }
+            }
+          } catch {
+            console.warn(`Invalid JSON file: ${file.name}`);
+          }
+        } else if (file.name.endsWith('.session')) {
+          // Single session file - use filename as phone number
+          const content = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(btoa(reader.result as string));
+            reader.readAsBinaryString(file);
+          });
+          
+          const phoneNumber = file.name.replace('.session', '').replace(/[^0-9+]/g, '');
+          accountsToUpload.push({
+            phone_number: phoneNumber || `+unknown_${Date.now()}`,
+            session_data: content,
+          });
+        }
+      }
+
       setUploadProgress(prev => ({
         ...prev,
-        processed: i + 1,
-        successful: prev.successful + (success ? 1 : 0),
-        failed: prev.failed + (success ? 0 : 1),
-        status: i === 9 ? 'completed' : 'processing',
-        errors: success ? prev.errors : [...prev.errors, `Account ${i + 1}: Invalid session file`]
+        total: accountsToUpload.length,
+        status: 'processing'
       }));
+
+      if (accountsToUpload.length === 0) {
+        setUploadProgress(prev => ({
+          ...prev,
+          status: 'error',
+          errors: ['No valid accounts found in uploaded files']
+        }));
+        toast.error('No valid accounts found in files');
+        return;
+      }
+
+      // Send to edge function
+      const { data, error } = await supabase.functions.invoke('process-account-upload', {
+        body: { accounts: accountsToUpload }
+      });
+
+      if (error) throw error;
+
+      setUploadProgress({
+        total: accountsToUpload.length,
+        processed: accountsToUpload.length,
+        successful: data.successful || 0,
+        failed: data.failed || 0,
+        status: 'completed',
+        errors: data.errors || []
+      });
+
+      if (data.successful > 0) {
+        toast.success(`Successfully uploaded ${data.successful} accounts`);
+      }
+      if (data.failed > 0) {
+        toast.error(`Failed to upload ${data.failed} accounts`);
+      }
+
+      refreshData();
+    } catch (error) {
+      console.error('Error uploading accounts:', error);
+      setUploadProgress(prev => ({
+        ...prev,
+        status: 'error',
+        errors: [...prev.errors, (error as Error).message]
+      }));
+      toast.error('Failed to upload accounts');
     }
-  }, []);
+  }, [refreshData]);
 
-  const addProxy = useCallback((proxy: Partial<Proxy>) => {
-    const newProxy: Proxy = {
-      id: `proxy-${Date.now()}`,
-      host: proxy.host || '',
-      port: proxy.port || 8080,
-      type: proxy.type || 'http',
-      status: 'active',
-      lastChecked: new Date(),
-      ...proxy
-    };
-    setProxies(prev => [...prev, newProxy]);
-  }, []);
+  const addProxy = useCallback(async (proxy: Partial<Proxy>) => {
+    try {
+      const { error } = await supabase
+        .from('proxies')
+        .insert({
+          host: proxy.host || '',
+          port: proxy.port || 8080,
+          username: proxy.username,
+          password: proxy.password,
+          proxy_type: proxy.type || 'http',
+          status: 'active',
+        });
 
-  const addProxiesBulk = useCallback((proxyText: string) => {
+      if (error) throw error;
+      toast.success('Proxy added');
+      refreshData();
+    } catch (error) {
+      console.error('Error adding proxy:', error);
+      toast.error('Failed to add proxy');
+    }
+  }, [refreshData]);
+
+  const addProxiesBulk = useCallback(async (proxyText: string) => {
     const lines = proxyText.split('\n').filter(l => l.trim());
-    const newProxies: Proxy[] = lines.map((line, i) => {
+    const newProxies = lines.map(line => {
       const parts = line.split(':');
       return {
-        id: `proxy-${Date.now()}-${i}`,
         host: parts[0] || '',
         port: parseInt(parts[1]) || 8080,
-        username: parts[2],
-        password: parts[3],
-        type: 'http' as const,
+        username: parts[2] || null,
+        password: parts[3] || null,
+        proxy_type: 'http' as const,
         status: 'active' as const,
-        lastChecked: new Date(),
       };
     });
-    setProxies(prev => [...prev, ...newProxies]);
-  }, []);
 
-  const updateProxy = useCallback((id: string, updates: Partial<Proxy>) => {
-    setProxies(prev => prev.map(p => 
-      p.id === id ? { ...p, ...updates } : p
-    ));
-  }, []);
+    try {
+      const { error } = await supabase
+        .from('proxies')
+        .insert(newProxies);
 
-  const deleteProxy = useCallback((id: string) => {
-    setProxies(prev => prev.filter(p => p.id !== id));
-  }, []);
+      if (error) throw error;
+      toast.success(`Added ${newProxies.length} proxies`);
+      refreshData();
+    } catch (error) {
+      console.error('Error adding proxies:', error);
+      toast.error('Failed to add proxies');
+    }
+  }, [refreshData]);
 
-  const assignProxy = useCallback((accountId: string, proxyId: string) => {
-    setAccounts(prev => prev.map(acc => 
-      acc.id === accountId ? { ...acc, proxyId } : acc
-    ));
-    setProxies(prev => prev.map(p => 
-      p.id === proxyId ? { ...p, assignedAccountId: accountId } : p
-    ));
-  }, []);
+  const updateProxy = useCallback(async (id: string, updates: Partial<Proxy>) => {
+    try {
+      const { error } = await supabase
+        .from('proxies')
+        .update({
+          host: updates.host,
+          port: updates.port,
+          username: updates.username,
+          password: updates.password,
+          proxy_type: updates.type,
+          status: updates.status,
+        })
+        .eq('id', id);
 
-  // Simulate typing and auto-reply
-  const simulateReply = useCallback((recipientPhone: string, recipientName?: string, accountId?: string) => {
-    // 50% chance of getting a reply
-    if (Math.random() > 0.5) return;
+      if (error) throw error;
+      refreshData();
+    } catch (error) {
+      console.error('Error updating proxy:', error);
+      toast.error('Failed to update proxy');
+    }
+  }, [refreshData]);
 
-    // Start typing indicator
-    setTypingUsers(prev => ({ ...prev, [recipientPhone]: true }));
+  const deleteProxy = useCallback(async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('proxies')
+        .delete()
+        .eq('id', id);
 
-    // Reply after 2-4 seconds
-    const replyDelay = 2000 + Math.random() * 2000;
-    setTimeout(() => {
-      setTypingUsers(prev => ({ ...prev, [recipientPhone]: false }));
+      if (error) throw error;
+      toast.success('Proxy deleted');
+      refreshData();
+    } catch (error) {
+      console.error('Error deleting proxy:', error);
+      toast.error('Failed to delete proxy');
+    }
+  }, [refreshData]);
+
+  const assignProxy = useCallback(async (accountId: string, proxyId: string) => {
+    try {
+      const { error } = await supabase
+        .from('telegram_accounts')
+        .update({ proxy_id: proxyId })
+        .eq('id', accountId);
+
+      if (error) throw error;
       
-      const replyContent = autoReplies[Math.floor(Math.random() * autoReplies.length)];
-      const replyMessage: Message = {
-        id: `msg-${Date.now()}`,
-        accountId: accountId || 'acc-1',
-        recipientId: recipientPhone,
-        recipientPhone,
-        recipientName,
-        content: replyContent,
-        direction: 'incoming',
-        status: 'read',
-        timestamp: new Date(),
-        threadId: `thread-${recipientPhone}`
-      };
+      await supabase
+        .from('proxies')
+        .update({ assigned_account_id: accountId })
+        .eq('id', proxyId);
 
-      setMessages(prev => [...prev, replyMessage]);
-      
-      // Update conversation with unread count
-      setConversations(prev => prev.map(c => 
-        c.recipientPhone === recipientPhone 
-          ? { ...c, unreadCount: c.unreadCount + 1, updatedAt: new Date(), isActive: true }
-          : c
-      ));
-    }, replyDelay);
-  }, []);
+      refreshData();
+    } catch (error) {
+      console.error('Error assigning proxy:', error);
+      toast.error('Failed to assign proxy');
+    }
+  }, [refreshData]);
 
   const sendMessage = useCallback((accountId: string, recipientPhone: string, content: string) => {
     const conv = conversations.find(c => c.recipientPhone === recipientPhone);
@@ -378,44 +556,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       threadId: `thread-${recipientPhone}`
     };
     setMessages(prev => [...prev, newMessage]);
-    
-    // Update message status after delays (simulating Telegram)
-    setTimeout(() => {
-      setMessages(prev => prev.map(m => 
-        m.id === newMessage.id ? { ...m, status: 'delivered' } : m
-      ));
-    }, 1000);
-
-    setTimeout(() => {
-      setMessages(prev => prev.map(m => 
-        m.id === newMessage.id ? { ...m, status: 'read' } : m
-      ));
-    }, 3000);
-    
-    setConversations(prev => {
-      const existing = prev.find(c => c.recipientPhone === recipientPhone);
-      if (existing) {
-        return prev.map(c => 
-          c.recipientPhone === recipientPhone 
-            ? { ...c, lastMessage: newMessage, updatedAt: new Date() }
-            : c
-        );
-      }
-      return [...prev, {
-        id: `conv-${Date.now()}`,
-        accountId,
-        recipientPhone,
-        lastMessage: newMessage,
-        unreadCount: 0,
-        isActive: true,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      }];
-    });
-
-    // Trigger auto-reply simulation
-    simulateReply(recipientPhone, conv?.recipientName, accountId);
-  }, [conversations, simulateReply]);
+  }, [conversations]);
 
   const getConversationMessages = useCallback((conversationId: string) => {
     const conv = conversations.find(c => c.id === conversationId);
@@ -447,35 +588,121 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     return newConvId;
   }, [conversations]);
 
-  const createCampaign = useCallback((campaign: Partial<Campaign>) => {
-    const newCampaign: Campaign = {
-      id: `campaign-${Date.now()}`,
-      name: campaign.name || 'New Campaign',
-      messageTemplate: campaign.messageTemplate || '',
-      status: 'draft',
-      recipientCount: campaign.recipientCount || 0,
-      sentCount: 0,
-      failedCount: 0,
-      replyCount: 0,
-      accountIds: campaign.accountIds || [],
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      ...campaign
-    };
-    setCampaigns(prev => [...prev, newCampaign]);
-  }, []);
+  const createCampaign = useCallback(async (campaign: Partial<Campaign>) => {
+    try {
+      const { data, error } = await supabase
+        .from('campaigns')
+        .insert({
+          name: campaign.name || 'New Campaign',
+          message_template: campaign.messageTemplate || '',
+          recipient_count: campaign.recipientCount || 0,
+          status: 'draft',
+        })
+        .select()
+        .single();
 
-  const updateCampaign = useCallback((id: string, updates: Partial<Campaign>) => {
-    setCampaigns(prev => prev.map(c => 
-      c.id === id ? { ...c, ...updates, updatedAt: new Date() } : c
-    ));
-  }, []);
+      if (error) throw error;
 
-  const deleteCampaign = useCallback((id: string) => {
-    setCampaigns(prev => prev.filter(c => c.id !== id));
-  }, []);
+      // Link accounts if provided
+      if (campaign.accountIds?.length && data) {
+        await supabase
+          .from('campaign_accounts')
+          .insert(campaign.accountIds.map(aid => ({
+            campaign_id: data.id,
+            account_id: aid
+          })));
+      }
 
-  const refreshStats = useCallback(() => {}, []);
+      toast.success('Campaign created');
+      refreshData();
+    } catch (error) {
+      console.error('Error creating campaign:', error);
+      toast.error('Failed to create campaign');
+    }
+  }, [refreshData]);
+
+  const updateCampaign = useCallback(async (id: string, updates: Partial<Campaign>) => {
+    try {
+      const { error } = await supabase
+        .from('campaigns')
+        .update({
+          name: updates.name,
+          message_template: updates.messageTemplate,
+          status: updates.status,
+          recipient_count: updates.recipientCount,
+        })
+        .eq('id', id);
+
+      if (error) throw error;
+      refreshData();
+    } catch (error) {
+      console.error('Error updating campaign:', error);
+      toast.error('Failed to update campaign');
+    }
+  }, [refreshData]);
+
+  const deleteCampaign = useCallback(async (id: string) => {
+    try {
+      // Delete campaign accounts first
+      await supabase
+        .from('campaign_accounts')
+        .delete()
+        .eq('campaign_id', id);
+
+      // Delete campaign recipients
+      await supabase
+        .from('campaign_recipients')
+        .delete()
+        .eq('campaign_id', id);
+
+      // Delete campaign
+      const { error } = await supabase
+        .from('campaigns')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+      toast.success('Campaign deleted');
+      refreshData();
+    } catch (error) {
+      console.error('Error deleting campaign:', error);
+      toast.error('Failed to delete campaign');
+    }
+  }, [refreshData]);
+
+  const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string }[]) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('send-bulk-messages/upload-recipients', {
+        body: { campaign_id: campaignId, recipients }
+      });
+
+      if (error) throw error;
+      toast.success(`Uploaded ${recipients.length} recipients`);
+      refreshData();
+    } catch (error) {
+      console.error('Error uploading recipients:', error);
+      toast.error('Failed to upload recipients');
+    }
+  }, [refreshData]);
+
+  const startCampaign = useCallback(async (campaignId: string) => {
+    try {
+      const { data, error } = await supabase.functions.invoke('send-bulk-messages/start-campaign', {
+        body: { campaign_id: campaignId }
+      });
+
+      if (error) throw error;
+      toast.success(data.message || 'Campaign started');
+      refreshData();
+    } catch (error) {
+      console.error('Error starting campaign:', error);
+      toast.error('Failed to start campaign');
+    }
+  }, [refreshData]);
+
+  const refreshStats = useCallback(() => {
+    refreshData();
+  }, [refreshData]);
 
   const value: TelegramContextType = {
     accounts,
@@ -486,6 +713,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     stats,
     uploadProgress,
     typingUsers,
+    isLoading,
     addAccount,
     updateAccount,
     deleteAccount,
@@ -502,7 +730,10 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     createCampaign,
     updateCampaign,
     deleteCampaign,
-    refreshStats
+    uploadRecipients,
+    startCampaign,
+    refreshStats,
+    refreshData,
   };
 
   return (
@@ -512,7 +743,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   );
 };
 
-export const useTelegram = (): TelegramContextType => {
+export const useTelegram = () => {
   const context = useContext(TelegramContext);
   if (!context) {
     throw new Error('useTelegram must be used within a TelegramProvider');
