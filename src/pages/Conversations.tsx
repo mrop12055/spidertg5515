@@ -160,8 +160,12 @@ const Chat: React.FC = () => {
   const handleSendMessage = async () => {
     if ((!messageInput.trim() && !selectedImage) || !selectedConv) return;
     
-    const account = accounts.find(a => a.id === selectedConv.accountId) || accounts[0];
-    if (!account) return;
+    // CRITICAL: Always use the conversation's original account - never fallback to another account
+    const account = accounts.find(a => a.id === selectedConv.accountId);
+    if (!account) {
+      toast.error('Original account is not available. Cannot send from a different number.');
+      return;
+    }
 
     if (selectedImage) {
       setIsSendingMedia(true);
