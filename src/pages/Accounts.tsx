@@ -6,14 +6,14 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import { 
   Plus, Upload, Trash2, Phone, FileText, 
-  CheckCircle, XCircle, AlertTriangle, Loader2, Search, Filter
+  CheckCircle, XCircle, Loader2, Search, Filter, RefreshCw, Check
 } from 'lucide-react';
-import { format } from 'date-fns';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -42,13 +42,17 @@ const Accounts: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [sessionFiles, setSessionFiles] = useState<SessionFile[]>([]);
   const [uploadResults, setUploadResults] = useState<{ successful: number; failed: number } | null>(null);
+  
+  // Bulk selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [isBulkChecking, setIsBulkChecking] = useState(false);
+  const [checkResults, setCheckResults] = useState<Map<string, 'checking' | 'valid' | 'invalid'>>(new Map());
 
-  // Extract phone number from filename (e.g., "5493416219301.session" -> "+5493416219301")
+  // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
     const baseName = filename.replace(/\.session$/i, '');
-    // Remove any non-digit characters except + at the start
     const cleaned = baseName.replace(/[^\d+]/g, '');
-    // Add + prefix if not present
     return cleaned.startsWith('+') ? cleaned : `+${cleaned}`;
   };
 
@@ -58,7 +62,6 @@ const Accounts: React.FC = () => {
       const reader = new FileReader();
       reader.onload = () => {
         const result = reader.result as string;
-        // Remove data URL prefix to get just the base64 data
         const base64 = result.split(',')[1];
         resolve(base64);
       };
@@ -133,7 +136,6 @@ const Accounts: React.FC = () => {
         toast.error(`${data.failed} account(s) failed`);
       }
 
-      // Clear files and close dialog on success
       if (data.successful > 0 && data.failed === 0) {
         setSessionFiles([]);
         setIsAddOpen(false);
@@ -179,6 +181,89 @@ const Accounts: React.FC = () => {
     }
   };
 
+  // Bulk delete
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    
+    setIsBulkDeleting(true);
+    try {
+      const { error } = await supabase
+        .from('telegram_accounts')
+        .delete()
+        .in('id', Array.from(selectedIds));
+
+      if (error) throw error;
+      
+      toast.success(`Deleted ${selectedIds.size} account(s)`);
+      setSelectedIds(new Set());
+      refreshData();
+    } catch (error) {
+      console.error('Error bulk deleting:', error);
+      toast.error('Failed to delete accounts');
+    } finally {
+      setIsBulkDeleting(false);
+    }
+  };
+
+  // Bulk check status - checks if session_data exists
+  const handleBulkCheck = async () => {
+    if (selectedIds.size === 0) return;
+    
+    setIsBulkChecking(true);
+    const newResults = new Map<string, 'checking' | 'valid' | 'invalid'>();
+    
+    // Set all to checking
+    selectedIds.forEach(id => newResults.set(id, 'checking'));
+    setCheckResults(new Map(newResults));
+
+    try {
+      // Get accounts with their session data
+      const { data: accountsData, error } = await supabase
+        .from('telegram_accounts')
+        .select('id, session_data, status')
+        .in('id', Array.from(selectedIds));
+
+      if (error) throw error;
+
+      let validCount = 0;
+      let invalidCount = 0;
+
+      for (const account of accountsData || []) {
+        // Check if session data exists and is not empty
+        const hasValidSession = account.session_data && account.session_data.length > 100;
+        
+        if (hasValidSession) {
+          newResults.set(account.id, 'valid');
+          validCount++;
+          // Update status to active if it has valid session
+          if (account.status !== 'active') {
+            await supabase
+              .from('telegram_accounts')
+              .update({ status: 'active' })
+              .eq('id', account.id);
+          }
+        } else {
+          newResults.set(account.id, 'invalid');
+          invalidCount++;
+          // Update status to disconnected if no valid session
+          await supabase
+            .from('telegram_accounts')
+            .update({ status: 'disconnected' })
+            .eq('id', account.id);
+        }
+      }
+
+      setCheckResults(new Map(newResults));
+      toast.success(`Check complete: ${validCount} valid, ${invalidCount} invalid`);
+      refreshData();
+    } catch (error) {
+      console.error('Error checking accounts:', error);
+      toast.error('Failed to check accounts');
+    } finally {
+      setIsBulkChecking(false);
+    }
+  };
+
   const getStatusBadge = (status: AccountStatus) => {
     const option = statusOptions.find(o => o.value === status);
     return <Badge className={option?.color || 'bg-muted'}>{option?.label || status}</Badge>;
@@ -198,6 +283,27 @@ const Accounts: React.FC = () => {
   const removeSessionFile = (index: number) => {
     setSessionFiles(prev => prev.filter((_, i) => i !== index));
   };
+
+  // Selection handlers
+  const toggleSelect = (id: string) => {
+    const newSelected = new Set(selectedIds);
+    if (newSelected.has(id)) {
+      newSelected.delete(id);
+    } else {
+      newSelected.add(id);
+    }
+    setSelectedIds(newSelected);
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.size === filteredAccounts.length) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredAccounts.map(a => a.id)));
+    }
+  };
+
+  const isAllSelected = filteredAccounts.length > 0 && selectedIds.size === filteredAccounts.length;
 
   return (
     <DashboardLayout>
@@ -334,6 +440,54 @@ const Accounts: React.FC = () => {
         }
       />
 
+      {/* Bulk Actions Bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-4 mb-4 p-4 rounded-lg bg-primary/10 border border-primary/30 animate-fade-in">
+          <span className="text-sm font-medium">
+            {selectedIds.size} account{selectedIds.size !== 1 ? 's' : ''} selected
+          </span>
+          <div className="flex-1" />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleBulkCheck}
+            disabled={isBulkChecking}
+            className="gap-2"
+          >
+            {isBulkChecking ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            Check Status
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            onClick={handleBulkDelete}
+            disabled={isBulkDeleting}
+            className="gap-2"
+          >
+            {isBulkDeleting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Trash2 className="w-4 h-4" />
+            )}
+            Delete Selected
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setSelectedIds(new Set());
+              setCheckResults(new Map());
+            }}
+          >
+            Cancel
+          </Button>
+        </div>
+      )}
+
       {/* Filters */}
       <div className="flex gap-4 mb-6">
         <div className="relative flex-1 max-w-md">
@@ -416,72 +570,126 @@ const Accounts: React.FC = () => {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4">
-          {filteredAccounts.map((account) => (
-            <Card key={account.id} className="hover:border-primary/20 transition-colors">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-4">
-                  {/* Avatar */}
-                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
-                    <Phone className="w-5 h-5 text-primary" />
-                  </div>
-                  
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
+        <div className="space-y-2">
+          {/* Select All Header */}
+          <div className="flex items-center gap-4 px-4 py-2 bg-secondary/50 rounded-lg">
+            <Checkbox
+              checked={isAllSelected}
+              onCheckedChange={toggleSelectAll}
+              aria-label="Select all"
+            />
+            <span className="text-sm text-muted-foreground">
+              {isAllSelected ? 'Deselect all' : 'Select all'} ({filteredAccounts.length} accounts)
+            </span>
+          </div>
+
+          {/* Account Cards */}
+          {filteredAccounts.map((account) => {
+            const checkStatus = checkResults.get(account.id);
+            
+            return (
+              <Card 
+                key={account.id} 
+                className={cn(
+                  "hover:border-primary/20 transition-colors",
+                  selectedIds.has(account.id) && "border-primary/50 bg-primary/5"
+                )}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-4">
+                    {/* Checkbox */}
+                    <Checkbox
+                      checked={selectedIds.has(account.id)}
+                      onCheckedChange={() => toggleSelect(account.id)}
+                      aria-label={`Select ${account.phoneNumber}`}
+                    />
+
+                    {/* Avatar */}
+                    <div className={cn(
+                      "w-12 h-12 rounded-full flex items-center justify-center",
+                      checkStatus === 'valid' && "bg-green-500/20",
+                      checkStatus === 'invalid' && "bg-destructive/20",
+                      checkStatus === 'checking' && "bg-primary/20",
+                      !checkStatus && "bg-primary/10"
+                    )}>
+                      {checkStatus === 'checking' ? (
+                        <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                      ) : checkStatus === 'valid' ? (
+                        <Check className="w-5 h-5 text-green-500" />
+                      ) : checkStatus === 'invalid' ? (
+                        <XCircle className="w-5 h-5 text-destructive" />
+                      ) : (
+                        <Phone className="w-5 h-5 text-primary" />
+                      )}
+                    </div>
+                    
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{account.phoneNumber}</span>
+                        {getStatusBadge(account.status)}
+                        {checkStatus === 'valid' && (
+                          <Badge className="bg-green-500/20 text-green-600 border-green-500/30">
+                            Session Valid
+                          </Badge>
+                        )}
+                        {checkStatus === 'invalid' && (
+                          <Badge className="bg-destructive/20 text-destructive border-destructive/30">
+                            No Session
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {account.firstName && `${account.firstName} ${account.lastName || ''}`}
+                        {account.username && ` • @${account.username}`}
+                      </div>
+                    </div>
+
+                    {/* Stats */}
+                    <div className="hidden md:flex items-center gap-6 text-sm">
+                      <div className="text-center">
+                        <div className="font-medium">{account.messagesSentToday || 0}</div>
+                        <div className="text-xs text-muted-foreground">Sent Today</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="font-medium">{account.dailyLimit || 25}</div>
+                        <div className="text-xs text-muted-foreground">Daily Limit</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="font-medium">{account.maturityDays || 0}d</div>
+                        <div className="text-xs text-muted-foreground">Maturity</div>
+                      </div>
+                    </div>
+
+                    {/* Actions */}
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{account.phoneNumber}</span>
-                      {getStatusBadge(account.status)}
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {account.firstName && `${account.firstName} ${account.lastName || ''}`}
-                      {account.username && ` • @${account.username}`}
+                      <Select
+                        value={account.status}
+                        onValueChange={(value) => handleStatusChange(account.id, value as AccountStatus)}
+                      >
+                        <SelectTrigger className="w-32 h-8">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {statusOptions.map(opt => (
+                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => handleDeleteAccount(account.id)}
+                        className="text-muted-foreground hover:text-destructive"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </Button>
                     </div>
                   </div>
-
-                  {/* Stats */}
-                  <div className="hidden md:flex items-center gap-6 text-sm">
-                    <div className="text-center">
-                      <div className="font-medium">{account.messagesSentToday || 0}</div>
-                      <div className="text-xs text-muted-foreground">Sent Today</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="font-medium">{account.dailyLimit || 25}</div>
-                      <div className="text-xs text-muted-foreground">Daily Limit</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="font-medium">{account.maturityDays || 0}d</div>
-                      <div className="text-xs text-muted-foreground">Maturity</div>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex items-center gap-2">
-                    <Select
-                      value={account.status}
-                      onValueChange={(value) => handleStatusChange(account.id, value as AccountStatus)}
-                    >
-                      <SelectTrigger className="w-32 h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statusOptions.map(opt => (
-                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleDeleteAccount(account.id)}
-                      className="text-muted-foreground hover:text-destructive"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </DashboardLayout>
