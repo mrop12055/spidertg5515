@@ -34,7 +34,7 @@ import {
   Square
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { format, isToday, isYesterday, isSameDay, subDays } from 'date-fns';
+import { format, isToday, isYesterday, isSameDay, subDays, differenceInMinutes } from 'date-fns';
 import { toast } from 'sonner';
 
 type TimeFilter = '24h' | '3d' | '7d';
@@ -108,6 +108,20 @@ const Chat: React.FC = () => {
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
   const isTyping = selectedConv ? typingUsers[selectedConv.recipientPhone] : false;
+
+  // Check if conversation is "live" (has recent incoming messages within 5 minutes)
+  const isLiveConversation = (conv: typeof selectedConv) => {
+    if (!conv) return false;
+    // Check if there are any incoming messages in the last 5 minutes
+    const convMessages = messages.filter(m => m.recipientPhone === conv.recipientPhone);
+    const recentIncoming = convMessages.some(m => 
+      m.direction === 'incoming' && 
+      differenceInMinutes(new Date(), new Date(m.timestamp)) < 5
+    );
+    return recentIncoming;
+  };
+
+  const selectedConvIsLive = isLiveConversation(selectedConv);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -651,9 +665,20 @@ const Chat: React.FC = () => {
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <h3 className="font-semibold text-foreground leading-tight">
-                      {selectedConv.recipientName || selectedConv.recipientPhone}
-                    </h3>
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold text-foreground leading-tight">
+                        {selectedConv.recipientName || selectedConv.recipientPhone}
+                      </h3>
+                      {selectedConvIsLive && (
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-green-500/10 border border-green-500/20">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                          </span>
+                          <span className="text-[10px] font-medium text-green-600 dark:text-green-400">Live</span>
+                        </div>
+                      )}
+                    </div>
                     <p className="text-xs text-muted-foreground">
                       {isTyping ? (
                         <span className="text-primary">typing...</span>
