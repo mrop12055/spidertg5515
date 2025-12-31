@@ -340,11 +340,41 @@ async def load_accounts():
 
 
 async def get_pending_messages():
-    """Get pending messages from the queue"""
+    """Get pending messages from the queue (excludes orphaned campaign messages)"""
     result = supabase.table("messages").select(
         "*, conversations(*)"
     ).eq("status", "pending").eq("direction", "outgoing").limit(50).execute()
-    return result.data or []
+    
+    # Filter out orphaned campaign messages (campaign was deleted)
+    # A message is orphaned if it was meant for a campaign but has no campaign_recipient_id
+    # This can happen if the campaign was deleted while messages were queued
+    messages = result.data or []
+    return [
+        msg for msg in messages 
+        if not is_orphaned_campaign_message(msg)
+    ]
+
+
+def is_orphaned_campaign_message(msg):
+    """
+    Check if a message is an orphaned campaign message.
+    Orphaned messages have no campaign_recipient_id but were queued from a campaign.
+    These should be skipped as the campaign was deleted.
+    """
+    # If it has a campaign_recipient_id, it's valid
+    if msg.get("campaign_recipient_id"):
+        return False
+    
+    # Check if conversation was created for a campaign (has no customer reply)
+    conv = msg.get("conversations", {}) or {}
+    
+    # If conversation has no recipient_telegram_id and is not active, 
+    # it's likely a campaign-created conversation that was orphaned
+    if not conv.get("is_active") and not conv.get("recipient_telegram_id"):
+        # This is a first-contact message with no campaign tracking - orphaned
+        return True
+    
+    return False
 
 
 async def get_validating_recipients():
@@ -1019,7 +1049,7 @@ async def get_live_pending_messages(live_conv_ids: Set[str]):
         "*, conversations(*)"
     ).eq("status", "pending").eq("direction", "outgoing").execute()
     
-    # Filter to only live conversations
+    # Filter to only live conversations (live chats don't need campaign_recipient_id check)
     return [
         msg for msg in (result.data or [])
         if msg.get("conversation_id") in live_conv_ids
@@ -1029,14 +1059,32 @@ async def get_live_pending_messages(live_conv_ids: Set[str]):
 async def get_campaign_pending_messages(live_conv_ids: Set[str]):
     """Get pending messages for NON-live conversations (campaign mode)"""
     result = supabase.table("messages").select(
-        "*, conversations(*)"
+        "*, conversations(*), campaign_recipients(campaign_id)"
     ).eq("status", "pending").eq("direction", "outgoing").limit(50).execute()
     
-    # Filter OUT live conversations (handled by live loop)
-    return [
-        msg for msg in (result.data or [])
-        if msg.get("conversation_id") not in live_conv_ids
-    ]
+    valid_messages = []
+    for msg in (result.data or []):
+        # Skip live conversations (handled by live loop)
+        if msg.get("conversation_id") in live_conv_ids:
+            continue
+        
+        # Skip orphaned campaign messages (campaign was deleted)
+        campaign_recipient_id = msg.get("campaign_recipient_id")
+        if not campaign_recipient_id:
+            # No campaign link - check if it's an orphaned first-contact message
+            if is_orphaned_campaign_message(msg):
+                print(f"    ⚠️ Skipping orphaned message {msg['id'][:8]} (campaign deleted)")
+                continue
+        else:
+            # Has campaign_recipient_id - verify campaign still exists
+            campaign_recipient = msg.get("campaign_recipients")
+            if not campaign_recipient or not campaign_recipient.get("campaign_id"):
+                print(f"    ⚠️ Skipping message {msg['id'][:8]} (campaign recipient deleted)")
+                continue
+        
+        valid_messages.append(msg)
+    
+    return valid_messages
 
 
 async def live_chat_loop():
