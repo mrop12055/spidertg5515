@@ -108,6 +108,8 @@ async def update_message_status(message_id: str, status: str, error: str = None)
     update_data = {"status": status}
     if status == "sent":
         update_data["delivered_at"] = datetime.utcnow().isoformat()
+    if error:
+        update_data["failed_reason"] = error
     supabase.table("messages").update(update_data).eq("id", message_id).execute()
 
 async def send_message(client: TelegramClient, phone: str, content: str):
@@ -178,7 +180,7 @@ async def process_account(account: dict, messages: list):
                 await update_message_status(msg["id"], "sent")
                 print(f"    ✓ Sent!")
             else:
-                await update_message_status(msg["id"], "failed")
+                await update_message_status(msg["id"], "failed", error)
                 print(f"    ✗ Failed: {error}")
             
             # Wait between messages
