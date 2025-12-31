@@ -14,16 +14,455 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      campaign_accounts: {
+        Row: {
+          account_id: string
+          campaign_id: string
+        }
+        Insert: {
+          account_id: string
+          campaign_id: string
+        }
+        Update: {
+          account_id?: string
+          campaign_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_accounts_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaign_accounts_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      campaign_recipients: {
+        Row: {
+          campaign_id: string
+          id: string
+          name: string | null
+          phone_number: string
+          sent_at: string | null
+          sent_by_account_id: string | null
+          status: string | null
+        }
+        Insert: {
+          campaign_id: string
+          id?: string
+          name?: string | null
+          phone_number: string
+          sent_at?: string | null
+          sent_by_account_id?: string | null
+          status?: string | null
+        }
+        Update: {
+          campaign_id?: string
+          id?: string
+          name?: string | null
+          phone_number?: string
+          sent_at?: string | null
+          sent_by_account_id?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "campaign_recipients_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaign_recipients_sent_by_account_id_fkey"
+            columns: ["sent_by_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      campaigns: {
+        Row: {
+          created_at: string | null
+          failed_count: number | null
+          id: string
+          message_template: string
+          name: string
+          recipient_count: number | null
+          reply_count: number | null
+          scheduled_at: string | null
+          sent_count: number | null
+          status: Database["public"]["Enums"]["campaign_status"] | null
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          failed_count?: number | null
+          id?: string
+          message_template: string
+          name: string
+          recipient_count?: number | null
+          reply_count?: number | null
+          scheduled_at?: string | null
+          sent_count?: number | null
+          status?: Database["public"]["Enums"]["campaign_status"] | null
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          failed_count?: number | null
+          id?: string
+          message_template?: string
+          name?: string
+          recipient_count?: number | null
+          reply_count?: number | null
+          scheduled_at?: string | null
+          sent_count?: number | null
+          status?: Database["public"]["Enums"]["campaign_status"] | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
+      conversations: {
+        Row: {
+          account_id: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          last_message_at: string | null
+          recipient_avatar: string | null
+          recipient_name: string | null
+          recipient_phone: string | null
+          recipient_telegram_id: number | null
+          recipient_username: string | null
+          unread_count: number | null
+          updated_at: string | null
+        }
+        Insert: {
+          account_id: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_message_at?: string | null
+          recipient_avatar?: string | null
+          recipient_name?: string | null
+          recipient_phone?: string | null
+          recipient_telegram_id?: number | null
+          recipient_username?: string | null
+          unread_count?: number | null
+          updated_at?: string | null
+        }
+        Update: {
+          account_id?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          last_message_at?: string | null
+          recipient_avatar?: string | null
+          recipient_name?: string | null
+          recipient_phone?: string | null
+          recipient_telegram_id?: number | null
+          recipient_username?: string | null
+          unread_count?: number | null
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      maturation_tasks: {
+        Row: {
+          account_id: string
+          completed_at: string | null
+          created_at: string | null
+          description: string | null
+          id: string
+          scheduled_at: string | null
+          status: string | null
+          task_type: string
+        }
+        Insert: {
+          account_id: string
+          completed_at?: string | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          scheduled_at?: string | null
+          status?: string | null
+          task_type: string
+        }
+        Update: {
+          account_id?: string
+          completed_at?: string | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          scheduled_at?: string | null
+          status?: string | null
+          task_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "maturation_tasks_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      messages: {
+        Row: {
+          account_id: string
+          content: string
+          conversation_id: string
+          created_at: string | null
+          delivered_at: string | null
+          direction: Database["public"]["Enums"]["message_direction"]
+          id: string
+          read_at: string | null
+          status: Database["public"]["Enums"]["message_status"] | null
+          telegram_message_id: number | null
+        }
+        Insert: {
+          account_id: string
+          content: string
+          conversation_id: string
+          created_at?: string | null
+          delivered_at?: string | null
+          direction: Database["public"]["Enums"]["message_direction"]
+          id?: string
+          read_at?: string | null
+          status?: Database["public"]["Enums"]["message_status"] | null
+          telegram_message_id?: number | null
+        }
+        Update: {
+          account_id?: string
+          content?: string
+          conversation_id?: string
+          created_at?: string | null
+          delivered_at?: string | null
+          direction?: Database["public"]["Enums"]["message_direction"]
+          id?: string
+          read_at?: string | null
+          status?: Database["public"]["Enums"]["message_status"] | null
+          telegram_message_id?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "messages_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      proxies: {
+        Row: {
+          assigned_account_id: string | null
+          country: string | null
+          created_at: string | null
+          host: string
+          id: string
+          last_checked: string | null
+          password: string | null
+          port: number
+          proxy_type: Database["public"]["Enums"]["proxy_type"] | null
+          response_time: number | null
+          status: Database["public"]["Enums"]["proxy_status"] | null
+          username: string | null
+        }
+        Insert: {
+          assigned_account_id?: string | null
+          country?: string | null
+          created_at?: string | null
+          host: string
+          id?: string
+          last_checked?: string | null
+          password?: string | null
+          port: number
+          proxy_type?: Database["public"]["Enums"]["proxy_type"] | null
+          response_time?: number | null
+          status?: Database["public"]["Enums"]["proxy_status"] | null
+          username?: string | null
+        }
+        Update: {
+          assigned_account_id?: string | null
+          country?: string | null
+          created_at?: string | null
+          host?: string
+          id?: string
+          last_checked?: string | null
+          password?: string | null
+          port?: number
+          proxy_type?: Database["public"]["Enums"]["proxy_type"] | null
+          response_time?: number | null
+          status?: Database["public"]["Enums"]["proxy_status"] | null
+          username?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proxies_assigned_account_id_fkey"
+            columns: ["assigned_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      telegram_accounts: {
+        Row: {
+          api_hash: string | null
+          api_id: string | null
+          avatar_url: string | null
+          ban_reason: string | null
+          created_at: string | null
+          daily_limit: number | null
+          first_name: string | null
+          id: string
+          last_active: string | null
+          last_name: string | null
+          maturity_days: number | null
+          maturity_score: number | null
+          messages_sent_today: number | null
+          phone_number: string
+          proxy_id: string | null
+          restricted_until: string | null
+          session_data: string | null
+          status: Database["public"]["Enums"]["account_status"] | null
+          telegram_id: number | null
+          username: string | null
+        }
+        Insert: {
+          api_hash?: string | null
+          api_id?: string | null
+          avatar_url?: string | null
+          ban_reason?: string | null
+          created_at?: string | null
+          daily_limit?: number | null
+          first_name?: string | null
+          id?: string
+          last_active?: string | null
+          last_name?: string | null
+          maturity_days?: number | null
+          maturity_score?: number | null
+          messages_sent_today?: number | null
+          phone_number: string
+          proxy_id?: string | null
+          restricted_until?: string | null
+          session_data?: string | null
+          status?: Database["public"]["Enums"]["account_status"] | null
+          telegram_id?: number | null
+          username?: string | null
+        }
+        Update: {
+          api_hash?: string | null
+          api_id?: string | null
+          avatar_url?: string | null
+          ban_reason?: string | null
+          created_at?: string | null
+          daily_limit?: number | null
+          first_name?: string | null
+          id?: string
+          last_active?: string | null
+          last_name?: string | null
+          maturity_days?: number | null
+          maturity_score?: number | null
+          messages_sent_today?: number | null
+          phone_number?: string
+          proxy_id?: string | null
+          restricted_until?: string | null
+          session_data?: string | null
+          status?: Database["public"]["Enums"]["account_status"] | null
+          telegram_id?: number | null
+          username?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "fk_proxy"
+            columns: ["proxy_id"]
+            isOneToOne: false
+            referencedRelation: "proxies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vps_connections: {
+        Row: {
+          api_key: string
+          created_at: string | null
+          id: string
+          ip_address: string | null
+          last_seen: string | null
+          name: string
+          status: string | null
+        }
+        Insert: {
+          api_key: string
+          created_at?: string | null
+          id?: string
+          ip_address?: string | null
+          last_seen?: string | null
+          name: string
+          status?: string | null
+        }
+        Update: {
+          api_key?: string
+          created_at?: string | null
+          id?: string
+          ip_address?: string | null
+          last_seen?: string | null
+          name?: string
+          status?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      reset_daily_message_counts: { Args: never; Returns: undefined }
     }
     Enums: {
-      [_ in never]: never
+      account_status:
+        | "active"
+        | "banned"
+        | "restricted"
+        | "disconnected"
+        | "cooldown"
+      campaign_status:
+        | "draft"
+        | "scheduled"
+        | "running"
+        | "paused"
+        | "completed"
+      message_direction: "incoming" | "outgoing"
+      message_status: "pending" | "sent" | "delivered" | "read" | "failed"
+      proxy_status: "active" | "inactive" | "error"
+      proxy_type: "http" | "https" | "socks4" | "socks5"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +589,19 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      account_status: [
+        "active",
+        "banned",
+        "restricted",
+        "disconnected",
+        "cooldown",
+      ],
+      campaign_status: ["draft", "scheduled", "running", "paused", "completed"],
+      message_direction: ["incoming", "outgoing"],
+      message_status: ["pending", "sent", "delivered", "read", "failed"],
+      proxy_status: ["active", "inactive", "error"],
+      proxy_type: ["http", "https", "socks4", "socks5"],
+    },
   },
 } as const
