@@ -112,17 +112,22 @@ async def update_message_status(message_id: str, status: str, error: str = None)
         update_data["failed_reason"] = error
     supabase.table("messages").update(update_data).eq("id", message_id).execute()
 
-async def send_message(client: TelegramClient, phone: str, content: str):
-    """Send a message to a phone number"""
+async def send_message(client: TelegramClient, recipient: str, content: str):
+    """Send a message to a phone number or username"""
     try:
-        # Try to get the user entity
-        entity = await client.get_entity(phone)
+        # Handle username (starts with @) or phone number
+        if recipient.startswith("@"):
+            entity = await client.get_entity(recipient)
+        else:
+            # Try phone number
+            entity = await client.get_entity(recipient)
+        
         await client.send_message(entity, content)
         return True, None
     except UserPrivacyRestrictedError:
         return False, "PERMANENT: User privacy settings prevent messaging"
     except UsernameNotOccupiedError:
-        return False, "PERMANENT: Username/phone not found on Telegram"
+        return False, "PERMANENT: Username not found on Telegram"
     except ValueError as e:
         # "Cannot find any entity corresponding to..." is a ValueError
         if "Cannot find any entity" in str(e):
@@ -169,15 +174,16 @@ async def process_account(account: dict, messages: list):
         # In production, filter by account_id: [m for m in messages if m["account_id"] == account["id"]]
         for msg in messages:
             conv = msg.get("conversations", {}) or {}
-            phone = conv.get("recipient_phone")
+            # Support both phone number and username
+            recipient = conv.get("recipient_username") or conv.get("recipient_phone")
             
-            if not phone:
-                print(f"    ⚠ No recipient phone for message {msg['id']}")
-                await update_message_status(msg["id"], "failed", "No recipient phone number")
+            if not recipient:
+                print(f"    ⚠ No recipient for message {msg['id']}")
+                await update_message_status(msg["id"], "failed", "No recipient phone/username")
                 continue
             
-            print(f"    → Sending to {phone}...")
-            success, error = await send_message(client, phone, msg["content"])
+            print(f"    → Sending to {recipient}...")
+            success, error = await send_message(client, recipient, msg["content"])
             
             if success:
                 await update_message_status(msg["id"], "sent")

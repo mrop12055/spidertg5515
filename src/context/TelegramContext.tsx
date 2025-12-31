@@ -641,20 +641,35 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, []);
 
   const startNewConversation = useCallback(async (accountId: string, recipientPhone: string, recipientName?: string) => {
+    // Check if it's a username (starts with @)
+    const isUsername = recipientPhone.startsWith('@');
+    
     // Check if conversation exists
-    const existing = conversations.find(c => c.recipientPhone === recipientPhone && c.accountId === accountId);
+    const existing = conversations.find(c => 
+      (isUsername ? c.recipientPhone === recipientPhone : c.recipientPhone === recipientPhone) && 
+      c.accountId === accountId
+    );
     if (existing) return existing.id;
 
     try {
+      const insertData: any = {
+        account_id: accountId,
+        recipient_name: recipientName,
+        is_active: false,
+        unread_count: 0,
+      };
+      
+      // Store username in recipient_username field, phone in recipient_phone
+      if (isUsername) {
+        insertData.recipient_username = recipientPhone;
+        insertData.recipient_phone = recipientPhone; // Also store in phone for display
+      } else {
+        insertData.recipient_phone = recipientPhone;
+      }
+      
       const { data, error } = await supabase
         .from('conversations')
-        .insert({
-          account_id: accountId,
-          recipient_phone: recipientPhone,
-          recipient_name: recipientName,
-          is_active: false,
-          unread_count: 0,
-        })
+        .insert(insertData)
         .select()
         .single();
 
