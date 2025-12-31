@@ -64,6 +64,7 @@ export interface Conversation {
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;
+  blockedByRecipient?: boolean;
 }
 
 export interface Campaign {

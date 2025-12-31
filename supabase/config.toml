@@ -14,3 +14,6 @@ verify_jwt = false
 
 [functions.test-proxies]
 verify_jwt = false
+
+[functions.cleanup-old-chats]
+verify_jwt = false

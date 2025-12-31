@@ -134,6 +134,7 @@ export type Database = {
       conversations: {
         Row: {
           account_id: string
+          blocked_by_recipient: boolean | null
           created_at: string | null
           id: string
           is_active: boolean | null
@@ -148,6 +149,7 @@ export type Database = {
         }
         Insert: {
           account_id: string
+          blocked_by_recipient?: boolean | null
           created_at?: string | null
           id?: string
           is_active?: boolean | null
@@ -162,6 +164,7 @@ export type Database = {
         }
         Update: {
           account_id?: string
+          blocked_by_recipient?: boolean | null
           created_at?: string | null
           id?: string
           is_active?: boolean | null
