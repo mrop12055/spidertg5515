@@ -804,14 +804,31 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   }, [conversations, messages]);
 
   const markConversationAsRead = useCallback(async (conversationId: string) => {
+    // Update local state immediately
     setConversations(prev => prev.map(c => 
       c.id === conversationId ? { ...c, unreadCount: 0 } : c
     ));
     
+    // Mark messages as read
+    setMessages(prev => prev.map(m => 
+      m.conversationId === conversationId && m.direction === 'incoming' && m.status !== 'read'
+        ? { ...m, status: 'read' }
+        : m
+    ));
+    
+    // Update database - conversation
     await supabase
       .from('conversations')
       .update({ unread_count: 0 })
       .eq('id', conversationId);
+    
+    // Update database - mark incoming messages as read
+    await supabase
+      .from('messages')
+      .update({ read_at: new Date().toISOString(), status: 'read' })
+      .eq('conversation_id', conversationId)
+      .eq('direction', 'incoming')
+      .is('read_at', null);
   }, []);
 
   const startNewConversation = useCallback(async (accountId: string, recipientPhone: string, recipientName?: string) => {
