@@ -7,13 +7,13 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Plus, Trash2, Globe, Loader2, Search, RefreshCw, 
-  CheckCircle, XCircle, Wifi, WifiOff, User, Clock, Server
+  CheckCircle, XCircle, Wifi, WifiOff, User, Clock, Server, AlertTriangle
 } from 'lucide-react';
 import { Proxy } from '@/types/telegram';
 import { toast } from 'sonner';
@@ -39,6 +39,15 @@ interface TestResult {
   error?: string;
 }
 
+interface ProxyToAdd {
+  host: string;
+  port: number;
+  username?: string;
+  password?: string;
+  type: string;
+  testResult?: TestResult;
+}
+
 const Proxies: React.FC = () => {
   const { proxies, accounts, refreshData, isLoading } = useTelegram();
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -62,16 +71,24 @@ const Proxies: React.FC = () => {
   });
   const [bulkProxies, setBulkProxies] = useState('');
   const [isAdding, setIsAdding] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [singleTestResult, setSingleTestResult] = useState<TestResult | null>(null);
+  const [parsedProxies, setParsedProxies] = useState<ProxyToAdd[]>([]);
+  const [isTestingBulk, setIsTestingBulk] = useState(false);
 
-  const handleAddSingle = async () => {
+  // Test a single proxy before adding
+  const testSingleProxy = async () => {
     if (!singleProxy.host || !singleProxy.port) {
       toast.error('Host and port are required');
       return;
     }
 
-    setIsAdding(true);
+    setIsTesting(true);
+    setSingleTestResult({ status: 'testing' });
+
     try {
-      const { error } = await supabase
+      // Create a temporary proxy entry to test
+      const { data: tempProxy, error: insertError } = await supabase
         .from('proxies')
         .insert({
           host: singleProxy.host.trim(),
@@ -79,60 +96,166 @@ const Proxies: React.FC = () => {
           username: singleProxy.username.trim() || null,
           password: singleProxy.password || null,
           proxy_type: singleProxy.type,
-          status: 'active',
-        });
+          status: 'inactive',
+        })
+        .select()
+        .single();
+
+      if (insertError) throw insertError;
+
+      // Test the proxy
+      const { data, error } = await supabase.functions.invoke('test-proxies', {
+        body: { proxy_ids: [tempProxy.id] }
+      });
 
       if (error) throw error;
-      
-      toast.success('Proxy added');
-      setSingleProxy({ host: '', port: '', username: '', password: '', type: 'http' });
-      setIsAddOpen(false);
+
+      const result = data.results?.[0];
+      if (result?.success) {
+        setSingleTestResult({ status: 'success', responseTime: result.responseTime });
+        toast.success(`Proxy is working! Response time: ${result.responseTime}ms`);
+        
+        // Update proxy status to active
+        await supabase
+          .from('proxies')
+          .update({ status: 'active' })
+          .eq('id', tempProxy.id);
+      } else {
+        setSingleTestResult({ status: 'failed', error: result?.error || 'Connection failed' });
+        toast.error(`Proxy test failed: ${result?.error || 'Connection failed'}`);
+        
+        // Delete the failed proxy
+        await supabase
+          .from('proxies')
+          .delete()
+          .eq('id', tempProxy.id);
+      }
+
       refreshData();
     } catch (error) {
-      console.error('Error adding proxy:', error);
-      toast.error('Failed to add proxy');
+      console.error('Error testing proxy:', error);
+      setSingleTestResult({ status: 'failed', error: 'Test failed' });
+      toast.error('Failed to test proxy');
     } finally {
-      setIsAdding(false);
+      setIsTesting(false);
     }
   };
 
-  const handleAddBulk = async () => {
+  // Parse and preview bulk proxies
+  const parseBulkProxies = () => {
     const lines = bulkProxies.split('\n').filter(l => l.trim());
-    if (lines.length === 0) {
-      toast.error('Enter at least one proxy');
+    const parsed: ProxyToAdd[] = lines.map(line => {
+      const parts = line.trim().split(':');
+      return {
+        host: parts[0] || '',
+        port: parseInt(parts[1]) || 8080,
+        username: parts[2] || undefined,
+        password: parts[3] || undefined,
+        type: 'http',
+      };
+    }).filter(p => p.host);
+    
+    setParsedProxies(parsed);
+    return parsed;
+  };
+
+  // Test all parsed proxies
+  const testBulkProxies = async () => {
+    const proxiesToTest = parseBulkProxies();
+    if (proxiesToTest.length === 0) {
+      toast.error('No valid proxies to test');
       return;
     }
 
-    setIsAdding(true);
-    try {
-      const proxiesToAdd = lines.map(line => {
-        const parts = line.trim().split(':');
-        return {
-          host: parts[0] || '',
-          port: parseInt(parts[1]) || 8080,
-          username: parts[2] || null,
-          password: parts[3] || null,
-          proxy_type: 'http' as const,
-          status: 'active' as const,
-        };
-      }).filter(p => p.host);
+    setIsTestingBulk(true);
 
-      const { error } = await supabase
+    try {
+      // Insert all proxies as inactive first
+      const { data: insertedProxies, error: insertError } = await supabase
         .from('proxies')
-        .insert(proxiesToAdd);
+        .insert(proxiesToTest.map(p => ({
+          host: p.host,
+          port: p.port,
+          username: p.username || null,
+          password: p.password || null,
+          proxy_type: p.type as 'http' | 'https' | 'socks4' | 'socks5',
+          status: 'inactive' as const,
+        })))
+        .select();
+
+      if (insertError) throw insertError;
+
+      // Test all inserted proxies
+      const { data, error } = await supabase.functions.invoke('test-proxies', {
+        body: { proxy_ids: insertedProxies?.map(p => p.id) || [] }
+      });
 
       if (error) throw error;
-      
-      toast.success(`Added ${proxiesToAdd.length} proxies`);
-      setBulkProxies('');
-      setIsAddOpen(false);
+
+      // Update parsed proxies with test results
+      const updatedParsed = proxiesToTest.map((p, i) => {
+        const result = data.results?.find((r: any) => r.id === insertedProxies?.[i]?.id);
+        return {
+          ...p,
+          testResult: result ? {
+            status: result.success ? 'success' : 'failed',
+            responseTime: result.responseTime,
+            error: result.error,
+          } as TestResult : undefined,
+        };
+      });
+
+      setParsedProxies(updatedParsed);
+
+      const working = data.results?.filter((r: any) => r.success).length || 0;
+      const failed = data.results?.filter((r: any) => !r.success).length || 0;
+
+      // Delete failed proxies
+      const failedIds = data.results?.filter((r: any) => !r.success).map((r: any) => r.id) || [];
+      if (failedIds.length > 0) {
+        await supabase
+          .from('proxies')
+          .delete()
+          .in('id', failedIds);
+      }
+
+      toast.success(`Tested: ${working} working, ${failed} failed`);
       refreshData();
+      
+      if (working > 0) {
+        setBulkProxies('');
+        setParsedProxies([]);
+        setIsAddOpen(false);
+      }
     } catch (error) {
-      console.error('Error adding proxies:', error);
-      toast.error('Failed to add proxies');
+      console.error('Error testing bulk proxies:', error);
+      toast.error('Failed to test proxies');
     } finally {
-      setIsAdding(false);
+      setIsTestingBulk(false);
     }
+  };
+
+  const handleAddSingle = async () => {
+    if (!singleProxy.host || !singleProxy.port) {
+      toast.error('Host and port are required');
+      return;
+    }
+
+    // If no test was run, test first
+    if (!singleTestResult || singleTestResult.status !== 'success') {
+      await testSingleProxy();
+      return;
+    }
+
+    // Proxy was already added during test
+    setSingleProxy({ host: '', port: '', username: '', password: '', type: 'http' });
+    setSingleTestResult(null);
+    setIsAddOpen(false);
+  };
+
+  const handleAddBulk = async () => {
+    // Test and add proxies
+    await testBulkProxies();
   };
 
   const handleDelete = async (id: string) => {
@@ -287,7 +410,13 @@ const Proxies: React.FC = () => {
         title="Proxy Management"
         description="Manage your proxy servers for Telegram accounts"
         action={
-          <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+          <Dialog open={isAddOpen} onOpenChange={(open) => {
+            setIsAddOpen(open);
+            if (!open) {
+              setSingleTestResult(null);
+              setParsedProxies([]);
+            }
+          }}>
             <DialogTrigger asChild>
               <Button className="gap-2">
                 <Plus className="w-4 h-4" />
@@ -297,6 +426,9 @@ const Proxies: React.FC = () => {
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>Add Proxies</DialogTitle>
+                <DialogDescription>
+                  Proxies will be tested before being added
+                </DialogDescription>
               </DialogHeader>
               <Tabs value={addTab} onValueChange={(v) => setAddTab(v as 'single' | 'bulk')} className="mt-4">
                 <TabsList className="grid w-full grid-cols-2">
@@ -311,7 +443,10 @@ const Proxies: React.FC = () => {
                       <Input
                         placeholder="proxy.example.com"
                         value={singleProxy.host}
-                        onChange={(e) => setSingleProxy({ ...singleProxy, host: e.target.value })}
+                        onChange={(e) => {
+                          setSingleProxy({ ...singleProxy, host: e.target.value });
+                          setSingleTestResult(null);
+                        }}
                       />
                     </div>
                     <div className="space-y-2">
@@ -320,7 +455,10 @@ const Proxies: React.FC = () => {
                         type="number"
                         placeholder="8080"
                         value={singleProxy.port}
-                        onChange={(e) => setSingleProxy({ ...singleProxy, port: e.target.value })}
+                        onChange={(e) => {
+                          setSingleProxy({ ...singleProxy, port: e.target.value });
+                          setSingleTestResult(null);
+                        }}
                       />
                     </div>
                   </div>
@@ -359,9 +497,57 @@ const Proxies: React.FC = () => {
                       </SelectContent>
                     </Select>
                   </div>
-                  <Button onClick={handleAddSingle} disabled={isAdding} className="w-full">
-                    {isAdding ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
-                    Add Proxy
+                  
+                  {/* Test Result */}
+                  {singleTestResult && (
+                    <div className={cn(
+                      "p-3 rounded-lg border flex items-center gap-2",
+                      singleTestResult.status === 'testing' && "bg-primary/10 border-primary/30",
+                      singleTestResult.status === 'success' && "bg-green-500/10 border-green-500/30",
+                      singleTestResult.status === 'failed' && "bg-destructive/10 border-destructive/30"
+                    )}>
+                      {singleTestResult.status === 'testing' && (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                          <span className="text-sm">Testing proxy connection...</span>
+                        </>
+                      )}
+                      {singleTestResult.status === 'success' && (
+                        <>
+                          <CheckCircle className="w-4 h-4 text-green-600" />
+                          <span className="text-sm text-green-600">
+                            Connected! Response time: {singleTestResult.responseTime}ms
+                          </span>
+                        </>
+                      )}
+                      {singleTestResult.status === 'failed' && (
+                        <>
+                          <XCircle className="w-4 h-4 text-destructive" />
+                          <span className="text-sm text-destructive">
+                            Failed: {singleTestResult.error}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  
+                  <Button onClick={handleAddSingle} disabled={isTesting} className="w-full">
+                    {isTesting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Testing...
+                      </>
+                    ) : singleTestResult?.status === 'success' ? (
+                      <>
+                        <CheckCircle className="w-4 h-4 mr-2" />
+                        Proxy Added
+                      </>
+                    ) : (
+                      <>
+                        <Wifi className="w-4 h-4 mr-2" />
+                        Test & Add Proxy
+                      </>
+                    )}
                   </Button>
                 </TabsContent>
                 
@@ -371,17 +557,58 @@ const Proxies: React.FC = () => {
                     <Textarea
                       placeholder="host:port:username:password&#10;host:port&#10;host:port:username:password"
                       value={bulkProxies}
-                      onChange={(e) => setBulkProxies(e.target.value)}
-                      rows={8}
+                      onChange={(e) => {
+                        setBulkProxies(e.target.value);
+                        setParsedProxies([]);
+                      }}
+                      rows={6}
                       className="font-mono text-sm"
                     />
                     <p className="text-xs text-muted-foreground">
                       One proxy per line. Format: host:port or host:port:username:password
                     </p>
                   </div>
-                  <Button onClick={handleAddBulk} disabled={isAdding} className="w-full">
-                    {isAdding ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Plus className="w-4 h-4 mr-2" />}
-                    Add {bulkProxies.split('\n').filter(l => l.trim()).length} Proxies
+                  
+                  {parsedProxies.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {parsedProxies.map((p, i) => (
+                        <div key={i} className={cn(
+                          "flex items-center gap-2 p-2 rounded text-sm",
+                          p.testResult?.status === 'success' && "bg-green-500/10",
+                          p.testResult?.status === 'failed' && "bg-destructive/10",
+                          !p.testResult && "bg-muted"
+                        )}>
+                          {p.testResult?.status === 'success' && <CheckCircle className="w-4 h-4 text-green-600" />}
+                          {p.testResult?.status === 'failed' && <XCircle className="w-4 h-4 text-destructive" />}
+                          {!p.testResult && <Globe className="w-4 h-4 text-muted-foreground" />}
+                          <span>{p.host}:{p.port}</span>
+                          {p.testResult?.responseTime && (
+                            <span className="text-xs text-muted-foreground">{p.testResult.responseTime}ms</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
+                    <p className="text-xs text-muted-foreground">
+                      All proxies will be tested before being added. Only working proxies will be saved.
+                    </p>
+                  </div>
+                  
+                  <Button onClick={handleAddBulk} disabled={isTestingBulk} className="w-full">
+                    {isTestingBulk ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Testing Proxies...
+                      </>
+                    ) : (
+                      <>
+                        <Wifi className="w-4 h-4 mr-2" />
+                        Test & Add {bulkProxies.split('\n').filter(l => l.trim()).length} Proxies
+                      </>
+                    )}
                   </Button>
                 </TabsContent>
               </Tabs>
@@ -503,12 +730,14 @@ const Proxies: React.FC = () => {
         </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
-              <User className="w-6 h-6 text-blue-500" />
+            <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
+              <User className="w-6 h-6 text-muted-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{proxies.filter(p => accounts.some(a => a.proxyId === p.id)).length}</p>
-              <p className="text-sm text-muted-foreground">Assigned</p>
+              <p className="text-2xl font-bold">
+                {proxies.filter(p => accounts.some(a => a.proxyId === p.id)).length}
+              </p>
+              <p className="text-sm text-muted-foreground">In Use</p>
             </div>
           </CardContent>
         </Card>
@@ -554,7 +783,7 @@ const Proxies: React.FC = () => {
           {/* Proxy Cards */}
           {filteredProxies.map((proxy) => {
             const testResult = testResults.get(proxy.id);
-            const assignedAccounts = getAccountsUsingProxy(proxy.id);
+            const accountsUsing = getAccountsUsingProxy(proxy.id);
             
             return (
               <Card 
@@ -573,35 +802,29 @@ const Proxies: React.FC = () => {
                       aria-label={`Select ${proxy.host}`}
                     />
 
-                    {/* Icon */}
+                    {/* Status Icon */}
                     <div className={cn(
-                      "w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0",
-                      testResult?.status === 'success' && "bg-green-500/20",
-                      testResult?.status === 'failed' && "bg-destructive/20",
-                      testResult?.status === 'testing' && "bg-primary/20",
-                      !testResult && proxy.status === 'active' && "bg-green-500/10",
-                      !testResult && proxy.status === 'error' && "bg-destructive/10",
-                      !testResult && proxy.status === 'inactive' && "bg-muted"
+                      "w-10 h-10 rounded-lg flex items-center justify-center",
+                      proxy.status === 'active' && "bg-green-500/10",
+                      proxy.status === 'error' && "bg-destructive/10",
+                      proxy.status === 'inactive' && "bg-muted"
                     )}>
                       {testResult?.status === 'testing' ? (
                         <Loader2 className="w-5 h-5 text-primary animate-spin" />
-                      ) : testResult?.status === 'success' ? (
-                        <CheckCircle className="w-5 h-5 text-green-500" />
-                      ) : testResult?.status === 'failed' ? (
-                        <XCircle className="w-5 h-5 text-destructive" />
+                      ) : proxy.status === 'active' ? (
+                        <Wifi className="w-5 h-5 text-green-500" />
+                      ) : proxy.status === 'error' ? (
+                        <WifiOff className="w-5 h-5 text-destructive" />
                       ) : (
-                        <Globe className="w-5 h-5 text-primary" />
+                        <Globe className="w-5 h-5 text-muted-foreground" />
                       )}
                     </div>
                     
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono font-medium">{proxy.host}:{proxy.port}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium font-mono">{proxy.host}:{proxy.port}</span>
                         {getStatusBadge(proxy.status)}
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-secondary text-muted-foreground">
-                          {proxy.type.toUpperCase()}
-                        </span>
                         {testResult?.status === 'success' && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-600 border border-green-500/30">
                             {testResult.responseTime}ms
@@ -609,47 +832,41 @@ const Proxies: React.FC = () => {
                         )}
                         {testResult?.status === 'failed' && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-destructive/20 text-destructive border border-destructive/30">
-                            {testResult.error || 'Failed'}
+                            Failed
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1">
-                        {proxy.username && (
-                          <span className="flex items-center gap-1">
-                            <User className="w-3 h-3" />
-                            {proxy.username}
-                          </span>
-                        )}
-                        {proxy.country && (
-                          <span>{proxy.country}</span>
-                        )}
-                        {proxy.responseTime && (
-                          <span className="flex items-center gap-1">
-                            <Clock className="w-3 h-3" />
-                            {proxy.responseTime}ms
-                          </span>
-                        )}
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
+                        <span className="uppercase">{proxy.type}</span>
+                        {proxy.username && <span>• Auth: {proxy.username}</span>}
+                        {proxy.country && <span>• {proxy.country}</span>}
+                        {proxy.responseTime && <span>• {proxy.responseTime}ms</span>}
                       </div>
                     </div>
 
-                    {/* Assigned Accounts */}
-                    <div className="hidden md:flex items-center gap-2">
-                      {assignedAccounts.length > 0 ? (
-                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-blue-500/10 border border-blue-500/20">
-                          <User className="w-4 h-4 text-blue-500" />
-                          <span className="text-sm font-medium text-blue-600">
-                            {assignedAccounts.length} account{assignedAccounts.length !== 1 ? 's' : ''}
-                          </span>
+                    {/* Accounts Using */}
+                    {accountsUsing.length > 0 && (
+                      <div className="text-center">
+                        <div className="font-medium">{accountsUsing.length}</div>
+                        <div className="text-xs text-muted-foreground">Accounts</div>
+                      </div>
+                    )}
+
+                    {/* Last Checked */}
+                    {proxy.lastChecked && (
+                      <div className="text-center hidden md:block">
+                        <div className="flex items-center gap-1 text-sm">
+                          <Clock className="w-3 h-3" />
+                          {new Date(proxy.lastChecked).toLocaleTimeString()}
                         </div>
-                      ) : (
-                        <span className="text-sm text-muted-foreground px-3">Not assigned</span>
-                      )}
-                    </div>
+                        <div className="text-xs text-muted-foreground">Last Check</div>
+                      </div>
+                    )}
 
                     {/* Status Select */}
                     <Select
                       value={proxy.status}
-                      onValueChange={(value) => handleStatusChange(proxy.id, value as 'active' | 'inactive' | 'error')}
+                      onValueChange={(value) => handleStatusChange(proxy.id, value as any)}
                     >
                       <SelectTrigger className="w-28 h-8">
                         <SelectValue />
