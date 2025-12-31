@@ -321,6 +321,83 @@ serve(async (req) => {
         break;
       }
 
+      case "change_name": {
+        const { task_id, account_id, success, error, first_name, last_name } = result;
+
+        if (success) {
+          // Update account name in database
+          await supabase
+            .from("telegram_accounts")
+            .update({
+              first_name: first_name || null,
+              last_name: last_name || null,
+              last_active: new Date().toISOString(),
+            })
+            .eq("id", account_id);
+        }
+
+        // Update task
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: success ? "completed" : "failed",
+            result: success ? "Name changed" : error,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Name change ${success ? "completed" : "failed"} for ${account_id}`);
+        break;
+      }
+
+      case "privacy_settings": {
+        const { task_id, account_id, success, error } = result;
+
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: success ? "completed" : "failed",
+            result: success ? "Privacy settings updated" : error,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Privacy settings ${success ? "completed" : "failed"} for ${account_id}`);
+        break;
+      }
+
+      case "change_password": {
+        const { task_id, account_id, success, error } = result;
+
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: success ? "completed" : "failed",
+            result: success ? "Password changed" : error,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Password change ${success ? "completed" : "failed"} for ${account_id}`);
+        break;
+      }
+
+      case "logout_sessions": {
+        const { task_id, account_id, success, error } = result;
+
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: success ? "completed" : "failed",
+            result: success ? "Other sessions logged out" : error,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Logout sessions ${success ? "completed" : "failed"} for ${account_id}`);
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }
