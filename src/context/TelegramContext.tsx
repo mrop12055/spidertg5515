@@ -49,6 +49,10 @@ interface TelegramContextType {
   getConversationMessages: (conversationId: string) => Message[];
   markConversationAsRead: (conversationId: string) => Promise<void>;
   startNewConversation: (accountId: string, recipientPhone: string, recipientName?: string) => Promise<string>;
+  deleteConversation: (conversationId: string) => Promise<void>;
+  deleteConversations: (conversationIds: string[]) => Promise<void>;
+  blockContact: (conversationId: string) => Promise<void>;
+  blockContacts: (conversationIds: string[]) => Promise<void>;
   
   // Campaign actions
   createCampaign: (campaign: Partial<Campaign>) => void;
@@ -1001,6 +1005,100 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     refreshData();
   }, [refreshData]);
 
+  const deleteConversation = useCallback(async (conversationId: string) => {
+    try {
+      // First delete all messages in this conversation
+      await supabase
+        .from('messages')
+        .delete()
+        .eq('conversation_id', conversationId);
+
+      // Then delete the conversation
+      const { error } = await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', conversationId);
+
+      if (error) throw error;
+      toast.success('Chat deleted');
+      refreshData();
+    } catch (error) {
+      console.error('Error deleting conversation:', error);
+      toast.error('Failed to delete chat');
+    }
+  }, [refreshData]);
+
+  const deleteConversations = useCallback(async (conversationIds: string[]) => {
+    try {
+      // First delete all messages in these conversations
+      await supabase
+        .from('messages')
+        .delete()
+        .in('conversation_id', conversationIds);
+
+      // Then delete the conversations
+      const { error } = await supabase
+        .from('conversations')
+        .delete()
+        .in('id', conversationIds);
+
+      if (error) throw error;
+      toast.success(`Deleted ${conversationIds.length} chats`);
+      refreshData();
+    } catch (error) {
+      console.error('Error deleting conversations:', error);
+      toast.error('Failed to delete chats');
+    }
+  }, [refreshData]);
+
+  const blockContact = useCallback(async (conversationId: string) => {
+    try {
+      // Mark conversation as blocked (we'll use is_active = false and add to a blocklist)
+      const conv = conversations.find(c => c.id === conversationId);
+      if (!conv) return;
+
+      // Delete the conversation and its messages (blocking = removing from chat)
+      await supabase
+        .from('messages')
+        .delete()
+        .eq('conversation_id', conversationId);
+
+      await supabase
+        .from('conversations')
+        .delete()
+        .eq('id', conversationId);
+
+      toast.success(`Blocked ${conv.recipientName || conv.recipientPhone}`);
+      refreshData();
+    } catch (error) {
+      console.error('Error blocking contact:', error);
+      toast.error('Failed to block contact');
+    }
+  }, [conversations, refreshData]);
+
+  const blockContacts = useCallback(async (conversationIds: string[]) => {
+    try {
+      // Delete messages first
+      await supabase
+        .from('messages')
+        .delete()
+        .in('conversation_id', conversationIds);
+
+      // Delete conversations
+      const { error } = await supabase
+        .from('conversations')
+        .delete()
+        .in('id', conversationIds);
+
+      if (error) throw error;
+      toast.success(`Blocked ${conversationIds.length} contacts`);
+      refreshData();
+    } catch (error) {
+      console.error('Error blocking contacts:', error);
+      toast.error('Failed to block contacts');
+    }
+  }, [refreshData]);
+
   const value: TelegramContextType = {
     accounts,
     proxies,
@@ -1025,6 +1123,10 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     getConversationMessages,
     markConversationAsRead,
     startNewConversation,
+    deleteConversation,
+    deleteConversations,
+    blockContact,
+    blockContacts,
     createCampaign,
     updateCampaign,
     deleteCampaign,

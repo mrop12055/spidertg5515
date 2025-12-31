@@ -6,9 +6,11 @@ import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Checkbox } from '@/components/ui/checkbox';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { 
   Send, 
@@ -25,7 +27,11 @@ import {
   XCircle,
   Image,
   X,
-  Loader2
+  Loader2,
+  Trash2,
+  Ban,
+  CheckSquare,
+  Square
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, isToday, isYesterday, isSameDay } from 'date-fns';
@@ -40,7 +46,11 @@ const Chat: React.FC = () => {
     accounts, 
     typingUsers,
     markConversationAsRead,
-    startNewConversation 
+    startNewConversation,
+    deleteConversation,
+    deleteConversations,
+    blockContact,
+    blockContacts
   } = useTelegram();
   
   const [selectedConversation, setSelectedConversation] = useState<string | null>(
@@ -57,6 +67,13 @@ const Chat: React.FC = () => {
   const [isSendingMedia, setIsSendingMedia] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // Selection mode state
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [selectedConversations, setSelectedConversations] = useState<Set<string>>(new Set());
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isBlockDialogOpen, setIsBlockDialogOpen] = useState(false);
+  const [singleActionConvId, setSingleActionConvId] = useState<string | null>(null);
 
   const selectedConv = conversations.find(c => c.id === selectedConversation);
   const conversationMessages = messages
@@ -158,6 +175,82 @@ const Chat: React.FC = () => {
     setNewChatName('');
   };
 
+  // Selection handlers
+  const toggleConversationSelection = (convId: string) => {
+    setSelectedConversations(prev => {
+      const next = new Set(prev);
+      if (next.has(convId)) {
+        next.delete(convId);
+      } else {
+        next.add(convId);
+      }
+      return next;
+    });
+  };
+
+  const selectAll = () => {
+    setSelectedConversations(new Set(filteredConversations.map(c => c.id)));
+  };
+
+  const deselectAll = () => {
+    setSelectedConversations(new Set());
+  };
+
+  const exitSelectionMode = () => {
+    setIsSelectionMode(false);
+    setSelectedConversations(new Set());
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedConversations.size === 0) return;
+    await deleteConversations(Array.from(selectedConversations));
+    setIsDeleteDialogOpen(false);
+    exitSelectionMode();
+    if (selectedConversation && selectedConversations.has(selectedConversation)) {
+      setSelectedConversation(null);
+    }
+  };
+
+  const handleBulkBlock = async () => {
+    if (selectedConversations.size === 0) return;
+    await blockContacts(Array.from(selectedConversations));
+    setIsBlockDialogOpen(false);
+    exitSelectionMode();
+    if (selectedConversation && selectedConversations.has(selectedConversation)) {
+      setSelectedConversation(null);
+    }
+  };
+
+  const handleSingleDelete = async () => {
+    if (!singleActionConvId) return;
+    await deleteConversation(singleActionConvId);
+    setIsDeleteDialogOpen(false);
+    setSingleActionConvId(null);
+    if (selectedConversation === singleActionConvId) {
+      setSelectedConversation(null);
+    }
+  };
+
+  const handleSingleBlock = async () => {
+    if (!singleActionConvId) return;
+    await blockContact(singleActionConvId);
+    setIsBlockDialogOpen(false);
+    setSingleActionConvId(null);
+    if (selectedConversation === singleActionConvId) {
+      setSelectedConversation(null);
+    }
+  };
+
+  const openSingleDeleteDialog = (convId: string) => {
+    setSingleActionConvId(convId);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const openSingleBlockDialog = (convId: string) => {
+    setSingleActionConvId(convId);
+    setIsBlockDialogOpen(true);
+  };
+
   const formatMessageDate = (date: Date) => {
     if (isToday(date)) return format(date, 'HH:mm');
     if (isYesterday(date)) return 'Yesterday';
@@ -212,75 +305,164 @@ const Chat: React.FC = () => {
 
   return (
     <DashboardLayout>
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {singleActionConvId ? 'Chat' : `${selectedConversations.size} Chats`}?</DialogTitle>
+            <DialogDescription>
+              This will permanently delete {singleActionConvId ? 'this chat' : `${selectedConversations.size} selected chats`} and all messages. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsDeleteDialogOpen(false); setSingleActionConvId(null); }}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={singleActionConvId ? handleSingleDelete : handleBulkDelete}>
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Block Confirmation Dialog */}
+      <Dialog open={isBlockDialogOpen} onOpenChange={setIsBlockDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Block {singleActionConvId ? 'Contact' : `${selectedConversations.size} Contacts`}?</DialogTitle>
+            <DialogDescription>
+              This will block {singleActionConvId ? 'this contact' : `${selectedConversations.size} selected contacts`} and delete their chats.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setIsBlockDialogOpen(false); setSingleActionConvId(null); }}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={singleActionConvId ? handleSingleBlock : handleBulkBlock}>
+              <Ban className="w-4 h-4 mr-2" />
+              Block
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <div className="h-[calc(100vh-100px)] flex rounded-xl overflow-hidden border border-border bg-card shadow-lg">
         {/* Sidebar - Conversation List */}
         <div className="w-[340px] border-r border-border flex flex-col bg-card">
           {/* Header */}
           <div className="p-4 border-b border-border">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold">Chats</h2>
-              <Dialog open={isNewChatOpen} onOpenChange={setIsNewChatOpen}>
-                <DialogTrigger asChild>
-                  <Button variant="ghost" size="icon" className="h-8 w-8">
-                    <Plus className="w-5 h-5" />
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>New Conversation</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 pt-4">
-                    <div className="space-y-2">
-                      <Label>Select Account</Label>
-                      <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Choose account" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {activeAccounts.map(acc => (
-                            <SelectItem key={acc.id} value={acc.id}>
-                              {acc.firstName} ({acc.phoneNumber})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Phone Number or Username</Label>
-                      <Input
-                        placeholder="+1234567890 or @username"
-                        value={newChatPhone}
-                        onChange={(e) => setNewChatPhone(e.target.value)}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        Enter a phone number with country code or Telegram @username
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Name (Optional)</Label>
-                      <Input
-                        placeholder="Contact name"
-                        value={newChatName}
-                        onChange={(e) => setNewChatName(e.target.value)}
-                      />
-                    </div>
-                    <Button onClick={handleStartNewChat} className="w-full">
-                      <UserPlus className="w-4 h-4 mr-2" />
-                      Start Chat
+            {isSelectionMode ? (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={exitSelectionMode}>
+                      <X className="w-5 h-5" />
+                    </Button>
+                    <span className="font-medium">{selectedConversations.size} selected</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={selectedConversations.size === filteredConversations.length ? deselectAll : selectAll}>
+                      {selectedConversations.size === filteredConversations.length ? <Square className="w-5 h-5" /> : <CheckSquare className="w-5 h-5" />}
                     </Button>
                   </div>
-                </DialogContent>
-              </Dialog>
-            </div>
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Search"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 bg-secondary/50 border-0 focus-visible:ring-1 rounded-full"
-              />
-            </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    className="flex-1"
+                    disabled={selectedConversations.size === 0}
+                    onClick={() => setIsDeleteDialogOpen(true)}
+                  >
+                    <Trash2 className="w-4 h-4 mr-1" />
+                    Delete ({selectedConversations.size})
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="flex-1 text-destructive hover:text-destructive"
+                    disabled={selectedConversations.size === 0}
+                    onClick={() => setIsBlockDialogOpen(true)}
+                  >
+                    <Ban className="w-4 h-4 mr-1" />
+                    Block ({selectedConversations.size})
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="text-lg font-semibold">Chats</h2>
+                  <div className="flex items-center gap-1">
+                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsSelectionMode(true)} title="Select chats">
+                      <CheckSquare className="w-5 h-5" />
+                    </Button>
+                    <Dialog open={isNewChatOpen} onOpenChange={setIsNewChatOpen}>
+                      <DialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Plus className="w-5 h-5" />
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>New Conversation</DialogTitle>
+                        </DialogHeader>
+                        <div className="space-y-4 pt-4">
+                          <div className="space-y-2">
+                            <Label>Select Account</Label>
+                            <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                              <SelectTrigger>
+                                <SelectValue placeholder="Choose account" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {activeAccounts.map(acc => (
+                                  <SelectItem key={acc.id} value={acc.id}>
+                                    {acc.firstName} ({acc.phoneNumber})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Phone Number or Username</Label>
+                            <Input
+                              placeholder="+1234567890 or @username"
+                              value={newChatPhone}
+                              onChange={(e) => setNewChatPhone(e.target.value)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Enter a phone number with country code or Telegram @username
+                            </p>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Name (Optional)</Label>
+                            <Input
+                              placeholder="Contact name"
+                              value={newChatName}
+                              onChange={(e) => setNewChatName(e.target.value)}
+                            />
+                          </div>
+                          <Button onClick={handleStartNewChat} className="w-full">
+                            <UserPlus className="w-4 h-4 mr-2" />
+                            Start Chat
+                          </Button>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                </div>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-10 bg-secondary/50 border-0 focus-visible:ring-1 rounded-full"
+                  />
+                </div>
+              </>
+            )}
           </div>
 
           {/* Conversation List */}
@@ -306,65 +488,102 @@ const Chat: React.FC = () => {
                   )[0];
                   const isSelected = selectedConversation === conv.id;
                   const isUserTyping = typingUsers[conv.recipientPhone];
+                  const isChecked = selectedConversations.has(conv.id);
 
                   return (
-                    <button
+                    <div
                       key={conv.id}
-                      onClick={() => setSelectedConversation(conv.id)}
                       className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 transition-all duration-150 text-left hover:bg-accent/50",
-                        isSelected && "bg-primary/10"
+                        "w-full flex items-center gap-3 px-4 py-3 transition-all duration-150 text-left hover:bg-accent/50 group",
+                        isSelected && !isSelectionMode && "bg-primary/10",
+                        isChecked && isSelectionMode && "bg-primary/10"
                       )}
                     >
-                      <div className="relative flex-shrink-0">
-                        <Avatar className="h-12 w-12">
-                          <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-medium text-lg">
-                            {conv.recipientName?.charAt(0).toUpperCase() || '?'}
-                          </AvatarFallback>
-                        </Avatar>
-                        {conv.isActive && (
-                          <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-[#31A24C] rounded-full ring-2 ring-card" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between mb-0.5">
-                          <span className={cn(
-                            "font-medium truncate",
-                            conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
-                          )}>
-                            {conv.recipientName || conv.recipientPhone}
-                          </span>
-                          <span className={cn(
-                            "text-xs flex-shrink-0 ml-2",
-                            conv.unreadCount > 0 ? "text-primary font-medium" : "text-muted-foreground"
-                          )}>
-                            {formatMessageDate(conv.updatedAt)}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <p className={cn(
-                            "text-sm truncate max-w-[200px] flex items-center gap-1",
-                            conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
-                          )}>
-                            {isUserTyping ? (
-                              <span className="text-primary italic">typing...</span>
-                            ) : (
-                              <>
-                                {lastMsg?.direction === 'outgoing' && (
-                                  <span className="flex-shrink-0">{getMessageStatus(lastMsg.status)}</span>
-                                )}
-                                <span className="truncate">{lastMsg?.content || 'No messages'}</span>
-                              </>
-                            )}
-                          </p>
-                          {conv.unreadCount > 0 && (
-                            <Badge className="h-5 min-w-5 flex items-center justify-center text-xs bg-primary rounded-full ml-2">
-                              {conv.unreadCount}
-                            </Badge>
+                      {isSelectionMode && (
+                        <Checkbox
+                          checked={isChecked}
+                          onCheckedChange={() => toggleConversationSelection(conv.id)}
+                          className="flex-shrink-0"
+                        />
+                      )}
+                      <button
+                        onClick={() => isSelectionMode ? toggleConversationSelection(conv.id) : setSelectedConversation(conv.id)}
+                        className="flex-1 flex items-center gap-3 text-left"
+                      >
+                        <div className="relative flex-shrink-0">
+                          <Avatar className="h-12 w-12">
+                            <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-medium text-lg">
+                              {conv.recipientName?.charAt(0).toUpperCase() || '?'}
+                            </AvatarFallback>
+                          </Avatar>
+                          {conv.isActive && (
+                            <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-[#31A24C] rounded-full ring-2 ring-card" />
                           )}
                         </div>
-                      </div>
-                    </button>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between mb-0.5">
+                            <span className={cn(
+                              "font-medium truncate",
+                              conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
+                            )}>
+                              {conv.recipientName || conv.recipientPhone}
+                            </span>
+                            <span className={cn(
+                              "text-xs flex-shrink-0 ml-2",
+                              conv.unreadCount > 0 ? "text-primary font-medium" : "text-muted-foreground"
+                            )}>
+                              {formatMessageDate(conv.updatedAt)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <p className={cn(
+                              "text-sm truncate max-w-[180px] flex items-center gap-1",
+                              conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
+                            )}>
+                              {isUserTyping ? (
+                                <span className="text-primary italic">typing...</span>
+                              ) : (
+                                <>
+                                  {lastMsg?.direction === 'outgoing' && (
+                                    <span className="flex-shrink-0">{getMessageStatus(lastMsg.status)}</span>
+                                  )}
+                                  <span className="truncate">{lastMsg?.content || 'No messages'}</span>
+                                </>
+                              )}
+                            </p>
+                            {conv.unreadCount > 0 && (
+                              <Badge className="h-5 min-w-5 flex items-center justify-center text-xs bg-primary rounded-full ml-2">
+                                {conv.unreadCount}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                      </button>
+                      {!isSelectionMode && (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button 
+                              variant="ghost" 
+                              size="icon" 
+                              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openSingleDeleteDialog(conv.id)} className="text-destructive">
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete Chat
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openSingleBlockDialog(conv.id)} className="text-destructive">
+                              <Ban className="w-4 h-4 mr-2" />
+                              Block Contact
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      )}
+                    </div>
                   );
                 })
               )}
