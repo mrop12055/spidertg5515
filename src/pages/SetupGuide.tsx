@@ -356,34 +356,43 @@ async def get_validating_recipients():
 async def validate_telegram_contact(client: TelegramClient, phone_number: str) -> Tuple[bool, Optional[str], Optional[int]]:
     """
     Validate if a phone number exists on Telegram and get their name.
+    Uses ImportContactsRequest to properly resolve phone numbers.
     Returns: (exists: bool, name: str or None, telegram_id: int or None)
     """
     try:
-        # Try to get the entity (contact) by phone number
-        entity = await client.get_entity(phone_number)
+        from telethon.tl.functions.contacts import ImportContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        import random
         
-        if entity:
+        # Create a temporary contact to check if user exists
+        contact = InputPhoneContact(
+            client_id=random.randint(0, 2**31 - 1),
+            phone=phone_number,
+            first_name="Validation",
+            last_name=""
+        )
+        
+        # Import the contact - this will tell us if the phone is on Telegram
+        result = await client(ImportContactsRequest([contact]))
+        
+        if result.users:
+            user = result.users[0]
             # Build the name from first_name and last_name
-            first_name = getattr(entity, 'first_name', '') or ''
-            last_name = getattr(entity, 'last_name', '') or ''
+            first_name = getattr(user, 'first_name', '') or ''
+            last_name = getattr(user, 'last_name', '') or ''
             full_name = f"{first_name} {last_name}".strip()
             
-            telegram_id = getattr(entity, 'id', None)
+            telegram_id = getattr(user, 'id', None)
             
             print(f"    ✓ Found on Telegram: {phone_number} -> {full_name or 'No name'}")
             return True, full_name if full_name else None, telegram_id
-    except ValueError as e:
-        # "Cannot find any entity corresponding to..." means not on Telegram
-        if "Cannot find any entity" in str(e):
+        else:
             print(f"    ✗ Not on Telegram: {phone_number}")
             return False, None, None
-        print(f"    ⚠ Error validating {phone_number}: {e}")
-        return False, None, None
+            
     except Exception as e:
         print(f"    ⚠ Error validating {phone_number}: {e}")
         return False, None, None
-    
-    return False, None, None
 
 
 async def update_recipient_validation(recipient_id: str, status: str, name: str = None):
@@ -572,8 +581,29 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         if recipient.startswith("@"):
             entity = await client.get_entity(recipient)
         else:
-            # Try phone number
-            entity = await client.get_entity(recipient)
+            # For phone numbers, we need to import as contact first
+            from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+            from telethon.tl.types import InputPhoneContact
+            import random
+            
+            # Create a temporary contact
+            contact = InputPhoneContact(
+                client_id=random.randint(0, 2**31 - 1),
+                phone=recipient,
+                first_name="Contact",
+                last_name=""
+            )
+            
+            # Import the contact
+            result = await client(ImportContactsRequest([contact]))
+            
+            if result.users:
+                entity = result.users[0]
+                # Optionally delete the contact after getting entity (to keep contacts clean)
+                # await client(DeleteContactsRequest(id=[entity.id]))
+            else:
+                # User not found on Telegram
+                return False, "PERMANENT: User not found - not on Telegram or privacy restricted"
         
         # Check if we need to send media
         if media_url and media_type == "image":
