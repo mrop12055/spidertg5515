@@ -44,15 +44,18 @@ from supabase import create_client
 SUPABASE_URL = "${supabaseUrl}"
 SUPABASE_KEY = "${supabaseKey}"
 
-# Telegram API credentials (get from my.telegram.org)
-TELEGRAM_API_ID = os.getenv("TELEGRAM_API_ID", "YOUR_API_ID")
-TELEGRAM_API_HASH = os.getenv("TELEGRAM_API_HASH", "YOUR_API_HASH")
+# Telegram API credentials (hardcoded for convenience)
+TELEGRAM_API_ID = "31812270"
+TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 
 # Temp folder for session files
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 
 # Message delay (seconds between messages to avoid spam detection)
-MESSAGE_DELAY = 30
+MESSAGE_DELAY = 10
+
+# Check interval (seconds between checking for new messages)
+CHECK_INTERVAL = 10
 
 # ===================================
 
@@ -186,8 +189,8 @@ async def main():
         messages = await get_pending_messages()
         
         if not messages:
-            print("  No pending messages. Waiting 30 seconds...")
-            await asyncio.sleep(30)
+            print(f"  No pending messages. Waiting {CHECK_INTERVAL} seconds...")
+            await asyncio.sleep(CHECK_INTERVAL)
             continue
         
         print(f"  Found {len(messages)} pending messages")
@@ -197,8 +200,8 @@ async def main():
             print(f"\\nProcessing account: {account['phone_number']}")
             await process_account(account, messages)
         
-        print("\\n  Cycle complete. Checking again in 30 seconds...")
-        await asyncio.sleep(30)
+        print(f"\\n  Cycle complete. Checking again in {CHECK_INTERVAL} seconds...")
+        await asyncio.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
     print("Starting sender... Press Ctrl+C to stop.")
