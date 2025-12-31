@@ -232,33 +232,49 @@ serve(async (req) => {
       });
     }
 
-    // Priority 4: SpamBot check tasks
+    // Priority 4: Account management tasks (spambot_check, change_name, privacy_settings, change_password, logout_sessions)
     const { data: checkTasks } = await supabase
       .from("account_check_tasks")
       .select("*, telegram_accounts(*)")
       .eq("status", "pending")
-      .eq("task_type", "spambot_check")
+      .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions"])
       .limit(1);
 
     if (checkTasks && checkTasks.length > 0) {
       const task = checkTasks[0];
       const accountData = task.telegram_accounts;
+      const taskType = task.task_type;
 
       if (accountData) {
-        // Check 96-hour cooldown
-        const lastCheck = accountData.last_spambot_check;
-        if (lastCheck) {
-          const hoursSinceCheck = (Date.now() - new Date(lastCheck).getTime()) / (1000 * 60 * 60);
-          if (hoursSinceCheck < 96) {
-            console.log(`[get-next-task] SpamBot check skipped: ${hoursSinceCheck.toFixed(1)}h since last check`);
-            await supabase
-              .from("account_check_tasks")
-              .update({
-                status: "skipped",
-                result: `Already checked ${hoursSinceCheck.toFixed(1)} hours ago. Cooldown is 96 hours.`,
-                completed_at: new Date().toISOString(),
-              })
-              .eq("id", task.id);
+        // For spambot_check, apply 96-hour cooldown
+        if (taskType === "spambot_check") {
+          const lastCheck = accountData.last_spambot_check;
+          if (lastCheck) {
+            const hoursSinceCheck = (Date.now() - new Date(lastCheck).getTime()) / (1000 * 60 * 60);
+            if (hoursSinceCheck < 96) {
+              console.log(`[get-next-task] SpamBot check skipped: ${hoursSinceCheck.toFixed(1)}h since last check`);
+              await supabase
+                .from("account_check_tasks")
+                .update({
+                  status: "skipped",
+                  result: `Already checked ${hoursSinceCheck.toFixed(1)} hours ago. Cooldown is 96 hours.`,
+                  completed_at: new Date().toISOString(),
+                })
+                .eq("id", task.id);
+            } else {
+              console.log(`[get-next-task] SpamBot check task for account ${task.account_id}`);
+              return new Response(JSON.stringify({
+                task: "spambot_check",
+                task_id: task.id,
+                account: {
+                  id: accountData.id,
+                  phone_number: accountData.phone_number,
+                  session_data: accountData.session_data,
+                },
+              }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              });
+            }
           } else {
             console.log(`[get-next-task] SpamBot check task for account ${task.account_id}`);
             return new Response(JSON.stringify({
@@ -274,11 +290,12 @@ serve(async (req) => {
             });
           }
         } else {
-          // Never checked before
-          console.log(`[get-next-task] SpamBot check task for account ${task.account_id}`);
+          // Other task types: change_name, privacy_settings, change_password, logout_sessions
+          console.log(`[get-next-task] ${taskType} task for account ${task.account_id}`);
           return new Response(JSON.stringify({
-            task: "spambot_check",
+            task: taskType,
             task_id: task.id,
+            task_data: task.result ? JSON.parse(task.result) : {},
             account: {
               id: accountData.id,
               phone_number: accountData.phone_number,

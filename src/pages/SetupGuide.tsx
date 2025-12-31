@@ -276,6 +276,69 @@ async def check_spambot(client: TelegramClient):
         return "active", None, f"Error: {e}"
 
 
+async def change_name(client: TelegramClient, first_name: str, last_name: str = ""):
+    """Change account name on Telegram"""
+    try:
+        from telethon.tl.functions.account import UpdateProfileRequest
+        await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+async def update_privacy(client: TelegramClient, hide_phone: bool, hide_last_seen: bool, disable_calls: bool):
+    """Update privacy settings"""
+    try:
+        from telethon.tl.functions.account import SetPrivacyRequest
+        from telethon.tl.types import InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, InputPrivacyKeyPhoneCall
+        from telethon.tl.types import InputPrivacyValueDisallowAll, InputPrivacyValueAllowContacts
+        
+        if hide_phone:
+            await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneNumber(), rules=[InputPrivacyValueDisallowAll()]))
+        
+        if hide_last_seen:
+            await client(SetPrivacyRequest(key=InputPrivacyKeyStatusTimestamp(), rules=[InputPrivacyValueDisallowAll()]))
+        
+        if disable_calls:
+            await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneCall(), rules=[InputPrivacyValueDisallowAll()]))
+        
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+async def change_password(client: TelegramClient, existing_pwd: str, new_pwd: str):
+    """Change 2FA cloud password"""
+    try:
+        from telethon.tl.functions.account import UpdatePasswordSettingsRequest, GetPasswordRequest
+        from telethon.password import compute_check
+        
+        pwd = await client(GetPasswordRequest())
+        
+        if pwd.has_password and existing_pwd:
+            check = compute_check(pwd, existing_pwd)
+        else:
+            check = None
+        
+        # Set new password
+        from telethon.tl.types.account import PasswordInputSettings
+        new_settings = PasswordInputSettings(new_algo=pwd.new_algo, new_password_hash=new_pwd.encode())
+        await client(UpdatePasswordSettingsRequest(password=check, new_settings=new_settings))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+async def logout_other_sessions(client: TelegramClient):
+    """Logout all other sessions"""
+    try:
+        from telethon.tl.functions.auth import ResetAuthorizationsRequest
+        await client(ResetAuthorizationsRequest())
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 async def main_loop():
     """Main task execution loop"""
     print("=" * 60)
@@ -361,6 +424,84 @@ async def main_loop():
                         "response": response
                     })
                     print(f"    Result: {status}")
+            
+            elif task_type == "change_name":
+                task_id = task.get("task_id")
+                task_data = task.get("task_data", {})
+                account = task.get("account", {})
+                
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  ✏️ Changing name for {account.get('phone_number')}...")
+                    success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
+                    await report_result("change_name", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": success,
+                        "error": error,
+                        "first_name": task_data.get("first_name"),
+                        "last_name": task_data.get("last_name")
+                    })
+                    print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
+            
+            elif task_type == "privacy_settings":
+                task_id = task.get("task_id")
+                task_data = task.get("task_data", {})
+                account = task.get("account", {})
+                
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  🔒 Updating privacy for {account.get('phone_number')}...")
+                    success, error = await update_privacy(
+                        client,
+                        task_data.get("hidePhone", False),
+                        task_data.get("hideLastSeen", False),
+                        task_data.get("disableCalls", False)
+                    )
+                    await report_result("privacy_settings", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": success,
+                        "error": error
+                    })
+                    print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
+            
+            elif task_type == "change_password":
+                task_id = task.get("task_id")
+                task_data = task.get("task_data", {})
+                account = task.get("account", {})
+                
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  🔐 Changing password for {account.get('phone_number')}...")
+                    success, error = await change_password(
+                        client,
+                        task_data.get("existing_password", ""),
+                        task_data.get("new_password", "")
+                    )
+                    await report_result("change_password", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": success,
+                        "error": error
+                    })
+                    print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
+            
+            elif task_type == "logout_sessions":
+                task_id = task.get("task_id")
+                account = task.get("account", {})
+                
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  🚪 Logging out other sessions for {account.get('phone_number')}...")
+                    success, error = await logout_other_sessions(client)
+                    await report_result("logout_sessions", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": success,
+                        "error": error
+                    })
+                    print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
         
         except KeyboardInterrupt:
             break
