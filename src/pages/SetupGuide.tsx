@@ -24,8 +24,8 @@ const SetupGuide: React.FC = () => {
 
   const pythonScript = `#!/usr/bin/env python3
 """
-TelegramCRM Bulk Message Sender
-Run this script on your PC to send queued messages via Telegram.
+TelegramCRM Bulk Message Sender & Receiver
+Run this script on your PC to send queued messages and receive incoming replies.
 Session files are downloaded from the database (base64 encoded).
 """
 
@@ -36,7 +36,7 @@ import tempfile
 from datetime import datetime, timezone
 
 # Install: pip install telethon supabase
-from telethon import TelegramClient
+from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, UserPrivacyRestrictedError, UsernameNotOccupiedError
 from supabase import create_client
 
@@ -60,6 +60,9 @@ CHECK_INTERVAL = 10
 # ===================================
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Store active clients for receiving messages
+active_clients = {}
 
 def decode_session_file(phone_number: str, base64_data: str) -> str:
     """Decode base64 session data and save to temp file"""
@@ -112,6 +115,55 @@ async def update_message_status(message_id: str, status: str, error: str = None)
         update_data["failed_reason"] = error
     supabase.table("messages").update(update_data).eq("id", message_id).execute()
 
+async def save_incoming_message(account_id: str, sender_id: int, sender_name: str, sender_username: str, content: str):
+    """Save incoming message to database"""
+    try:
+        # Find or create conversation
+        phone_display = f"@{sender_username}" if sender_username else f"User {sender_id}"
+        
+        # Check if conversation exists
+        result = supabase.table("conversations").select("*").eq("account_id", account_id).eq("recipient_telegram_id", sender_id).execute()
+        
+        if result.data and len(result.data) > 0:
+            conv = result.data[0]
+            conv_id = conv["id"]
+            # Update conversation
+            supabase.table("conversations").update({
+                "last_message_at": datetime.now(timezone.utc).isoformat(),
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "unread_count": (conv.get("unread_count") or 0) + 1
+            }).eq("id", conv_id).execute()
+        else:
+            # Create new conversation
+            new_conv = supabase.table("conversations").insert({
+                "account_id": account_id,
+                "recipient_telegram_id": sender_id,
+                "recipient_name": sender_name or phone_display,
+                "recipient_username": f"@{sender_username}" if sender_username else None,
+                "recipient_phone": phone_display,
+                "is_active": True,
+                "unread_count": 1,
+                "last_message_at": datetime.now(timezone.utc).isoformat()
+            }).execute()
+            conv_id = new_conv.data[0]["id"]
+        
+        # Save message
+        supabase.table("messages").insert({
+            "account_id": account_id,
+            "conversation_id": conv_id,
+            "content": content,
+            "direction": "incoming",
+            "status": "delivered",
+            "telegram_message_id": None,
+            "delivered_at": datetime.now(timezone.utc).isoformat()
+        }).execute()
+        
+        print(f"    📩 Saved incoming message from {sender_name or sender_username or sender_id}")
+        return True
+    except Exception as e:
+        print(f"    ⚠ Failed to save incoming message: {e}")
+        return False
+
 async def send_message(client: TelegramClient, recipient: str, content: str):
     """Send a message to a phone number or username"""
     try:
@@ -142,6 +194,30 @@ async def send_message(client: TelegramClient, recipient: str, content: str):
             return False, f"PERMANENT: {error_str}"
         return False, error_str
 
+async def setup_message_handler(client: TelegramClient, account_id: str):
+    """Set up handler for incoming messages"""
+    @client.on(events.NewMessage(incoming=True))
+    async def handler(event):
+        try:
+            sender = await event.get_sender()
+            if sender:
+                sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()
+                sender_username = sender.username
+                sender_id = sender.id
+                content = event.message.text or "[Media message]"
+                
+                await save_incoming_message(
+                    account_id=account_id,
+                    sender_id=sender_id,
+                    sender_name=sender_name,
+                    sender_username=sender_username,
+                    content=content
+                )
+        except Exception as e:
+            print(f"    ⚠ Error handling incoming message: {e}")
+    
+    return handler
+
 async def process_account(account: dict, messages: list):
     """Process messages for a single account"""
     session_path = account.get("_session_path")
@@ -157,17 +233,24 @@ async def process_account(account: dict, messages: list):
         print("  ⚠ Please set TELEGRAM_API_ID and TELEGRAM_API_HASH")
         return
     
-    client = TelegramClient(session_path, int(api_id), api_hash)
+    # Check if we already have an active client for this account
+    client = active_clients.get(account["id"])
     
-    try:
+    if not client:
+        client = TelegramClient(session_path, int(api_id), api_hash)
         await client.connect()
         
         if not await client.is_user_authorized():
             print(f"  ⚠ Session expired for {account['phone_number']}")
-            # Update account status
             supabase.table("telegram_accounts").update({"status": "disconnected"}).eq("id", account["id"]).execute()
             return
         
+        # Set up incoming message handler
+        await setup_message_handler(client, account["id"])
+        active_clients[account["id"]] = client
+        print(f"  ✓ Connected and listening for messages")
+    
+    try:
         # Get account info and update in database
         me = await client.get_me()
         if me:
@@ -203,8 +286,7 @@ async def process_account(account: dict, messages: list):
             display_name = me.first_name or me.username or me.phone
             print(f"  ✓ Connected as {display_name} (@{me.username or 'no username'})")
         
-        # Process ALL messages (not just for this account) - useful when you have few accounts
-        # In production, filter by account_id: [m for m in messages if m["account_id"] == account["id"]]
+        # Process outgoing messages
         for msg in messages:
             conv = msg.get("conversations", {}) or {}
             # Support both phone number and username
@@ -233,13 +315,14 @@ async def process_account(account: dict, messages: list):
     
     except Exception as e:
         print(f"  ⚠ Error processing account: {e}")
-    
-    finally:
-        await client.disconnect()
+        # Remove from active clients on error
+        if account["id"] in active_clients:
+            del active_clients[account["id"]]
+            await client.disconnect()
 
 async def main():
     print("=" * 50)
-    print("TelegramCRM Bulk Message Sender")
+    print("TelegramCRM Message Sender & Receiver")
     print(f"Session folder: {SESSION_FOLDER}")
     print("=" * 50)
     
@@ -249,24 +332,30 @@ async def main():
         accounts = await load_accounts()
         messages = await get_pending_messages()
         
-        if not messages:
-            print(f"  No pending messages. Waiting {CHECK_INTERVAL} seconds...")
-            await asyncio.sleep(CHECK_INTERVAL)
-            continue
-        
-        print(f"  Found {len(messages)} pending messages")
         print(f"  Active accounts: {len(accounts)}")
+        print(f"  Pending messages: {len(messages)}")
         
         for account in accounts:
             print(f"\\nProcessing account: {account['phone_number']}")
             await process_account(account, messages)
         
-        print(f"\\n  Cycle complete. Checking again in {CHECK_INTERVAL} seconds...")
+        # Keep clients running to receive messages
+        print(f"\\n  Listening for incoming messages... (checking again in {CHECK_INTERVAL}s)")
         await asyncio.sleep(CHECK_INTERVAL)
 
+async def shutdown():
+    """Cleanup on shutdown"""
+    print("\\nShutting down...")
+    for account_id, client in active_clients.items():
+        await client.disconnect()
+    print("Disconnected all clients.")
+
 if __name__ == "__main__":
-    print("Starting sender... Press Ctrl+C to stop.")
-    asyncio.run(main())
+    print("Starting sender & receiver... Press Ctrl+C to stop.")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        asyncio.run(shutdown())
 `;
 
   return (
