@@ -17,3 +17,9 @@ verify_jwt = false
 
 [functions.cleanup-old-chats]
 verify_jwt = false
+
+[functions.get-next-task]
+verify_jwt = false
+
+[functions.report-task-result]
+verify_jwt = false
