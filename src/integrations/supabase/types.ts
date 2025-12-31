@@ -42,7 +42,15 @@ export type Database = {
           status?: string
           task_type?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "account_check_tasks_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       campaign_accounts: {
         Row: {
