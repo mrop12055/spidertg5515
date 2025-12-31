@@ -445,6 +445,38 @@ async def update_message_status(message_id: str, status: str, error: str = None)
     supabase.table("messages").update(update_data).eq("id", message_id).execute()
 
 
+async def update_campaign_recipient_status(phone_number: str, account_id: str, status: str):
+    """
+    Update campaign recipient status when a message is sent/failed.
+    Matches by phone number and account to find the correct recipient.
+    """
+    try:
+        # Find campaign recipients with this phone number assigned to this account
+        result = supabase.table("campaign_recipients").select("id, campaign_id").eq(
+            "phone_number", phone_number
+        ).eq("sent_by_account_id", account_id).eq("status", "pending").limit(1).execute()
+        
+        if result.data and len(result.data) > 0:
+            recipient = result.data[0]
+            update_data = {"status": status}
+            if status == "sent":
+                update_data["sent_at"] = datetime.now(timezone.utc).isoformat()
+            
+            # Update the recipient status
+            supabase.table("campaign_recipients").update(update_data).eq("id", recipient["id"]).execute()
+            
+            # Also update campaign sent_count or failed_count
+            campaign_id = recipient["campaign_id"]
+            if status == "sent":
+                supabase.rpc("increment_campaign_sent_count", {"cid": campaign_id}).execute()
+            elif status == "failed":
+                supabase.rpc("increment_campaign_failed_count", {"cid": campaign_id}).execute()
+            
+            print(f"    📊 Updated campaign recipient status: {status}")
+    except Exception as e:
+        print(f"    ⚠ Could not update campaign recipient: {e}")
+
+
 async def increment_account_message_count(account_id: str):
     """Increment the messages_sent_today counter for an account"""
     global messages_sent_by_current
@@ -845,9 +877,13 @@ async def process_account(account: dict, messages: list):
             if success:
                 await update_message_status(msg["id"], "sent")
                 await increment_account_message_count(account_id)
+                # Update campaign recipient if this was a campaign message
+                await update_campaign_recipient_status(recipient, account_id, "sent")
                 print(f"    ✓ Sent from {account['phone_number']}!")
             else:
                 await update_message_status(msg["id"], "failed", error)
+                # Update campaign recipient if this was a campaign message
+                await update_campaign_recipient_status(recipient, account_id, "failed")
                 print(f"    ✗ Failed: {error}")
                 
                 # If rate limited, put account on cooldown
