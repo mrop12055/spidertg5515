@@ -121,18 +121,39 @@ async def save_incoming_message(account_id: str, sender_id: int, sender_name: st
         # Find or create conversation
         phone_display = f"@{sender_username}" if sender_username else f"User {sender_id}"
         
-        # Check if conversation exists
+        # Check if conversation exists - first by telegram_id, then by username
+        conv_id = None
+        conv = None
+        
+        # Try to find by telegram_id first
         result = supabase.table("conversations").select("*").eq("account_id", account_id).eq("recipient_telegram_id", sender_id).execute()
         
         if result.data and len(result.data) > 0:
             conv = result.data[0]
             conv_id = conv["id"]
-            # Update conversation
-            supabase.table("conversations").update({
+        elif sender_username:
+            # Try to find by username (for conversations created before we knew the telegram_id)
+            username_search = f"@{sender_username}"
+            result = supabase.table("conversations").select("*").eq("account_id", account_id).eq("recipient_username", username_search).execute()
+            if result.data and len(result.data) > 0:
+                conv = result.data[0]
+                conv_id = conv["id"]
+        
+        if conv_id:
+            # Update existing conversation with telegram_id and name if we have them
+            update_data = {
                 "last_message_at": datetime.now(timezone.utc).isoformat(),
                 "updated_at": datetime.now(timezone.utc).isoformat(),
-                "unread_count": (conv.get("unread_count") or 0) + 1
-            }).eq("id", conv_id).execute()
+                "unread_count": (conv.get("unread_count") or 0) + 1,
+                "is_active": True
+            }
+            # Always update telegram_id if we have it (might be missing from original conversation)
+            if sender_id:
+                update_data["recipient_telegram_id"] = sender_id
+            if sender_name:
+                update_data["recipient_name"] = sender_name
+            
+            supabase.table("conversations").update(update_data).eq("id", conv_id).execute()
         else:
             # Create new conversation
             new_conv = supabase.table("conversations").insert({
