@@ -661,7 +661,9 @@ const Accounts: React.FC = () => {
                         {account.firstName && (
                           <span>{account.firstName} {account.lastName || ''}</span>
                         )}
-                        {account.username && <span>@{account.username}</span>}
+                        {account.username && !account.username.includes('update_state') && (
+                          <span>@{account.username}</span>
+                        )}
                         {proxyLabel && (
                           <span className="flex items-center gap-1 text-xs">
                             <Globe className="w-3 h-3" />
