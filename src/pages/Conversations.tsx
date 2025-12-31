@@ -79,7 +79,11 @@ const Chat: React.FC = () => {
   // Mark conversation as read when selected
   useEffect(() => {
     if (selectedConversation) {
-      markConversationAsRead(selectedConversation);
+      // Small delay to ensure the conversation is rendered first
+      const timer = setTimeout(() => {
+        markConversationAsRead(selectedConversation);
+      }, 100);
+      return () => clearTimeout(timer);
     }
   }, [selectedConversation, markConversationAsRead]);
 

@@ -80,7 +80,7 @@ const Dashboard: React.FC = () => {
     <DashboardLayout>
       <PageHeader 
         title="Dashboard" 
-        description="Monitor your Telegram bulk messaging system"
+        description="Monitor your TGxOP bulk messaging system"
         icon={LayoutDashboard}
         action={
           <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>

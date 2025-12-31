@@ -29,8 +29,8 @@ interface NavItem {
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
   { icon: Phone, label: 'Accounts', path: '/accounts' },
-  { icon: Globe, label: 'Proxies', path: '/proxies' },
-  { icon: MessageSquare, label: 'Conversations', path: '/conversations' },
+  { icon: Globe, label: 'Proxy Management', path: '/proxies' },
+  { icon: MessageSquare, label: 'Chat', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: Settings, label: 'Settings', path: '/settings' },
@@ -60,8 +60,8 @@ export const Sidebar: React.FC = () => {
           </div>
           {!collapsed && (
             <div className="animate-fade-in">
-              <h1 className="font-bold text-lg text-sidebar-foreground">TelegramCRM</h1>
-              <p className="text-xs text-muted-foreground">Contact Manager</p>
+              <h1 className="font-bold text-lg text-sidebar-foreground">TGxOP</h1>
+              <p className="text-xs text-muted-foreground">Dashboard</p>
             </div>
           )}
         </div>
