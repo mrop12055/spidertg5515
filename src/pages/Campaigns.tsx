@@ -412,6 +412,21 @@ const Campaigns: React.FC = () => {
     })));
   };
 
+  // Only show warmed-up accounts (>5 days old) for campaigns
+  const WARMUP_DAYS = parseInt(localStorage.getItem('app_settings') ? JSON.parse(localStorage.getItem('app_settings')!).warmupDays || 5 : 5);
+  const now = new Date();
+  const warmedUpAccounts = accounts.filter(a => {
+    if (a.status !== 'active') return false;
+    const daysSinceCreation = Math.floor((now.getTime() - new Date(a.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    return daysSinceCreation >= WARMUP_DAYS;
+  });
+  
+  const warmingAccounts = accounts.filter(a => {
+    if (a.status !== 'active') return false;
+    const daysSinceCreation = Math.floor((now.getTime() - new Date(a.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+    return daysSinceCreation < WARMUP_DAYS;
+  });
+
   const activeAccounts = accounts.filter(a => a.status === 'active');
 
   return (
@@ -515,40 +530,62 @@ const Campaigns: React.FC = () => {
                     </Button>
                   </div>
                   
-                  {activeAccounts.length === 0 ? (
+                  {warmedUpAccounts.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground border rounded-lg">
-                      No active accounts available. Upload accounts first.
+                      <p className="font-medium">No warmed-up accounts available</p>
+                      <p className="text-sm mt-2">Accounts need {WARMUP_DAYS}+ days to be ready for campaigns.</p>
+                      {warmingAccounts.length > 0 && (
+                        <p className="text-sm mt-1 text-primary">{warmingAccounts.length} account(s) still warming up...</p>
+                      )}
                     </div>
                   ) : (
                     <div className="max-h-60 overflow-y-auto space-y-2 p-2 border rounded-lg bg-accent/30">
                       <div className="flex items-center gap-2 mb-2">
                         <Checkbox
-                          checked={newCampaign.accountIds.length === activeAccounts.length}
+                          checked={newCampaign.accountIds.length === warmedUpAccounts.length && warmedUpAccounts.length > 0}
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              setNewCampaign(prev => ({ ...prev, accountIds: activeAccounts.map(a => a.id) }));
+                              setNewCampaign(prev => ({ ...prev, accountIds: warmedUpAccounts.map(a => a.id) }));
                             } else {
                               setNewCampaign(prev => ({ ...prev, accountIds: [] }));
                             }
                           }}
                         />
-                        <label className="text-sm font-medium">Select All ({activeAccounts.length})</label>
+                        <label className="text-sm font-medium">Select All Warmed-up ({warmedUpAccounts.length})</label>
                       </div>
-                      {activeAccounts.map(account => (
-                        <div key={account.id} className="flex items-center gap-2">
-                          <Checkbox
-                            id={account.id}
-                            checked={newCampaign.accountIds.includes(account.id)}
-                            onCheckedChange={() => handleAccountToggle(account.id)}
-                          />
-                          <label htmlFor={account.id} className="text-sm cursor-pointer flex-1">
-                            {account.firstName || account.phoneNumber} 
-                            <span className="text-muted-foreground ml-1">
-                              ({account.phoneNumber}) - {account.messagesSentToday}/{account.dailyLimit} today
-                            </span>
-                          </label>
+                      {warmedUpAccounts.map(account => {
+                        const daysSinceCreation = Math.floor((now.getTime() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+                        return (
+                          <div key={account.id} className="flex items-center gap-2">
+                            <Checkbox
+                              id={account.id}
+                              checked={newCampaign.accountIds.includes(account.id)}
+                              onCheckedChange={() => handleAccountToggle(account.id)}
+                            />
+                            <label htmlFor={account.id} className="text-sm cursor-pointer flex-1">
+                              {account.firstName || account.phoneNumber} 
+                              <span className="text-muted-foreground ml-1">
+                                ({account.phoneNumber}) - {account.messagesSentToday}/{account.dailyLimit} today • {daysSinceCreation}d old
+                              </span>
+                            </label>
+                          </div>
+                        );
+                      })}
+                      
+                      {warmingAccounts.length > 0 && (
+                        <div className="mt-3 pt-3 border-t">
+                          <p className="text-xs text-muted-foreground mb-2">⏳ Still warming up ({warmingAccounts.length})</p>
+                          {warmingAccounts.slice(0, 5).map(account => {
+                            const daysSinceCreation = Math.floor((now.getTime() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+                            const daysRemaining = WARMUP_DAYS - daysSinceCreation;
+                            return (
+                              <div key={account.id} className="text-xs text-muted-foreground py-1">
+                                {account.firstName || account.phoneNumber} - {daysRemaining} days left
+                              </div>
+                            );
+                          })}
                         </div>
-                      ))}
+                      )}
                     </div>
                   )}
                   
