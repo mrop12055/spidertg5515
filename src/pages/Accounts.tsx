@@ -109,10 +109,10 @@ const Accounts: React.FC = () => {
       )
       .subscribe();
 
-    // Fallback refresh every 10 seconds
+    // Fallback refresh every 10 minutes
     const interval = setInterval(() => {
       refreshData();
-    }, 10000);
+    }, 600000);
 
     return () => {
       supabase.removeChannel(channel);
