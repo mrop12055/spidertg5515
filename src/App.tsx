@@ -13,6 +13,7 @@ import Maturation from "./pages/Maturation";
 import Chat from "./pages/Chat";
 import Campaigns from "./pages/Campaigns";
 import Settings from "./pages/Settings";
+import VPSGuide from "./pages/VPSGuide";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -35,6 +36,7 @@ const App = () => (
                 <Route path="/chat" element={<Chat />} />
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/settings" element={<Settings />} />
+                <Route path="/vps-guide" element={<VPSGuide />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>
