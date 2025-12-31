@@ -44,10 +44,10 @@ interface TelegramContextType {
   assignProxy: (accountId: string, proxyId: string) => void;
   
   // Message actions
-  sendMessage: (accountId: string, recipientPhone: string, content: string) => void;
+  sendMessage: (accountId: string, recipientPhone: string, content: string) => Promise<void>;
   getConversationMessages: (conversationId: string) => Message[];
-  markConversationAsRead: (conversationId: string) => void;
-  startNewConversation: (accountId: string, recipientPhone: string, recipientName?: string) => string;
+  markConversationAsRead: (conversationId: string) => Promise<void>;
+  startNewConversation: (accountId: string, recipientPhone: string, recipientName?: string) => Promise<string>;
   
   // Campaign actions
   createCampaign: (campaign: Partial<Campaign>) => void;
@@ -541,22 +541,66 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [refreshData]);
 
-  const sendMessage = useCallback((accountId: string, recipientPhone: string, content: string) => {
-    const conv = conversations.find(c => c.recipientPhone === recipientPhone);
-    const newMessage: Message = {
-      id: `msg-${Date.now()}`,
-      accountId,
-      recipientId: recipientPhone,
-      recipientPhone,
-      recipientName: conv?.recipientName,
-      content,
-      direction: 'outgoing',
-      status: 'sent',
-      timestamp: new Date(),
-      threadId: `thread-${recipientPhone}`
-    };
-    setMessages(prev => [...prev, newMessage]);
-  }, [conversations]);
+  const sendMessage = useCallback(async (accountId: string, recipientPhone: string, content: string) => {
+    try {
+      // Find or create conversation
+      let conv = conversations.find(c => c.recipientPhone === recipientPhone && c.accountId === accountId);
+      let conversationId = conv?.id;
+      
+      if (!conversationId) {
+        // Create conversation in database
+        const { data: newConv, error: convError } = await supabase
+          .from('conversations')
+          .insert({
+            account_id: accountId,
+            recipient_phone: recipientPhone,
+            is_active: true,
+            unread_count: 0,
+          })
+          .select()
+          .single();
+        
+        if (convError) throw convError;
+        conversationId = newConv.id;
+      }
+
+      // Insert message to database with 'pending' status for Python to pick up
+      const { data: msgData, error: msgError } = await supabase
+        .from('messages')
+        .insert({
+          account_id: accountId,
+          conversation_id: conversationId,
+          content,
+          direction: 'outgoing',
+          status: 'pending', // Python script will pick this up
+        })
+        .select()
+        .single();
+
+      if (msgError) throw msgError;
+
+      // Update local state immediately for UI responsiveness
+      const newMessage: Message = {
+        id: msgData.id,
+        accountId,
+        recipientId: recipientPhone,
+        recipientPhone,
+        recipientName: conv?.recipientName,
+        content,
+        direction: 'outgoing',
+        status: 'sent',
+        timestamp: new Date(),
+        threadId: `thread-${recipientPhone}`
+      };
+      setMessages(prev => [...prev, newMessage]);
+      
+      toast.success('Message queued for sending');
+      refreshData();
+    } catch (error) {
+      console.error('Error sending message:', error);
+      toast.error('Failed to send message');
+    }
+  }, [conversations, refreshData]);
 
   const getConversationMessages = useCallback((conversationId: string) => {
     const conv = conversations.find(c => c.id === conversationId);
@@ -564,29 +608,45 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     return messages.filter(m => m.recipientPhone === conv.recipientPhone);
   }, [conversations, messages]);
 
-  const markConversationAsRead = useCallback((conversationId: string) => {
+  const markConversationAsRead = useCallback(async (conversationId: string) => {
     setConversations(prev => prev.map(c => 
       c.id === conversationId ? { ...c, unreadCount: 0 } : c
     ));
+    
+    await supabase
+      .from('conversations')
+      .update({ unread_count: 0 })
+      .eq('id', conversationId);
   }, []);
 
-  const startNewConversation = useCallback((accountId: string, recipientPhone: string, recipientName?: string) => {
-    const existing = conversations.find(c => c.recipientPhone === recipientPhone);
+  const startNewConversation = useCallback(async (accountId: string, recipientPhone: string, recipientName?: string) => {
+    // Check if conversation exists
+    const existing = conversations.find(c => c.recipientPhone === recipientPhone && c.accountId === accountId);
     if (existing) return existing.id;
 
-    const newConvId = `conv-${Date.now()}`;
-    setConversations(prev => [...prev, {
-      id: newConvId,
-      accountId,
-      recipientPhone,
-      recipientName,
-      unreadCount: 0,
-      isActive: false,
-      createdAt: new Date(),
-      updatedAt: new Date()
-    }]);
-    return newConvId;
-  }, [conversations]);
+    try {
+      const { data, error } = await supabase
+        .from('conversations')
+        .insert({
+          account_id: accountId,
+          recipient_phone: recipientPhone,
+          recipient_name: recipientName,
+          is_active: false,
+          unread_count: 0,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+      
+      refreshData();
+      return data.id;
+    } catch (error) {
+      console.error('Error creating conversation:', error);
+      toast.error('Failed to create conversation');
+      return '';
+    }
+  }, [conversations, refreshData]);
 
   const createCampaign = useCallback(async (campaign: Partial<Campaign>) => {
     try {
