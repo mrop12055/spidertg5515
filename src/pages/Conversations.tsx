@@ -21,7 +21,8 @@ import {
   MessageSquare,
   Clock,
   Plus,
-  UserPlus
+  UserPlus,
+  XCircle
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, isToday, isYesterday, isSameDay } from 'date-fns';
@@ -130,6 +131,10 @@ const Chat: React.FC = () => {
         return <CheckCheck className="w-4 h-4 text-muted-foreground/70" />;
       case 'sent':
         return <Check className="w-4 h-4 text-muted-foreground/70" />;
+      case 'failed':
+        return <XCircle className="w-4 h-4 text-destructive" />;
+      case 'pending':
+        return <Clock className="w-3 h-3 text-muted-foreground/50" />;
       default:
         return <Clock className="w-3 h-3 text-muted-foreground/50" />;
     }
@@ -396,9 +401,11 @@ const Chat: React.FC = () => {
                                 <div
                                   className={cn(
                                     "px-3 py-2 shadow-sm relative",
-                                    isOutgoing
-                                      ? "bg-[#DCF8C6] dark:bg-[#005C4B] text-foreground"
-                                      : "bg-card text-foreground",
+                                    msg.status === 'failed'
+                                      ? "bg-destructive/10 border border-destructive/30"
+                                      : isOutgoing
+                                        ? "bg-[#DCF8C6] dark:bg-[#005C4B] text-foreground"
+                                        : "bg-card text-foreground",
                                     // Rounded corners based on position
                                     isFirstInGroup && isLastInGroup && (isOutgoing 
                                       ? "rounded-2xl rounded-br-md" 
@@ -415,12 +422,20 @@ const Chat: React.FC = () => {
                                   )}
                                 >
                                   <p className="text-sm leading-relaxed break-words">{msg.content}</p>
+                                  {/* Show failed reason if message failed */}
+                                  {msg.status === 'failed' && msg.failedReason && (
+                                    <p className="text-xs text-destructive mt-1 pt-1 border-t border-destructive/20">
+                                      ⚠ {msg.failedReason.replace('PERMANENT: ', '')}
+                                    </p>
+                                  )}
                                   <div className="flex items-center justify-end gap-1 mt-0.5 -mb-0.5">
                                     <span className={cn(
                                       "text-[11px]",
-                                      isOutgoing 
-                                        ? "text-foreground/60" 
-                                        : "text-muted-foreground"
+                                      msg.status === 'failed'
+                                        ? "text-destructive"
+                                        : isOutgoing 
+                                          ? "text-foreground/60" 
+                                          : "text-muted-foreground"
                                     )}>
                                       {format(msg.timestamp, 'HH:mm')}
                                     </span>
