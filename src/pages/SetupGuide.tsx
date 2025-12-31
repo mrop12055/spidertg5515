@@ -1096,6 +1096,25 @@ async def spambot_check_loop():
             for task in tasks:
                 account_id = task["account_id"]
                 task_id = task["id"]
+                account_data = task.get("telegram_accounts", {})
+                phone = account_data.get("phone_number", "Unknown")
+                
+                # Check 96-hour cooldown - skip if already checked within 96 hours
+                last_check = account_data.get("last_spambot_check")
+                if last_check:
+                    try:
+                        last_check_dt = datetime.fromisoformat(last_check.replace('Z', '+00:00'))
+                        hours_since_check = (datetime.now(timezone.utc) - last_check_dt).total_seconds() / 3600
+                        if hours_since_check < 96:
+                            print(f"  ⏭ Skipping {phone}: Checked {hours_since_check:.1f} hours ago (cooldown: 96h)")
+                            supabase.table("account_check_tasks").update({
+                                "status": "skipped",
+                                "result": f"Already checked {hours_since_check:.1f} hours ago. Cooldown is 96 hours.",
+                                "completed_at": datetime.now(timezone.utc).isoformat()
+                            }).eq("id", task_id).execute()
+                            continue
+                    except Exception as parse_err:
+                        print(f"  ⚠ Could not parse last_spambot_check date: {parse_err}")
                 
                 # Check if we have an active client for this account
                 if account_id not in active_clients:
@@ -1107,7 +1126,6 @@ async def spambot_check_loop():
                     continue
                 
                 client = active_clients[account_id]
-                phone = task.get("telegram_accounts", {}).get("phone_number", "Unknown")
                 
                 print(f"  🔍 Checking @SpamBot for {phone}...")
                 
