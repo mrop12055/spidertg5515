@@ -718,19 +718,24 @@ const Accounts: React.FC = () => {
         title="Telegram Accounts"
         description="Upload session files and manage your accounts"
         action={
-          <Dialog open={isAddOpen} onOpenChange={(open) => {
-            setIsAddOpen(open);
-            if (!open) {
-              setSessionFiles([]);
-              setUploadResults(null);
-            }
-          }}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="w-4 h-4" />
-                Add Accounts
-              </Button>
-            </DialogTrigger>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={refreshData} disabled={isLoading} className="gap-2">
+              <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+              Refresh
+            </Button>
+            <Dialog open={isAddOpen} onOpenChange={(open) => {
+              setIsAddOpen(open);
+              if (!open) {
+                setSessionFiles([]);
+                setUploadResults(null);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  Add Accounts
+                </Button>
+              </DialogTrigger>
             <DialogContent className="max-w-lg">
               <DialogHeader>
                 <DialogTitle>Upload Session Files</DialogTitle>
@@ -841,6 +846,7 @@ const Accounts: React.FC = () => {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         }
       />
 
