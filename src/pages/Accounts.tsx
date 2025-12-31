@@ -83,6 +83,8 @@ const Accounts: React.FC = () => {
       return;
     }
 
+    toast.info(`Processing ${validFiles.length} file(s)...`);
+    
     const processedFiles: SessionFile[] = [];
     
     for (const file of validFiles) {
@@ -97,6 +99,7 @@ const Accounts: React.FC = () => {
 
     setSessionFiles(processedFiles);
     setUploadResults(null);
+    toast.success(`${processedFiles.length} file(s) ready to upload`);
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
