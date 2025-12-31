@@ -191,12 +191,15 @@ const Chat: React.FC = () => {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>Phone Number</Label>
+                      <Label>Phone Number or Username</Label>
                       <Input
-                        placeholder="+1234567890"
+                        placeholder="+1234567890 or @username"
                         value={newChatPhone}
                         onChange={(e) => setNewChatPhone(e.target.value)}
                       />
+                      <p className="text-xs text-muted-foreground">
+                        Enter a phone number with country code or Telegram @username
+                      </p>
                     </div>
                     <div className="space-y-2">
                       <Label>Name (Optional)</Label>
