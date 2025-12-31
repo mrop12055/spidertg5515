@@ -19,6 +19,83 @@ interface AccountData {
   api_hash?: string;
 }
 
+// Extract user data from Telethon session file
+function extractUserDataFromSession(sessionData: string): {
+  firstName?: string;
+  lastName?: string;
+  username?: string;
+  telegramId?: number;
+  isValid: boolean;
+} {
+  const result: { firstName?: string; lastName?: string; username?: string; telegramId?: number; isValid: boolean } = { isValid: false };
+  
+  try {
+    const binaryString = atob(sessionData);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+
+    // Check SQLite magic header
+    const header = new TextDecoder().decode(bytes.slice(0, 16));
+    
+    if (header.startsWith('SQLite format 3')) {
+      // Valid SQLite session - check size
+      result.isValid = bytes.length >= 1000;
+      
+      // Extract readable content
+      const fileContent = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      
+      // Look for username pattern
+      const usernameMatch = fileContent.match(/[a-zA-Z][a-zA-Z0-9_]{4,31}/g);
+      if (usernameMatch) {
+        const filtered = usernameMatch.filter(u => 
+          !u.match(/^(sqlite|format|table|create|index|integer|primary|unique|text|blob|null|version|sessions|entities|sent_files|update_state|dc_id|server_address|auth_key|takeout_id|pts|qts|date|seq|unread_count|api_layer)$/i) &&
+          u.length >= 5 && u.length <= 32
+        );
+        if (filtered.length > 0) {
+          result.username = filtered[0];
+        }
+      }
+
+      // Look for name patterns
+      const namePattern = /([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)/g;
+      const nameMatches = fileContent.match(namePattern);
+      if (nameMatches) {
+        const validNames = nameMatches.filter(n => 
+          n.length >= 2 && n.length <= 64 &&
+          !n.match(/^(SQLite|Session|Version|Create|Table|Index|Primary|Integer|Update|Delete|Select|Insert)$/i)
+        );
+        if (validNames.length > 0) {
+          const parts = validNames[0].split(' ');
+          result.firstName = parts[0];
+          if (parts[1]) result.lastName = parts[1];
+        }
+      }
+
+      // Look for Telegram ID
+      const idPattern = /\b([1-9]\d{6,10})\b/g;
+      const idMatches = fileContent.match(idPattern);
+      if (idMatches) {
+        const validIds = idMatches.filter(id => {
+          const num = parseInt(id);
+          return num > 1000000 && num < 10000000000;
+        });
+        if (validIds.length > 0) {
+          result.telegramId = parseInt(validIds[0]);
+        }
+      }
+    } else if (sessionData.length > 200) {
+      // Might be a Pyrogram string session
+      result.isValid = true;
+    }
+  } catch (e) {
+    console.error('Error extracting user data:', e);
+  }
+  
+  return result;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -55,6 +132,12 @@ serve(async (req) => {
           continue;
         }
 
+        // Extract and verify session data immediately
+        const extracted = extractUserDataFromSession(account.session_data);
+        const status = extracted.isValid ? 'active' : 'disconnected';
+        
+        console.log(`[process-account-upload] ${account.phone_number}: valid=${extracted.isValid}, username=${extracted.username}, firstName=${extracted.firstName}`);
+
         // Check if account already exists
         const { data: existing } = await supabase
           .from('telegram_accounts')
@@ -62,19 +145,23 @@ serve(async (req) => {
           .eq('phone_number', account.phone_number)
           .single();
 
+        const accountData = {
+          session_data: account.session_data,
+          first_name: extracted.firstName || account.first_name || null,
+          last_name: extracted.lastName || account.last_name || null,
+          username: extracted.username || account.username || null,
+          telegram_id: extracted.telegramId || null,
+          api_id: account.api_id,
+          api_hash: account.api_hash,
+          status: status,
+          last_active: extracted.isValid ? new Date().toISOString() : null,
+        };
+
         if (existing) {
           // Update existing account
           const { data, error } = await supabase
             .from('telegram_accounts')
-            .update({
-              session_data: account.session_data,
-              first_name: account.first_name,
-              last_name: account.last_name,
-              username: account.username,
-              api_id: account.api_id,
-              api_hash: account.api_hash,
-              status: 'active',
-            })
+            .update(accountData)
             .eq('id', existing.id)
             .select()
             .single();
@@ -88,13 +175,7 @@ serve(async (req) => {
             .from('telegram_accounts')
             .insert({
               phone_number: account.phone_number,
-              session_data: account.session_data,
-              first_name: account.first_name,
-              last_name: account.last_name,
-              username: account.username,
-              api_id: account.api_id,
-              api_hash: account.api_hash,
-              status: 'active',
+              ...accountData,
               maturity_score: 0,
               maturity_days: 0,
               daily_limit: 25,

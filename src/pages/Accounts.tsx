@@ -91,12 +91,29 @@ const Accounts: React.FC = () => {
   // Messages sent today tracking
   const [messagesSentLast24h, setMessagesSentLast24h] = useState<Map<string, number>>(new Map());
   
-  // Auto-refresh for status checking
+  // Realtime subscription for instant account updates
   useEffect(() => {
+    const channel = supabase
+      .channel('accounts-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'telegram_accounts' },
+        (payload) => {
+          console.log('Account change detected:', payload.eventType);
+          refreshData();
+        }
+      )
+      .subscribe();
+
+    // Fallback refresh every 10 seconds
     const interval = setInterval(() => {
       refreshData();
-    }, 30000); // Refresh every 30 seconds
-    return () => clearInterval(interval);
+    }, 10000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
   }, [refreshData]);
   
   // Fetch messages sent in last 24 hours per account
