@@ -77,23 +77,18 @@ serve(async (req) => {
       .select("*, telegram_api_credentials(*)")
       .eq("status", "active");
 
-    // Get restricted accounts only if their restriction has expired
-    // They can still chat with existing contacts once restriction lifts
+    // Get ALL restricted accounts - they can still message existing conversations
+    // Restricted accounts cannot message NEW contacts, but existing conversations are safe
     const { data: restrictedAccounts } = await supabase
       .from("telegram_accounts")
       .select("*, telegram_api_credentials(*)")
-      .eq("status", "restricted")
-      .or(`restricted_until.is.null,restricted_until.lt.${new Date().toISOString()}`);
+      .eq("status", "restricted");
 
-    // Filter out accounts that are still restricted
-    const usableRestrictedAccounts = (restrictedAccounts || []).filter((a: any) => {
-      if (!a.restricted_until) return true;
-      return new Date(a.restricted_until) < new Date();
-    });
-
-    // Combine for live chat purposes - only active + expired restrictions
-    const allUsableAccounts = [...(activeAccounts || []), ...usableRestrictedAccounts];
-    const accounts = activeAccounts || []; // Only active for campaigns
+    // For LIVE CHAT: Include ALL restricted accounts (they can message existing conversations)
+    const allUsableAccounts = [...(activeAccounts || []), ...(restrictedAccounts || [])];
+    
+    // For CAMPAIGNS: Only active accounts (campaigns target new contacts)
+    const accounts = activeAccounts || [];
 
     if (activeAccountsError) {
       console.error("[get-next-task] Error fetching accounts:", activeAccountsError);
@@ -589,32 +584,38 @@ serve(async (req) => {
     }
 
     // RUNNER: livechat - Handles ALL pending outgoing messages (not just live conversations)
-    // Restricted accounts CAN send live chat messages to existing contacts
+    // Restricted accounts CAN send live chat messages to existing contacts (won't get banned)
     if (runner === "livechat") {
-      // Get all usable account IDs for quick lookup
+      // Get all usable account IDs (includes restricted for livechat)
       const usableAccountIds = new Set(allUsableAccounts.map((a: { id: string }) => a.id));
       
-      // First, fail messages from accounts that are no longer usable (banned, disconnected, etc.)
-      const { data: stuckMessages } = await supabase
-        .from("messages")
-        .select("id, account_id")
-        .eq("status", "pending")
-        .eq("direction", "outgoing")
-        .is("campaign_recipient_id", null);
+      // Only fail messages from BANNED or DISCONNECTED accounts (not restricted!)
+      const { data: unusableAccounts } = await supabase
+        .from("telegram_accounts")
+        .select("id")
+        .in("status", ["banned", "disconnected"]);
       
-      if (stuckMessages && stuckMessages.length > 0) {
-        const messagesToFail = stuckMessages.filter(m => !usableAccountIds.has(m.account_id));
-        if (messagesToFail.length > 0) {
-          const messageIds = messagesToFail.map(m => m.id);
+      if (unusableAccounts && unusableAccounts.length > 0) {
+        const unusableIds = unusableAccounts.map((a: { id: string }) => a.id);
+        const { data: stuckMessages } = await supabase
+          .from("messages")
+          .select("id")
+          .eq("status", "pending")
+          .eq("direction", "outgoing")
+          .is("campaign_recipient_id", null)
+          .in("account_id", unusableIds);
+        
+        if (stuckMessages && stuckMessages.length > 0) {
+          const messageIds = stuckMessages.map(m => m.id);
           await supabase
             .from("messages")
-            .update({ status: "failed", failed_reason: "Account unavailable (restricted/banned)" })
+            .update({ status: "failed", failed_reason: "Account banned or disconnected" })
             .in("id", messageIds);
-          console.log(`[get-next-task] Auto-failed ${messagesToFail.length} messages from unavailable accounts`);
+          console.log(`[get-next-task] Auto-failed ${stuckMessages.length} messages from banned/disconnected accounts`);
         }
       }
       
-      // Now fetch pending messages and find one with an available account
+      // Fetch pending messages and find one with an available account
       const { data: pendingMessages } = await supabase
         .from("messages")
         .select("*, conversations(*)")
