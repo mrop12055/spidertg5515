@@ -382,6 +382,18 @@ const Settings: React.FC = () => {
       />
 
       <div className="max-w-3xl space-y-6">
+        {/* Loading indicator for database settings */}
+        {isLoadingSettings && (
+          <Card className="border-primary/30">
+            <CardContent className="flex items-center justify-center py-8">
+              <div className="flex items-center gap-3">
+                <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                <span className="text-muted-foreground">Loading settings from database...</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* API Credentials Distribution */}
         <Card className="border-primary/30">
           <CardHeader>
