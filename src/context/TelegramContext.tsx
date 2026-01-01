@@ -218,6 +218,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           failedReason: (m as any).failed_reason || undefined,
           mediaUrl: (m as any).media_url || undefined,
           mediaType: (m as any).media_type || undefined,
+          campaignRecipientId: (m as any).campaign_recipient_id || undefined,
         })));
       }
 
@@ -270,6 +271,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
               failedReason: m.failed_reason || undefined,
               mediaUrl: m.media_url || undefined,
               mediaType: m.media_type || undefined,
+              campaignRecipientId: m.campaign_recipient_id || undefined,
             };
 
             setMessages(prev => {

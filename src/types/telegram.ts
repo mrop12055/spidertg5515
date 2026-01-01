@@ -64,6 +64,7 @@ export interface Message {
   failedReason?: string;
   mediaUrl?: string;
   mediaType?: string;
+  campaignRecipientId?: string; // If set, this message was sent via a campaign
 }
 
 export interface Conversation {

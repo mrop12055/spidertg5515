@@ -80,9 +80,9 @@ const Chat: React.FC = () => {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
 
   const selectedConv = conversations.find(c => c.id === selectedConversation);
-  // Filter out failed messages from chat view - show only in campaigns section
+  // Filter out failed messages from chat view - use conversationId for accurate matching
   const conversationMessages = messages
-    .filter(m => selectedConv && m.recipientPhone === selectedConv.recipientPhone && m.status !== 'failed')
+    .filter(m => selectedConv && m.conversationId === selectedConv.id && m.status !== 'failed')
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   // Filter conversations by time
@@ -144,7 +144,7 @@ const Chat: React.FC = () => {
   const isLiveConversation = (conv: typeof selectedConv) => {
     if (!conv) return false;
     // Check if there are any incoming messages in the last 5 minutes
-    const convMessages = messages.filter(m => m.recipientPhone === conv.recipientPhone);
+    const convMessages = messages.filter(m => m.conversationId === conv.id);
     const recentIncoming = convMessages.some(m => 
       m.direction === 'incoming' && 
       differenceInMinutes(new Date(), new Date(m.timestamp)) < 5
@@ -535,7 +535,8 @@ const Chat: React.FC = () => {
                   const avatarInitial = conv.recipientName?.charAt(0).toUpperCase() || 
                                         (conv.recipientPhone?.startsWith('+') ? conv.recipientPhone.slice(1, 3) : '?');
                   
-                  // Get message preview - handle empty content
+                  // Get message preview - handle empty content + campaign indicator
+                  const isCampaignMessage = !!lastMsg?.campaignRecipientId;
                   const messagePreview = lastMsg?.content?.trim() || (lastMsg ? 'Message sent' : 'No messages');
 
                   return (
@@ -613,6 +614,9 @@ const Chat: React.FC = () => {
                                 <>
                                   {lastMsg?.direction === 'outgoing' && (
                                     <span className="flex-shrink-0">{getMessageStatus(lastMsg.status)}</span>
+                                  )}
+                                  {isCampaignMessage && (
+                                    <span className="text-[10px] px-1 py-0.5 bg-primary/20 text-primary rounded mr-1 flex-shrink-0">Campaign</span>
                                   )}
                                   <span className="truncate">{messagePreview}</span>
                                 </>
@@ -803,6 +807,12 @@ const Chat: React.FC = () => {
                                     </p>
                                   )}
                                   <div className="flex items-center justify-end gap-1 mt-0.5 -mb-0.5">
+                                    {/* Campaign indicator */}
+                                    {msg.campaignRecipientId && isOutgoing && (
+                                      <span className="text-[9px] px-1 py-0.5 bg-primary-foreground/20 rounded mr-1">
+                                        Campaign
+                                      </span>
+                                    )}
                                     <span className={cn(
                                       "text-[11px]",
                                       msg.status === 'failed'
