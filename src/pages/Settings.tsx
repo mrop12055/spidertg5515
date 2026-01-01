@@ -104,6 +104,8 @@ const Settings: React.FC = () => {
   // Warmup & Geo states
   const [isSchedulingWarmup, setIsSchedulingWarmup] = useState(false);
   const [isDetectingCountry, setIsDetectingCountry] = useState(false);
+  const [isRunningSpamBotCheck, setIsRunningSpamBotCheck] = useState(false);
+  const [lastSpamBotResult, setLastSpamBotResult] = useState<{ scheduled: number; restricted: number } | null>(null);
 
   // Schedule warmup tasks
   const handleScheduleWarmup = async () => {
@@ -132,6 +134,26 @@ const Settings: React.FC = () => {
       toast.error('Failed to detect proxy countries');
     } finally {
       setIsDetectingCountry(false);
+    }
+  };
+
+  // Run SpamBot health check
+  const handleRunSpamBotCheck = async () => {
+    setIsRunningSpamBotCheck(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('auto-spambot-check');
+      if (error) throw error;
+      setLastSpamBotResult({ scheduled: data.scheduled, restricted: data.restricted_accounts });
+      if (data.restricted_accounts > 0) {
+        toast.warning(`Scheduled ${data.scheduled} checks. ⚠️ ${data.restricted_accounts} accounts are restricted!`);
+      } else {
+        toast.success(`Scheduled ${data.scheduled} SpamBot checks for ${data.total_accounts} accounts`);
+      }
+    } catch (error) {
+      console.error('SpamBot check failed:', error);
+      toast.error('Failed to run SpamBot check');
+    } finally {
+      setIsRunningSpamBotCheck(false);
     }
   };
 
@@ -818,6 +840,58 @@ const Settings: React.FC = () => {
             </Button>
             <p className="text-xs text-muted-foreground text-center">
               Schedules channel joins, content viewing, reactions based on account age
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* SpamBot Health Checks (Phase 4) */}
+        <Card className="border-red-500/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-red-500" />
+              SpamBot Health Checks
+            </CardTitle>
+            <CardDescription>
+              Weekly automated checks via @SpamBot to detect restrictions early
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="p-3 rounded-lg bg-muted/50">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Automatic Schedule</span>
+                <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30">
+                  Every Sunday 3:00 AM UTC
+                </Badge>
+              </div>
+              {lastSpamBotResult && (
+                <div className="mt-2 pt-2 border-t border-border">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">Last Run</span>
+                    <span>{lastSpamBotResult.scheduled} scheduled, {lastSpamBotResult.restricted} restricted</span>
+                  </div>
+                </div>
+              )}
+            </div>
+            <Button 
+              variant="outline" 
+              onClick={handleRunSpamBotCheck}
+              disabled={isRunningSpamBotCheck}
+              className="w-full"
+            >
+              {isRunningSpamBotCheck ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Running...
+                </>
+              ) : (
+                <>
+                  <Shield className="w-4 h-4 mr-2" />
+                  Run SpamBot Check Now
+                </>
+              )}
+            </Button>
+            <p className="text-xs text-muted-foreground text-center">
+              Schedules SpamBot checks for all active accounts. Run Python account_manager.py to process.
             </p>
           </CardContent>
         </Card>
