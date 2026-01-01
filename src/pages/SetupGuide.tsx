@@ -400,12 +400,13 @@ if __name__ == "__main__":
   const livechatRunnerPy = `#!/usr/bin/env python3
 """
 TelegramCRM - Live Chat Runner
-Handles: Incoming messages, Live chat replies
+Handles: Incoming messages, Live chat replies, Profile photos
 Run: python livechat_runner.py
 """
 
 import asyncio
 import signal
+import base64
 
 from telethon import events
 
@@ -435,12 +436,29 @@ async def setup_message_handler(client, account_id: str):
                 media_type = "image" if event.message.photo else None
                 if event.message.photo:
                     content = "[Photo] " + (event.message.text or "")
+                
+                # Get sender phone if available
+                sender_phone = None
+                if hasattr(sender, 'phone') and sender.phone:
+                    sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+                
+                # Get profile photo
+                avatar_base64 = None
+                try:
+                    photo = await client.download_profile_photo(sender, bytes)
+                    if photo:
+                        avatar_base64 = base64.b64encode(photo).decode('utf-8')
+                except:
+                    pass
+                
                 print(f"  From {sender.first_name or sender.id}: {content[:40]}...")
                 await report_result("incoming_message", {
                     "account_id": account_id,
                     "sender_id": sender.id,
                     "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
                     "sender_username": sender.username,
+                    "sender_phone": sender_phone,
+                    "sender_avatar": avatar_base64,
                     "content": content,
                     "media_type": media_type
                 })
@@ -812,12 +830,29 @@ async def setup_message_handler(client, account_id):
                 media_type = "image" if event.message.photo else None
                 if event.message.photo:
                     content = "[Photo] " + (event.message.text or "")
+                
+                # Get sender phone
+                sender_phone = None
+                if hasattr(sender, 'phone') and sender.phone:
+                    sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+                
+                # Get profile photo
+                avatar_base64 = None
+                try:
+                    photo = await client.download_profile_photo(sender, bytes)
+                    if photo:
+                        avatar_base64 = base64.b64encode(photo).decode('utf-8')
+                except:
+                    pass
+                
                 print(f"  [CHAT] From {sender.first_name or sender.id}: {content[:40]}...")
                 await report_result("incoming_message", {
                     "account_id": account_id,
                     "sender_id": sender.id,
                     "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
                     "sender_username": sender.username,
+                    "sender_phone": sender_phone,
+                    "sender_avatar": avatar_base64,
                     "content": content,
                     "media_type": media_type
                 })
