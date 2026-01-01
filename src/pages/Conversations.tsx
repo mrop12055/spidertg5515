@@ -81,8 +81,9 @@ const Chat: React.FC = () => {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
 
   const selectedConv = conversations.find(c => c.id === selectedConversation);
+  // Filter out failed messages from chat view - show only in campaigns section
   const conversationMessages = messages
-    .filter(m => selectedConv && m.recipientPhone === selectedConv.recipientPhone)
+    .filter(m => selectedConv && m.recipientPhone === selectedConv.recipientPhone && m.status !== 'failed')
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
   // Filter conversations by time

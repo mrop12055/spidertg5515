@@ -31,11 +31,18 @@ interface BulkMessageTemplate {
   accountCount: number;
 }
 
+interface FailedRecipient {
+  phone_number: string;
+  name: string | null;
+  failed_reason: string | null;
+}
+
 interface CampaignReport {
   successful: number;
   failed: number;
   pending: number;
   total: number;
+  failedRecipients: FailedRecipient[];
 }
 
 const Campaigns: React.FC = () => {
@@ -78,7 +85,7 @@ const Campaigns: React.FC = () => {
     for (const campaign of campaigns) {
       const { data: recipients, error } = await supabase
         .from('campaign_recipients')
-        .select('id, status, phone_number, sent_by_account_id')
+        .select('id, status, phone_number, name, sent_by_account_id')
         .eq('campaign_id', campaign.id);
 
       if (!recipients || error) continue;
@@ -94,19 +101,19 @@ const Campaigns: React.FC = () => {
         const pendingIds = pending.map((r) => r.id);
         const { data: linkedMsgs } = await supabase
           .from('messages')
-          .select('status, delivered_at, created_at, campaign_recipient_id')
+          .select('status, delivered_at, created_at, campaign_recipient_id, failed_reason')
           .eq('direction', 'outgoing')
           .in('status', ['sent', 'failed'])
           .in('campaign_recipient_id', pendingIds)
           .order('created_at', { ascending: false })
           .limit(200);
 
-        const byRecipientId = new Map<string, { status: string; delivered_at: string | null }>();
+        const byRecipientId = new Map<string, { status: string; delivered_at: string | null; failed_reason: string | null }>();
         (linkedMsgs || []).forEach((m: any) => {
           const rid = m.campaign_recipient_id as string | null;
           if (!rid) return;
           if (!byRecipientId.has(rid)) {
-            byRecipientId.set(rid, { status: m.status, delivered_at: m.delivered_at ?? null });
+            byRecipientId.set(rid, { status: m.status, delivered_at: m.delivered_at ?? null, failed_reason: m.failed_reason ?? null });
           }
         });
 
@@ -140,20 +147,20 @@ const Campaigns: React.FC = () => {
 
           const { data: sentMsgs } = await supabase
             .from('messages')
-            .select('status, delivered_at, account_id, created_at, conversations!inner(recipient_phone)')
+            .select('status, delivered_at, account_id, created_at, failed_reason, conversations!inner(recipient_phone)')
             .eq('direction', 'outgoing')
             .in('status', ['sent', 'failed'])
             .in('account_id', accountIds)
             .order('created_at', { ascending: false })
             .limit(500);
 
-          const msgIndex = new Map<string, { status: string; delivered_at: string | null }>();
+          const msgIndex = new Map<string, { status: string; delivered_at: string | null; failed_reason: string | null }>();
           (sentMsgs || []).forEach((m: any) => {
             const phone = m?.conversations?.recipient_phone;
             if (!phone || !phonesSet.has(phone)) return;
             const key = `${m.account_id}|${phone}`;
             if (!msgIndex.has(key)) {
-              msgIndex.set(key, { status: m.status, delivered_at: m.delivered_at ?? null });
+              msgIndex.set(key, { status: m.status, delivered_at: m.delivered_at ?? null, failed_reason: m.failed_reason ?? null });
             }
           });
 
@@ -178,11 +185,42 @@ const Campaigns: React.FC = () => {
         }
       }
 
+      // Fetch failed reasons from messages for failed recipients
+      const failedRecipientPhones = recipients.filter((r) => r.status === 'failed').map((r) => r.phone_number);
+      let failedRecipients: FailedRecipient[] = [];
+      
+      if (failedRecipientPhones.length > 0) {
+        // Get failed messages with reasons
+        const { data: failedMessages } = await supabase
+          .from('messages')
+          .select('failed_reason, campaign_recipient_id')
+          .eq('direction', 'outgoing')
+          .eq('status', 'failed')
+          .in('campaign_recipient_id', recipients.filter(r => r.status === 'failed').map(r => r.id))
+          .limit(100);
+
+        const reasonsByRecipientId = new Map<string, string>();
+        (failedMessages || []).forEach((m: any) => {
+          if (m.campaign_recipient_id && m.failed_reason) {
+            reasonsByRecipientId.set(m.campaign_recipient_id, m.failed_reason);
+          }
+        });
+
+        failedRecipients = recipients
+          .filter((r) => r.status === 'failed')
+          .map((r) => ({
+            phone_number: r.phone_number,
+            name: r.name,
+            failed_reason: reasonsByRecipientId.get(r.id) || 'Unknown error'
+          }));
+      }
+
       const report: CampaignReport = {
         successful: recipients.filter((r) => r.status === 'sent').length,
         failed: recipients.filter((r) => r.status === 'failed').length,
         pending: recipients.filter((r) => r.status === 'pending').length,
         total: recipients.length,
+        failedRecipients
       };
 
       setCampaignReports((prev) => new Map(prev).set(campaign.id, report));
@@ -734,7 +772,7 @@ const Campaigns: React.FC = () => {
 
       {/* Report Dialog */}
       <Dialog open={isReportOpen} onOpenChange={setIsReportOpen}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Campaign Report: {selectedReportCampaign?.name}</DialogTitle>
           </DialogHeader>
@@ -772,6 +810,33 @@ const Campaigns: React.FC = () => {
                           <span>{Math.round(((report.successful + report.failed) / report.total) * 100)}%</span>
                         </div>
                         <Progress value={((report.successful + report.failed) / report.total) * 100} />
+                      </div>
+                    )}
+                    
+                    {/* Failed Recipients List */}
+                    {report.failedRecipients.length > 0 && (
+                      <div className="space-y-2">
+                        <h4 className="text-sm font-medium flex items-center gap-2">
+                          <XCircle className="w-4 h-4 text-destructive" />
+                          Failed Recipients ({report.failedRecipients.length})
+                        </h4>
+                        <div className="max-h-48 overflow-y-auto border rounded-lg divide-y">
+                          {report.failedRecipients.map((recipient, idx) => (
+                            <div key={idx} className="p-3 text-sm">
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <p className="font-medium">{recipient.name || recipient.phone_number}</p>
+                                  {recipient.name && (
+                                    <p className="text-xs text-muted-foreground">{recipient.phone_number}</p>
+                                  )}
+                                </div>
+                              </div>
+                              <p className="text-xs text-destructive mt-1 bg-destructive/10 px-2 py-1 rounded">
+                                {recipient.failed_reason}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                     
