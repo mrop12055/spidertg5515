@@ -191,12 +191,12 @@ const Campaigns: React.FC = () => {
       let failedRecipients: FailedRecipient[] = [];
       
       if (failedRecipientPhones.length > 0) {
-        // Get failed messages with reasons
+        // Get failed/cancelled messages with reasons
         const { data: failedMessages } = await supabase
           .from('messages')
           .select('failed_reason, campaign_recipient_id')
           .eq('direction', 'outgoing')
-          .eq('status', 'failed')
+          .in('status', ['failed', 'cancelled'])
           .in('campaign_recipient_id', recipients.filter(r => r.status === 'failed').map(r => r.id))
           .limit(100);
 
