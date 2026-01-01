@@ -462,7 +462,14 @@ const Chat: React.FC = () => {
             ) : (
               <>
                 <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-sm font-medium text-muted-foreground">Conversations</h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-medium text-muted-foreground">Conversations</h2>
+                    {conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0) > 0 && (
+                      <Badge className="h-5 min-w-5 flex items-center justify-center text-xs bg-primary rounded-full">
+                        {conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0)} unread
+                      </Badge>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsSelectionMode(true)} title="Select chats">
                       <CheckSquare className="w-4 h-4" />
