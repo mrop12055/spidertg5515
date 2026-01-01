@@ -35,6 +35,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
+import { CountdownTimer } from '@/components/ui/countdown-timer';
 
 const statusOptions: { value: AccountStatus; label: string; color: string; icon: React.ReactNode }[] = [
   { value: 'active', label: 'Active', color: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30', icon: <Wifi className="w-3 h-3" /> },
@@ -955,11 +956,15 @@ const Accounts: React.FC = () => {
             {account.username && !account.username.includes('update_state') && (
               <span className="text-primary/70">@{account.username}</span>
             )}
-            {account.status === 'restricted' && account.restrictedUntil && (
-              <span className="text-amber-600 flex items-center gap-0.5">
-                <Clock className="w-3 h-3" />
-                {getRestrictionTimeLeft(account.restrictedUntil)}
-              </span>
+            {account.restrictedUntil && new Date(account.restrictedUntil) > new Date() && (
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 text-[10px]">
+                <AlertTriangle className="w-3 h-3" />
+                <CountdownTimer 
+                  targetDate={new Date(account.restrictedUntil)} 
+                  compact
+                  className="text-amber-600"
+                />
+              </div>
             )}
           </div>
         </div>
