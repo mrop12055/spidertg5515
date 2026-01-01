@@ -273,42 +273,138 @@ serve(async (req) => {
       });
     }
 
-    // RUNNER: warmup - Only warmup tasks
+    // RUNNER: warmup - Only warmup tasks (from warmup_schedule table)
     if (runner === "warmup") {
-      if (newAccounts.length > 0) {
-        const { data: warmupTasks } = await supabase
-          .from("maturation_tasks")
-          .select("*, telegram_accounts(*, telegram_api_credentials(*))")
-          .eq("status", "pending")
-          .lte("scheduled_at", new Date().toISOString())
-          .limit(1);
+      // Priority 1: Check for bidirectional interaction tasks
+      const { data: interactionTasks } = await supabase
+        .from("interaction_scheduler")
+        .select("*, sender:telegram_accounts!sender_account_id(*, telegram_api_credentials(*)), receiver:telegram_accounts!receiver_account_id(*)")
+        .eq("status", "pending")
+        .lte("scheduled_at", new Date().toISOString())
+        .order("scheduled_at", { ascending: true })
+        .limit(1);
 
-        if (warmupTasks && warmupTasks.length > 0) {
-          const task = warmupTasks[0];
-          const accountData = task.telegram_accounts;
+      if (interactionTasks && interactionTasks.length > 0) {
+        const task = interactionTasks[0] as any;
+        const senderAccount = task.sender;
+        const receiverAccount = task.receiver;
+        
+        if (senderAccount && senderAccount.status === "active" && receiverAccount) {
+          const apiCred = senderAccount.telegram_api_credentials;
           
-          if (accountData && accountData.status === "active") {
-            const apiCred = accountData.telegram_api_credentials;
-            console.log(`[get-next-task] Warmup task ${task.task_type} for ${task.account_id}`);
-            return new Response(JSON.stringify({
-              task: "warmup_" + task.task_type,
-              task_id: task.id,
-              account: {
-                id: accountData.id,
-                phone_number: accountData.phone_number,
-                session_data: accountData.session_data,
-                device_model: accountData.device_model,
-                system_version: accountData.system_version,
-                app_version: accountData.app_version,
-                lang_code: accountData.lang_code,
-                system_lang_code: accountData.system_lang_code,
-                api_id: apiCred?.api_id || accountData.api_id,
-                api_hash: apiCred?.api_hash || accountData.api_hash,
-              },
-            }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
+          // Mark as in_progress
+          await supabase
+            .from("interaction_scheduler")
+            .update({ status: "in_progress" })
+            .eq("id", task.id);
+          
+          console.log(`[get-next-task] Interaction task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
+          return new Response(JSON.stringify({
+            task: "warmup_interaction",
+            task_id: task.id,
+            task_data: {
+              recipient_phone: receiverAccount.phone_number,
+              message: task.message_content,
+            },
+            account: {
+              id: senderAccount.id,
+              phone_number: senderAccount.phone_number,
+              session_data: senderAccount.session_data,
+              device_model: senderAccount.device_model,
+              system_version: senderAccount.system_version,
+              app_version: senderAccount.app_version,
+              lang_code: senderAccount.lang_code,
+              system_lang_code: senderAccount.system_lang_code,
+              api_id: apiCred?.api_id || senderAccount.api_id,
+              api_hash: apiCred?.api_hash || senderAccount.api_hash,
+            },
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      // Priority 2: Check warmup_schedule table for channel/content tasks
+      const { data: warmupTasks } = await supabase
+        .from("warmup_schedule")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*))")
+        .eq("status", "pending")
+        .lte("scheduled_at", new Date().toISOString())
+        .order("priority", { ascending: false })
+        .order("scheduled_at", { ascending: true })
+        .limit(1);
+
+      if (warmupTasks && warmupTasks.length > 0) {
+        const task = warmupTasks[0] as any;
+        const accountData = task.telegram_accounts;
+        
+        if (accountData && accountData.status === "active") {
+          const apiCred = accountData.telegram_api_credentials;
+          
+          // Mark as in_progress
+          await supabase
+            .from("warmup_schedule")
+            .update({ status: "in_progress" })
+            .eq("id", task.id);
+          
+          console.log(`[get-next-task] Warmup task ${task.task_type} for ${task.account_id}`);
+          return new Response(JSON.stringify({
+            task: "warmup_" + task.task_type,
+            task_id: task.id,
+            task_data: {
+              channel_username: task.channel_username,
+            },
+            account: {
+              id: accountData.id,
+              phone_number: accountData.phone_number,
+              session_data: accountData.session_data,
+              device_model: accountData.device_model,
+              system_version: accountData.system_version,
+              app_version: accountData.app_version,
+              lang_code: accountData.lang_code,
+              system_lang_code: accountData.system_lang_code,
+              api_id: apiCred?.api_id || accountData.api_id,
+              api_hash: apiCred?.api_hash || accountData.api_hash,
+            },
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      // Fallback: Check old maturation_tasks table for backwards compatibility
+      const { data: oldWarmupTasks } = await supabase
+        .from("maturation_tasks")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*))")
+        .eq("status", "pending")
+        .lte("scheduled_at", new Date().toISOString())
+        .limit(1);
+
+      if (oldWarmupTasks && oldWarmupTasks.length > 0) {
+        const task = oldWarmupTasks[0] as any;
+        const accountData = task.telegram_accounts;
+        
+        if (accountData && accountData.status === "active") {
+          const apiCred = accountData.telegram_api_credentials;
+          console.log(`[get-next-task] Legacy warmup task ${task.task_type} for ${task.account_id}`);
+          return new Response(JSON.stringify({
+            task: "warmup_" + task.task_type,
+            task_id: task.id,
+            account: {
+              id: accountData.id,
+              phone_number: accountData.phone_number,
+              session_data: accountData.session_data,
+              device_model: accountData.device_model,
+              system_version: accountData.system_version,
+              app_version: accountData.app_version,
+              lang_code: accountData.lang_code,
+              system_lang_code: accountData.system_lang_code,
+              api_id: apiCred?.api_id || accountData.api_id,
+              api_hash: apiCred?.api_hash || accountData.api_hash,
+            },
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
       }
 
@@ -316,7 +412,7 @@ serve(async (req) => {
         task: "wait",
         seconds: 30,
         reason: "No warmup tasks",
-        accounts: newAccounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
+        accounts: accounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
           id: a.id,
           phone_number: a.phone_number,
           session_data: a.session_data,

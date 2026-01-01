@@ -652,6 +652,52 @@ serve(async (req) => {
         break;
       }
 
+      case "warmup": {
+        const { task_id, task_type: warmupType, account_id, success, error, channel } = result;
+
+        // Check if it's an interaction task (from interaction_scheduler)
+        if (warmupType === "interaction") {
+          await supabase
+            .from("interaction_scheduler")
+            .update({
+              status: success ? "completed" : "failed",
+              sent_at: success ? new Date().toISOString() : null,
+            })
+            .eq("id", task_id);
+          
+          console.log(`[report-task-result] Interaction ${success ? "completed" : "failed"}`);
+        } else {
+          // Regular warmup task (from warmup_schedule)
+          await supabase
+            .from("warmup_schedule")
+            .update({
+              status: success ? "completed" : "failed",
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", task_id);
+
+          // Also try maturation_tasks for backwards compatibility
+          await supabase
+            .from("maturation_tasks")
+            .update({
+              status: success ? "completed" : "failed",
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", task_id);
+          
+          console.log(`[report-task-result] Warmup ${warmupType} ${success ? "completed" : "failed"} for ${account_id}: ${channel || ""}`);
+        }
+
+        // Update account last_active
+        if (account_id) {
+          await supabase
+            .from("telegram_accounts")
+            .update({ last_active: new Date().toISOString() })
+            .eq("id", account_id);
+        }
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }
