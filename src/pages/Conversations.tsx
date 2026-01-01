@@ -119,10 +119,21 @@ const Chat: React.FC = () => {
     return convMessages.some(m => m.status !== 'failed');
   };
 
+  // Helper to get latest message timestamp for a conversation
+  const getLastMessageTime = (conv: typeof conversations[0]) => {
+    const convMessages = messages.filter(m => m.conversationId === conv.id);
+    if (convMessages.length === 0) return new Date(conv.updatedAt).getTime();
+    const sorted = [...convMessages].sort((a, b) => 
+      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    return new Date(sorted[0].timestamp).getTime();
+  };
+
   const filteredConversations = conversations
     .filter(c => {
       const cutoff = getTimeFilterCutoff();
-      const matchesTime = new Date(c.updatedAt) >= cutoff;
+      const lastMsgTime = getLastMessageTime(c);
+      const matchesTime = lastMsgTime >= cutoff.getTime();
       const matchesSearch = 
         c.recipientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         c.recipientPhone?.includes(searchQuery);
@@ -136,7 +147,8 @@ const Chat: React.FC = () => {
       const hasSuccess = hasSuccessfulMessages(c);
       return matchesTime && matchesSearch && isNotSpamBot && weInitiated && hasSuccess;
     })
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    // Sort by actual last message time, not updatedAt
+    .sort((a, b) => getLastMessageTime(b) - getLastMessageTime(a));
 
   const isTyping = selectedConv ? typingUsers[selectedConv.recipientPhone] : false;
 
