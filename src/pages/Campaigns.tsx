@@ -268,16 +268,16 @@ const Campaigns: React.FC = () => {
     const recipientLines = newCampaign.recipientsText.split('\n').filter(l => l.trim());
     const parsedRecipients = recipientLines.map(line => {
       const parts = line.split(/[,\t]/).map(p => p.trim());
-      const rawPhone = parts[0];
-      const normalizedPhone = normalizePhoneNumber(rawPhone);
+      const rawInput = parts[0];
+      const { identifier, isUsername } = normalizeRecipient(rawInput);
       return {
-        phone_number: normalizedPhone,
+        phone_number: identifier, // Can be phone or @username
         name: parts[1] || undefined
       };
-    }).filter(r => r.phone_number && r.phone_number.length >= 8);
+    }).filter(r => r.phone_number && r.phone_number.length >= 3); // Min 3 chars for usernames
 
     if (parsedRecipients.length === 0) {
-      toast.error('Please add at least one valid recipient phone number');
+      toast.error('Please add at least one valid phone number or username');
       return;
     }
 
@@ -313,17 +313,30 @@ const Campaigns: React.FC = () => {
     refreshData();
   };
 
-  // Normalize phone number - add + prefix if missing, strip formatting
-  const normalizePhoneNumber = (phone: string): string => {
-    // Remove all non-digit characters except +
-    let normalized = phone.replace(/[^\d+]/g, '');
+  // Normalize recipient - handles phone numbers OR usernames
+  const normalizeRecipient = (input: string): { identifier: string; isUsername: boolean } => {
+    const trimmed = input.trim();
+    
+    // Check if it's a username (starts with @ or contains only letters/numbers/underscores)
+    if (trimmed.startsWith('@')) {
+      return { identifier: trimmed.toLowerCase(), isUsername: true };
+    }
+    
+    // Check if it looks like a username (no digits at start, contains letters)
+    const isLikelyUsername = /^[a-zA-Z][a-zA-Z0-9_]{4,}$/.test(trimmed);
+    if (isLikelyUsername && !/^\d+$/.test(trimmed)) {
+      return { identifier: '@' + trimmed.toLowerCase(), isUsername: true };
+    }
+    
+    // Otherwise treat as phone number - remove all non-digit characters except +
+    let normalized = trimmed.replace(/[^\d+]/g, '');
     
     // If it doesn't start with +, add it
-    if (!normalized.startsWith('+')) {
+    if (normalized && !normalized.startsWith('+')) {
       normalized = '+' + normalized;
     }
     
-    return normalized;
+    return { identifier: normalized, isUsername: false };
   };
 
   const handleUploadRecipients = useCallback(async () => {
@@ -334,18 +347,18 @@ const Campaigns: React.FC = () => {
 
     const lines = recipientText.split('\n').filter(l => l.trim());
     const recipients = lines.map(line => {
-      // Support: just phone, phone,name, or phone name formats
+      // Support: phone, username, phone,name formats
       const parts = line.split(/[,\t]/).map(p => p.trim());
-      const rawPhone = parts[0];
+      const rawInput = parts[0];
       
-      // Normalize phone number - add + prefix automatically
-      const normalizedPhone = normalizePhoneNumber(rawPhone);
+      // Normalize - handles both phone numbers and usernames
+      const { identifier } = normalizeRecipient(rawInput);
       
       return {
-        phone_number: normalizedPhone,
+        phone_number: identifier,
         name: parts[1] || undefined // Name is optional - Python will auto-fetch from Telegram
       };
-    }).filter(r => r.phone_number && r.phone_number.length >= 8); // Basic length validation
+    }).filter(r => r.phone_number && r.phone_number.length >= 3); // Min 3 for usernames
 
     if (recipients.length === 0) {
       toast.error('No valid phone numbers found');
@@ -534,25 +547,30 @@ const Campaigns: React.FC = () => {
                   </div>
                   
                   <div className="p-4 rounded-lg bg-accent/30 border border-border">
-                    <p className="text-xs font-semibold text-muted-foreground mb-2">Format (one per line):</p>
+                    <p className="text-xs font-semibold text-muted-foreground mb-2">Format (one per line) - Phone OR Username:</p>
                     <pre className="text-xs font-mono text-foreground">
 {`+14155551234,John Doe
-+14155559876,Jane Smith
-14155550000 (+ will be added automatically)`}
+@telegram_user,Jane Smith
+username123
+14155550000`}
                     </pre>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      • Phone numbers: + added automatically if missing<br/>
+                      • Usernames: @ added automatically if missing
+                    </p>
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Phone Numbers / Telegram IDs</Label>
+                    <Label>Phone Numbers or Telegram Usernames</Label>
                     <Textarea
-                      placeholder={`+14155551234,John Doe\n+14155559876,Jane Smith\n14155550000 (+ added automatically)`}
+                      placeholder={`+14155551234,John Doe\n@telegram_user\nusername123\n14155550000`}
                       value={newCampaign.recipientsText}
                       onChange={(e) => setNewCampaign(prev => ({ ...prev, recipientsText: e.target.value }))}
                       rows={8}
                       className="font-mono text-sm"
                     />
                     <p className="text-xs text-muted-foreground">
-                      {newCampaign.recipientsText.split('\n').filter(l => l.trim()).length} recipients • Numbers without + will have it added automatically
+                      {newCampaign.recipientsText.split('\n').filter(l => l.trim()).length} recipients
                     </p>
                   </div>
                 </TabsContent>
