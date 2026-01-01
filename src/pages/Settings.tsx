@@ -361,25 +361,6 @@ const Settings: React.FC = () => {
     }
   };
 
-  // Export settings as JSON
-  const handleExportSettings = () => {
-    const exportSettings = {
-      ...schedulerSettings,
-      dailyLimit: settings.dailyMessageLimit,
-      warmupDays: settings.warmupDays,
-    };
-    
-    const blob = new Blob([JSON.stringify(exportSettings, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'scheduler_settings.json';
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    toast.success('Settings exported!');
-  };
-
   const handleSave = () => {
     localStorage.setItem('app_settings', JSON.stringify(settings));
     localStorage.setItem('python_scheduler_settings', JSON.stringify(schedulerSettings));
@@ -694,13 +675,6 @@ const Settings: React.FC = () => {
                 />
               </div>
             </div>
-            
-            <Separator />
-            
-            <Button variant="outline" onClick={handleExportSettings} className="w-full">
-              <Download className="w-4 h-4 mr-2" />
-              Export Settings for Python Script
-            </Button>
           </CardContent>
         </Card>
 
