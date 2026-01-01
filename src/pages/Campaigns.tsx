@@ -412,20 +412,10 @@ const Campaigns: React.FC = () => {
     })));
   };
 
-  // Only show warmed-up accounts (>5 days old) for campaigns
-  const WARMUP_DAYS = parseInt(localStorage.getItem('app_settings') ? JSON.parse(localStorage.getItem('app_settings')!).warmupDays || 5 : 5);
+  // All active accounts are available for campaigns (warmup disabled for testing)
   const now = new Date();
-  const warmedUpAccounts = accounts.filter(a => {
-    if (a.status !== 'active') return false;
-    const daysSinceCreation = Math.floor((now.getTime() - new Date(a.createdAt).getTime()) / (1000 * 60 * 60 * 24));
-    return daysSinceCreation >= WARMUP_DAYS;
-  });
-  
-  const warmingAccounts = accounts.filter(a => {
-    if (a.status !== 'active') return false;
-    const daysSinceCreation = Math.floor((now.getTime() - new Date(a.createdAt).getTime()) / (1000 * 60 * 60 * 24));
-    return daysSinceCreation < WARMUP_DAYS;
-  });
+  const warmedUpAccounts = accounts.filter(a => a.status === 'active');
+  const warmingAccounts: typeof accounts = []; // No warmup restriction
 
   const activeAccounts = accounts.filter(a => a.status === 'active');
 
@@ -532,11 +522,8 @@ const Campaigns: React.FC = () => {
                   
                   {warmedUpAccounts.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground border rounded-lg">
-                      <p className="font-medium">No warmed-up accounts available</p>
-                      <p className="text-sm mt-2">Accounts need {WARMUP_DAYS}+ days to be ready for campaigns.</p>
-                      {warmingAccounts.length > 0 && (
-                        <p className="text-sm mt-1 text-primary">{warmingAccounts.length} account(s) still warming up...</p>
-                      )}
+                      <p className="font-medium">No active accounts available</p>
+                      <p className="text-sm mt-2">Add accounts in the Accounts page first.</p>
                     </div>
                   ) : (
                     <div className="max-h-60 overflow-y-auto space-y-2 p-2 border rounded-lg bg-accent/30">
@@ -551,7 +538,7 @@ const Campaigns: React.FC = () => {
                             }
                           }}
                         />
-                        <label className="text-sm font-medium">Select All Warmed-up ({warmedUpAccounts.length})</label>
+                        <label className="text-sm font-medium">Select All Active ({warmedUpAccounts.length})</label>
                       </div>
                       {warmedUpAccounts.map(account => {
                         const daysSinceCreation = Math.floor((now.getTime() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24));
@@ -572,20 +559,6 @@ const Campaigns: React.FC = () => {
                         );
                       })}
                       
-                      {warmingAccounts.length > 0 && (
-                        <div className="mt-3 pt-3 border-t">
-                          <p className="text-xs text-muted-foreground mb-2">⏳ Still warming up ({warmingAccounts.length})</p>
-                          {warmingAccounts.slice(0, 5).map(account => {
-                            const daysSinceCreation = Math.floor((now.getTime() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24));
-                            const daysRemaining = WARMUP_DAYS - daysSinceCreation;
-                            return (
-                              <div key={account.id} className="text-xs text-muted-foreground py-1">
-                                {account.firstName || account.phoneNumber} - {daysRemaining} days left
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
                     </div>
                   )}
                   
