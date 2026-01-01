@@ -51,6 +51,8 @@
     --status-disconnected-foreground: 0 0% 100%;
     --status-cooldown: 280 70% 55%;
     --status-cooldown-foreground: 0 0% 100%;
+    --status-error: 0 75% 55%;
+    --status-error-foreground: 0 0% 100%;
     
     /* Telegram brand */
     --telegram: 200 85% 50%;
