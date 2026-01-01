@@ -11,7 +11,8 @@ import {
   ChevronRight,
   Phone,
   BookOpen,
-  Globe
+  Globe,
+  BarChart3
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -33,6 +34,7 @@ const navItems: NavItem[] = [
   { icon: MessageSquare, label: 'Chat', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
+  { icon: BarChart3, label: 'Reports', path: '/reports' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 

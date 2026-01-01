@@ -13,6 +13,7 @@ import Conversations from "./pages/Conversations";
 import Campaigns from "./pages/Campaigns";
 import Settings from "./pages/Settings";
 import SetupGuide from "./pages/SetupGuide";
+import Reports from "./pages/Reports";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -35,6 +36,7 @@ const App = () => (
                 <Route path="/campaigns" element={<Campaigns />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/setup" element={<SetupGuide />} />
+                <Route path="/reports" element={<Reports />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>
