@@ -529,31 +529,6 @@ const Campaigns: React.FC = () => {
     toast.success('Report exported');
   };
 
-  // Export scheduler settings as JSON file for Python script
-  const handleExportSchedulerSettings = () => {
-    const settings = {
-      enabled: schedulerSettings.enabled,
-      maxMessagesBeforeRotation: schedulerSettings.maxMessagesBeforeRotation,
-      cooldownDuration: schedulerSettings.cooldownDuration,
-      prioritizeHighMaturity: schedulerSettings.prioritizeHighMaturity,
-      autoSkipRestricted: schedulerSettings.autoSkipRestricted,
-      balanceLoad: schedulerSettings.balanceLoad,
-      messagesPerAccount: messagesPerAccount,
-      messageInterval: messageInterval,
-      accountSwitchDelay: accountSwitchDelay,
-    };
-    
-    const blob = new Blob([JSON.stringify(settings, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'scheduler_settings.json';
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    toast.success('Settings exported! Place scheduler_settings.json in the same folder as the Python script.');
-  };
-
   const getStatusColor = (status: Campaign['status']) => {
     switch (status) {
       case 'running': return 'bg-status-active text-status-active-foreground';
@@ -941,18 +916,6 @@ username123
                       </div>
                     </div>
                   </div>
-                  
-                  <Button 
-                    variant="outline" 
-                    onClick={handleExportSchedulerSettings}
-                    className="w-full"
-                  >
-                    <Download className="w-4 h-4 mr-2" />
-                    Export Settings for Python Script
-                  </Button>
-                  <p className="text-xs text-muted-foreground text-center">
-                    Place the downloaded <code className="bg-muted px-1 rounded">scheduler_settings.json</code> in the same folder as the Python script
-                  </p>
                 </TabsContent>
               </Tabs>
 
