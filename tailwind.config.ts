@@ -78,6 +78,8 @@ export default {
           "disconnected-foreground": "hsl(var(--status-disconnected-foreground))",
           cooldown: "hsl(var(--status-cooldown))",
           "cooldown-foreground": "hsl(var(--status-cooldown-foreground))",
+          error: "hsl(var(--status-error))",
+          "error-foreground": "hsl(var(--status-error-foreground))",
         },
       },
       borderRadius: {
