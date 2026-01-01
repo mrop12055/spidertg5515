@@ -52,6 +52,11 @@ async def setup_message_handler(client, account_id: str):
                     content = "[Photo] " + (event.message.text or "")
                     media_type = "image"
                 
+                # Get phone number if available
+                sender_phone = None
+                if hasattr(sender, 'phone') and sender.phone:
+                    sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+                
                 print(f"  📥 Message from {sender.first_name or sender.id}: {content[:50]}...")
                 
                 await report_result("incoming_message", {
@@ -59,6 +64,7 @@ async def setup_message_handler(client, account_id: str):
                     "sender_id": sender.id,
                     "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
                     "sender_username": sender.username,
+                    "sender_phone": sender_phone,
                     "content": content,
                     "media_url": media_url,
                     "media_type": media_type
