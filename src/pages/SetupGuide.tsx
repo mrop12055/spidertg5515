@@ -1284,6 +1284,140 @@ if __name__ == "__main__":
         print("Goodbye!")
 `;
 
+  // ========== LAUNCHER SCRIPTS ==========
+  const runAllBat = `@echo off
+title TelegramCRM - All in One
+echo ========================================
+echo    TelegramCRM - Starting All Runners
+echo ========================================
+echo.
+echo Press Ctrl+C to stop all runners
+echo.
+python main_runner.py
+echo.
+echo All runners stopped.
+pause
+`;
+
+  const runAllSh = `#!/bin/bash
+echo "========================================"
+echo "   TelegramCRM - Starting All Runners"
+echo "========================================"
+echo ""
+echo "Press Ctrl+C to stop all runners"
+echo ""
+python3 main_runner.py
+`;
+
+  const runCampaignBat = `@echo off
+title TelegramCRM - Campaign Runner
+echo ========================================
+echo    TelegramCRM - Campaign Runner
+echo ========================================
+echo.
+python campaign_runner.py
+pause
+`;
+
+  const runLivechatBat = `@echo off
+title TelegramCRM - Live Chat
+echo ========================================
+echo    TelegramCRM - Live Chat Listener
+echo ========================================
+echo.
+python live_chat_listener.py
+pause
+`;
+
+  const runWarmupBat = `@echo off
+title TelegramCRM - Warmup
+echo ========================================
+echo    TelegramCRM - Warmup Runner
+echo ========================================
+echo.
+python warmup_runner.py
+pause
+`;
+
+  const runAccountBat = `@echo off
+title TelegramCRM - Account Manager
+echo ========================================
+echo    TelegramCRM - Account Manager
+echo ========================================
+echo.
+python account_manager.py
+pause
+`;
+
+  const installRequirementsBat = `@echo off
+title TelegramCRM - Installing Dependencies
+echo ========================================
+echo    Installing Required Packages...
+echo ========================================
+echo.
+pip install telethon httpx
+echo.
+echo ========================================
+echo    Installation Complete!
+echo ========================================
+pause
+`;
+
+  const installRequirementsSh = `#!/bin/bash
+echo "========================================"
+echo "   Installing Required Packages..."
+echo "========================================"
+pip3 install telethon httpx
+echo ""
+echo "Installation Complete!"
+`;
+
+  const requirementsTxt = `telethon>=1.34.0
+httpx>=0.27.0
+`;
+
+  const readmeTxt = `TelegramCRM - Python Scripts
+=============================
+
+FIRST TIME SETUP:
+-----------------
+1. Make sure Python 3.8+ is installed
+2. Double-click INSTALL_REQUIREMENTS.bat (Windows) or run:
+   pip install telethon httpx
+
+RUNNING THE BOT:
+----------------
+Option 1: Run ALL tasks at once
+   Double-click: RUN_TELEGRAM_CRM.bat
+
+Option 2: Run specific runners (recommended)
+   - RUN_CAMPAIGN.bat     - Send campaigns
+   - RUN_LIVECHAT.bat     - Listen for messages
+   - RUN_WARMUP.bat       - Mature new accounts
+   - RUN_ACCOUNT.bat      - Account management
+
+STOPPING:
+---------
+Press Ctrl+C in the terminal window, or close the window.
+
+FILES:
+------
+- config.py            - Configuration settings
+- client_manager.py    - Shared Telegram client logic
+- campaign_runner.py   - Campaign sending
+- live_chat_listener.py - Incoming messages
+- account_manager.py   - Account tasks
+- warmup_runner.py     - New account warmup
+- main_runner.py       - All-in-one runner
+
+RECOMMENDED SETUP:
+------------------
+Keep RUN_LIVECHAT.bat always running for live chat.
+Run RUN_CAMPAIGN.bat only when sending campaigns.
+
+For support, visit your TelegramCRM dashboard.
+`;
+
   const downloadFile = (content: string, filename: string) => {
     const blob = new Blob([content], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
@@ -1297,6 +1431,8 @@ if __name__ == "__main__":
 
   const downloadAllAsZip = async () => {
     const zip = new JSZip();
+    
+    // Python files
     zip.file('config.py', configPy);
     zip.file('client_manager.py', clientManagerPy);
     zip.file('campaign_runner.py', campaignRunnerPy);
@@ -1305,14 +1441,30 @@ if __name__ == "__main__":
     zip.file('warmup_runner.py', warmupRunnerPy);
     zip.file('main_runner.py', mainRunnerPy);
     
+    // Launcher scripts (Windows)
+    zip.file('RUN_TELEGRAM_CRM.bat', runAllBat);
+    zip.file('RUN_CAMPAIGN.bat', runCampaignBat);
+    zip.file('RUN_LIVECHAT.bat', runLivechatBat);
+    zip.file('RUN_WARMUP.bat', runWarmupBat);
+    zip.file('RUN_ACCOUNT.bat', runAccountBat);
+    zip.file('INSTALL_REQUIREMENTS.bat', installRequirementsBat);
+    
+    // Launcher scripts (Mac/Linux)
+    zip.file('run_telegram_crm.sh', runAllSh);
+    zip.file('install_requirements.sh', installRequirementsSh);
+    
+    // Docs
+    zip.file('requirements.txt', requirementsTxt);
+    zip.file('README.txt', readmeTxt);
+    
     const content = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(content);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'telegram_crm_scripts.zip';
+    a.download = 'TelegramCRM.zip';
     a.click();
     URL.revokeObjectURL(url);
-    toast.success('Downloaded all scripts as ZIP');
+    toast.success('Downloaded complete package!');
   };
 
   return (
@@ -1369,41 +1521,77 @@ if __name__ == "__main__":
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <Button onClick={downloadAllAsZip} size="lg" className="w-full gap-2">
+            <Button onClick={downloadAllAsZip} size="lg" className="w-full gap-2 bg-green-600 hover:bg-green-700">
               <Download className="w-5 h-5" />
-              Download All Scripts (ZIP)
+              Download Complete Package (ZIP) - One Click Run!
             </Button>
             
-            <div className="grid gap-2 md:grid-cols-2">
-              <Button variant="outline" onClick={() => downloadFile(configPy, 'config.py')} className="gap-2">
-                <Settings2 className="w-4 h-4" />
-                config.py
-              </Button>
-              <Button variant="outline" onClick={() => downloadFile(clientManagerPy, 'client_manager.py')} className="gap-2">
-                <Settings2 className="w-4 h-4" />
-                client_manager.py
-              </Button>
-              <Button variant="outline" onClick={() => downloadFile(campaignRunnerPy, 'campaign_runner.py')} className="gap-2">
-                <MessageCircle className="w-4 h-4" />
-                campaign_runner.py
-              </Button>
-              <Button variant="outline" onClick={() => downloadFile(liveChatListenerPy, 'live_chat_listener.py')} className="gap-2">
-                <Zap className="w-4 h-4" />
-                live_chat_listener.py
-              </Button>
-              <Button variant="outline" onClick={() => downloadFile(accountManagerPy, 'account_manager.py')} className="gap-2">
-                <Users className="w-4 h-4" />
-                account_manager.py
-              </Button>
-              <Button variant="outline" onClick={() => downloadFile(warmupRunnerPy, 'warmup_runner.py')} className="gap-2">
-                <Shield className="w-4 h-4" />
-                warmup_runner.py
-              </Button>
-              <Button variant="outline" onClick={() => downloadFile(mainRunnerPy, 'main_runner.py')} className="gap-2 md:col-span-2">
+            <p className="text-center text-sm text-muted-foreground">
+              Includes all Python files, launcher scripts (.bat/.sh), and instructions
+            </p>
+
+            <div className="grid gap-2 md:grid-cols-3">
+              <Button variant="outline" onClick={() => downloadFile(runAllBat, 'RUN_TELEGRAM_CRM.bat')} className="gap-2">
                 <Play className="w-4 h-4" />
-                main_runner.py (All-in-One)
+                RUN_TELEGRAM_CRM.bat
+              </Button>
+              <Button variant="outline" onClick={() => downloadFile(runCampaignBat, 'RUN_CAMPAIGN.bat')} className="gap-2">
+                <MessageCircle className="w-4 h-4" />
+                RUN_CAMPAIGN.bat
+              </Button>
+              <Button variant="outline" onClick={() => downloadFile(runLivechatBat, 'RUN_LIVECHAT.bat')} className="gap-2">
+                <Zap className="w-4 h-4" />
+                RUN_LIVECHAT.bat
+              </Button>
+              <Button variant="outline" onClick={() => downloadFile(runWarmupBat, 'RUN_WARMUP.bat')} className="gap-2">
+                <Shield className="w-4 h-4" />
+                RUN_WARMUP.bat
+              </Button>
+              <Button variant="outline" onClick={() => downloadFile(runAccountBat, 'RUN_ACCOUNT.bat')} className="gap-2">
+                <Users className="w-4 h-4" />
+                RUN_ACCOUNT.bat
+              </Button>
+              <Button variant="outline" onClick={() => downloadFile(installRequirementsBat, 'INSTALL_REQUIREMENTS.bat')} className="gap-2">
+                <Terminal className="w-4 h-4" />
+                INSTALL_REQUIREMENTS.bat
               </Button>
             </div>
+            
+            <details className="mt-4">
+              <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">
+                Show Python files (for manual download)
+              </summary>
+              <div className="grid gap-2 md:grid-cols-2 mt-3">
+                <Button variant="ghost" size="sm" onClick={() => downloadFile(configPy, 'config.py')} className="gap-2 justify-start">
+                  <Settings2 className="w-4 h-4" />
+                  config.py
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => downloadFile(clientManagerPy, 'client_manager.py')} className="gap-2 justify-start">
+                  <Settings2 className="w-4 h-4" />
+                  client_manager.py
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => downloadFile(campaignRunnerPy, 'campaign_runner.py')} className="gap-2 justify-start">
+                  <MessageCircle className="w-4 h-4" />
+                  campaign_runner.py
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => downloadFile(liveChatListenerPy, 'live_chat_listener.py')} className="gap-2 justify-start">
+                  <Zap className="w-4 h-4" />
+                  live_chat_listener.py
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => downloadFile(accountManagerPy, 'account_manager.py')} className="gap-2 justify-start">
+                  <Users className="w-4 h-4" />
+                  account_manager.py
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => downloadFile(warmupRunnerPy, 'warmup_runner.py')} className="gap-2 justify-start">
+                  <Shield className="w-4 h-4" />
+                  warmup_runner.py
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => downloadFile(mainRunnerPy, 'main_runner.py')} className="gap-2 justify-start md:col-span-2">
+                  <Play className="w-4 h-4" />
+                  main_runner.py (All-in-One)
+                </Button>
+              </div>
+            </details>
           </CardContent>
         </Card>
 
@@ -1506,12 +1694,71 @@ if __name__ == "__main__":
           </CardContent>
         </Card>
 
-        {/* Quick Start */}
+        {/* Quick Start - One Click */}
+        <Card className="border-primary/50 bg-primary/5">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Play className="w-5 h-5 text-primary" />
+              One-Click Setup (Windows)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-3">
+              <div className="flex items-start gap-3">
+                <Badge className="mt-0.5 bg-green-600">1</Badge>
+                <div>
+                  <p className="font-medium">Download the complete package</p>
+                  <p className="text-sm text-muted-foreground">Click the green "Download Complete Package" button above</p>
+                </div>
+              </div>
+              
+              <div className="flex items-start gap-3">
+                <Badge className="mt-0.5 bg-green-600">2</Badge>
+                <div>
+                  <p className="font-medium">Extract the ZIP file</p>
+                  <p className="text-sm text-muted-foreground">Right-click → Extract All to any folder</p>
+                </div>
+              </div>
+              
+              <div className="flex items-start gap-3">
+                <Badge className="mt-0.5 bg-green-600">3</Badge>
+                <div>
+                  <p className="font-medium">Install dependencies (first time only)</p>
+                  <p className="text-sm text-muted-foreground">Double-click <code className="bg-background px-2 py-1 rounded font-bold">INSTALL_REQUIREMENTS.bat</code></p>
+                </div>
+              </div>
+              
+              <div className="flex items-start gap-3">
+                <Badge className="mt-0.5 bg-green-600">4</Badge>
+                <div>
+                  <p className="font-medium">Run TelegramCRM!</p>
+                  <p className="text-sm text-muted-foreground">Double-click <code className="bg-background px-2 py-1 rounded font-bold">RUN_TELEGRAM_CRM.bat</code> - That's it!</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="p-3 rounded-lg bg-background border mt-4">
+              <p className="text-sm font-medium mb-2">📁 What's in the package:</p>
+              <div className="grid grid-cols-2 gap-1 text-xs text-muted-foreground">
+                <span>• RUN_TELEGRAM_CRM.bat (All tasks)</span>
+                <span>• RUN_CAMPAIGN.bat</span>
+                <span>• RUN_LIVECHAT.bat</span>
+                <span>• RUN_WARMUP.bat</span>
+                <span>• RUN_ACCOUNT.bat</span>
+                <span>• INSTALL_REQUIREMENTS.bat</span>
+                <span>• All Python scripts</span>
+                <span>• README.txt</span>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Manual Setup */}
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Terminal className="w-5 h-5" />
-              Quick Start
+              Manual Setup (Advanced)
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -1537,29 +1784,9 @@ if __name__ == "__main__":
               <div className="flex items-start gap-3">
                 <Badge className="mt-0.5">2</Badge>
                 <div>
-                  <p className="font-medium">Download all scripts to a folder</p>
-                  <p className="text-sm text-muted-foreground">Click "Download All Scripts (ZIP)" above</p>
-                </div>
-              </div>
-              
-              <div className="flex items-start gap-3">
-                <Badge className="mt-0.5">3</Badge>
-                <div>
-                  <p className="font-medium">Open terminal in that folder</p>
-                  <p className="text-sm text-muted-foreground">Type <code className="bg-background px-2 py-1 rounded">cmd</code> in address bar (Windows)</p>
-                </div>
-              </div>
-              
-              <div className="flex items-start gap-3">
-                <Badge className="mt-0.5">4</Badge>
-                <div>
-                  <p className="font-medium">Run the scripts you need</p>
+                  <p className="font-medium">Open terminal in folder and run</p>
                   <div className="relative mt-2">
-                    <pre className="bg-background p-3 rounded-lg border text-sm overflow-x-auto"># Terminal 1 - Always running for live chat
-python live_chat_listener.py
-
-# Terminal 2 - Run when sending campaigns
-python campaign_runner.py</pre>
+                    <pre className="bg-background p-3 rounded-lg border text-sm overflow-x-auto">python main_runner.py</pre>
                   </div>
                 </div>
               </div>
