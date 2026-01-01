@@ -96,7 +96,15 @@ function randomChoice<T>(arr: T[]): T {
 // Track used fingerprints to ensure uniqueness within batch
 const usedFingerprints = new Set<string>();
 
-function generateUniqueFingerprint(existingFingerprints: Set<string>): {
+interface ApiCredential {
+  id: string;
+  api_id: string;
+  api_hash: string;
+  client_type: string;
+  accounts_count: number;
+}
+
+function generateUniqueFingerprint(existingFingerprints: Set<string>, preferredClientType?: string): {
   device_model: string;
   system_version: string;
   app_version: string;
@@ -107,8 +115,13 @@ function generateUniqueFingerprint(existingFingerprints: Set<string>): {
   const maxAttempts = 100;
   
   while (attempts < maxAttempts) {
-    // 80% Android, 20% iOS
-    const useAndroid = Math.random() < 0.8;
+    // If we have a preferred client type, use matching device
+    let useAndroid = Math.random() < 0.8;
+    if (preferredClientType === 'ios' || preferredClientType === 'macos') {
+      useAndroid = false;
+    } else if (preferredClientType === 'android') {
+      useAndroid = true;
+    }
     
     let device_model: string;
     let system_version: string;
@@ -150,6 +163,68 @@ function generateUniqueFingerprint(existingFingerprints: Set<string>): {
     lang_code: randomChoice(LANGUAGES).code,
     system_lang_code: "en-US"
   };
+}
+
+// Select API credential with load balancing (least accounts first)
+function selectApiCredential(credentials: ApiCredential[], deviceModel: string): ApiCredential {
+  // Determine device type from fingerprint
+  const isIos = deviceModel.toLowerCase().includes('iphone');
+  
+  // Filter by matching client type if possible
+  let matchingCreds = credentials.filter(c => {
+    if (isIos) return c.client_type === 'ios' || c.client_type === 'macos';
+    return c.client_type === 'android' || c.client_type === 'desktop';
+  });
+  
+  // Fallback to all if no match
+  if (matchingCreds.length === 0) {
+    matchingCreds = credentials;
+  }
+  
+  // Sort by accounts_count (load balancing)
+  matchingCreds.sort((a, b) => a.accounts_count - b.accounts_count);
+  
+  return matchingCreds[0];
+}
+
+// Extract country code from phone number
+function extractPhoneCountry(phoneNumber: string): string | null {
+  const cleaned = phoneNumber.replace(/\D/g, '');
+  
+  // Common country code prefixes
+  const countryPrefixes: Record<string, string> = {
+    '1': 'US', '7': 'RU', '20': 'EG', '27': 'ZA', '30': 'GR', '31': 'NL',
+    '32': 'BE', '33': 'FR', '34': 'ES', '36': 'HU', '39': 'IT', '40': 'RO',
+    '41': 'CH', '43': 'AT', '44': 'GB', '45': 'DK', '46': 'SE', '47': 'NO',
+    '48': 'PL', '49': 'DE', '51': 'PE', '52': 'MX', '53': 'CU', '54': 'AR',
+    '55': 'BR', '56': 'CL', '57': 'CO', '58': 'VE', '60': 'MY', '61': 'AU',
+    '62': 'ID', '63': 'PH', '64': 'NZ', '65': 'SG', '66': 'TH', '81': 'JP',
+    '82': 'KR', '84': 'VN', '86': 'CN', '90': 'TR', '91': 'IN', '92': 'PK',
+    '93': 'AF', '94': 'LK', '95': 'MM', '98': 'IR', '212': 'MA', '213': 'DZ',
+    '216': 'TN', '218': 'LY', '220': 'GM', '221': 'SN', '234': 'NG', '249': 'SD',
+    '254': 'KE', '255': 'TZ', '256': 'UG', '260': 'ZM', '263': 'ZW', '351': 'PT',
+    '352': 'LU', '353': 'IE', '354': 'IS', '358': 'FI', '359': 'BG', '370': 'LT',
+    '371': 'LV', '372': 'EE', '373': 'MD', '374': 'AM', '375': 'BY', '380': 'UA',
+    '381': 'RS', '385': 'HR', '386': 'SI', '387': 'BA', '389': 'MK', '420': 'CZ',
+    '421': 'SK', '502': 'GT', '503': 'SV', '504': 'HN', '505': 'NI', '506': 'CR',
+    '507': 'PA', '509': 'HT', '590': 'GP', '591': 'BO', '593': 'EC', '594': 'GF',
+    '595': 'PY', '597': 'SR', '598': 'UY', '599': 'CW', '852': 'HK', '853': 'MO',
+    '855': 'KH', '856': 'LA', '880': 'BD', '886': 'TW', '960': 'MV', '961': 'LB',
+    '962': 'JO', '963': 'SY', '964': 'IQ', '965': 'KW', '966': 'SA', '967': 'YE',
+    '968': 'OM', '971': 'AE', '972': 'IL', '973': 'BH', '974': 'QA', '976': 'MN',
+    '977': 'NP', '992': 'TJ', '993': 'TM', '994': 'AZ', '995': 'GE', '996': 'KG',
+    '998': 'UZ',
+  };
+  
+  // Try 3-digit, then 2-digit, then 1-digit prefixes
+  for (const len of [3, 2, 1]) {
+    const prefix = cleaned.substring(0, len);
+    if (countryPrefixes[prefix]) {
+      return countryPrefixes[prefix];
+    }
+  }
+  
+  return null;
 }
 
 // Extract user data from Telethon session file
@@ -249,6 +324,18 @@ serve(async (req) => {
 
     console.log(`[process-account-upload] Processing ${accounts.length} accounts`);
 
+    // Fetch API credentials for distribution
+    const { data: apiCredentials } = await supabase
+      .from('telegram_api_credentials')
+      .select('*')
+      .eq('is_active', true);
+    
+    if (!apiCredentials || apiCredentials.length === 0) {
+      console.log('[process-account-upload] No API credentials found - using default');
+    } else {
+      console.log(`[process-account-upload] Found ${apiCredentials.length} API credentials for distribution`);
+    }
+
     // Fetch existing fingerprints to ensure uniqueness
     const { data: existingAccounts } = await supabase
       .from('telegram_accounts')
@@ -284,10 +371,24 @@ serve(async (req) => {
         const extracted = extractUserDataFromSession(account.session_data);
         const status = extracted.isValid ? 'active' : 'disconnected';
         
-        // Generate UNIQUE device fingerprint for this account
-        const fingerprint = generateUniqueFingerprint(existingFingerprints);
+        // Select API credential with load balancing
+        let selectedApiCredential: ApiCredential | null = null;
+        if (apiCredentials && apiCredentials.length > 0) {
+          // Prefer matching client type based on existing fingerprint or random
+          const preferredType = Math.random() < 0.8 ? 'android' : 'ios';
+          selectedApiCredential = selectApiCredential(apiCredentials, preferredType === 'ios' ? 'iPhone' : 'Samsung');
+        }
         
-        console.log(`[process-account-upload] ${account.phone_number}: valid=${extracted.isValid}, fingerprint=${fingerprint.device_model} (${fingerprint.system_version})`);
+        // Generate UNIQUE device fingerprint matching the API type
+        const fingerprint = generateUniqueFingerprint(
+          existingFingerprints, 
+          selectedApiCredential?.client_type
+        );
+        
+        // Extract phone country
+        const phoneCountry = extractPhoneCountry(account.phone_number);
+        
+        console.log(`[process-account-upload] ${account.phone_number}: valid=${extracted.isValid}, fingerprint=${fingerprint.device_model}, API=${selectedApiCredential?.client_type || 'default'}, country=${phoneCountry}`);
 
 
         // Check if account already exists
@@ -307,6 +408,13 @@ serve(async (req) => {
           api_hash: account.api_hash,
           status: status,
           last_active: extracted.isValid ? new Date().toISOString() : null,
+          phone_country: phoneCountry,
+          // Assign API credential if not already set
+          ...(existing ? {} : {
+            api_credential_id: selectedApiCredential?.id || null,
+            warmup_phase: 0,
+            warmup_started_at: new Date().toISOString(),
+          }),
           // Only set fingerprint if not already set (preserve existing)
           ...(existing?.device_model ? {} : {
             device_model: fingerprint.device_model,

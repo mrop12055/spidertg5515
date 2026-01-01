@@ -92,11 +92,17 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         print(f"  📱 Using fingerprint: {device_model} ({system_version})")
     
     try:
+        # Get API credentials from account (from backend) or use default
+        api_id = account.get("api_id") or TELEGRAM_API_ID
+        api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+        
+        print(f"  🔑 Using API ID: {api_id[:4]}*** ({account.get('phone_number', 'unknown')})")
+        
         # Create client with unique device fingerprint
         client = TelegramClient(
             session_path, 
-            int(TELEGRAM_API_ID), 
-            TELEGRAM_API_HASH,
+            int(api_id), 
+            api_hash,
             device_model=device_model,
             system_version=system_version,
             app_version=app_version,
