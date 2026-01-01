@@ -173,10 +173,20 @@ serve(async (req) => {
           });
           
           if (!hasUsableAccount) {
-            console.log(`[get-next-task] No usable accounts left for campaign "${campaign.name}" (restricted or daily limit) - completing`);
+            // Check if there are still pending recipients
+            const { count: pendingCount } = await supabase
+              .from("campaign_recipients")
+              .select("id", { count: "exact", head: true })
+              .eq("campaign_id", campaign.id)
+              .eq("status", "pending");
+            
+            // If pending recipients exist, mark as FAILED (couldn't complete)
+            // If no pending recipients, mark as completed (all were processed)
+            const newStatus = (pendingCount && pendingCount > 0) ? "failed" : "completed";
+            console.log(`[get-next-task] No usable accounts left for campaign "${campaign.name}" - marking as ${newStatus} (${pendingCount || 0} pending)`);
             await supabase
               .from("campaigns")
-              .update({ status: "completed" })
+              .update({ status: newStatus })
               .eq("id", campaign.id);
           } else {
             allCampaignsStopped = false;

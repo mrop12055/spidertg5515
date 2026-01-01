@@ -85,7 +85,7 @@ export interface Campaign {
   id: string;
   name: string;
   messageTemplate: string;
-  status: 'draft' | 'scheduled' | 'running' | 'paused' | 'completed';
+  status: 'draft' | 'scheduled' | 'running' | 'paused' | 'completed' | 'failed';
   scheduledAt?: Date;
   recipientCount: number;
   sentCount: number;

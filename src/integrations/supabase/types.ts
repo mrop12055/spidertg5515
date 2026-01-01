@@ -761,6 +761,7 @@ export type Database = {
         | "running"
         | "paused"
         | "completed"
+        | "failed"
       message_direction: "incoming" | "outgoing"
       message_status:
         | "pending"
@@ -906,7 +907,14 @@ export const Constants = {
         "disconnected",
         "cooldown",
       ],
-      campaign_status: ["draft", "scheduled", "running", "paused", "completed"],
+      campaign_status: [
+        "draft",
+        "scheduled",
+        "running",
+        "paused",
+        "completed",
+        "failed",
+      ],
       message_direction: ["incoming", "outgoing"],
       message_status: [
         "pending",
