@@ -19,6 +19,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useState } from 'react';
+import { useTelegram } from '@/context/TelegramContext';
 
 interface NavItem {
   icon: React.ElementType;
@@ -42,6 +43,10 @@ export const Sidebar: React.FC = () => {
   const { user, logout, isSuperAdmin } = useAuth();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const { conversations } = useTelegram();
+
+  // Calculate total unread count
+  const totalUnread = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
 
   const filteredNavItems = navItems.filter(item => 
     !item.superAdminOnly || isSuperAdmin
@@ -75,26 +80,40 @@ export const Sidebar: React.FC = () => {
           const isActive = location.pathname === item.path || 
                           (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
           
+          const showBadge = item.path === '/conversations' && totalUnread > 0;
+          
           return (
             <NavLink
               key={item.path}
               to={item.path}
               className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
+                "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative",
                 isActive 
                   ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-glow" 
                   : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 collapsed && "justify-center px-2"
               )}
             >
-              <item.icon className={cn(
-                "w-5 h-5 flex-shrink-0 transition-transform duration-200",
-                !isActive && "group-hover:scale-110"
-              )} />
+              <div className="relative">
+                <item.icon className={cn(
+                  "w-5 h-5 flex-shrink-0 transition-transform duration-200",
+                  !isActive && "group-hover:scale-110"
+                )} />
+                {showBadge && collapsed && (
+                  <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center animate-pulse">
+                    {totalUnread > 99 ? '99+' : totalUnread}
+                  </span>
+                )}
+              </div>
               {!collapsed && (
                 <span className="text-sm font-medium animate-fade-in">{item.label}</span>
               )}
-              {isActive && !collapsed && (
+              {showBadge && !collapsed && (
+                <span className="ml-auto min-w-[20px] h-[20px] rounded-full bg-destructive text-destructive-foreground text-xs font-bold flex items-center justify-center animate-pulse">
+                  {totalUnread > 99 ? '99+' : totalUnread}
+                </span>
+              )}
+              {isActive && !collapsed && !showBadge && (
                 <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-primary-foreground animate-pulse" />
               )}
             </NavLink>
