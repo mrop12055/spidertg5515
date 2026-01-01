@@ -153,17 +153,20 @@ serve(async (req) => {
           // Get accounts assigned to this specific campaign
           const { data: campaignAccountLinks } = await supabase
             .from("campaign_accounts")
-            .select("account_id, telegram_accounts!inner(id, status)")
+            .select("account_id, telegram_accounts!inner(id, status, messages_sent_today, daily_limit)")
             .eq("campaign_id", campaign.id);
           
-          // Check if any assigned account is still active
-          const hasActiveAccount = (campaignAccountLinks || []).some((ca: any) => {
+          // Check if any assigned account is usable (active AND under daily limit)
+          const hasUsableAccount = (campaignAccountLinks || []).some((ca: any) => {
             const acc = ca.telegram_accounts;
-            return acc && acc.status === 'active';
+            if (!acc) return false;
+            const limit = acc.daily_limit ?? 25;
+            const sentToday = acc.messages_sent_today ?? 0;
+            return acc.status === 'active' && sentToday < limit;
           });
           
-          if (!hasActiveAccount) {
-            console.log(`[get-next-task] All accounts for campaign "${campaign.name}" are restricted - completing`);
+          if (!hasUsableAccount) {
+            console.log(`[get-next-task] No usable accounts left for campaign "${campaign.name}" (restricted or daily limit) - completing`);
             await supabase
               .from("campaigns")
               .update({ status: "completed" })

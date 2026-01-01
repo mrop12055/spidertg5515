@@ -225,14 +225,22 @@ const Campaigns: React.FC = () => {
       // Complete when: no pending AND (has sent/failed OR campaign was running but no active accounts left)
       const shouldComplete = campaign.status === 'running' && pendingCount === 0 && recipients.length > 0;
       
-      // Also check if campaign is paused with no active accounts - mark as completed
-      const { data: activeAccounts } = await supabase
-        .from('telegram_accounts')
-        .select('id')
-        .eq('status', 'active');
-      
-      const noActiveAccounts = !activeAccounts || activeAccounts.length === 0;
-      const shouldForceComplete = campaign.status === 'running' && noActiveAccounts && recipients.length > 0;
+      // Check if there are any USABLE accounts for this campaign (active + under daily limit)
+      const { data: campaignAccountLinks } = await supabase
+        .from('campaign_accounts')
+        .select('account_id, telegram_accounts!inner(status, messages_sent_today, daily_limit)')
+        .eq('campaign_id', campaign.id);
+
+      const hasUsableAccount = (campaignAccountLinks || []).some((ca: any) => {
+        const acc = ca.telegram_accounts;
+        if (!acc) return false;
+        const limit = acc.daily_limit ?? 25;
+        const sentToday = acc.messages_sent_today ?? 0;
+        return acc.status === 'active' && sentToday < limit;
+      });
+
+      const noUsableAccounts = !hasUsableAccount;
+      const shouldForceComplete = campaign.status === 'running' && noUsableAccounts && recipients.length > 0;
 
       const report: CampaignReport = {
         successful: sentCount,
