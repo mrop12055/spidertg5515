@@ -253,12 +253,13 @@ serve(async (req) => {
           sender_name,
           sender_username,
           sender_phone,
+          sender_avatar,
           content,
           media_url,
           media_type,
         } = result;
 
-        console.log(`[report-task-result] Processing incoming message from sender_id=${sender_id}, username=${sender_username}, phone=${sender_phone}`);
+        console.log(`[report-task-result] Processing incoming message from sender_id=${sender_id}, username=${sender_username}, phone=${sender_phone}, has_avatar=${!!sender_avatar}`);
 
         // Find or create conversation with improved matching
         // Use phone number or telegram_id as unique identifier - NEVER use generic "Contact" name
@@ -419,13 +420,17 @@ serve(async (req) => {
           if (sender_phone) {
             updateData.recipient_phone = sender_phone;
           }
+          // Update avatar if we have one
+          if (sender_avatar) {
+            updateData.recipient_avatar = `data:image/jpeg;base64,${sender_avatar}`;
+          }
 
           await supabase
             .from("conversations")
             .update(updateData)
             .eq("id", convId);
             
-          console.log(`[report-task-result] Updated conversation ${convId} with telegram_id=${sender_id}`);
+          console.log(`[report-task-result] Updated conversation ${convId} with telegram_id=${sender_id}, has_avatar=${!!sender_avatar}`);
         }
 
         if (!convId) {
@@ -439,6 +444,7 @@ serve(async (req) => {
               recipient_name: displayName,
               recipient_username: sender_username ? `@${sender_username}` : null,
               recipient_phone: sender_phone || phoneDisplay,
+              recipient_avatar: sender_avatar ? `data:image/jpeg;base64,${sender_avatar}` : null,
               is_active: true,
               unread_count: 1,
               last_message_at: new Date().toISOString(),
