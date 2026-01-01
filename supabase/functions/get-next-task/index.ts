@@ -8,6 +8,8 @@ const corsHeaders = {
 
 const LIVE_CONVERSATION_TIMEOUT_MINUTES = 5;
 const WARMUP_DAYS = 0; // Days before account is ready for campaigns (disabled for testing)
+const MESSAGE_DELAY_MIN_SECONDS = 30; // Minimum delay between campaign messages
+const MESSAGE_DELAY_MAX_SECONDS = 60; // Maximum delay between campaign messages
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -237,6 +239,13 @@ serve(async (req) => {
             // Get API credentials from account or use defaults
             const apiCred = account.telegram_api_credentials;
             
+            // Calculate random delay for next message (human-like behavior)
+            const delaySeconds = Math.floor(
+              Math.random() * (MESSAGE_DELAY_MAX_SECONDS - MESSAGE_DELAY_MIN_SECONDS + 1) + MESSAGE_DELAY_MIN_SECONDS
+            );
+            
+            console.log(`[get-next-task] Campaign message assigned, next check in ${delaySeconds}s`);
+            
             return new Response(JSON.stringify({
               task: "send",
               message: {
@@ -261,6 +270,7 @@ serve(async (req) => {
                 proxy_id: account.proxy_id,
               },
               mode: "campaign",
+              delay_after: delaySeconds, // Tell Python to wait after sending
             }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             });
