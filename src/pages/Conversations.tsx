@@ -36,8 +36,11 @@ import {
 import { cn } from '@/lib/utils';
 import { format, isToday, isYesterday, isSameDay, subDays, differenceInMinutes } from 'date-fns';
 import { toast } from 'sonner';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { FileWarning, Activity, AlertTriangle } from 'lucide-react';
 
 type TimeFilter = '24h' | '3d' | '7d';
+type ViewTab = 'chats' | 'reports';
 
 const Chat: React.FC = () => {
   const { 
@@ -79,6 +82,9 @@ const Chat: React.FC = () => {
   
   // Time filter state
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
+  
+  // View tab state
+  const [viewTab, setViewTab] = useState<ViewTab>('chats');
 
   const selectedConv = conversations.find(c => c.id === selectedConversation);
   // Filter out failed messages from chat view - show only in campaigns section
@@ -113,6 +119,13 @@ const Chat: React.FC = () => {
     return sorted[0]?.direction === 'outgoing';
   };
 
+  // Helper to check if conversation has any successful (non-failed) messages
+  const hasSuccessfulMessages = (conv: typeof conversations[0]) => {
+    const convMessages = messages.filter(m => m.conversationId === conv.id);
+    // Must have at least one message that isn't failed
+    return convMessages.some(m => m.status !== 'failed');
+  };
+
   const filteredConversations = conversations
     .filter(c => {
       const cutoff = getTimeFilterCutoff();
@@ -126,9 +139,14 @@ const Chat: React.FC = () => {
         c.recipientName?.toLowerCase() !== 'spam info bot';
       // Only show conversations where WE sent first message
       const weInitiated = isUserInitiated(c);
-      return matchesTime && matchesSearch && isNotSpamBot && weInitiated;
+      // Hide conversations that only have failed messages
+      const hasSuccess = hasSuccessfulMessages(c);
+      return matchesTime && matchesSearch && isNotSpamBot && weInitiated && hasSuccess;
     })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  // Get failed messages for reports tab
+  const failedMessages = messages.filter(m => m.status === 'failed' && m.direction === 'outgoing');
 
   const isTyping = selectedConv ? typingUsers[selectedConv.recipientPhone] : false;
 
@@ -453,174 +471,285 @@ const Chat: React.FC = () => {
               </>
             ) : (
               <>
-                <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-lg font-semibold">Chats</h2>
-                  <div className="flex items-center gap-1">
-                    <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsSelectionMode(true)} title="Select chats">
-                      <CheckSquare className="w-5 h-5" />
-                    </Button>
-                  </div>
-                </div>
-                
-                {/* Time Filter Tabs */}
+                {/* Main Tabs: Chats / Reports */}
                 <div className="flex gap-1 mb-3 p-1 bg-secondary/50 rounded-lg">
-                  {(['24h', '3d', '7d'] as TimeFilter[]).map((filter) => (
-                    <button
-                      key={filter}
-                      onClick={() => setTimeFilter(filter)}
-                      className={cn(
-                        "flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all",
-                        timeFilter === filter 
-                          ? "bg-background shadow-sm text-foreground" 
-                          : "text-muted-foreground hover:text-foreground"
-                      )}
-                    >
-                      {filter === '24h' ? '24 Hours' : filter === '3d' ? '3 Days' : '7 Days'}
-                    </button>
-                  ))}
+                  <button
+                    onClick={() => setViewTab('chats')}
+                    className={cn(
+                      "flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-1.5",
+                      viewTab === 'chats' 
+                        ? "bg-background shadow-sm text-foreground" 
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" />
+                    Chats
+                  </button>
+                  <button
+                    onClick={() => setViewTab('reports')}
+                    className={cn(
+                      "flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all flex items-center justify-center gap-1.5",
+                      viewTab === 'reports' 
+                        ? "bg-background shadow-sm text-foreground" 
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    <Activity className="w-3.5 h-3.5" />
+                    Reports
+                    {failedMessages.length > 0 && (
+                      <Badge variant="destructive" className="h-4 min-w-4 px-1 text-[10px]">
+                        {failedMessages.length}
+                      </Badge>
+                    )}
+                  </button>
                 </div>
-                
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-10 bg-secondary/50 border-0 focus-visible:ring-1 rounded-full"
-                  />
-                </div>
+
+                {viewTab === 'chats' && (
+                  <>
+                    <div className="flex items-center justify-between mb-2">
+                      <h2 className="text-sm font-medium text-muted-foreground">Conversations</h2>
+                      <div className="flex items-center gap-1">
+                        <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsSelectionMode(true)} title="Select chats">
+                          <CheckSquare className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                    
+                    {/* Time Filter Tabs */}
+                    <div className="flex gap-1 mb-3 p-1 bg-secondary/30 rounded-lg">
+                      {(['24h', '3d', '7d'] as TimeFilter[]).map((filter) => (
+                        <button
+                          key={filter}
+                          onClick={() => setTimeFilter(filter)}
+                          className={cn(
+                            "flex-1 px-2 py-1 text-[10px] font-medium rounded transition-all",
+                            timeFilter === filter 
+                              ? "bg-background shadow-sm text-foreground" 
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                        >
+                          {filter === '24h' ? '24h' : filter === '3d' ? '3d' : '7d'}
+                        </button>
+                      ))}
+                    </div>
+                    
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input
+                        placeholder="Search"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        className="pl-10 bg-secondary/50 border-0 focus-visible:ring-1 rounded-full h-9 text-sm"
+                      />
+                    </div>
+                  </>
+                )}
+
+                {viewTab === 'reports' && (
+                  <h2 className="text-sm font-medium text-muted-foreground">Failed Messages & Activity</h2>
+                )}
               </>
             )}
           </div>
 
-          {/* Conversation List */}
+          {/* Content based on tab */}
           <ScrollArea className="flex-1">
-            <div>
-              {filteredConversations.length === 0 ? (
-                <div className="px-4 py-12 text-center">
-                  <MessageSquare className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
-                  <p className="text-muted-foreground text-sm">No chats yet</p>
-                  <p className="text-xs text-muted-foreground/70 mt-1">
-                    Start a campaign to begin conversations
-                  </p>
-                </div>
-              ) : (
-                filteredConversations.map((conv) => {
-                  // Filter out failed messages from last message preview
-                  const convMessages = messages.filter(m => m.recipientPhone === conv.recipientPhone && m.status !== 'failed');
-                  const lastMsg = convMessages.sort((a, b) => 
-                    new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-                  )[0];
-                  const isSelected = selectedConversation === conv.id;
-                  const isUserTyping = typingUsers[conv.recipientPhone];
-                  const isChecked = selectedConversations.has(conv.id);
+            {viewTab === 'chats' ? (
+              <div>
+                {filteredConversations.length === 0 ? (
+                  <div className="px-4 py-12 text-center">
+                    <MessageSquare className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
+                    <p className="text-muted-foreground text-sm">No chats yet</p>
+                    <p className="text-xs text-muted-foreground/70 mt-1">
+                      Start a campaign to begin conversations
+                    </p>
+                  </div>
+                ) : (
+                  filteredConversations.map((conv) => {
+                    // Filter out failed messages from last message preview
+                    const convMessages = messages.filter(m => m.recipientPhone === conv.recipientPhone && m.status !== 'failed');
+                    const lastMsg = convMessages.sort((a, b) => 
+                      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+                    )[0];
+                    const isSelected = selectedConversation === conv.id;
+                    const isUserTyping = typingUsers[conv.recipientPhone];
+                    const isChecked = selectedConversations.has(conv.id);
 
-                  return (
-                    <div
-                      key={conv.id}
-                      className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 transition-all duration-150 text-left hover:bg-accent/50 group",
-                        isSelected && !isSelectionMode && "bg-primary/10",
-                        isChecked && isSelectionMode && "bg-primary/10"
-                      )}
-                    >
-                      {isSelectionMode && (
-                        <Checkbox
-                          checked={isChecked}
-                          onCheckedChange={() => toggleConversationSelection(conv.id)}
-                          className="flex-shrink-0"
-                        />
-                      )}
-                      <button
-                        onClick={() => isSelectionMode ? toggleConversationSelection(conv.id) : setSelectedConversation(conv.id)}
-                        className="flex-1 flex items-center gap-3 text-left"
+                    return (
+                      <div
+                        key={conv.id}
+                        className={cn(
+                          "w-full flex items-center gap-3 px-4 py-3 transition-all duration-150 text-left hover:bg-accent/50 group",
+                          isSelected && !isSelectionMode && "bg-primary/10",
+                          isChecked && isSelectionMode && "bg-primary/10"
+                        )}
                       >
-                        <div className="relative flex-shrink-0">
-                          <Avatar className="h-12 w-12">
-                            <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-medium text-lg">
-                              {conv.recipientName?.charAt(0).toUpperCase() || '?'}
-                            </AvatarFallback>
-                          </Avatar>
-                          {conv.isActive && (
-                            <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-[#31A24C] rounded-full ring-2 ring-card" />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between mb-0.5">
-                            <div className="flex items-center gap-2 truncate">
+                        {isSelectionMode && (
+                          <Checkbox
+                            checked={isChecked}
+                            onCheckedChange={() => toggleConversationSelection(conv.id)}
+                            className="flex-shrink-0"
+                          />
+                        )}
+                        <button
+                          onClick={() => isSelectionMode ? toggleConversationSelection(conv.id) : setSelectedConversation(conv.id)}
+                          className="flex-1 flex items-center gap-3 text-left"
+                        >
+                          <div className="relative flex-shrink-0">
+                            <Avatar className="h-12 w-12">
+                              <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-medium text-lg">
+                                {conv.recipientName?.charAt(0).toUpperCase() || '?'}
+                              </AvatarFallback>
+                            </Avatar>
+                            {conv.isActive && (
+                              <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-[#31A24C] rounded-full ring-2 ring-card" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center justify-between mb-0.5">
+                              <div className="flex items-center gap-2 truncate">
+                                <span className={cn(
+                                  "font-medium truncate",
+                                  conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
+                                )}>
+                                  {conv.recipientName || conv.recipientPhone}
+                                </span>
+                                {conv.blockedByRecipient && (
+                                  <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5">
+                                    <Ban className="w-2.5 h-2.5" />
+                                    Blocked
+                                  </Badge>
+                                )}
+                              </div>
                               <span className={cn(
-                                "font-medium truncate",
-                                conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
+                                "text-xs flex-shrink-0 ml-2",
+                                conv.unreadCount > 0 ? "text-primary font-medium" : "text-muted-foreground"
                               )}>
-                                {conv.recipientName || conv.recipientPhone}
+                                {formatMessageDate(conv.updatedAt)}
                               </span>
-                              {conv.blockedByRecipient && (
-                                <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5">
-                                  <Ban className="w-2.5 h-2.5" />
-                                  Blocked
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <p className={cn(
+                                "text-sm truncate max-w-[180px] flex items-center gap-1",
+                                conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
+                              )}>
+                                {isUserTyping ? (
+                                  <span className="text-primary italic">typing...</span>
+                                ) : (
+                                  <>
+                                    {lastMsg?.direction === 'outgoing' && (
+                                      <span className="flex-shrink-0">{getMessageStatus(lastMsg.status)}</span>
+                                    )}
+                                    <span className="truncate">{lastMsg?.content || 'No messages'}</span>
+                                  </>
+                                )}
+                              </p>
+                              {conv.unreadCount > 0 && (
+                                <Badge className="h-5 min-w-5 flex items-center justify-center text-xs bg-primary rounded-full ml-2">
+                                  {conv.unreadCount}
                                 </Badge>
                               )}
                             </div>
-                            <span className={cn(
-                              "text-xs flex-shrink-0 ml-2",
-                              conv.unreadCount > 0 ? "text-primary font-medium" : "text-muted-foreground"
-                            )}>
-                              {formatMessageDate(conv.updatedAt)}
-                            </span>
                           </div>
-                          <div className="flex items-center justify-between">
-                            <p className={cn(
-                              "text-sm truncate max-w-[180px] flex items-center gap-1",
-                              conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
-                            )}>
-                              {isUserTyping ? (
-                                <span className="text-primary italic">typing...</span>
-                              ) : (
-                                <>
-                                  {lastMsg?.direction === 'outgoing' && (
-                                    <span className="flex-shrink-0">{getMessageStatus(lastMsg.status)}</span>
-                                  )}
-                                  <span className="truncate">{lastMsg?.content || 'No messages'}</span>
-                                </>
-                              )}
-                            </p>
-                            {conv.unreadCount > 0 && (
-                              <Badge className="h-5 min-w-5 flex items-center justify-center text-xs bg-primary rounded-full ml-2">
-                                {conv.unreadCount}
-                              </Badge>
-                            )}
+                        </button>
+                        {!isSelectionMode && (
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button 
+                                variant="ghost" 
+                                size="icon" 
+                                className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <MoreVertical className="w-4 h-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openSingleDeleteDialog(conv.id)} className="text-destructive">
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Delete Chat
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openSingleBlockDialog(conv.id)} className="text-destructive">
+                                <Ban className="w-4 h-4 mr-2" />
+                                Block Contact
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            ) : (
+              /* Reports Tab Content */
+              <div className="p-4 space-y-4">
+                {/* Stats Summary */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/20">
+                    <div className="flex items-center gap-2 mb-1">
+                      <XCircle className="w-4 h-4 text-destructive" />
+                      <span className="text-xs font-medium text-destructive">Failed</span>
+                    </div>
+                    <p className="text-2xl font-bold text-destructive">{failedMessages.length}</p>
+                  </div>
+                  <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Check className="w-4 h-4 text-green-600" />
+                      <span className="text-xs font-medium text-green-600">Delivered</span>
+                    </div>
+                    <p className="text-2xl font-bold text-green-600">
+                      {messages.filter(m => m.direction === 'outgoing' && (m.status === 'sent' || m.status === 'delivered')).length}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Failed Messages List */}
+                <div>
+                  <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-destructive" />
+                    Failed Messages
+                  </h3>
+                  {failedMessages.length === 0 ? (
+                    <div className="p-6 text-center border rounded-lg bg-muted/30">
+                      <Check className="w-8 h-8 mx-auto mb-2 text-green-500" />
+                      <p className="text-sm text-muted-foreground">No failed messages!</p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {failedMessages.slice(0, 20).map((msg) => {
+                        const conv = conversations.find(c => c.id === msg.conversationId);
+                        return (
+                          <div key={msg.id} className="p-3 rounded-lg border bg-card">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium truncate">
+                                  {conv?.recipientName || conv?.recipientPhone || 'Unknown'}
+                                </p>
+                                <p className="text-xs text-muted-foreground truncate mt-0.5">
+                                  {msg.content}
+                                </p>
+                              </div>
+                              <span className="text-[10px] text-muted-foreground flex-shrink-0">
+                                {format(new Date(msg.timestamp), 'HH:mm')}
+                              </span>
+                            </div>
+                            <div className="mt-2 px-2 py-1 rounded bg-destructive/10 text-destructive text-xs">
+                              {(msg as any).failedReason || 'Delivery failed'}
+                            </div>
                           </div>
-                        </div>
-                      </button>
-                      {!isSelectionMode && (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <MoreVertical className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => openSingleDeleteDialog(conv.id)} className="text-destructive">
-                              <Trash2 className="w-4 h-4 mr-2" />
-                              Delete Chat
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => openSingleBlockDialog(conv.id)} className="text-destructive">
-                              <Ban className="w-4 h-4 mr-2" />
-                              Block Contact
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                        );
+                      })}
+                      {failedMessages.length > 20 && (
+                        <p className="text-xs text-center text-muted-foreground py-2">
+                          +{failedMessages.length - 20} more failed messages
+                        </p>
                       )}
                     </div>
-                  );
-                })
-              )}
-            </div>
+                  )}
+                </div>
+              </div>
+            )}
           </ScrollArea>
         </div>
 
