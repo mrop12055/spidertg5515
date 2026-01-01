@@ -67,8 +67,10 @@ async def main_loop():
             elif task_type == "send":
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
+                recipient_name = task.get("recipient_name")
                 account = task.get("account", {})
                 delay_after = task.get("delay_after", 30)  # Default 30 sec delay
+                content = msg.get("content", "")
                 
                 print(f"  ⏱ Delay after this message: {delay_after}s")
                 
@@ -77,16 +79,19 @@ async def main_loop():
                     print(f"  📨 Sending to {recipient}...")
                     
                     success, error = await send_message(
-                        client, recipient, msg.get("content", ""),
+                        client, recipient, content,
                         msg.get("media_url")
                     )
                     
+                    # Report result with full details for conversation creation
                     await report_result("send", {
-                        "message_id": msg.get("id"),
                         "success": success,
                         "error": error,
                         "campaign_recipient_id": msg.get("campaign_recipient_id"),
-                        "account_id": account.get("id")
+                        "account_id": account.get("id"),
+                        "content": content,
+                        "recipient_phone": recipient,
+                        "recipient_name": recipient_name,
                     })
                     
                     if success:
