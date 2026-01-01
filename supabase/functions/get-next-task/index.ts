@@ -7,7 +7,7 @@ const corsHeaders = {
 };
 
 const LIVE_CONVERSATION_TIMEOUT_MINUTES = 5;
-const WARMUP_DAYS = 5; // Days before account is ready for campaigns
+const WARMUP_DAYS = 0; // Days before account is ready for campaigns (disabled for testing)
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
