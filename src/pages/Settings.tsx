@@ -31,10 +31,18 @@ import {
   RefreshCw,
   Key,
   Plus,
-  X
+  X,
+  Globe,
+  Flame,
+  Link2,
+  AlertTriangle,
+  Users,
+  MessageCircle,
+  Play
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface ApiCredential {
   id: string;
@@ -59,7 +67,11 @@ const Settings: React.FC = () => {
     maturationAutoRun: false,
     proxyRotation: false,
     autoCleanupDays: 7,
-    warmupDays: 5,
+    warmupDays: 14,
+    blockFirstMessageLinks: true,
+    warnFirstMessageLinks: true,
+    enforceProxyMapping: true,
+    requireGeoMatch: false,
   });
 
   // Python script scheduler settings
@@ -88,6 +100,40 @@ const Settings: React.FC = () => {
   const [newApiHash, setNewApiHash] = useState('');
   const [newApiType, setNewApiType] = useState<string>('android');
   const [isAddingApi, setIsAddingApi] = useState(false);
+  
+  // Warmup & Geo states
+  const [isSchedulingWarmup, setIsSchedulingWarmup] = useState(false);
+  const [isDetectingCountry, setIsDetectingCountry] = useState(false);
+
+  // Schedule warmup tasks
+  const handleScheduleWarmup = async () => {
+    setIsSchedulingWarmup(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('schedule-warmup-tasks');
+      if (error) throw error;
+      toast.success(`Scheduled ${data.scheduled} warmup tasks for ${data.accounts_processed} accounts`);
+    } catch (error) {
+      console.error('Warmup scheduling failed:', error);
+      toast.error('Failed to schedule warmup tasks');
+    } finally {
+      setIsSchedulingWarmup(false);
+    }
+  };
+
+  // Detect proxy countries
+  const handleDetectProxyCountry = async () => {
+    setIsDetectingCountry(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('detect-proxy-country');
+      if (error) throw error;
+      toast.success(`Detected country for ${data.detected}/${data.checked} proxies. ${data.geo_mismatches} geo mismatches found.`);
+    } catch (error) {
+      console.error('Country detection failed:', error);
+      toast.error('Failed to detect proxy countries');
+    } finally {
+      setIsDetectingCountry(false);
+    }
+  };
 
   // Fetch API credentials
   const fetchApiCredentials = async () => {
@@ -727,6 +773,179 @@ const Settings: React.FC = () => {
           </CardContent>
         </Card>
 
+        {/* 14-Day Warmup System (Phase 3) */}
+        <Card className="border-orange-500/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Flame className="w-5 h-5 text-orange-500" />
+              14-Day Warmup System
+            </CardTitle>
+            <CardDescription>
+              Automated daily tasks to build account trust and activity history
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Auto-run warmup tasks</Label>
+                <p className="text-sm text-muted-foreground">
+                  Join channels, view content, send reactions daily
+                </p>
+              </div>
+              <Switch
+                checked={settings.maturationAutoRun}
+                onCheckedChange={(checked) => updateSettings({ maturationAutoRun: checked })}
+              />
+            </div>
+            <Separator />
+            <Button 
+              variant="outline" 
+              onClick={handleScheduleWarmup}
+              disabled={isSchedulingWarmup}
+              className="w-full"
+            >
+              {isSchedulingWarmup ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Scheduling...
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4 mr-2" />
+                  Schedule Today's Warmup Tasks
+                </>
+              )}
+            </Button>
+            <p className="text-xs text-muted-foreground text-center">
+              Schedules channel joins, content viewing, reactions based on account age
+            </p>
+          </CardContent>
+        </Card>
+
+        {/* First Message Safety (Phase 5) */}
+        <Card className="border-yellow-500/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-yellow-500" />
+              First Message Safety
+            </CardTitle>
+            <CardDescription>
+              Protect accounts when messaging new contacts
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Block links in first messages</Label>
+                <p className="text-sm text-muted-foreground">
+                  Prevent sending URLs to new contacts (high ban risk)
+                </p>
+              </div>
+              <Switch
+                checked={settings.blockFirstMessageLinks}
+                onCheckedChange={(checked) => updateSettings({ blockFirstMessageLinks: checked })}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Warn about links</Label>
+                <p className="text-sm text-muted-foreground">
+                  Show warning when campaign contains URLs
+                </p>
+              </div>
+              <Switch
+                checked={settings.warnFirstMessageLinks}
+                onCheckedChange={(checked) => updateSettings({ warnFirstMessageLinks: checked })}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Geographic IP Consistency (Phase 6) */}
+        <Card className="border-blue-500/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Globe className="w-5 h-5 text-blue-500" />
+              Geographic IP Consistency
+            </CardTitle>
+            <CardDescription>
+              Match proxy locations to phone number countries
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Enforce 1:1 proxy mapping</Label>
+                <p className="text-sm text-muted-foreground">
+                  Each account must have a dedicated proxy
+                </p>
+              </div>
+              <Switch
+                checked={settings.enforceProxyMapping}
+                onCheckedChange={(checked) => updateSettings({ enforceProxyMapping: checked })}
+              />
+            </div>
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Require geo-match</Label>
+                <p className="text-sm text-muted-foreground">
+                  Block messaging if proxy country ≠ phone country
+                </p>
+              </div>
+              <Switch
+                checked={settings.requireGeoMatch}
+                onCheckedChange={(checked) => updateSettings({ requireGeoMatch: checked })}
+              />
+            </div>
+            <Separator />
+            <Button 
+              variant="outline" 
+              onClick={handleDetectProxyCountry}
+              disabled={isDetectingCountry}
+              className="w-full"
+            >
+              {isDetectingCountry ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Detecting...
+                </>
+              ) : (
+                <>
+                  <Globe className="w-4 h-4 mr-2" />
+                  Detect Proxy Countries & Check Mismatches
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+
+        {/* Bidirectional Interactions (Phase 7) */}
+        <Card className="border-purple-500/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-purple-500" />
+              Bidirectional Interactions
+            </CardTitle>
+            <CardDescription>
+              Build trust by having your accounts message each other
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Interactions are automatically scheduled as part of the 14-day warmup system. Your accounts will exchange friendly messages to build activity history.
+            </p>
+            <div className="p-3 rounded-lg bg-muted/50 text-xs">
+              <p className="font-medium mb-1">How it works:</p>
+              <ul className="list-disc list-inside space-y-1 text-muted-foreground">
+                <li>Days 1-7: No interactions (building individual history)</li>
+                <li>Days 8-14: Accounts start messaging each other</li>
+                <li>Messages include: "Hey! 👋", "How are you?", etc.</li>
+                <li>Replies are scheduled 30min-2hrs later for realism</li>
+              </ul>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Notifications */}
         <Card>
           <CardHeader>
@@ -759,30 +978,6 @@ const Settings: React.FC = () => {
               <Switch
                 checked={settings.notifyOnBan}
                 onCheckedChange={(checked) => updateSettings({ notifyOnBan: checked })}
-              />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Maturation */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="w-5 h-5" />
-              Account Maturation
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Auto-run maturation</Label>
-                <p className="text-sm text-muted-foreground">
-                  Automatically mature new accounts
-                </p>
-              </div>
-              <Switch
-                checked={settings.maturationAutoRun}
-                onCheckedChange={(checked) => updateSettings({ maturationAutoRun: checked })}
               />
             </div>
           </CardContent>

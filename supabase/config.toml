@@ -26,3 +26,9 @@ verify_jwt = false
 
 [functions.redistribute-api-credentials]
 verify_jwt = false
+
+[functions.schedule-warmup-tasks]
+verify_jwt = false
+
+[functions.detect-proxy-country]
+verify_jwt = false

@@ -174,6 +174,8 @@ export type Database = {
           account_id: string
           blocked_by_recipient: boolean | null
           created_at: string | null
+          first_message_sent: boolean | null
+          has_prior_contact: boolean | null
           id: string
           is_active: boolean | null
           last_message_at: string | null
@@ -189,6 +191,8 @@ export type Database = {
           account_id: string
           blocked_by_recipient?: boolean | null
           created_at?: string | null
+          first_message_sent?: boolean | null
+          has_prior_contact?: boolean | null
           id?: string
           is_active?: boolean | null
           last_message_at?: string | null
@@ -204,6 +208,8 @@ export type Database = {
           account_id?: string
           blocked_by_recipient?: boolean | null
           created_at?: string | null
+          first_message_sent?: boolean | null
+          has_prior_contact?: boolean | null
           id?: string
           is_active?: boolean | null
           last_message_at?: string | null
@@ -219,6 +225,54 @@ export type Database = {
           {
             foreignKeyName: "conversations_account_id_fkey"
             columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      interaction_scheduler: {
+        Row: {
+          created_at: string
+          id: string
+          message_content: string
+          receiver_account_id: string
+          scheduled_at: string
+          sender_account_id: string
+          sent_at: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          message_content: string
+          receiver_account_id: string
+          scheduled_at?: string
+          sender_account_id: string
+          sent_at?: string | null
+          status?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          message_content?: string
+          receiver_account_id?: string
+          scheduled_at?: string
+          sender_account_id?: string
+          sent_at?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "interaction_scheduler_receiver_account_id_fkey"
+            columns: ["receiver_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "interaction_scheduler_sender_account_id_fkey"
+            columns: ["sender_account_id"]
             isOneToOne: false
             referencedRelation: "telegram_accounts"
             referencedColumns: ["id"]
@@ -344,6 +398,7 @@ export type Database = {
           assigned_account_id: string | null
           country: string | null
           created_at: string | null
+          detected_country: string | null
           host: string
           id: string
           last_checked: string | null
@@ -358,6 +413,7 @@ export type Database = {
           assigned_account_id?: string | null
           country?: string | null
           created_at?: string | null
+          detected_country?: string | null
           host: string
           id?: string
           last_checked?: string | null
@@ -372,6 +428,7 @@ export type Database = {
           assigned_account_id?: string | null
           country?: string | null
           created_at?: string | null
+          detected_country?: string | null
           host?: string
           id?: string
           last_checked?: string | null
@@ -629,10 +686,12 @@ export type Database = {
       warmup_schedule: {
         Row: {
           account_id: string
+          channel_username: string | null
           completed_at: string | null
           created_at: string | null
           day_number: number
           id: string
+          priority: number | null
           scheduled_at: string | null
           status: string | null
           task_description: string | null
@@ -640,10 +699,12 @@ export type Database = {
         }
         Insert: {
           account_id: string
+          channel_username?: string | null
           completed_at?: string | null
           created_at?: string | null
           day_number: number
           id?: string
+          priority?: number | null
           scheduled_at?: string | null
           status?: string | null
           task_description?: string | null
@@ -651,10 +712,12 @@ export type Database = {
         }
         Update: {
           account_id?: string
+          channel_username?: string | null
           completed_at?: string | null
           created_at?: string | null
           day_number?: number
           id?: string
+          priority?: number | null
           scheduled_at?: string | null
           status?: string | null
           task_description?: string | null
