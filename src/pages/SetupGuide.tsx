@@ -1292,7 +1292,7 @@ if __name__ == "__main__":
     a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-    toast.success(\`Downloaded \${filename}\`);
+    toast.success(`Downloaded ${filename}`);
   };
 
   const downloadAllAsZip = async () => {
