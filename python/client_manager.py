@@ -15,6 +15,7 @@ from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
 
 from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
+from fingerprint_generator import generate_fingerprint
 
 # Temp folder for session files
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
@@ -37,7 +38,7 @@ def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
 
 
 async def get_or_create_client(account: dict, setup_handler=None) -> Optional[TelegramClient]:
-    """Get existing client or create new one"""
+    """Get existing client or create new one with unique device fingerprint"""
     account_id = account["id"]
     
     if account_id in active_clients:
@@ -61,8 +62,47 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
     if not session_path:
         return None
     
+    # Get device fingerprint from account or generate new one
+    device_model = account.get("device_model")
+    system_version = account.get("system_version")
+    app_version = account.get("app_version")
+    lang_code = account.get("lang_code") or "en"
+    system_lang_code = account.get("system_lang_code") or "en-US"
+    
+    # If no fingerprint stored, generate one and report it
+    if not device_model or not system_version:
+        fp = generate_fingerprint()
+        device_model = fp["device_model"]
+        system_version = fp["system_version"]
+        app_version = fp["app_version"]
+        lang_code = fp["lang_code"]
+        system_lang_code = fp["system_lang_code"]
+        print(f"  📱 Generated fingerprint: {device_model} ({system_version})")
+        
+        # Report fingerprint to be saved in database
+        await report_result("fingerprint_generated", {
+            "account_id": account_id,
+            "device_model": device_model,
+            "system_version": system_version,
+            "app_version": app_version,
+            "lang_code": lang_code,
+            "system_lang_code": system_lang_code
+        })
+    else:
+        print(f"  📱 Using fingerprint: {device_model} ({system_version})")
+    
     try:
-        client = TelegramClient(session_path, int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+        # Create client with unique device fingerprint
+        client = TelegramClient(
+            session_path, 
+            int(TELEGRAM_API_ID), 
+            TELEGRAM_API_HASH,
+            device_model=device_model,
+            system_version=system_version,
+            app_version=app_version,
+            lang_code=lang_code,
+            system_lang_code=system_lang_code
+        )
         await client.connect()
         
         if not await client.is_user_authorized():

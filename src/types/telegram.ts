@@ -19,6 +19,12 @@ export interface TelegramAccount {
   restrictedUntil?: Date;
   banReason?: string;
   avatar?: string;
+  // Device fingerprint
+  deviceModel?: string;
+  systemVersion?: string;
+  appVersion?: string;
+  langCode?: string;
+  systemLangCode?: string;
 }
 
 export interface Proxy {

@@ -115,6 +115,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           restrictedUntil: acc.restricted_until ? new Date(acc.restricted_until) : undefined,
           banReason: acc.ban_reason || undefined,
           avatar: acc.avatar_url || undefined,
+          // Device fingerprint
+          deviceModel: acc.device_model || undefined,
+          systemVersion: acc.system_version || undefined,
+          appVersion: acc.app_version || undefined,
+          langCode: acc.lang_code || undefined,
+          systemLangCode: acc.system_lang_code || undefined,
         })));
       }
 
