@@ -207,23 +207,24 @@ serve(async (req) => {
               }
             }
             
-            // Check if any active accounts remain - if not, pause all running campaigns
+            // Check if any active accounts remain - if not, complete all running campaigns
             const { data: activeAccounts } = await supabase
               .from("telegram_accounts")
               .select("id")
               .eq("status", "active");
             
             if (!activeAccounts || activeAccounts.length === 0) {
-              console.log(`[report-task-result] No active accounts left - pausing all running campaigns`);
+              console.log(`[report-task-result] No active accounts left - completing all running campaigns`);
               
-              const { data: pausedCampaigns } = await supabase
+              // Mark campaigns as completed (not paused) so user knows it stopped due to restrictions
+              const { data: completedCampaigns } = await supabase
                 .from("campaigns")
-                .update({ status: "paused" })
+                .update({ status: "completed" })
                 .eq("status", "running")
                 .select("id, name");
               
-              if (pausedCampaigns && pausedCampaigns.length > 0) {
-                console.log(`[report-task-result] Paused ${pausedCampaigns.length} campaigns due to no active accounts`);
+              if (completedCampaigns && completedCampaigns.length > 0) {
+                console.log(`[report-task-result] Completed ${completedCampaigns.length} campaigns due to no active accounts`);
               }
             }
           }
