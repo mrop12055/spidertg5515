@@ -352,11 +352,54 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       )
       .subscribe();
 
+    // Subscribe to campaign changes
+    const campaignsChannel = supabase
+      .channel('campaigns-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'campaigns'
+        },
+        (payload) => {
+          console.log('Campaign change:', payload);
+          
+          if (payload.eventType === 'UPDATE') {
+            const c = payload.new as any;
+            setCampaigns(prev =>
+              prev.map(camp =>
+                camp.id === c.id
+                  ? {
+                      ...camp,
+                      status: c.status as Campaign['status'],
+                      sentCount: c.sent_count || camp.sentCount,
+                      failedCount: c.failed_count || camp.failedCount,
+                      recipientCount: c.recipient_count || camp.recipientCount,
+                      updatedAt: new Date(c.updated_at || camp.updatedAt),
+                    }
+                  : camp
+              )
+            );
+          } else if (payload.eventType === 'INSERT') {
+            // Refresh to get full campaign data with relations
+            refreshData();
+          } else if (payload.eventType === 'DELETE') {
+            const oldRow = payload.old as any;
+            const deletedId = oldRow?.id;
+            if (!deletedId) return;
+            setCampaigns(prev => prev.filter(c => c.id !== deletedId));
+          }
+        }
+      )
+      .subscribe();
+
     return () => {
       supabase.removeChannel(messagesChannel);
       supabase.removeChannel(conversationsChannel);
+      supabase.removeChannel(campaignsChannel);
     };
-  }, []);
+  }, [refreshData]);
 
   const stats: DashboardStats = {
     totalAccounts: accounts.length,
