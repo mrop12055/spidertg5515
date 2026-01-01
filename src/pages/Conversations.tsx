@@ -4,7 +4,7 @@ import { useTelegram } from '@/context/TelegramContext';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
@@ -545,6 +545,9 @@ const Chat: React.FC = () => {
                       >
                         <div className="relative flex-shrink-0">
                           <Avatar className="h-12 w-12">
+                            {conv.recipientAvatar && (
+                              <AvatarImage src={conv.recipientAvatar} alt={conv.recipientName || 'Contact'} />
+                            )}
                             <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-medium text-lg">
                               {conv.recipientName?.charAt(0).toUpperCase() || '?'}
                             </AvatarFallback>
@@ -648,6 +651,9 @@ const Chat: React.FC = () => {
               <div className="h-16 px-4 border-b border-border flex items-center justify-between bg-card">
                 <div className="flex items-center gap-3">
                   <Avatar className="h-10 w-10">
+                    {selectedConv.recipientAvatar && (
+                      <AvatarImage src={selectedConv.recipientAvatar} alt={selectedConv.recipientName || 'Contact'} />
+                    )}
                     <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-medium">
                       {selectedConv.recipientName?.charAt(0).toUpperCase() || '?'}
                     </AvatarFallback>

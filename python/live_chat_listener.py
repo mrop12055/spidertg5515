@@ -57,6 +57,17 @@ async def setup_message_handler(client, account_id: str):
                 if hasattr(sender, 'phone') and sender.phone:
                     sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
                 
+                # Get profile photo
+                avatar_base64 = None
+                try:
+                    photo = await client.download_profile_photo(sender, bytes)
+                    if photo:
+                        import base64
+                        avatar_base64 = base64.b64encode(photo).decode('utf-8')
+                        print(f"    📸 Got profile photo for {sender.first_name or sender.id}")
+                except Exception as e:
+                    print(f"    ⚠ Could not get profile photo: {e}")
+                
                 print(f"  📥 Message from {sender.first_name or sender.id}: {content[:50]}...")
                 
                 await report_result("incoming_message", {
@@ -65,6 +76,7 @@ async def setup_message_handler(client, account_id: str):
                     "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
                     "sender_username": sender.username,
                     "sender_phone": sender_phone,
+                    "sender_avatar": avatar_base64,
                     "content": content,
                     "media_url": media_url,
                     "media_type": media_type
