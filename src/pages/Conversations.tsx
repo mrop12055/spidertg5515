@@ -125,7 +125,7 @@ const Chat: React.FC = () => {
       const matchesTime = new Date(c.updatedAt) >= cutoff;
       const matchesSearch = 
         c.recipientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.recipientPhone.includes(searchQuery);
+        c.recipientPhone?.includes(searchQuery);
       // Exclude SpamBot conversations
       const isNotSpamBot = 
         c.recipientPhone !== '@SpamBot' && 
@@ -520,15 +520,23 @@ const Chat: React.FC = () => {
                   </p>
                 </div>
               ) : (
-                filteredConversations.map((conv) => {
-                  // Filter out failed messages from last message preview
-                  const convMessages = messages.filter(m => m.recipientPhone === conv.recipientPhone && m.status !== 'failed');
+              filteredConversations.map((conv) => {
+                  // Filter out failed messages from last message preview - use conversationId for accuracy
+                  const convMessages = messages.filter(m => m.conversationId === conv.id && m.status !== 'failed');
                   const lastMsg = convMessages.sort((a, b) => 
                     new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
                   )[0];
                   const isSelected = selectedConversation === conv.id;
                   const isUserTyping = typingUsers[conv.recipientPhone];
                   const isChecked = selectedConversations.has(conv.id);
+                  
+                  // Get display name - fallback to phone if no name
+                  const displayName = conv.recipientName || conv.recipientPhone || 'Unknown';
+                  const avatarInitial = conv.recipientName?.charAt(0).toUpperCase() || 
+                                        (conv.recipientPhone?.startsWith('+') ? conv.recipientPhone.slice(1, 3) : '?');
+                  
+                  // Get message preview - handle empty content
+                  const messagePreview = lastMsg?.content?.trim() || (lastMsg ? 'Message sent' : 'No messages');
 
                   return (
                     <div
@@ -556,7 +564,7 @@ const Chat: React.FC = () => {
                               <AvatarImage src={conv.recipientAvatar} alt={conv.recipientName || 'Contact'} />
                             )}
                             <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-medium text-lg">
-                              {conv.recipientName?.charAt(0).toUpperCase() || '?'}
+                              {avatarInitial}
                             </AvatarFallback>
                           </Avatar>
                           {conv.isActive && (
@@ -571,7 +579,7 @@ const Chat: React.FC = () => {
                                   "font-medium truncate",
                                   conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
                                 )}>
-                                  {conv.recipientName || conv.recipientPhone}
+                                  {displayName}
                                 </span>
                                 {conv.blockedByRecipient && (
                                   <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5">
@@ -606,7 +614,7 @@ const Chat: React.FC = () => {
                                   {lastMsg?.direction === 'outgoing' && (
                                     <span className="flex-shrink-0">{getMessageStatus(lastMsg.status)}</span>
                                   )}
-                                  <span className="truncate">{lastMsg?.content || 'No messages'}</span>
+                                  <span className="truncate">{messagePreview}</span>
                                 </>
                               )}
                             </p>
