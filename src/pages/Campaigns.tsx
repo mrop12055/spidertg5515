@@ -67,6 +67,7 @@ const Campaigns: React.FC = () => {
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [selectedReportCampaign, setSelectedReportCampaign] = useState<Campaign | null>(null);
   const [campaignReports, setCampaignReports] = useState<Map<string, CampaignReport>>(new Map());
+  const [accountUniqueRecipients, setAccountUniqueRecipients] = useState<Map<string, number>>(new Map());
   
   // Bulk messaging settings
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
@@ -322,6 +323,49 @@ const Campaigns: React.FC = () => {
     }, 5000);
     return () => window.clearInterval(interval);
   }, [campaigns.length, fetchReports]);
+
+  // Fetch unique recipients per account for today (for campaign account selection display)
+  const fetchAccountUniqueRecipients = useCallback(async () => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Get all outgoing messages sent today with their conversations (for recipient info)
+    const { data: todayMessages } = await supabase
+      .from('messages')
+      .select('account_id, conversation_id, conversations!inner(recipient_phone)')
+      .eq('direction', 'outgoing')
+      .in('status', ['sent', 'failed', 'pending'])
+      .gte('created_at', today.toISOString());
+    
+    if (!todayMessages) return;
+    
+    // Count unique recipients per account
+    const accountRecipients = new Map<string, Set<string>>();
+    todayMessages.forEach((msg: any) => {
+      const phone = msg.conversations?.recipient_phone;
+      if (!msg.account_id || !phone) return;
+      
+      if (!accountRecipients.has(msg.account_id)) {
+        accountRecipients.set(msg.account_id, new Set());
+      }
+      accountRecipients.get(msg.account_id)!.add(phone);
+    });
+    
+    // Convert to count map
+    const countMap = new Map<string, number>();
+    accountRecipients.forEach((phones, accountId) => {
+      countMap.set(accountId, phones.size);
+    });
+    
+    setAccountUniqueRecipients(countMap);
+  }, []);
+
+  useEffect(() => {
+    fetchAccountUniqueRecipients();
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchAccountUniqueRecipients, 30000);
+    return () => clearInterval(interval);
+  }, [fetchAccountUniqueRecipients]);
 
   const handleCreateCampaign = async () => {
     if (!newCampaign.name) {
@@ -748,6 +792,7 @@ username123
                       </div>
                       {warmedUpAccounts.map(account => {
                         const daysSinceCreation = Math.floor((now.getTime() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+                        const uniqueRecipientsToday = accountUniqueRecipients.get(account.id) || 0;
                         return (
                           <div key={account.id} className="flex items-center gap-2">
                             <Checkbox
@@ -758,7 +803,7 @@ username123
                             <label htmlFor={account.id} className="text-sm cursor-pointer flex-1">
                               {account.firstName || account.phoneNumber} 
                               <span className="text-muted-foreground ml-1">
-                                ({account.phoneNumber}) - {account.messagesSentToday}/{account.dailyLimit} today • {daysSinceCreation}d old
+                                ({account.phoneNumber}) - {uniqueRecipientsToday}/{account.dailyLimit} recipients today • {daysSinceCreation}d old
                               </span>
                             </label>
                           </div>
