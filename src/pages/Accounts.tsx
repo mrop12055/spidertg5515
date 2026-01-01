@@ -815,10 +815,13 @@ const Accounts: React.FC = () => {
   });
 
   // Split accounts by status
-  // Include temporarily restricted accounts (with future restrictedUntil) in the restricted tab
+  // Temporarily restricted accounts (with future restrictedUntil) appear in BOTH Active and Restricted tabs
   const now = new Date();
   const accountsByStatus = {
-    active: filteredAccounts.filter(a => a.status === 'active'),
+    active: filteredAccounts.filter(a => 
+      a.status === 'active' || 
+      (a.restrictedUntil && new Date(a.restrictedUntil) > now)
+    ),
     banned: filteredAccounts.filter(a => a.status === 'banned'),
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
