@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
+import { Progress } from '@/components/ui/progress';
+import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -23,8 +25,21 @@ import {
   RotateCcw,
   Trash2,
   Calendar,
-  Loader2
+  Loader2,
+  Smartphone,
+  Monitor,
+  RefreshCw,
+  Key
 } from 'lucide-react';
+
+interface ApiCredential {
+  id: string;
+  name: string;
+  api_id: string;
+  client_type: string;
+  accounts_count: number;
+  is_active: boolean;
+}
 
 const Settings: React.FC = () => {
   const { toast: showToast } = useToast();
@@ -54,6 +69,58 @@ const Settings: React.FC = () => {
     messageInterval: 3,
     accountSwitchDelay: 5,
   });
+
+  // API credentials distribution
+  const [apiCredentials, setApiCredentials] = useState<ApiCredential[]>([]);
+  const [isLoadingCredentials, setIsLoadingCredentials] = useState(true);
+  const [isRedistributing, setIsRedistributing] = useState(false);
+  const [totalAccounts, setTotalAccounts] = useState(0);
+
+  // Fetch API credentials
+  const fetchApiCredentials = async () => {
+    setIsLoadingCredentials(true);
+    try {
+      const { data, error } = await supabase
+        .from('telegram_api_credentials')
+        .select('*')
+        .order('client_type');
+      
+      if (error) throw error;
+      setApiCredentials(data || []);
+
+      // Get total accounts
+      const { count } = await supabase
+        .from('telegram_accounts')
+        .select('*', { count: 'exact', head: true });
+      setTotalAccounts(count || 0);
+    } catch (error) {
+      console.error('Failed to fetch API credentials:', error);
+    } finally {
+      setIsLoadingCredentials(false);
+    }
+  };
+
+  // Redistribute accounts across API credentials
+  const handleRedistribute = async () => {
+    setIsRedistributing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('redistribute-api-credentials');
+      
+      if (error) throw error;
+      
+      toast.success(`Redistributed ${data.assigned} accounts across API credentials`);
+      fetchApiCredentials();
+    } catch (error) {
+      console.error('Redistribution failed:', error);
+      toast.error('Failed to redistribute accounts');
+    } finally {
+      setIsRedistributing(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchApiCredentials();
+  }, []);
 
   // Load settings from localStorage
   useEffect(() => {
@@ -142,11 +209,113 @@ const Settings: React.FC = () => {
       />
 
       <div className="max-w-3xl space-y-6">
-        {/* Python Script Speed Settings */}
+        {/* API Credentials Distribution */}
         <Card className="border-primary/30">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Zap className="w-5 h-5 text-primary" />
+              <Key className="w-5 h-5 text-primary" />
+              API Credentials Distribution
+            </CardTitle>
+            <CardDescription>
+              Accounts are distributed across 4 official Telegram API IDs to reduce ban risk
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isLoadingCredentials ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  {apiCredentials.map((cred) => {
+                    const percentage = totalAccounts > 0 
+                      ? Math.round((cred.accounts_count / totalAccounts) * 100) 
+                      : 0;
+                    const iconMap: Record<string, React.ReactNode> = {
+                      android: <Smartphone className="w-4 h-4 text-green-500" />,
+                      ios: <Smartphone className="w-4 h-4 text-blue-500" />,
+                      desktop: <Monitor className="w-4 h-4 text-purple-500" />,
+                      macos: <Monitor className="w-4 h-4 text-gray-500" />,
+                    };
+                    
+                    return (
+                      <div 
+                        key={cred.id} 
+                        className="p-4 rounded-lg border bg-card/50 space-y-2"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {iconMap[cred.client_type] || <Smartphone className="w-4 h-4" />}
+                            <span className="font-medium text-sm">{cred.name}</span>
+                          </div>
+                          <Badge variant="outline" className="text-xs">
+                            {cred.client_type}
+                          </Badge>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">
+                              {cred.accounts_count} accounts
+                            </span>
+                            <span className="font-medium">{percentage}%</span>
+                          </div>
+                          <Progress value={percentage} className="h-2" />
+                        </div>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          API ID: {cred.api_id}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {apiCredentials.length > 0 && (
+                  <div className="pt-2 space-y-3">
+                    <Separator />
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Total Accounts</span>
+                      <span className="font-medium">{totalAccounts}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-muted-foreground">Unassigned</span>
+                      <span className="font-medium">
+                        {totalAccounts - apiCredentials.reduce((sum, c) => sum + c.accounts_count, 0)}
+                      </span>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      onClick={handleRedistribute}
+                      disabled={isRedistributing}
+                      className="w-full"
+                    >
+                      {isRedistributing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Redistributing...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Redistribute Accounts Evenly
+                        </>
+                      )}
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center">
+                      Assigns unassigned accounts and balances distribution across all API IDs
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Python Script Speed Settings */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Zap className="w-5 h-5" />
               Message Sending Settings
             </CardTitle>
             <CardDescription>
