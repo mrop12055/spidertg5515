@@ -1054,8 +1054,11 @@ username123
               const noUsableAccounts = usableAssigned.length === 0 && assignedAccountIds.length > 0;
               const campaignStuck = campaign.status === 'running' && hasPending && noUsableAccounts;
               
+              // Check if campaign failed due to no usable accounts (has pending but failed status)
+              const campaignFailedDueToAccounts = campaign.status === 'failed' && hasPending;
+              
               return (
-                <Card key={campaign.id} className={`hover:border-primary/30 transition-colors ${campaignStuck ? 'border-destructive' : ''}`}>
+                <Card key={campaign.id} className={`hover:border-primary/30 transition-colors ${campaignStuck || campaignFailedDueToAccounts ? 'border-status-error/50' : ''}`}>
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <div>
@@ -1077,6 +1080,12 @@ username123
                         {campaignStuck && (
                           <p className="text-xs text-destructive mt-1">
                             All assigned accounts are restricted or at daily limit. Campaign cannot progress.
+                          </p>
+                        )}
+                        {campaignFailedDueToAccounts && (
+                          <p className="text-xs text-destructive mt-1 flex items-center gap-1">
+                            <AlertCircle className="w-3 h-3" />
+                            Campaign stopped: All accounts were restricted or at daily limit. {report?.pending} recipients still pending.
                           </p>
                         )}
                       </div>
