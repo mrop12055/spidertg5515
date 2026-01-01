@@ -25,6 +25,7 @@ serve(async (req) => {
     switch (task_type) {
       case "send": {
         let { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name } = result;
+        let isNewConversation = false; // Track if this is first message to a new contact
 
         if (success) {
           // For campaign messages: Create conversation and message ONLY on successful send
@@ -63,6 +64,7 @@ serve(async (req) => {
               console.log(`[report-task-result] Using existing conversation ${conversationId}`);
             } else {
               // Create new conversation only on successful delivery
+              isNewConversation = true;
               const { data: newConv, error: convError } = await supabase
                 .from("conversations")
                 .insert({
@@ -78,6 +80,7 @@ serve(async (req) => {
 
               if (convError) {
                 console.error(`[report-task-result] Error creating conversation:`, convError);
+                isNewConversation = false;
               } else {
                 conversationId = newConv.id;
                 console.log(`[report-task-result] Created new conversation ${conversationId}`);
@@ -145,20 +148,33 @@ serve(async (req) => {
               .in("status", ["pending", "sending"]);
           }
 
-          // Increment account message count
-          const { data: account } = await supabase
-            .from("telegram_accounts")
-            .select("messages_sent_today")
-            .eq("id", account_id)
-            .single();
+          // Increment account message count ONLY for new contacts (first message to this recipient)
+          // For campaign messages: only if we created a new conversation
+          // For live chat replies: don't count (message_id without campaign_recipient_id means it's a reply)
+          const shouldCountMessage = campaign_recipient_id ? isNewConversation : false;
+          
+          if (shouldCountMessage && account_id) {
+            const { data: account } = await supabase
+              .from("telegram_accounts")
+              .select("messages_sent_today")
+              .eq("id", account_id)
+              .single();
 
-          if (account) {
+            if (account) {
+              await supabase
+                .from("telegram_accounts")
+                .update({
+                  messages_sent_today: (account.messages_sent_today || 0) + 1,
+                  last_active: new Date().toISOString(),
+                })
+                .eq("id", account_id);
+              console.log(`[report-task-result] Incremented message count for account ${account_id} (new contact)`);
+            }
+          } else if (account_id) {
+            // Just update last_active for replies, don't count
             await supabase
               .from("telegram_accounts")
-              .update({
-                messages_sent_today: (account.messages_sent_today || 0) + 1,
-                last_active: new Date().toISOString(),
-              })
+              .update({ last_active: new Date().toISOString() })
               .eq("id", account_id);
           }
 
