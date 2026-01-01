@@ -106,6 +106,17 @@ const Settings: React.FC = () => {
   const [isDetectingCountry, setIsDetectingCountry] = useState(false);
   const [isRunningSpamBotCheck, setIsRunningSpamBotCheck] = useState(false);
   const [lastSpamBotResult, setLastSpamBotResult] = useState<{ scheduled: number; restricted: number } | null>(null);
+  const [isEnforcingProxy, setIsEnforcingProxy] = useState(false);
+  const [isLoadingStats, setIsLoadingStats] = useState(true);
+  const [antiBotStats, setAntiBotStats] = useState<{
+    phase1_api_distribution: { total_api_credentials: number; active_api_credentials: number; accounts_per_api: number };
+    phase2_proxy_mapping: { total_accounts: number; accounts_with_proxy: number; accounts_without_proxy: number; total_proxies: number; shared_proxies_violations: number; mapping_coverage: number };
+    phase3_warmup: { accounts_in_warmup: number; accounts_warmup_complete: number; pending_warmup_tasks: number };
+    phase4_spambot: { clean: number; limited: number; restricted: number; unknown: number; pending_checks: number };
+    phase5_first_message: { new_contact_conversations: number };
+    phase6_geo_consistency: { geo_matched: number; geo_mismatches: number; match_rate: number; proxies_with_country: number };
+    phase7_interactions: { pending: number; completed: number };
+  } | null>(null);
 
   // Schedule warmup tasks
   const handleScheduleWarmup = async () => {
@@ -154,6 +165,40 @@ const Settings: React.FC = () => {
       toast.error('Failed to run SpamBot check');
     } finally {
       setIsRunningSpamBotCheck(false);
+    }
+  };
+
+  // Fetch anti-bot stats
+  const fetchAntiBotStats = async () => {
+    try {
+      const { data, error } = await supabase.functions.invoke('get-antibot-stats');
+      if (error) throw error;
+      setAntiBotStats(data.stats);
+    } catch (error) {
+      console.error('Failed to fetch anti-bot stats:', error);
+    } finally {
+      setIsLoadingStats(false);
+    }
+  };
+
+  // Enforce 1:1 proxy mapping
+  const handleEnforceProxyMapping = async () => {
+    setIsEnforcingProxy(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('enforce-proxy-mapping');
+      if (error) throw error;
+      const { stats } = data;
+      if (stats.violations.length > 0) {
+        toast.warning(`Assigned ${stats.assignments_made} proxies. ${stats.violations.length} issues found.`);
+      } else {
+        toast.success(`All accounts have dedicated proxies! ${stats.assignments_made} new assignments.`);
+      }
+      fetchAntiBotStats();
+    } catch (error) {
+      console.error('Proxy mapping failed:', error);
+      toast.error('Failed to enforce proxy mapping');
+    } finally {
+      setIsEnforcingProxy(false);
     }
   };
 
@@ -262,6 +307,7 @@ const Settings: React.FC = () => {
 
   useEffect(() => {
     fetchApiCredentials();
+    fetchAntiBotStats();
   }, []);
 
   // Load settings from localStorage
@@ -807,6 +853,22 @@ const Settings: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {antiBotStats && (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="p-3 rounded-lg bg-orange-500/10 text-center">
+                  <div className="text-2xl font-bold text-orange-500">{antiBotStats.phase3_warmup.accounts_in_warmup}</div>
+                  <div className="text-xs text-muted-foreground">In Warmup</div>
+                </div>
+                <div className="p-3 rounded-lg bg-green-500/10 text-center">
+                  <div className="text-2xl font-bold text-green-500">{antiBotStats.phase3_warmup.accounts_warmup_complete}</div>
+                  <div className="text-xs text-muted-foreground">Complete</div>
+                </div>
+                <div className="p-3 rounded-lg bg-muted/50 text-center">
+                  <div className="text-2xl font-bold">{antiBotStats.phase3_warmup.pending_warmup_tasks}</div>
+                  <div className="text-xs text-muted-foreground">Pending Tasks</div>
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div>
                 <Label>Auto-run warmup tasks</Label>
@@ -856,6 +918,26 @@ const Settings: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {antiBotStats && (
+              <div className="grid grid-cols-4 gap-2 mb-4">
+                <div className="p-2 rounded-lg bg-green-500/10 text-center">
+                  <div className="text-lg font-bold text-green-500">{antiBotStats.phase4_spambot.clean}</div>
+                  <div className="text-[10px] text-muted-foreground">Clean</div>
+                </div>
+                <div className="p-2 rounded-lg bg-yellow-500/10 text-center">
+                  <div className="text-lg font-bold text-yellow-500">{antiBotStats.phase4_spambot.limited}</div>
+                  <div className="text-[10px] text-muted-foreground">Limited</div>
+                </div>
+                <div className="p-2 rounded-lg bg-red-500/10 text-center">
+                  <div className="text-lg font-bold text-red-500">{antiBotStats.phase4_spambot.restricted}</div>
+                  <div className="text-[10px] text-muted-foreground">Restricted</div>
+                </div>
+                <div className="p-2 rounded-lg bg-muted/50 text-center">
+                  <div className="text-lg font-bold">{antiBotStats.phase4_spambot.unknown}</div>
+                  <div className="text-[10px] text-muted-foreground">Unknown</div>
+                </div>
+              </div>
+            )}
             <div className="p-3 rounded-lg bg-muted/50">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Automatic Schedule</span>
@@ -863,11 +945,11 @@ const Settings: React.FC = () => {
                   Every Sunday 3:00 AM UTC
                 </Badge>
               </div>
-              {lastSpamBotResult && (
+              {(lastSpamBotResult || antiBotStats) && (
                 <div className="mt-2 pt-2 border-t border-border">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Last Run</span>
-                    <span>{lastSpamBotResult.scheduled} scheduled, {lastSpamBotResult.restricted} restricted</span>
+                    <span className="text-muted-foreground">Pending Checks</span>
+                    <span>{antiBotStats?.phase4_spambot.pending_checks || 0}</span>
                   </div>
                 </div>
               )}
@@ -947,6 +1029,22 @@ const Settings: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {antiBotStats && (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <div className="p-3 rounded-lg bg-green-500/10 text-center">
+                  <div className="text-2xl font-bold text-green-500">{antiBotStats.phase2_proxy_mapping.accounts_with_proxy}</div>
+                  <div className="text-xs text-muted-foreground">With Proxy</div>
+                </div>
+                <div className="p-3 rounded-lg bg-red-500/10 text-center">
+                  <div className="text-2xl font-bold text-red-500">{antiBotStats.phase6_geo_consistency.geo_mismatches}</div>
+                  <div className="text-xs text-muted-foreground">Geo Mismatch</div>
+                </div>
+                <div className="p-3 rounded-lg bg-blue-500/10 text-center">
+                  <div className="text-2xl font-bold text-blue-500">{antiBotStats.phase6_geo_consistency.match_rate}%</div>
+                  <div className="text-xs text-muted-foreground">Match Rate</div>
+                </div>
+              </div>
+            )}
             <div className="flex items-center justify-between">
               <div>
                 <Label>Enforce 1:1 proxy mapping</Label>
@@ -972,24 +1070,24 @@ const Settings: React.FC = () => {
               />
             </div>
             <Separator />
-            <Button 
-              variant="outline" 
-              onClick={handleDetectProxyCountry}
-              disabled={isDetectingCountry}
-              className="w-full"
-            >
-              {isDetectingCountry ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Detecting...
-                </>
-              ) : (
-                <>
-                  <Globe className="w-4 h-4 mr-2" />
-                  Detect Proxy Countries & Check Mismatches
-                </>
-              )}
-            </Button>
+            <div className="grid grid-cols-2 gap-2">
+              <Button 
+                variant="outline" 
+                onClick={handleEnforceProxyMapping}
+                disabled={isEnforcingProxy}
+              >
+                {isEnforcingProxy ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Link2 className="w-4 h-4 mr-2" />}
+                Assign Proxies
+              </Button>
+              <Button 
+                variant="outline" 
+                onClick={handleDetectProxyCountry}
+                disabled={isDetectingCountry}
+              >
+                {isDetectingCountry ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Globe className="w-4 h-4 mr-2" />}
+                Detect Countries
+              </Button>
+            </div>
           </CardContent>
         </Card>
 
@@ -1005,15 +1103,23 @@ const Settings: React.FC = () => {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Interactions are automatically scheduled as part of the 14-day warmup system. Your accounts will exchange friendly messages to build activity history.
-            </p>
+            {antiBotStats && (
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="p-3 rounded-lg bg-purple-500/10 text-center">
+                  <div className="text-2xl font-bold text-purple-500">{antiBotStats.phase7_interactions.pending}</div>
+                  <div className="text-xs text-muted-foreground">Pending</div>
+                </div>
+                <div className="p-3 rounded-lg bg-green-500/10 text-center">
+                  <div className="text-2xl font-bold text-green-500">{antiBotStats.phase7_interactions.completed}</div>
+                  <div className="text-xs text-muted-foreground">Completed</div>
+                </div>
+              </div>
+            )}
             <div className="p-3 rounded-lg bg-muted/50 text-xs">
               <p className="font-medium mb-1">How it works:</p>
               <ul className="list-disc list-inside space-y-1 text-muted-foreground">
                 <li>Days 1-7: No interactions (building individual history)</li>
                 <li>Days 8-14: Accounts start messaging each other</li>
-                <li>Messages include: "Hey! 👋", "How are you?", etc.</li>
                 <li>Replies are scheduled 30min-2hrs later for realism</li>
               </ul>
             </div>

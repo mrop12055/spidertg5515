@@ -35,3 +35,12 @@ verify_jwt = false
 
 [functions.auto-spambot-check]
 verify_jwt = false
+
+[functions.enforce-proxy-mapping]
+verify_jwt = false
+
+[functions.validate-first-message]
+verify_jwt = false
+
+[functions.get-antibot-stats]
+verify_jwt = false
