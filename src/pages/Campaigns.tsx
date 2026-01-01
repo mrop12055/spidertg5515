@@ -41,6 +41,7 @@ interface CampaignReport {
   successful: number;
   failed: number;
   pending: number;
+  unused: number;  // Recipients that were never processed (still pending when campaign ended)
   total: number;
   failedRecipients: FailedRecipient[];
 }
@@ -216,16 +217,34 @@ const Campaigns: React.FC = () => {
           }));
       }
 
+      const sentCount = recipients.filter((r) => r.status === 'sent').length;
+      const failedCount = recipients.filter((r) => r.status === 'failed').length;
+      const pendingCount = recipients.filter((r) => r.status === 'pending' || r.status === 'sending').length;
+      
+      // Check if campaign should be auto-completed
+      // Complete when: no pending AND (has sent/failed OR campaign was running but no active accounts left)
+      const shouldComplete = campaign.status === 'running' && pendingCount === 0 && recipients.length > 0;
+      
+      // Also check if campaign is paused with no active accounts - mark as completed
+      const { data: activeAccounts } = await supabase
+        .from('telegram_accounts')
+        .select('id')
+        .eq('status', 'active');
+      
+      const noActiveAccounts = !activeAccounts || activeAccounts.length === 0;
+      const shouldForceComplete = campaign.status === 'running' && noActiveAccounts && recipients.length > 0;
+
       const report: CampaignReport = {
-        successful: recipients.filter((r) => r.status === 'sent').length,
-        failed: recipients.filter((r) => r.status === 'failed').length,
-        pending: recipients.filter((r) => r.status === 'pending').length,
+        successful: sentCount,
+        failed: failedCount,
+        pending: pendingCount,
+        unused: pendingCount,  // If campaign completed, pending = unused
         total: recipients.length,
         failedRecipients
       };
 
-      // Auto-update campaign status to 'completed' when all recipients are processed
-      if (report.total > 0 && report.pending === 0 && campaign.status === 'running') {
+      // Auto-update campaign status to 'completed' when appropriate
+      if (shouldComplete || shouldForceComplete) {
         await supabase
           .from('campaigns')
           .update({ status: 'completed', updated_at: new Date().toISOString() })
@@ -866,22 +885,26 @@ username123
                 
                 return (
                   <>
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="text-center p-4 rounded-lg bg-muted">
+                    <div className="grid grid-cols-5 gap-3">
+                      <div className="text-center p-3 rounded-lg bg-muted">
                         <p className="text-2xl font-bold">{report.total}</p>
                         <p className="text-xs text-muted-foreground">Total</p>
                       </div>
-                      <div className="text-center p-4 rounded-lg bg-green-500/10">
+                      <div className="text-center p-3 rounded-lg bg-green-500/10">
                         <p className="text-2xl font-bold text-green-600">{report.successful}</p>
                         <p className="text-xs text-muted-foreground">Sent</p>
                       </div>
-                      <div className="text-center p-4 rounded-lg bg-destructive/10">
+                      <div className="text-center p-3 rounded-lg bg-destructive/10">
                         <p className="text-2xl font-bold text-destructive">{report.failed}</p>
                         <p className="text-xs text-muted-foreground">Failed</p>
                       </div>
-                      <div className="text-center p-4 rounded-lg bg-yellow-500/10">
+                      <div className="text-center p-3 rounded-lg bg-yellow-500/10">
                         <p className="text-2xl font-bold text-yellow-600">{report.pending}</p>
                         <p className="text-xs text-muted-foreground">Pending</p>
+                      </div>
+                      <div className="text-center p-3 rounded-lg bg-gray-500/10">
+                        <p className="text-2xl font-bold text-gray-500">{report.unused}</p>
+                        <p className="text-xs text-muted-foreground">Unused</p>
                       </div>
                     </div>
                     
