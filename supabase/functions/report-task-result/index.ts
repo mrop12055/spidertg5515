@@ -336,35 +336,8 @@ serve(async (req) => {
           }
         }
 
-        // Priority 4: Look for conversations without telegram_id that we recently messaged
-        // This is crucial for campaign conversations where we only have phone number initially
-        if (!convId) {
-          console.log(`[report-task-result] Searching for unlinked campaign conversations...`);
-          
-          // Find conversations for this account that don't have telegram_id set
-          const { data: unlinkedConvs } = await supabase
-            .from("conversations")
-            .select("*, messages!inner(direction, created_at)")
-            .eq("account_id", account_id)
-            .is("recipient_telegram_id", null)
-            .order("last_message_at", { ascending: false })
-            .limit(20);
-
-          if (unlinkedConvs && unlinkedConvs.length > 0) {
-            // Find one that has only outgoing messages (fresh campaign conversation waiting for reply)
-            for (const conv of unlinkedConvs) {
-              const hasOnlyOutgoing = (conv.messages as any[]).every((m: any) => m.direction === 'outgoing');
-              if (hasOnlyOutgoing) {
-                convId = conv.id;
-                existingConvData = conv;
-                console.log(`[report-task-result] Found unlinked campaign conversation: ${convId} (phone: ${conv.recipient_phone})`);
-                break;
-              }
-            }
-          }
-        }
-
-        // Priority 5: Check campaign_recipients for matching phone and link to that conversation
+        // Priority 4: Check campaign_recipients for matching phone and link to that conversation
+        // Only match by phone number - do NOT use generic unlinked conversation matching
         if (!convId && sender_phone) {
           console.log(`[report-task-result] Searching campaign recipients for phone match...`);
           
