@@ -69,15 +69,16 @@ serve(async (req) => {
     }
 
     // Get all active accounts for campaigns - exclude banned, restricted
+    // Include API credentials for each account
     const { data: activeAccounts, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
-      .select("*")
+      .select("*, telegram_api_credentials(*)")
       .eq("status", "active");
 
     // Get restricted accounts too (for live chat only - they can still chat with existing contacts)
     const { data: restrictedAccounts } = await supabase
       .from("telegram_accounts")
-      .select("*")
+      .select("*, telegram_api_credentials(*)")
       .eq("status", "restricted");
 
     // Combine for live chat purposes
@@ -189,6 +190,10 @@ serve(async (req) => {
               .eq("status", "pending");
 
             console.log(`[get-next-task] Campaign task: message ${msg.id.slice(0, 8)}`);
+            
+            // Get API credentials from account or use defaults
+            const apiCred = account.telegram_api_credentials;
+            
             return new Response(JSON.stringify({
               task: "send",
               message: {
@@ -203,6 +208,14 @@ serve(async (req) => {
                 id: account.id,
                 phone_number: account.phone_number,
                 session_data: account.session_data,
+                device_model: account.device_model,
+                system_version: account.system_version,
+                app_version: account.app_version,
+                lang_code: account.lang_code,
+                system_lang_code: account.system_lang_code,
+                api_id: apiCred?.api_id || account.api_id,
+                api_hash: apiCred?.api_hash || account.api_hash,
+                proxy_id: account.proxy_id,
               },
               mode: "campaign",
             }), {
@@ -220,6 +233,7 @@ serve(async (req) => {
 
         if (validatingRecipients && validatingRecipients.length > 0) {
           const account = accounts[0];
+          const apiCred = account.telegram_api_credentials;
           console.log(`[get-next-task] Validate task: ${validatingRecipients.length} recipients`);
           return new Response(JSON.stringify({
             task: "validate",
@@ -232,6 +246,13 @@ serve(async (req) => {
               id: account.id,
               phone_number: account.phone_number,
               session_data: account.session_data,
+              device_model: account.device_model,
+              system_version: account.system_version,
+              app_version: account.app_version,
+              lang_code: account.lang_code,
+              system_lang_code: account.system_lang_code,
+              api_id: apiCred?.api_id || account.api_id,
+              api_hash: apiCred?.api_hash || account.api_hash,
             },
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -257,7 +278,7 @@ serve(async (req) => {
       if (newAccounts.length > 0) {
         const { data: warmupTasks } = await supabase
           .from("maturation_tasks")
-          .select("*, telegram_accounts(*)")
+          .select("*, telegram_accounts(*, telegram_api_credentials(*))")
           .eq("status", "pending")
           .lte("scheduled_at", new Date().toISOString())
           .limit(1);
@@ -267,6 +288,7 @@ serve(async (req) => {
           const accountData = task.telegram_accounts;
           
           if (accountData && accountData.status === "active") {
+            const apiCred = accountData.telegram_api_credentials;
             console.log(`[get-next-task] Warmup task ${task.task_type} for ${task.account_id}`);
             return new Response(JSON.stringify({
               task: "warmup_" + task.task_type,
@@ -275,6 +297,13 @@ serve(async (req) => {
                 id: accountData.id,
                 phone_number: accountData.phone_number,
                 session_data: accountData.session_data,
+                device_model: accountData.device_model,
+                system_version: accountData.system_version,
+                app_version: accountData.app_version,
+                lang_code: accountData.lang_code,
+                system_lang_code: accountData.system_lang_code,
+                api_id: apiCred?.api_id || accountData.api_id,
+                api_hash: apiCred?.api_hash || accountData.api_hash,
               },
             }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -301,7 +330,7 @@ serve(async (req) => {
     if (runner === "account") {
       const { data: checkTasks } = await supabase
         .from("account_check_tasks")
-        .select("*, telegram_accounts(*)")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*))")
         .eq("status", "pending")
         .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo"])
         .limit(1);
@@ -312,6 +341,8 @@ serve(async (req) => {
         const taskType = task.task_type;
 
         if (accountData) {
+          const apiCred = accountData.telegram_api_credentials;
+          
           if (taskType === "spambot_check") {
             const lastCheck = accountData.last_spambot_check;
             if (lastCheck) {
@@ -334,6 +365,13 @@ serve(async (req) => {
                     id: accountData.id,
                     phone_number: accountData.phone_number,
                     session_data: accountData.session_data,
+                    device_model: accountData.device_model,
+                    system_version: accountData.system_version,
+                    app_version: accountData.app_version,
+                    lang_code: accountData.lang_code,
+                    system_lang_code: accountData.system_lang_code,
+                    api_id: apiCred?.api_id || accountData.api_id,
+                    api_hash: apiCred?.api_hash || accountData.api_hash,
                   },
                 }), {
                   headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -348,6 +386,13 @@ serve(async (req) => {
                   id: accountData.id,
                   phone_number: accountData.phone_number,
                   session_data: accountData.session_data,
+                  device_model: accountData.device_model,
+                  system_version: accountData.system_version,
+                  app_version: accountData.app_version,
+                  lang_code: accountData.lang_code,
+                  system_lang_code: accountData.system_lang_code,
+                  api_id: apiCred?.api_id || accountData.api_id,
+                  api_hash: apiCred?.api_hash || accountData.api_hash,
                 },
               }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -363,6 +408,13 @@ serve(async (req) => {
                 id: accountData.id,
                 phone_number: accountData.phone_number,
                 session_data: accountData.session_data,
+                device_model: accountData.device_model,
+                system_version: accountData.system_version,
+                app_version: accountData.app_version,
+                lang_code: accountData.lang_code,
+                system_lang_code: accountData.system_lang_code,
+                api_id: apiCred?.api_id || accountData.api_id,
+                api_hash: apiCred?.api_hash || accountData.api_hash,
               },
             }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -412,6 +464,7 @@ serve(async (req) => {
             .eq("status", "pending");
 
           console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)} to ${conv.recipient_phone || conv.recipient_username} (account status: ${account.status})`);
+          const apiCred = account.telegram_api_credentials;
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -426,6 +479,13 @@ serve(async (req) => {
               id: account.id,
               phone_number: account.phone_number,
               session_data: account.session_data,
+              device_model: account.device_model,
+              system_version: account.system_version,
+              app_version: account.app_version,
+              lang_code: account.lang_code,
+              system_lang_code: account.system_lang_code,
+              api_id: apiCred?.api_id || account.api_id,
+              api_hash: apiCred?.api_hash || account.api_hash,
             },
             mode: "live",
           }), {
@@ -472,6 +532,7 @@ serve(async (req) => {
             .eq("status", "pending");
 
           console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)}`);
+          const apiCred = account.telegram_api_credentials;
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -486,6 +547,13 @@ serve(async (req) => {
               id: account.id,
               phone_number: account.phone_number,
               session_data: account.session_data,
+              device_model: account.device_model,
+              system_version: account.system_version,
+              app_version: account.app_version,
+              lang_code: account.lang_code,
+              system_lang_code: account.system_lang_code,
+              api_id: apiCred?.api_id || account.api_id,
+              api_hash: apiCred?.api_hash || account.api_hash,
             },
             mode: "live",
           }), {

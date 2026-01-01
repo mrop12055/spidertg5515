@@ -392,8 +392,57 @@ export type Database = {
           },
         ]
       }
+      scheduled_interactions: {
+        Row: {
+          created_at: string | null
+          id: string
+          message_content: string
+          receiver_account_id: string
+          scheduled_at: string | null
+          sender_account_id: string
+          sent_at: string | null
+          status: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          message_content: string
+          receiver_account_id: string
+          scheduled_at?: string | null
+          sender_account_id: string
+          sent_at?: string | null
+          status?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          message_content?: string
+          receiver_account_id?: string
+          scheduled_at?: string | null
+          sender_account_id?: string
+          sent_at?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scheduled_interactions_receiver_account_id_fkey"
+            columns: ["receiver_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "scheduled_interactions_sender_account_id_fkey"
+            columns: ["sender_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       telegram_accounts: {
         Row: {
+          api_credential_id: string | null
           api_hash: string | null
           api_id: string | null
           app_version: string | null
@@ -403,7 +452,9 @@ export type Database = {
           daily_limit: number | null
           device_model: string | null
           first_name: string | null
+          geo_mismatch: boolean | null
           id: string
+          interaction_pair_id: string | null
           lang_code: string | null
           last_active: string | null
           last_name: string | null
@@ -411,17 +462,22 @@ export type Database = {
           maturity_days: number | null
           maturity_score: number | null
           messages_sent_today: number | null
+          phone_country: string | null
           phone_number: string
           proxy_id: string | null
           restricted_until: string | null
           session_data: string | null
+          spambot_status: string | null
           status: Database["public"]["Enums"]["account_status"] | null
           system_lang_code: string | null
           system_version: string | null
           telegram_id: number | null
           username: string | null
+          warmup_phase: number | null
+          warmup_started_at: string | null
         }
         Insert: {
+          api_credential_id?: string | null
           api_hash?: string | null
           api_id?: string | null
           app_version?: string | null
@@ -431,7 +487,9 @@ export type Database = {
           daily_limit?: number | null
           device_model?: string | null
           first_name?: string | null
+          geo_mismatch?: boolean | null
           id?: string
+          interaction_pair_id?: string | null
           lang_code?: string | null
           last_active?: string | null
           last_name?: string | null
@@ -439,17 +497,22 @@ export type Database = {
           maturity_days?: number | null
           maturity_score?: number | null
           messages_sent_today?: number | null
+          phone_country?: string | null
           phone_number: string
           proxy_id?: string | null
           restricted_until?: string | null
           session_data?: string | null
+          spambot_status?: string | null
           status?: Database["public"]["Enums"]["account_status"] | null
           system_lang_code?: string | null
           system_version?: string | null
           telegram_id?: number | null
           username?: string | null
+          warmup_phase?: number | null
+          warmup_started_at?: string | null
         }
         Update: {
+          api_credential_id?: string | null
           api_hash?: string | null
           api_id?: string | null
           app_version?: string | null
@@ -459,7 +522,9 @@ export type Database = {
           daily_limit?: number | null
           device_model?: string | null
           first_name?: string | null
+          geo_mismatch?: boolean | null
           id?: string
+          interaction_pair_id?: string | null
           lang_code?: string | null
           last_active?: string | null
           last_name?: string | null
@@ -467,15 +532,19 @@ export type Database = {
           maturity_days?: number | null
           maturity_score?: number | null
           messages_sent_today?: number | null
+          phone_country?: string | null
           phone_number?: string
           proxy_id?: string | null
           restricted_until?: string | null
           session_data?: string | null
+          spambot_status?: string | null
           status?: Database["public"]["Enums"]["account_status"] | null
           system_lang_code?: string | null
           system_version?: string | null
           telegram_id?: number | null
           username?: string | null
+          warmup_phase?: number | null
+          warmup_started_at?: string | null
         }
         Relationships: [
           {
@@ -485,7 +554,47 @@ export type Database = {
             referencedRelation: "proxies"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "telegram_accounts_api_credential_id_fkey"
+            columns: ["api_credential_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_api_credentials"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      telegram_api_credentials: {
+        Row: {
+          accounts_count: number | null
+          api_hash: string
+          api_id: string
+          client_type: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+        }
+        Insert: {
+          accounts_count?: number | null
+          api_hash: string
+          api_id: string
+          client_type: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+        }
+        Update: {
+          accounts_count?: number | null
+          api_hash?: string
+          api_id?: string
+          client_type?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+        }
+        Relationships: []
       }
       vps_connections: {
         Row: {
@@ -516,6 +625,50 @@ export type Database = {
           status?: string | null
         }
         Relationships: []
+      }
+      warmup_schedule: {
+        Row: {
+          account_id: string
+          completed_at: string | null
+          created_at: string | null
+          day_number: number
+          id: string
+          scheduled_at: string | null
+          status: string | null
+          task_description: string | null
+          task_type: string
+        }
+        Insert: {
+          account_id: string
+          completed_at?: string | null
+          created_at?: string | null
+          day_number: number
+          id?: string
+          scheduled_at?: string | null
+          status?: string | null
+          task_description?: string | null
+          task_type: string
+        }
+        Update: {
+          account_id?: string
+          completed_at?: string | null
+          created_at?: string | null
+          day_number?: number
+          id?: string
+          scheduled_at?: string | null
+          status?: string | null
+          task_description?: string | null
+          task_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_schedule_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
