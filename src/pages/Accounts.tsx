@@ -18,8 +18,10 @@ import {
   Check, Shield, Globe, Link2, Unlink, Download, MoreVertical,
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
   Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock, 
-  LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone
+  LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone, 
+  Flame, Bot, MapPin, Key
 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -963,7 +965,7 @@ const Accounts: React.FC = () => {
         </div>
 
         {/* Stats - desktop */}
-        <div className="hidden lg:flex items-center gap-4 text-xs">
+        <div className="hidden lg:flex items-center gap-3 text-xs flex-wrap">
           <div className="text-center min-w-[40px]">
             <div className="font-medium text-foreground">{msgSent24h}/{account.dailyLimit || 10}</div>
             <div className="text-muted-foreground">24h</div>
@@ -972,16 +974,104 @@ const Accounts: React.FC = () => {
             <div className="font-medium text-foreground">{getAccountAge(account.createdAt)}d</div>
             <div className="text-muted-foreground">Age</div>
           </div>
-          {/* Device Fingerprint */}
-          {account.deviceModel && (
-            <div 
-              className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/10 text-blue-600 cursor-help"
-              title={`${account.deviceModel} | ${account.systemVersion} | v${account.appVersion} | ${account.langCode}`}
-            >
-              <Smartphone className="w-3 h-3" />
-              <span className="max-w-[100px] truncate">{account.deviceModel?.split(' ')[0]}</span>
+          
+          {/* Warmup Phase Indicator */}
+          {account.warmupPhase !== undefined && account.warmupPhase < 4 && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={cn(
+                    "flex items-center gap-1 px-2 py-1 rounded text-xs",
+                    account.warmupPhase === 0 && "bg-red-500/10 text-red-600",
+                    account.warmupPhase === 1 && "bg-orange-500/10 text-orange-600",
+                    account.warmupPhase === 2 && "bg-yellow-500/10 text-yellow-600",
+                    account.warmupPhase === 3 && "bg-lime-500/10 text-lime-600",
+                  )}>
+                    <Flame className="w-3 h-3" />
+                    <span>P{account.warmupPhase}/4</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Warmup Phase {account.warmupPhase}/4</p>
+                  <p className="text-xs text-muted-foreground">
+                    {account.warmupPhase === 0 && "New account - limited to profile setup"}
+                    {account.warmupPhase === 1 && "Early warmup - join channels only"}
+                    {account.warmupPhase === 2 && "Mid warmup - can react & view"}
+                    {account.warmupPhase === 3 && "Almost ready - limited messaging"}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {account.warmupPhase === 4 && (
+            <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-emerald-500/10 text-emerald-600">
+              <Flame className="w-3 h-3" />
+              <span>Ready</span>
             </div>
           )}
+
+          {/* SpamBot Status */}
+          {account.spambotStatus && account.spambotStatus !== 'unknown' && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={cn(
+                    "flex items-center gap-1 px-2 py-1 rounded text-xs",
+                    account.spambotStatus === 'clean' && "bg-emerald-500/10 text-emerald-600",
+                    account.spambotStatus === 'limited' && "bg-amber-500/10 text-amber-600",
+                    account.spambotStatus === 'restricted' && "bg-red-500/10 text-red-600",
+                  )}>
+                    <Bot className="w-3 h-3" />
+                    <span>{account.spambotStatus === 'clean' ? '✓' : account.spambotStatus}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>SpamBot Status: {account.spambotStatus}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+
+          {/* Geo Mismatch Warning */}
+          {account.geoMismatch && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-500/10 text-amber-600">
+                    <MapPin className="w-3 h-3" />
+                    <span>!</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Geographic Mismatch</p>
+                  <p className="text-xs text-muted-foreground">
+                    Phone country ({account.phoneCountry || '?'}) doesn't match proxy country
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+
+          {/* Device Fingerprint */}
+          {account.deviceModel && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/10 text-blue-600">
+                    <Smartphone className="w-3 h-3" />
+                    <span className="max-w-[80px] truncate">{account.deviceModel?.split(' ')[0]}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{account.deviceModel}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {account.systemVersion} | v{account.appVersion} | {account.langCode}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          
           {proxyLabel && (
             <div className={cn(
               "flex items-center gap-1 px-2 py-1 rounded text-xs",

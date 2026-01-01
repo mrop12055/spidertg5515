@@ -29,13 +29,18 @@ import {
   Smartphone,
   Monitor,
   RefreshCw,
-  Key
+  Key,
+  Plus,
+  X
 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
 interface ApiCredential {
   id: string;
   name: string;
   api_id: string;
+  api_hash: string;
   client_type: string;
   accounts_count: number;
   is_active: boolean;
@@ -75,6 +80,14 @@ const Settings: React.FC = () => {
   const [isLoadingCredentials, setIsLoadingCredentials] = useState(true);
   const [isRedistributing, setIsRedistributing] = useState(false);
   const [totalAccounts, setTotalAccounts] = useState(0);
+  
+  // Add API credential dialog
+  const [isAddApiOpen, setIsAddApiOpen] = useState(false);
+  const [newApiName, setNewApiName] = useState('');
+  const [newApiId, setNewApiId] = useState('');
+  const [newApiHash, setNewApiHash] = useState('');
+  const [newApiType, setNewApiType] = useState<string>('android');
+  const [isAddingApi, setIsAddingApi] = useState(false);
 
   // Fetch API credentials
   const fetchApiCredentials = async () => {
@@ -115,6 +128,67 @@ const Settings: React.FC = () => {
       toast.error('Failed to redistribute accounts');
     } finally {
       setIsRedistributing(false);
+    }
+  };
+
+  // Add new API credential
+  const handleAddApiCredential = async () => {
+    if (!newApiName.trim() || !newApiId.trim() || !newApiHash.trim()) {
+      toast.error('Please fill all fields');
+      return;
+    }
+    
+    setIsAddingApi(true);
+    try {
+      const { error } = await supabase
+        .from('telegram_api_credentials')
+        .insert({
+          name: newApiName.trim(),
+          api_id: newApiId.trim(),
+          api_hash: newApiHash.trim(),
+          client_type: newApiType,
+          is_active: true,
+          accounts_count: 0,
+        });
+      
+      if (error) throw error;
+      
+      toast.success('API credential added successfully');
+      setNewApiName('');
+      setNewApiId('');
+      setNewApiHash('');
+      setNewApiType('android');
+      setIsAddApiOpen(false);
+      fetchApiCredentials();
+    } catch (error) {
+      console.error('Failed to add API credential:', error);
+      toast.error('Failed to add API credential');
+    } finally {
+      setIsAddingApi(false);
+    }
+  };
+
+  // Delete API credential
+  const handleDeleteApiCredential = async (id: string) => {
+    try {
+      // First unassign accounts from this credential
+      await supabase
+        .from('telegram_accounts')
+        .update({ api_credential_id: null })
+        .eq('api_credential_id', id);
+      
+      const { error } = await supabase
+        .from('telegram_api_credentials')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      toast.success('API credential deleted');
+      fetchApiCredentials();
+    } catch (error) {
+      console.error('Failed to delete API credential:', error);
+      toast.error('Failed to delete API credential');
     }
   };
 
@@ -212,13 +286,87 @@ const Settings: React.FC = () => {
         {/* API Credentials Distribution */}
         <Card className="border-primary/30">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Key className="w-5 h-5 text-primary" />
-              API Credentials Distribution
-            </CardTitle>
-            <CardDescription>
-              Accounts are distributed across 4 official Telegram API IDs to reduce ban risk
-            </CardDescription>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Key className="w-5 h-5 text-primary" />
+                  API Credentials Distribution
+                </CardTitle>
+                <CardDescription>
+                  Accounts are distributed across multiple Telegram API IDs to reduce ban risk
+                </CardDescription>
+              </div>
+              <Dialog open={isAddApiOpen} onOpenChange={setIsAddApiOpen}>
+                <DialogTrigger asChild>
+                  <Button size="sm" variant="outline" className="gap-2">
+                    <Plus className="w-4 h-4" />
+                    Add API
+                  </Button>
+                </DialogTrigger>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Add API Credential</DialogTitle>
+                    <DialogDescription>
+                      Add a custom Telegram API ID/Hash pair for account distribution
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 pt-4">
+                    <div className="space-y-2">
+                      <Label>Name</Label>
+                      <Input
+                        placeholder="e.g., Custom Android 1"
+                        value={newApiName}
+                        onChange={(e) => setNewApiName(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>API ID</Label>
+                      <Input
+                        placeholder="e.g., 12345678"
+                        value={newApiId}
+                        onChange={(e) => setNewApiId(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>API Hash</Label>
+                      <Input
+                        placeholder="e.g., abc123def456..."
+                        value={newApiHash}
+                        onChange={(e) => setNewApiHash(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Client Type</Label>
+                      <Select value={newApiType} onValueChange={setNewApiType}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="android">Android</SelectItem>
+                          <SelectItem value="ios">iOS</SelectItem>
+                          <SelectItem value="desktop">Desktop</SelectItem>
+                          <SelectItem value="macos">macOS</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <Button 
+                      onClick={handleAddApiCredential} 
+                      disabled={isAddingApi}
+                      className="w-full"
+                    >
+                      {isAddingApi ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Adding...
+                        </>
+                      ) : (
+                        'Add API Credential'
+                      )}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
             {isLoadingCredentials ? (
@@ -242,9 +390,17 @@ const Settings: React.FC = () => {
                     return (
                       <div 
                         key={cred.id} 
-                        className="p-4 rounded-lg border bg-card/50 space-y-2"
+                        className="p-4 rounded-lg border bg-card/50 space-y-2 group relative"
                       >
-                        <div className="flex items-center justify-between">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="absolute top-2 right-2 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => handleDeleteApiCredential(cred.id)}
+                        >
+                          <X className="w-3 h-3 text-destructive" />
+                        </Button>
+                        <div className="flex items-center justify-between pr-6">
                           <div className="flex items-center gap-2">
                             {iconMap[cred.client_type] || <Smartphone className="w-4 h-4" />}
                             <span className="font-medium text-sm">{cred.name}</span>
