@@ -147,6 +147,26 @@ serve(async (req) => {
                   .in("id", recipientIds);
               }
             }
+            
+            // Check if any active accounts remain - if not, pause all running campaigns
+            const { data: activeAccounts } = await supabase
+              .from("telegram_accounts")
+              .select("id")
+              .eq("status", "active");
+            
+            if (!activeAccounts || activeAccounts.length === 0) {
+              console.log(`[report-task-result] No active accounts left - pausing all running campaigns`);
+              
+              const { data: pausedCampaigns } = await supabase
+                .from("campaigns")
+                .update({ status: "paused" })
+                .eq("status", "running")
+                .select("id, name");
+              
+              if (pausedCampaigns && pausedCampaigns.length > 0) {
+                console.log(`[report-task-result] Paused ${pausedCampaigns.length} campaigns due to no active accounts`);
+              }
+            }
           }
           
           // Update message as failed (from pending or sending to failed)

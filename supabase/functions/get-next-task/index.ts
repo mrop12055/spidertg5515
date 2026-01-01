@@ -138,6 +138,41 @@ serve(async (req) => {
     
     // RUNNER: campaign - Only campaign messages (uses ALL active accounts now)
     if (runner === "campaign") {
+      // If no active accounts, auto-pause any running campaigns
+      if (accounts.length === 0) {
+        const { data: runningCampaigns } = await supabase
+          .from("campaigns")
+          .select("id, name")
+          .eq("status", "running");
+        
+        if (runningCampaigns && runningCampaigns.length > 0) {
+          for (const campaign of runningCampaigns) {
+            console.log(`[get-next-task] No active accounts - pausing campaign ${campaign.name}`);
+            await supabase
+              .from("campaigns")
+              .update({ status: "paused" })
+              .eq("id", campaign.id);
+          }
+          
+          return new Response(JSON.stringify({
+            task: "wait",
+            seconds: 30,
+            stop_signal: true,
+            reason: "No active accounts - campaigns paused"
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        
+        return new Response(JSON.stringify({
+          task: "wait",
+          seconds: 30,
+          reason: "No active accounts available"
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       if (accounts.length > 0) {
         const { data: campaignMessages } = await supabase
           .from("messages")
