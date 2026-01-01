@@ -154,19 +154,22 @@ serve(async (req) => {
         let allCampaignsStopped = true;
         
         for (const campaign of runningCampaigns) {
-          // Get accounts assigned to this specific campaign
+          // Get accounts assigned to this specific campaign (include restricted_until for temp restriction check)
           const { data: campaignAccountLinks } = await supabase
             .from("campaign_accounts")
-            .select("account_id, telegram_accounts!inner(id, status, messages_sent_today, daily_limit)")
+            .select("account_id, telegram_accounts!inner(id, status, messages_sent_today, daily_limit, restricted_until)")
             .eq("campaign_id", campaign.id);
           
-          // Check if any assigned account is usable (active AND under daily limit)
+          // Check if any assigned account is usable (active AND under daily limit AND not temporarily restricted)
+          const now = new Date().toISOString();
           const hasUsableAccount = (campaignAccountLinks || []).some((ca: any) => {
             const acc = ca.telegram_accounts;
             if (!acc) return false;
             const limit = acc.daily_limit ?? 25;
             const sentToday = acc.messages_sent_today ?? 0;
-            return acc.status === 'active' && sentToday < limit;
+            // Must be active, under limit, and NOT temporarily restricted (restricted_until must be null or in past)
+            const isRestricted = acc.restricted_until && acc.restricted_until > now;
+            return acc.status === 'active' && sentToday < limit && !isRestricted;
           });
           
           if (!hasUsableAccount) {
