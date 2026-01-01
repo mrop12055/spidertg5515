@@ -75,14 +75,22 @@ serve(async (req) => {
       .select("*, telegram_api_credentials(*)")
       .eq("status", "active");
 
-    // Get restricted accounts too (for live chat only - they can still chat with existing contacts)
+    // Get restricted accounts only if their restriction has expired
+    // They can still chat with existing contacts once restriction lifts
     const { data: restrictedAccounts } = await supabase
       .from("telegram_accounts")
       .select("*, telegram_api_credentials(*)")
-      .eq("status", "restricted");
+      .eq("status", "restricted")
+      .or(`restricted_until.is.null,restricted_until.lt.${new Date().toISOString()}`);
 
-    // Combine for live chat purposes
-    const allUsableAccounts = [...(activeAccounts || []), ...(restrictedAccounts || [])];
+    // Filter out accounts that are still restricted
+    const usableRestrictedAccounts = (restrictedAccounts || []).filter((a: any) => {
+      if (!a.restricted_until) return true;
+      return new Date(a.restricted_until) < new Date();
+    });
+
+    // Combine for live chat purposes - only active + expired restrictions
+    const allUsableAccounts = [...(activeAccounts || []), ...usableRestrictedAccounts];
     const accounts = activeAccounts || []; // Only active for campaigns
 
     if (activeAccountsError) {
