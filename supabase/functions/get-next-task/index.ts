@@ -176,39 +176,22 @@ serve(async (req) => {
       }
 
       if (accounts.length > 0) {
-        const { data: campaignMessages } = await supabase
-          .from("messages")
-          .select("*, conversations(*), campaign_recipients(campaign_id)")
+        // NEW FLOW: Query campaign_recipients directly, not messages
+        // Conversations are only created on successful delivery
+        const { data: pendingRecipients } = await supabase
+          .from("campaign_recipients")
+          .select("*, campaigns!inner(id, status, message_template)")
           .eq("status", "pending")
-          .eq("direction", "outgoing")
-          .not("campaign_recipient_id", "is", null)
+          .not("sent_by_account_id", "is", null)
           .limit(50);
 
-        if (campaignMessages && campaignMessages.length > 0) {
-          for (const msg of campaignMessages) {
-            if (liveConvIds.has(msg.conversation_id)) continue;
-
-            const conv = msg.conversations || {};
-            const campaignRecipientId = msg.campaign_recipient_id;
-            const campaignRecipient = msg.campaign_recipients;
+        if (pendingRecipients && pendingRecipients.length > 0) {
+          for (const recipient of pendingRecipients) {
+            const campaign = recipient.campaigns;
             
-            if (!campaignRecipient || !campaignRecipient.campaign_id) {
-              await supabase
-                .from("messages")
-                .update({ status: "cancelled", failed_reason: "Campaign recipient deleted" })
-                .eq("id", msg.id);
-              continue;
-            }
-
             // Check if campaign is paused
-            const { data: campaign } = await supabase
-              .from("campaigns")
-              .select("status")
-              .eq("id", campaignRecipient.campaign_id)
-              .single();
-            
             if (campaign && (campaign.status === "paused" || campaign.status === "draft")) {
-              console.log(`[get-next-task] Campaign ${campaignRecipient.campaign_id} is paused - sending stop signal`);
+              console.log(`[get-next-task] Campaign ${campaign.id} is paused - sending stop signal`);
               return new Response(JSON.stringify({
                 task: "wait",
                 seconds: 5,
@@ -219,24 +202,31 @@ serve(async (req) => {
               });
             }
 
-            // Use ALL active accounts, not just warmed-up
-            const account = accounts.find((a: { id: string }) => a.id === msg.account_id);
+            // Find the assigned account
+            const account = accounts.find((a: { id: string }) => a.id === recipient.sent_by_account_id);
             if (!account) continue;
 
+            // Check daily limit
             if ((account.messages_sent_today || 0) >= (account.daily_limit || 50)) {
               console.log(`[get-next-task] Account ${account.phone_number} at daily limit`);
               continue;
             }
 
+            // Mark recipient as "sending" to prevent duplicate picks
             await supabase
-              .from("messages")
+              .from("campaign_recipients")
               .update({ status: "sending" })
-              .eq("id", msg.id)
+              .eq("id", recipient.id)
               .eq("status", "pending");
 
-            console.log(`[get-next-task] Campaign task: message ${msg.id.slice(0, 8)}`);
+            console.log(`[get-next-task] Campaign task: recipient ${recipient.id.slice(0, 8)} -> ${recipient.phone_number}`);
             
-            // Get API credentials from account or use defaults
+            // Personalize message template
+            const personalizedMessage = (campaign.message_template || '')
+              .replace(/{name}/g, recipient.name || 'there')
+              .replace(/{phone}/g, recipient.phone_number);
+            
+            // Get API credentials from account
             const apiCred = account.telegram_api_credentials;
             
             // Calculate random delay for next message (human-like behavior)
@@ -249,13 +239,11 @@ serve(async (req) => {
             return new Response(JSON.stringify({
               task: "send",
               message: {
-                id: msg.id,
-                content: msg.content,
-                media_url: msg.media_url,
-                media_type: msg.media_type,
-                campaign_recipient_id: msg.campaign_recipient_id,
+                content: personalizedMessage,
+                campaign_recipient_id: recipient.id,
               },
-              recipient: conv.recipient_username || conv.recipient_phone,
+              recipient: recipient.phone_number,
+              recipient_name: recipient.name,
               account: {
                 id: account.id,
                 phone_number: account.phone_number,
@@ -270,7 +258,7 @@ serve(async (req) => {
                 proxy_id: account.proxy_id,
               },
               mode: "campaign",
-              delay_after: delaySeconds, // Tell Python to wait after sending
+              delay_after: delaySeconds,
             }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             });

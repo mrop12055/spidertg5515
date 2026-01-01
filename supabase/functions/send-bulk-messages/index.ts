@@ -243,8 +243,9 @@ serve(async (req) => {
         .eq('id', campaign_id);
 
       // Queue messages for each recipient (distribute across accounts)
+      // NOTE: We DON'T create conversations here - they're created only when message is successfully sent
       let accountIndex = 0;
-      const queuedMessages = [];
+      const queuedCount = { success: 0, failed: 0 };
 
       for (const recipient of recipients || []) {
         const account = accounts[accountIndex % accounts.length];
@@ -254,69 +255,33 @@ serve(async (req) => {
           .replace(/{name}/g, recipient.name || 'there')
           .replace(/{phone}/g, recipient.phone_number);
 
-        // Create or get conversation
-        let conversation;
-        const { data: existingConv } = await supabase
-          .from('conversations')
-          .select('id')
-          .eq('account_id', account.id)
-          .eq('recipient_phone', recipient.phone_number)
-          .maybeSingle();
-
-        if (existingConv) {
-          conversation = existingConv;
-        } else {
-          const { data: newConv, error: convError } = await supabase
-            .from('conversations')
-            .insert({
-              account_id: account.id,
-              recipient_phone: recipient.phone_number,
-              recipient_name: recipient.name,
-              is_active: true,
-            })
-            .select()
-            .single();
-
-          if (convError) throw convError;
-          conversation = newConv;
-        }
-
-        // Queue message with pending status - link to campaign recipient for direct status updates
-        const { data: message, error: msgError } = await supabase
-          .from('messages')
-          .insert({
-            account_id: account.id,
-            conversation_id: conversation.id,
-            content: personalizedMessage,
-            direction: 'outgoing',
-            status: 'pending',
-            campaign_recipient_id: recipient.id, // Link message to campaign recipient
+        // Update recipient with assigned account and message content
+        // The message will be sent by Python, conversation created on success
+        const { error: updateError } = await supabase
+          .from('campaign_recipients')
+          .update({ 
+            sent_by_account_id: account.id,
           })
-          .select()
-          .single();
+          .eq('id', recipient.id);
 
-        if (msgError) {
-          console.error(`[send-bulk-messages] Error queuing message for ${recipient.phone_number}:`, msgError.message);
+        if (updateError) {
+          console.error(`[send-bulk-messages] Error assigning account for ${recipient.phone_number}:`, updateError.message);
+          queuedCount.failed++;
         } else {
-          queuedMessages.push(message);
-          
-          // Update recipient with assigned account
-          await supabase
-            .from('campaign_recipients')
-            .update({ sent_by_account_id: account.id })
-            .eq('id', recipient.id);
+          queuedCount.success++;
         }
 
         accountIndex++;
       }
 
-      console.log(`[send-bulk-messages] Queued ${queuedMessages.length} messages for campaign ${campaign_id}`);
+      console.log(`[send-bulk-messages] Assigned ${queuedCount.success} recipients for campaign ${campaign_id}`);
 
       return new Response(
         JSON.stringify({ 
           success: true, 
-          queued: queuedMessages.length,
-          message: 'Messages queued. They will be sent when VPS backend is connected.'
+          queued: queuedCount.success,
+          failed: queuedCount.failed,
+          message: 'Recipients assigned. Messages will be sent when VPS backend is connected. Conversations will be created on successful delivery.'
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );

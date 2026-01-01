@@ -24,38 +24,67 @@ serve(async (req) => {
 
     switch (task_type) {
       case "send": {
-        const { message_id, success, error, campaign_recipient_id, account_id } = result;
+        const { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name } = result;
 
         if (success) {
-          // Update message status (from pending or sending to sent)
-          await supabase
-            .from("messages")
-            .update({
-              status: "sent",
-              delivered_at: new Date().toISOString(),
-            })
-            .eq("id", message_id)
-            .in("status", ["pending", "sending"]);
+          // For campaign messages: Create conversation and message ONLY on successful send
+          if (campaign_recipient_id && account_id) {
+            // Get or create conversation
+            let conversationId: string | null = null;
+            
+            const { data: existingConv } = await supabase
+              .from("conversations")
+              .select("id")
+              .eq("account_id", account_id)
+              .eq("recipient_phone", recipient_phone)
+              .maybeSingle();
 
-          // Increment account message count
-          const { data: account } = await supabase
-            .from("telegram_accounts")
-            .select("messages_sent_today")
-            .eq("id", account_id)
-            .single();
+            if (existingConv) {
+              conversationId = existingConv.id;
+              console.log(`[report-task-result] Using existing conversation ${conversationId}`);
+            } else {
+              // Create new conversation only on successful delivery
+              const { data: newConv, error: convError } = await supabase
+                .from("conversations")
+                .insert({
+                  account_id: account_id,
+                  recipient_phone: recipient_phone,
+                  recipient_name: recipient_name,
+                  is_active: true,
+                  first_message_sent: true,
+                  last_message_at: new Date().toISOString(),
+                })
+                .select()
+                .single();
 
-          if (account) {
-            await supabase
-              .from("telegram_accounts")
-              .update({
-                messages_sent_today: (account.messages_sent_today || 0) + 1,
-                last_active: new Date().toISOString(),
-              })
-              .eq("id", account_id);
-          }
+              if (convError) {
+                console.error(`[report-task-result] Error creating conversation:`, convError);
+              } else {
+                conversationId = newConv.id;
+                console.log(`[report-task-result] Created new conversation ${conversationId}`);
+              }
+            }
 
-          // Update campaign recipient if applicable
-          if (campaign_recipient_id) {
+            // Create message record for the sent message
+            if (conversationId) {
+              const { error: msgError } = await supabase
+                .from("messages")
+                .insert({
+                  account_id: account_id,
+                  conversation_id: conversationId,
+                  content: content || '',
+                  direction: 'outgoing',
+                  status: 'sent',
+                  delivered_at: new Date().toISOString(),
+                  campaign_recipient_id: campaign_recipient_id,
+                });
+
+              if (msgError) {
+                console.error(`[report-task-result] Error creating message:`, msgError);
+              }
+            }
+
+            // Update campaign recipient status
             await supabase
               .from("campaign_recipients")
               .update({
@@ -85,9 +114,36 @@ serve(async (req) => {
                   .eq("id", recipient.campaign_id);
               }
             }
+          } else if (message_id) {
+            // Non-campaign message: just update existing message status
+            await supabase
+              .from("messages")
+              .update({
+                status: "sent",
+                delivered_at: new Date().toISOString(),
+              })
+              .eq("id", message_id)
+              .in("status", ["pending", "sending"]);
           }
 
-          console.log(`[report-task-result] Message ${message_id} sent successfully`);
+          // Increment account message count
+          const { data: account } = await supabase
+            .from("telegram_accounts")
+            .select("messages_sent_today")
+            .eq("id", account_id)
+            .single();
+
+          if (account) {
+            await supabase
+              .from("telegram_accounts")
+              .update({
+                messages_sent_today: (account.messages_sent_today || 0) + 1,
+                last_active: new Date().toISOString(),
+              })
+              .eq("id", account_id);
+          }
+
+          console.log(`[report-task-result] Message sent successfully for recipient ${campaign_recipient_id || message_id}`);
         } else {
           // Check if error indicates account restriction
           const restrictionErrors = [
