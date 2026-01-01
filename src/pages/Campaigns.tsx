@@ -525,11 +525,24 @@ const Campaigns: React.FC = () => {
     })));
   };
 
-  // All active accounts are available for campaigns (warmup disabled for testing)
+  // Filter out accounts that have a future restricted_until (temporarily restricted)
+  // These can still chat with existing contacts but CANNOT be used for campaigns (new contacts = ban risk)
   const now = new Date();
-  const warmedUpAccounts = accounts.filter(a => a.status === 'active');
-  const warmingAccounts: typeof accounts = []; // No warmup restriction
+  const isTemporarilyRestricted = (account: typeof accounts[0]) => {
+    return account.restrictedUntil && new Date(account.restrictedUntil) > now;
+  };
 
+  // For campaigns: only active accounts that are NOT temporarily restricted
+  const campaignEligibleAccounts = accounts.filter(
+    (a) => a.status === 'active' && !isTemporarilyRestricted(a)
+  );
+  const tempRestrictedAccounts = accounts.filter(
+    (a) => a.status === 'active' && isTemporarilyRestricted(a)
+  );
+
+  // Legacy naming kept for backward compat in UI
+  const warmedUpAccounts = campaignEligibleAccounts;
+  const warmingAccounts: typeof accounts = []; // No warmup restriction
   const activeAccounts = accounts.filter(a => a.status === 'active');
 
   return (
@@ -706,6 +719,36 @@ username123
                         );
                       })}
                       
+                    </div>
+                  )}
+
+                  {/* Show temporarily restricted accounts as informational (not selectable) */}
+                  {tempRestrictedAccounts.length > 0 && (
+                    <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-yellow-600 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium text-yellow-600">
+                            {tempRestrictedAccounts.length} Account(s) Temporarily Restricted
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            These accounts have a 24h+ restriction and cannot be used for campaigns (new contacts = ban risk).
+                            They can still reply to existing conversations.
+                          </p>
+                          <div className="mt-2 space-y-1">
+                            {tempRestrictedAccounts.map((acc) => {
+                              const hoursLeft = acc.restrictedUntil
+                                ? Math.ceil((new Date(acc.restrictedUntil).getTime() - now.getTime()) / (1000 * 60 * 60))
+                                : 0;
+                              return (
+                                <p key={acc.id} className="text-xs text-yellow-600">
+                                  • {acc.firstName || acc.phoneNumber} — {hoursLeft}h left
+                                </p>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
                   
@@ -992,9 +1035,24 @@ username123
           ) : (
             campaigns.map((campaign) => {
               const report = campaignReports.get(campaign.id);
+
+              // Check if this campaign has usable accounts (not temp restricted, under daily limit)
+              const assignedAccountIds = campaign.accountIds || [];
+              const usableAssigned = assignedAccountIds.filter((accId) => {
+                const acc = accounts.find((a) => a.id === accId);
+                if (!acc) return false;
+                if (acc.status !== 'active') return false;
+                if (acc.restrictedUntil && new Date(acc.restrictedUntil) > now) return false;
+                if ((acc.messagesSentToday ?? 0) >= (acc.dailyLimit ?? 25)) return false;
+                return true;
+              });
+
+              const hasPending = (report?.pending ?? 0) > 0;
+              const noUsableAccounts = usableAssigned.length === 0 && assignedAccountIds.length > 0;
+              const campaignStuck = campaign.status === 'running' && hasPending && noUsableAccounts;
               
               return (
-                <Card key={campaign.id} className="hover:border-primary/30 transition-colors">
+                <Card key={campaign.id} className={`hover:border-primary/30 transition-colors ${campaignStuck ? 'border-destructive' : ''}`}>
                   <CardHeader className="pb-3">
                     <div className="flex items-start justify-between">
                       <div>
@@ -1003,10 +1061,21 @@ username123
                           <Badge className={getStatusColor(campaign.status)}>
                             {campaign.status}
                           </Badge>
+                          {campaignStuck && (
+                            <Badge variant="destructive" className="gap-1">
+                              <AlertCircle className="w-3 h-3" />
+                              No Usable Accounts
+                            </Badge>
+                          )}
                         </CardTitle>
                         <p className="text-sm text-muted-foreground mt-1">
                           Created {format(campaign.createdAt, 'MMM d, yyyy')}
                         </p>
+                        {campaignStuck && (
+                          <p className="text-xs text-destructive mt-1">
+                            All assigned accounts are restricted or at daily limit. Campaign cannot progress.
+                          </p>
+                        )}
                       </div>
                       <div className="flex gap-2">
                         {/* Upload Recipients Button */}
