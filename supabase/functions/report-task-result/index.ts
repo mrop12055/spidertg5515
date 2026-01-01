@@ -89,6 +89,66 @@ serve(async (req) => {
 
           console.log(`[report-task-result] Message ${message_id} sent successfully`);
         } else {
+          // Check if error indicates account restriction
+          const restrictionErrors = [
+            'restricted',
+            'flood',
+            'too many requests',
+            'wait',
+            'spam',
+            'banned',
+            'deactivated',
+            'phone_number_banned',
+            'user_deactivated',
+            'auth_key_unregistered',
+            'session_revoked',
+            'user_is_blocked'
+          ];
+          
+          const errorLower = (error || '').toLowerCase();
+          const isRestricted = restrictionErrors.some(r => errorLower.includes(r));
+          
+          if (isRestricted && account_id) {
+            console.log(`[report-task-result] Account ${account_id} appears restricted, stopping immediately`);
+            
+            // Mark account as restricted
+            await supabase
+              .from("telegram_accounts")
+              .update({
+                status: "restricted",
+                ban_reason: error,
+                restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+              })
+              .eq("id", account_id);
+            
+            // Cancel ALL pending messages from this account
+            const { data: cancelledMessages } = await supabase
+              .from("messages")
+              .update({ 
+                status: "cancelled", 
+                failed_reason: `Account restricted: ${error}` 
+              })
+              .eq("account_id", account_id)
+              .eq("status", "pending")
+              .select("id, campaign_recipient_id");
+            
+            if (cancelledMessages && cancelledMessages.length > 0) {
+              console.log(`[report-task-result] Cancelled ${cancelledMessages.length} pending messages from restricted account`);
+              
+              // Update campaign recipients status
+              const recipientIds = cancelledMessages
+                .filter(m => m.campaign_recipient_id)
+                .map(m => m.campaign_recipient_id);
+              
+              if (recipientIds.length > 0) {
+                await supabase
+                  .from("campaign_recipients")
+                  .update({ status: "failed" })
+                  .in("id", recipientIds);
+              }
+            }
+          }
+          
           // Update message as failed (from pending or sending to failed)
           await supabase
             .from("messages")
