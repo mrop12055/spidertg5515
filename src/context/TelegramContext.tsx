@@ -121,6 +121,13 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           appVersion: acc.app_version || undefined,
           langCode: acc.lang_code || undefined,
           systemLangCode: acc.system_lang_code || undefined,
+          // Anti-ban features
+          warmupPhase: (acc as any).warmup_phase ?? 0,
+          warmupStartedAt: (acc as any).warmup_started_at ? new Date((acc as any).warmup_started_at) : undefined,
+          spambotStatus: (acc as any).spambot_status || 'unknown',
+          phoneCountry: (acc as any).phone_country || undefined,
+          geoMismatch: (acc as any).geo_mismatch || false,
+          apiCredentialId: (acc as any).api_credential_id || undefined,
         })));
       }
 

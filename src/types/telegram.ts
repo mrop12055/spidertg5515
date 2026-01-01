@@ -25,6 +25,13 @@ export interface TelegramAccount {
   appVersion?: string;
   langCode?: string;
   systemLangCode?: string;
+  // Anti-ban features
+  warmupPhase?: number; // 0-4 (0 = new, 4 = fully warmed)
+  warmupStartedAt?: Date;
+  spambotStatus?: 'unknown' | 'clean' | 'limited' | 'restricted';
+  phoneCountry?: string;
+  geoMismatch?: boolean;
+  apiCredentialId?: string;
 }
 
 export interface Proxy {
