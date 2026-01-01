@@ -96,12 +96,12 @@ const Chat: React.FC = () => {
     }
   };
 
-  // Helper to check if conversation has a reply (we sent first AND they replied)
-  const hasReceivedReply = (conv: typeof conversations[0]) => {
+  // Helper to check if we sent the first message (campaign initiated)
+  const isUserInitiated = (conv: typeof conversations[0]) => {
     const convMessages = messages.filter(m => m.conversationId === conv.id);
     
-    // Must have at least 2 messages
-    if (convMessages.length < 2) return false;
+    // No messages = don't show
+    if (convMessages.length === 0) return false;
     
     // Sort by timestamp
     const sorted = [...convMessages].sort((a, b) => 
@@ -109,12 +109,7 @@ const Chat: React.FC = () => {
     );
     
     // First message must be outgoing (we sent via campaign)
-    const firstIsOutgoing = sorted[0]?.direction === 'outgoing';
-    
-    // Must have at least one incoming message (reply)
-    const hasIncoming = convMessages.some(m => m.direction === 'incoming');
-    
-    return firstIsOutgoing && hasIncoming;
+    return sorted[0]?.direction === 'outgoing';
   };
 
   const filteredConversations = conversations
@@ -128,9 +123,9 @@ const Chat: React.FC = () => {
       const isNotSpamBot = 
         c.recipientPhone !== '@SpamBot' && 
         c.recipientName?.toLowerCase() !== 'spam info bot';
-      // Only show conversations where we sent first AND received a reply
-      const hasReply = hasReceivedReply(c);
-      return matchesTime && matchesSearch && isNotSpamBot && hasReply;
+      // Only show conversations where WE sent first message
+      const weInitiated = isUserInitiated(c);
+      return matchesTime && matchesSearch && isNotSpamBot && weInitiated;
     })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
@@ -458,7 +453,7 @@ const Chat: React.FC = () => {
             ) : (
               <>
                 <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-lg font-semibold">Replies Only</h2>
+                  <h2 className="text-lg font-semibold">Chats</h2>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsSelectionMode(true)} title="Select chats">
                       <CheckSquare className="w-5 h-5" />
@@ -503,9 +498,9 @@ const Chat: React.FC = () => {
               {filteredConversations.length === 0 ? (
                 <div className="px-4 py-12 text-center">
                   <MessageSquare className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
-                  <p className="text-muted-foreground text-sm">No replies yet</p>
+                  <p className="text-muted-foreground text-sm">No chats yet</p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Conversations will appear when campaign recipients reply
+                    Start a campaign to begin conversations
                   </p>
                 </div>
               ) : (
