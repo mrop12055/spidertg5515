@@ -14,6 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { CountdownTimer } from '@/components/ui/countdown-timer';
 import { 
   Plus, Play, Pause, Trash2, Edit, Send, Users, CheckCircle, XCircle, 
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
@@ -735,17 +736,18 @@ username123
                             These accounts have a 24h+ restriction and cannot be used for campaigns (new contacts = ban risk).
                             They can still reply to existing conversations.
                           </p>
-                          <div className="mt-2 space-y-1">
-                            {tempRestrictedAccounts.map((acc) => {
-                              const hoursLeft = acc.restrictedUntil
-                                ? Math.ceil((new Date(acc.restrictedUntil).getTime() - now.getTime()) / (1000 * 60 * 60))
-                                : 0;
-                              return (
-                                <p key={acc.id} className="text-xs text-yellow-600">
-                                  • {acc.firstName || acc.phoneNumber} — {hoursLeft}h left
-                                </p>
-                              );
-                            })}
+                          <div className="mt-2 space-y-2">
+                            {tempRestrictedAccounts.map((acc) => (
+                              <div key={acc.id} className="flex items-center justify-between text-xs text-yellow-600 bg-yellow-500/5 rounded px-2 py-1">
+                                <span>• {acc.firstName || acc.phoneNumber}</span>
+                                {acc.restrictedUntil && (
+                                  <CountdownTimer 
+                                    targetDate={new Date(acc.restrictedUntil)} 
+                                    className="text-yellow-600"
+                                  />
+                                )}
+                              </div>
+                            ))}
                           </div>
                         </div>
                       </div>
