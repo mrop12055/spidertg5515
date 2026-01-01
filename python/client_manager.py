@@ -43,6 +43,13 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
     if account_id in active_clients:
         client = active_clients[account_id]
         if client.is_connected():
+            # Ensure incoming message handler is installed (important when a client was created by another runner)
+            if setup_handler and not getattr(client, "_telegramcrm_handler_installed", False):
+                try:
+                    await setup_handler(client, account_id)
+                    setattr(client, "_telegramcrm_handler_installed", True)
+                except Exception as e:
+                    print(f"  ⚠ Failed to set up handler for {account.get('phone_number', 'unknown')}: {e}")
             return client
     
     session_data = account.get("session_data")
@@ -66,6 +73,7 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         # Set up message handler if provided
         if setup_handler:
             await setup_handler(client, account_id)
+            setattr(client, "_telegramcrm_handler_installed", True)
         
         active_clients[account_id] = client
         
