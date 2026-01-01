@@ -93,35 +93,63 @@ function randomChoice<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function generateFingerprint(): {
+// Track used fingerprints to ensure uniqueness within batch
+const usedFingerprints = new Set<string>();
+
+function generateUniqueFingerprint(existingFingerprints: Set<string>): {
   device_model: string;
   system_version: string;
   app_version: string;
   lang_code: string;
   system_lang_code: string;
 } {
-  // 80% Android, 20% iOS
-  const useAndroid = Math.random() < 0.8;
+  let attempts = 0;
+  const maxAttempts = 100;
   
-  let device_model: string;
-  let system_version: string;
-  
-  if (useAndroid) {
-    const device = randomChoice(ANDROID_DEVICES);
-    device_model = device.model;
-    system_version = randomChoice(device.versions);
-  } else {
-    const device = randomChoice(IOS_DEVICES);
-    device_model = device.model;
-    system_version = randomChoice(device.versions);
+  while (attempts < maxAttempts) {
+    // 80% Android, 20% iOS
+    const useAndroid = Math.random() < 0.8;
+    
+    let device_model: string;
+    let system_version: string;
+    
+    if (useAndroid) {
+      const device = randomChoice(ANDROID_DEVICES);
+      device_model = device.model;
+      system_version = randomChoice(device.versions);
+    } else {
+      const device = randomChoice(IOS_DEVICES);
+      device_model = device.model;
+      system_version = randomChoice(device.versions);
+    }
+    
+    const app_version = randomChoice(TELEGRAM_VERSIONS);
+    const lang = randomChoice(LANGUAGES);
+    const lang_code = lang.code;
+    const system_lang_code = randomChoice(lang.systems);
+    
+    // Create unique key for this fingerprint
+    const fingerprintKey = `${device_model}|${system_version}|${app_version}|${lang_code}|${system_lang_code}`;
+    
+    // Check if this fingerprint is already used
+    if (!existingFingerprints.has(fingerprintKey) && !usedFingerprints.has(fingerprintKey)) {
+      usedFingerprints.add(fingerprintKey);
+      return { device_model, system_version, app_version, lang_code, system_lang_code };
+    }
+    
+    attempts++;
   }
   
-  const app_version = randomChoice(TELEGRAM_VERSIONS);
-  const lang = randomChoice(LANGUAGES);
-  const lang_code = lang.code;
-  const system_lang_code = randomChoice(lang.systems);
-  
-  return { device_model, system_version, app_version, lang_code, system_lang_code };
+  // Fallback: generate with random suffix to ensure uniqueness
+  const device = randomChoice(ANDROID_DEVICES);
+  const app_version = `${randomChoice(TELEGRAM_VERSIONS)}.${Math.floor(Math.random() * 100)}`;
+  return {
+    device_model: device.model,
+    system_version: randomChoice(device.versions),
+    app_version,
+    lang_code: randomChoice(LANGUAGES).code,
+    system_lang_code: "en-US"
+  };
 }
 
 // Extract user data from Telethon session file
@@ -221,6 +249,20 @@ serve(async (req) => {
 
     console.log(`[process-account-upload] Processing ${accounts.length} accounts`);
 
+    // Fetch existing fingerprints to ensure uniqueness
+    const { data: existingAccounts } = await supabase
+      .from('telegram_accounts')
+      .select('device_model, system_version, app_version, lang_code, system_lang_code');
+    
+    const existingFingerprints = new Set<string>();
+    existingAccounts?.forEach(acc => {
+      if (acc.device_model) {
+        const key = `${acc.device_model}|${acc.system_version}|${acc.app_version}|${acc.lang_code}|${acc.system_lang_code}`;
+        existingFingerprints.add(key);
+      }
+    });
+    console.log(`[process-account-upload] Found ${existingFingerprints.size} existing fingerprints`);
+
     const results = {
       successful: 0,
       failed: 0,
@@ -242,10 +284,11 @@ serve(async (req) => {
         const extracted = extractUserDataFromSession(account.session_data);
         const status = extracted.isValid ? 'active' : 'disconnected';
         
-        // Generate unique device fingerprint for this account
-        const fingerprint = generateFingerprint();
+        // Generate UNIQUE device fingerprint for this account
+        const fingerprint = generateUniqueFingerprint(existingFingerprints);
         
         console.log(`[process-account-upload] ${account.phone_number}: valid=${extracted.isValid}, fingerprint=${fingerprint.device_model} (${fingerprint.system_version})`);
+
 
         // Check if account already exists
         const { data: existing } = await supabase
