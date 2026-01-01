@@ -1,15 +1,141 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Download } from 'lucide-react';
+import { Download, CheckCircle2, XCircle, Loader2, Send, MessageSquare, UserCog, Flame } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
+import { supabase } from '@/integrations/supabase/client';
+
+interface RunnerStatus {
+  name: string;
+  icon: React.ReactNode;
+  color: string;
+  functions: string[];
+  lastSeen: Date | null;
+  isOnline: boolean;
+}
 
 const SetupGuide: React.FC = () => {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+  // Runner status state
+  const [runnerStatuses, setRunnerStatuses] = useState<RunnerStatus[]>([
+    {
+      name: 'Campaign Runner',
+      icon: <Send className="h-5 w-5" />,
+      color: 'text-blue-500',
+      functions: ['Send campaign messages', 'Validate recipients', 'Track delivery'],
+      lastSeen: null,
+      isOnline: false
+    },
+    {
+      name: 'LiveChat Runner',
+      icon: <MessageSquare className="h-5 w-5" />,
+      color: 'text-purple-500',
+      functions: ['Listen incoming messages', 'Send replies', 'Real-time updates'],
+      lastSeen: null,
+      isOnline: false
+    },
+    {
+      name: 'Account Runner',
+      icon: <UserCog className="h-5 w-5" />,
+      color: 'text-yellow-500',
+      functions: ['SpamBot check', 'Change name/photo', 'Privacy settings', 'Password', 'Logout sessions'],
+      lastSeen: null,
+      isOnline: false
+    },
+    {
+      name: 'Warmup Runner',
+      icon: <Flame className="h-5 w-5" />,
+      color: 'text-red-500',
+      functions: ['Join channels', 'View content', 'Account maturation'],
+      lastSeen: null,
+      isOnline: false
+    }
+  ]);
+
+  // Check runner status based on recent account activity
+  useEffect(() => {
+    const checkRunnerStatus = async () => {
+      try {
+        // Check for recently active accounts (within last 30 seconds = runner is live)
+        const thirtySecondsAgo = new Date(Date.now() - 30000).toISOString();
+        
+        const { data: activeAccounts } = await supabase
+          .from('telegram_accounts')
+          .select('last_active, status')
+          .gte('last_active', thirtySecondsAgo);
+        
+        const hasActiveAccounts = activeAccounts && activeAccounts.length > 0;
+        
+        // Check for pending tasks (runners are processing)
+        const { data: pendingTasks } = await supabase
+          .from('account_check_tasks')
+          .select('task_type, status')
+          .eq('status', 'pending')
+          .limit(5);
+        
+        const hasPendingAccountTasks = pendingTasks && pendingTasks.length > 0;
+        
+        // Check for running campaigns
+        const { data: runningCampaigns } = await supabase
+          .from('campaigns')
+          .select('status')
+          .eq('status', 'running')
+          .limit(1);
+        
+        const hasCampaignRunning = runningCampaigns && runningCampaigns.length > 0;
+        
+        // Check for active conversations (livechat)
+        const { data: activeConversations } = await supabase
+          .from('conversations')
+          .select('last_message_at')
+          .gte('last_message_at', thirtySecondsAgo)
+          .limit(1);
+        
+        const hasRecentMessages = activeConversations && activeConversations.length > 0;
+
+        // Check maturation tasks for warmup
+        const { data: warmupTasks } = await supabase
+          .from('maturation_tasks')
+          .select('status')
+          .eq('status', 'pending')
+          .limit(1);
+        
+        const hasWarmupTasks = warmupTasks && warmupTasks.length > 0;
+
+        setRunnerStatuses(prev => prev.map((runner, index) => {
+          let isOnline = false;
+          
+          if (index === 0) { // Campaign
+            isOnline = hasActiveAccounts && hasCampaignRunning;
+          } else if (index === 1) { // LiveChat
+            isOnline = hasActiveAccounts || hasRecentMessages;
+          } else if (index === 2) { // Account
+            isOnline = hasActiveAccounts || hasPendingAccountTasks;
+          } else if (index === 3) { // Warmup
+            isOnline = hasActiveAccounts && hasWarmupTasks;
+          }
+          
+          return {
+            ...runner,
+            isOnline,
+            lastSeen: isOnline ? new Date() : runner.lastSeen
+          };
+        }));
+      } catch (error) {
+        console.error('Error checking runner status:', error);
+      }
+    };
+
+    checkRunnerStatus();
+    const interval = setInterval(checkRunnerStatus, 5000); // Check every 5 seconds
+    
+    return () => clearInterval(interval);
+  }, []);
 
   // ========== 1. CONFIG.PY ==========
   const configPy = `"""
@@ -1156,6 +1282,83 @@ timeout /t 3
                 <li><code className="bg-background px-2 py-1 rounded">pip install telethon httpx</code></li>
                 <li>Run: <code className="bg-background px-2 py-1 rounded">python main_runner.py</code></li>
               </ol>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Runner Status Section */}
+        <Card>
+          <CardContent className="p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-semibold">🖥️ Python Runners Status</h3>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Auto-refresh every 5s
+              </div>
+            </div>
+            
+            <div className="grid gap-3">
+              {runnerStatuses.map((runner, index) => (
+                <div 
+                  key={index}
+                  className={`border rounded-lg p-4 transition-all ${
+                    runner.isOnline 
+                      ? 'border-green-500/50 bg-green-500/5' 
+                      : 'border-border bg-muted/30'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
+                      <div className={runner.color}>
+                        {runner.icon}
+                      </div>
+                      <div>
+                        <p className="font-medium">{runner.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {runner.lastSeen 
+                            ? `Last seen: ${runner.lastSeen.toLocaleTimeString()}`
+                            : 'Not connected yet'
+                          }
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {runner.isOnline ? (
+                        <>
+                          <span className="text-xs font-medium text-green-600 dark:text-green-400">LIVE</span>
+                          <CheckCircle2 className="h-5 w-5 text-green-500" />
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-xs font-medium text-muted-foreground">OFFLINE</span>
+                          <XCircle className="h-5 w-5 text-muted-foreground" />
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-1.5 mt-3">
+                    {runner.functions.map((func, funcIndex) => (
+                      <span 
+                        key={funcIndex}
+                        className={`text-xs px-2 py-0.5 rounded-full ${
+                          runner.isOnline
+                            ? 'bg-green-500/20 text-green-700 dark:text-green-300'
+                            : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {func}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="text-center pt-2">
+              <p className="text-xs text-muted-foreground">
+                💡 Run <code className="bg-muted px-1.5 py-0.5 rounded">RUN_ALL.bat</code> on your PC to connect runners
+              </p>
             </div>
           </CardContent>
         </Card>
