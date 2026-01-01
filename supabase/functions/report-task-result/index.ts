@@ -24,11 +24,30 @@ serve(async (req) => {
 
     switch (task_type) {
       case "send": {
-        const { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name } = result;
+        let { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name } = result;
 
         if (success) {
           // For campaign messages: Create conversation and message ONLY on successful send
           if (campaign_recipient_id && account_id) {
+            // FALLBACK: If content/recipient_phone/name are missing, fetch from campaign_recipients
+            if (!content || !recipient_phone) {
+              const { data: recipientData } = await supabase
+                .from("campaign_recipients")
+                .select("phone_number, name, campaigns(message_template)")
+                .eq("id", campaign_recipient_id)
+                .single();
+              
+              if (recipientData) {
+                recipient_phone = recipient_phone || recipientData.phone_number;
+                recipient_name = recipient_name || recipientData.name;
+                const template = (recipientData.campaigns as any)?.message_template || '';
+                content = content || template
+                  .replace(/{name}/g, recipientData.name || 'there')
+                  .replace(/{phone}/g, recipientData.phone_number);
+                console.log(`[report-task-result] Fetched missing data from recipient: content="${content}", phone=${recipient_phone}`);
+              }
+            }
+            
             // Get or create conversation
             let conversationId: string | null = null;
             
