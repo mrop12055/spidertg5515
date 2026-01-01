@@ -68,6 +68,7 @@ async def main_loop():
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
                 account = task.get("account", {})
+                delay_after = task.get("delay_after", 30)  # Default 30 sec delay
                 
                 client = await get_or_create_client(account)
                 if client and recipient:
@@ -87,7 +88,8 @@ async def main_loop():
                     })
                     
                     if success:
-                        print(f"    ✓ Sent!")
+                        print(f"    ✓ Sent! Waiting {delay_after}s before next...")
+                        await asyncio.sleep(delay_after)  # Human-like delay
                     else:
                         print(f"    ✗ Failed: {error}")
             
