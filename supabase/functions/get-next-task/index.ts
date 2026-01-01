@@ -7,9 +7,14 @@ const corsHeaders = {
 };
 
 const LIVE_CONVERSATION_TIMEOUT_MINUTES = 5;
-const WARMUP_DAYS = 0; // Days before account is ready for campaigns (disabled for testing)
-const MESSAGE_DELAY_MIN_SECONDS = 5; // Minimum delay between campaign messages
-const MESSAGE_DELAY_MAX_SECONDS = 15; // Maximum delay between campaign messages
+
+// Default values (will be overridden by database settings)
+let WARMUP_DAYS = 0;
+let MESSAGE_DELAY_MIN_SECONDS = 5;
+let MESSAGE_DELAY_MAX_SECONDS = 15;
+let ACCOUNT_SWITCH_DELAY_SECONDS = 30;
+let DAILY_MESSAGE_LIMIT = 25;
+let MESSAGES_PER_ACCOUNT = 10;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -26,6 +31,27 @@ serve(async (req) => {
     const { account_id, runner } = body;
 
     console.log(`[get-next-task] Request for runner: ${runner || 'all'}, account: ${account_id || 'any'}`);
+
+    // Load settings from database
+    const { data: settingsData } = await supabase
+      .from("app_settings")
+      .select("key, value");
+
+    if (settingsData) {
+      for (const setting of settingsData) {
+        const value = setting.value as Record<string, unknown>;
+        if (setting.key === "message_timing" && value) {
+          MESSAGE_DELAY_MIN_SECONDS = (value.minDelaySeconds as number) || MESSAGE_DELAY_MIN_SECONDS;
+          MESSAGE_DELAY_MAX_SECONDS = (value.maxDelaySeconds as number) || MESSAGE_DELAY_MAX_SECONDS;
+          ACCOUNT_SWITCH_DELAY_SECONDS = (value.accountSwitchDelaySeconds as number) || ACCOUNT_SWITCH_DELAY_SECONDS;
+        } else if (setting.key === "account_limits" && value) {
+          WARMUP_DAYS = (value.warmupDays as number) || WARMUP_DAYS;
+          DAILY_MESSAGE_LIMIT = (value.dailyMessageLimit as number) || DAILY_MESSAGE_LIMIT;
+          MESSAGES_PER_ACCOUNT = (value.messagesPerAccount as number) || MESSAGES_PER_ACCOUNT;
+        }
+      }
+      console.log(`[get-next-task] Loaded settings: delay=${MESSAGE_DELAY_MIN_SECONDS}-${MESSAGE_DELAY_MAX_SECONDS}s, warmup=${WARMUP_DAYS}d, limit=${DAILY_MESSAGE_LIMIT}`);
+    }
 
     // Reset any messages stuck in "sending" status for more than 2 minutes
     const sendingCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();

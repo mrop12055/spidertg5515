@@ -13,6 +13,7 @@ import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { 
   Settings as SettingsIcon, 
   Bell, 
@@ -58,33 +59,24 @@ const Settings: React.FC = () => {
   const { toast: showToast } = useToast();
   const [isCleaningUp, setIsCleaningUp] = useState(false);
   
-  const [settings, setSettings] = useState({
-    dailyMessageLimit: 10,
-    messageCooldown: 60,
-    autoRestartBanned: false,
+  // Use database settings hook
+  const { 
+    settings: dbSettings, 
+    isLoading: isLoadingSettings, 
+    isSaving, 
+    saveAllSettings, 
+    updateSettings: updateDbSettings 
+  } = useAppSettings();
+  
+  // Local UI settings (for things not in database yet)
+  const [localSettings, setLocalSettings] = useState({
     notifyOnReply: true,
     notifyOnBan: true,
     maturationAutoRun: false,
-    proxyRotation: false,
-    autoCleanupDays: 7,
-    warmupDays: 14,
     blockFirstMessageLinks: true,
     warnFirstMessageLinks: true,
     enforceProxyMapping: true,
     requireGeoMatch: false,
-  });
-
-  // Python script scheduler settings
-  const [schedulerSettings, setSchedulerSettings] = useState({
-    enabled: true,
-    maxMessagesBeforeRotation: 10,
-    cooldownDuration: 10,
-    prioritizeHighMaturity: true,
-    autoSkipRestricted: true,
-    balanceLoad: true,
-    messagesPerAccount: 10,
-    messageInterval: 3,
-    accountSwitchDelay: 5,
   });
 
   // API credentials distribution
@@ -310,38 +302,48 @@ const Settings: React.FC = () => {
     fetchAntiBotStats();
   }, []);
 
-  // Load settings from localStorage
+  // Load local settings from localStorage (for things not in database)
   useEffect(() => {
-    const savedSettings = localStorage.getItem('app_settings');
-    if (savedSettings) {
+    const savedLocal = localStorage.getItem('local_ui_settings');
+    if (savedLocal) {
       try {
-        setSettings(prev => ({ ...prev, ...JSON.parse(savedSettings) }));
+        setLocalSettings(prev => ({ ...prev, ...JSON.parse(savedLocal) }));
       } catch (e) {
-        console.error('Failed to load settings');
-      }
-    }
-
-    const savedScheduler = localStorage.getItem('python_scheduler_settings');
-    if (savedScheduler) {
-      try {
-        setSchedulerSettings(prev => ({ ...prev, ...JSON.parse(savedScheduler) }));
-      } catch (e) {
-        console.error('Failed to load scheduler settings');
+        console.error('Failed to load local settings');
       }
     }
   }, []);
 
-  // Save settings to localStorage
-  const updateSettings = (updates: Partial<typeof settings>) => {
-    const newSettings = { ...settings, ...updates };
-    setSettings(newSettings);
-    localStorage.setItem('app_settings', JSON.stringify(newSettings));
+  // Helper to update message timing settings
+  const updateMessageTiming = (updates: Partial<typeof dbSettings.message_timing>) => {
+    updateDbSettings('message_timing', updates);
   };
 
-  const updateSchedulerSettings = (updates: Partial<typeof schedulerSettings>) => {
-    const newSettings = { ...schedulerSettings, ...updates };
-    setSchedulerSettings(newSettings);
-    localStorage.setItem('python_scheduler_settings', JSON.stringify(newSettings));
+  // Helper to update scheduler settings
+  const updateSchedulerSettings = (updates: Partial<typeof dbSettings.scheduler>) => {
+    updateDbSettings('scheduler', updates);
+  };
+
+  // Helper to update account limits
+  const updateAccountLimits = (updates: Partial<typeof dbSettings.account_limits>) => {
+    updateDbSettings('account_limits', updates);
+  };
+
+  // Helper to update safety settings
+  const updateSafetySettings = (updates: Partial<typeof dbSettings.safety>) => {
+    updateDbSettings('safety', updates);
+  };
+
+  // Helper to update cleanup settings
+  const updateCleanupSettings = (updates: Partial<typeof dbSettings.cleanup>) => {
+    updateDbSettings('cleanup', updates);
+  };
+
+  // Update local UI settings
+  const updateLocalSettings = (updates: Partial<typeof localSettings>) => {
+    const newSettings = { ...localSettings, ...updates };
+    setLocalSettings(newSettings);
+    localStorage.setItem('local_ui_settings', JSON.stringify(newSettings));
   };
 
   // Manual cleanup trigger
@@ -361,13 +363,15 @@ const Settings: React.FC = () => {
     }
   };
 
-  const handleSave = () => {
-    localStorage.setItem('app_settings', JSON.stringify(settings));
-    localStorage.setItem('python_scheduler_settings', JSON.stringify(schedulerSettings));
-    showToast({
-      title: "Settings saved",
-      description: "Your settings have been updated successfully.",
-    });
+  const handleSave = async () => {
+    const saved = await saveAllSettings(dbSettings);
+    if (saved) {
+      localStorage.setItem('local_ui_settings', JSON.stringify(localSettings));
+      showToast({
+        title: "Settings saved",
+        description: "Your settings have been saved to database.",
+      });
+    }
   };
 
   return (
@@ -582,7 +586,7 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={schedulerSettings.enabled}
+                checked={dbSettings.scheduler.enabled}
                 onCheckedChange={(checked) => updateSchedulerSettings({ enabled: checked })}
               />
             </div>
@@ -592,29 +596,29 @@ const Settings: React.FC = () => {
             <div className="space-y-4">
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <Label>Message Interval</Label>
-                  <span className="text-sm font-medium">{schedulerSettings.messageInterval}s</span>
+                  <Label>Min Message Delay</Label>
+                  <span className="text-sm font-medium">{dbSettings.message_timing.minDelaySeconds}s</span>
                 </div>
                 <Slider
-                  value={[schedulerSettings.messageInterval]}
-                  onValueChange={([value]) => updateSchedulerSettings({ messageInterval: value })}
+                  value={[dbSettings.message_timing.minDelaySeconds]}
+                  onValueChange={([value]) => updateMessageTiming({ minDelaySeconds: value })}
                   min={1}
                   max={60}
                   step={1}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Seconds between each message. Lower = faster but riskier.
+                  Minimum seconds between each message.
                 </p>
               </div>
               
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <Label>Account Switch Delay</Label>
-                  <span className="text-sm font-medium">{schedulerSettings.accountSwitchDelay}s</span>
+                  <Label>Max Message Delay</Label>
+                  <span className="text-sm font-medium">{dbSettings.message_timing.maxDelaySeconds}s</span>
                 </div>
                 <Slider
-                  value={[schedulerSettings.accountSwitchDelay]}
-                  onValueChange={([value]) => updateSchedulerSettings({ accountSwitchDelay: value })}
+                  value={[dbSettings.message_timing.maxDelaySeconds]}
+                  onValueChange={([value]) => updateMessageTiming({ maxDelaySeconds: value })}
                   min={1}
                   max={120}
                   step={1}
@@ -623,14 +627,14 @@ const Settings: React.FC = () => {
               
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <Label>Messages Per Account</Label>
-                  <span className="text-sm font-medium">{schedulerSettings.messagesPerAccount}</span>
+                  <Label>Account Switch Delay</Label>
+                  <span className="text-sm font-medium">{dbSettings.message_timing.accountSwitchDelaySeconds}s</span>
                 </div>
                 <Slider
-                  value={[schedulerSettings.messagesPerAccount]}
-                  onValueChange={([value]) => updateSchedulerSettings({ messagesPerAccount: value })}
+                  value={[dbSettings.message_timing.accountSwitchDelaySeconds]}
+                  onValueChange={([value]) => updateMessageTiming({ accountSwitchDelaySeconds: value })}
                   min={1}
-                  max={50}
+                  max={120}
                   step={1}
                 />
               </div>
@@ -638,10 +642,10 @@ const Settings: React.FC = () => {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label>Cooldown Duration</Label>
-                  <span className="text-sm font-medium">{schedulerSettings.cooldownDuration} min</span>
+                  <span className="text-sm font-medium">{dbSettings.scheduler.cooldownDuration} min</span>
                 </div>
                 <Slider
-                  value={[schedulerSettings.cooldownDuration]}
+                  value={[dbSettings.scheduler.cooldownDuration]}
                   onValueChange={([value]) => updateSchedulerSettings({ cooldownDuration: value })}
                   min={1}
                   max={60}
@@ -656,21 +660,21 @@ const Settings: React.FC = () => {
               <div className="flex items-center justify-between">
                 <Label className="text-sm">Prioritize high maturity accounts</Label>
                 <Switch
-                  checked={schedulerSettings.prioritizeHighMaturity}
+                  checked={dbSettings.scheduler.prioritizeHighMaturity}
                   onCheckedChange={(v) => updateSchedulerSettings({ prioritizeHighMaturity: v })}
                 />
               </div>
               <div className="flex items-center justify-between">
                 <Label className="text-sm">Auto-skip restricted accounts</Label>
                 <Switch
-                  checked={schedulerSettings.autoSkipRestricted}
+                  checked={dbSettings.scheduler.autoSkipRestricted}
                   onCheckedChange={(v) => updateSchedulerSettings({ autoSkipRestricted: v })}
                 />
               </div>
               <div className="flex items-center justify-between">
                 <Label className="text-sm">Balance load across accounts</Label>
                 <Switch
-                  checked={schedulerSettings.balanceLoad}
+                  checked={dbSettings.scheduler.balanceLoad}
                   onCheckedChange={(v) => updateSchedulerSettings({ balanceLoad: v })}
                 />
               </div>
@@ -693,11 +697,11 @@ const Settings: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <Label>Daily Message Limit (per account)</Label>
-                <span className="text-sm font-medium">{settings.dailyMessageLimit}</span>
+                <span className="text-sm font-medium">{dbSettings.account_limits.dailyMessageLimit}</span>
               </div>
               <Slider
-                value={[settings.dailyMessageLimit]}
-                onValueChange={([value]) => updateSettings({ dailyMessageLimit: value })}
+                value={[dbSettings.account_limits.dailyMessageLimit]}
+                onValueChange={([value]) => updateAccountLimits({ dailyMessageLimit: value })}
                 min={5}
                 max={50}
                 step={1}
@@ -709,18 +713,32 @@ const Settings: React.FC = () => {
             
             <div>
               <div className="flex items-center justify-between mb-2">
-                <Label>Warm-up Days</Label>
-                <span className="text-sm font-medium">{settings.warmupDays} days</span>
+                <Label>Messages Per Account (per rotation)</Label>
+                <span className="text-sm font-medium">{dbSettings.account_limits.messagesPerAccount}</span>
               </div>
               <Slider
-                value={[settings.warmupDays]}
-                onValueChange={([value]) => updateSettings({ warmupDays: value })}
+                value={[dbSettings.account_limits.messagesPerAccount]}
+                onValueChange={([value]) => updateAccountLimits({ messagesPerAccount: value })}
                 min={1}
+                max={50}
+                step={1}
+              />
+            </div>
+            
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Warm-up Days</Label>
+                <span className="text-sm font-medium">{dbSettings.account_limits.warmupDays} days</span>
+              </div>
+              <Slider
+                value={[dbSettings.account_limits.warmupDays]}
+                onValueChange={([value]) => updateAccountLimits({ warmupDays: value })}
+                min={0}
                 max={14}
                 step={1}
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Days before new accounts can join campaigns
+                Days before new accounts can join campaigns (0 = disabled)
               </p>
             </div>
           </CardContent>
@@ -741,11 +759,11 @@ const Settings: React.FC = () => {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <Label>Auto-delete chats older than</Label>
-                <span className="text-sm font-medium">{settings.autoCleanupDays} days</span>
+                <span className="text-sm font-medium">{dbSettings.cleanup.retentionDays} days</span>
               </div>
               <Slider
-                value={[settings.autoCleanupDays]}
-                onValueChange={([value]) => updateSettings({ autoCleanupDays: value })}
+                value={[dbSettings.cleanup.retentionDays]}
+                onValueChange={([value]) => updateCleanupSettings({ retentionDays: value })}
                 min={3}
                 max={30}
                 step={1}
@@ -795,8 +813,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.autoRestartBanned}
-                onCheckedChange={(checked) => updateSettings({ autoRestartBanned: checked })}
+                checked={dbSettings.safety.autoRestartBanned}
+                onCheckedChange={(checked) => updateSafetySettings({ autoRestartBanned: checked })}
               />
             </div>
             <Separator />
@@ -808,8 +826,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.proxyRotation}
-                onCheckedChange={(checked) => updateSettings({ proxyRotation: checked })}
+                checked={dbSettings.safety.proxyRotation}
+                onCheckedChange={(checked) => updateSafetySettings({ proxyRotation: checked })}
               />
             </div>
           </CardContent>
@@ -851,8 +869,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.maturationAutoRun}
-                onCheckedChange={(checked) => updateSettings({ maturationAutoRun: checked })}
+                checked={localSettings.maturationAutoRun}
+                onCheckedChange={(checked) => updateLocalSettings({ maturationAutoRun: checked })}
               />
             </div>
             <Separator />
@@ -972,8 +990,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.blockFirstMessageLinks}
-                onCheckedChange={(checked) => updateSettings({ blockFirstMessageLinks: checked })}
+                checked={localSettings.blockFirstMessageLinks}
+                onCheckedChange={(checked) => updateLocalSettings({ blockFirstMessageLinks: checked })}
               />
             </div>
             <div className="flex items-center justify-between">
@@ -984,8 +1002,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.warnFirstMessageLinks}
-                onCheckedChange={(checked) => updateSettings({ warnFirstMessageLinks: checked })}
+                checked={localSettings.warnFirstMessageLinks}
+                onCheckedChange={(checked) => updateLocalSettings({ warnFirstMessageLinks: checked })}
               />
             </div>
           </CardContent>
@@ -1027,8 +1045,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.enforceProxyMapping}
-                onCheckedChange={(checked) => updateSettings({ enforceProxyMapping: checked })}
+                checked={localSettings.enforceProxyMapping}
+                onCheckedChange={(checked) => updateLocalSettings({ enforceProxyMapping: checked })}
               />
             </div>
             <div className="flex items-center justify-between">
@@ -1039,8 +1057,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.requireGeoMatch}
-                onCheckedChange={(checked) => updateSettings({ requireGeoMatch: checked })}
+                checked={localSettings.requireGeoMatch}
+                onCheckedChange={(checked) => updateLocalSettings({ requireGeoMatch: checked })}
               />
             </div>
             <Separator />
@@ -1117,8 +1135,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.notifyOnReply}
-                onCheckedChange={(checked) => updateSettings({ notifyOnReply: checked })}
+                checked={localSettings.notifyOnReply}
+                onCheckedChange={(checked) => updateLocalSettings({ notifyOnReply: checked })}
               />
             </div>
             <Separator />
@@ -1130,8 +1148,8 @@ const Settings: React.FC = () => {
                 </p>
               </div>
               <Switch
-                checked={settings.notifyOnBan}
-                onCheckedChange={(checked) => updateSettings({ notifyOnBan: checked })}
+                checked={localSettings.notifyOnBan}
+                onCheckedChange={(checked) => updateLocalSettings({ notifyOnBan: checked })}
               />
             </div>
           </CardContent>
