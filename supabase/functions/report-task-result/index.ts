@@ -177,30 +177,33 @@ serve(async (req) => {
               })
               .eq("id", account_id);
             
-            // Cancel ALL pending messages from this account
-            const { data: cancelledMessages } = await supabase
-              .from("messages")
-              .update({ 
-                status: "cancelled", 
-                failed_reason: `Account restricted: ${error}` 
-              })
-              .eq("account_id", account_id)
-              .eq("status", "pending")
-              .select("id, campaign_recipient_id");
+            // Cancel ALL pending/sending campaign recipients from this account
+            const { data: cancelledRecipients } = await supabase
+              .from("campaign_recipients")
+              .update({ status: "failed" })
+              .eq("sent_by_account_id", account_id)
+              .in("status", ["pending", "sending"])
+              .select("id, campaign_id");
             
-            if (cancelledMessages && cancelledMessages.length > 0) {
-              console.log(`[report-task-result] Cancelled ${cancelledMessages.length} pending messages from restricted account`);
+            if (cancelledRecipients && cancelledRecipients.length > 0) {
+              console.log(`[report-task-result] Cancelled ${cancelledRecipients.length} pending recipients from restricted account`);
               
-              // Update campaign recipients status
-              const recipientIds = cancelledMessages
-                .filter(m => m.campaign_recipient_id)
-                .map(m => m.campaign_recipient_id);
-              
-              if (recipientIds.length > 0) {
-                await supabase
-                  .from("campaign_recipients")
-                  .update({ status: "failed" })
-                  .in("id", recipientIds);
+              // Update failed counts for affected campaigns
+              const campaignIds = [...new Set(cancelledRecipients.map(r => r.campaign_id))];
+              for (const cid of campaignIds) {
+                const failedCount = cancelledRecipients.filter(r => r.campaign_id === cid).length;
+                const { data: campaign } = await supabase
+                  .from("campaigns")
+                  .select("failed_count")
+                  .eq("id", cid)
+                  .single();
+                
+                if (campaign) {
+                  await supabase
+                    .from("campaigns")
+                    .update({ failed_count: (campaign.failed_count || 0) + failedCount })
+                    .eq("id", cid);
+                }
               }
             }
             
@@ -224,18 +227,8 @@ serve(async (req) => {
               }
             }
           }
-          
-          // Update message as failed (from pending or sending to failed)
-          await supabase
-            .from("messages")
-            .update({
-              status: "failed",
-              failed_reason: error,
-            })
-            .eq("id", message_id)
-            .in("status", ["pending", "sending"]);
 
-          // Update campaign recipient if applicable
+          // Update campaign recipient as failed
           if (campaign_recipient_id) {
             await supabase
               .from("campaign_recipients")
@@ -263,9 +256,19 @@ serve(async (req) => {
                   .eq("id", recipient.campaign_id);
               }
             }
+          } else if (message_id) {
+            // Non-campaign message: update existing message as failed
+            await supabase
+              .from("messages")
+              .update({
+                status: "failed",
+                failed_reason: error,
+              })
+              .eq("id", message_id)
+              .in("status", ["pending", "sending"]);
           }
 
-          console.log(`[report-task-result] Message ${message_id} failed: ${error}`);
+          console.log(`[report-task-result] Message failed for recipient ${campaign_recipient_id || message_id}: ${error}`);
         }
         break;
       }
