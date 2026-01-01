@@ -68,22 +68,32 @@ serve(async (req) => {
       }
     }
 
-    // Get all active accounts - exclude banned, restricted
-    const { data: accounts, error: accountsError } = await supabase
+    // Get all active accounts for campaigns - exclude banned, restricted
+    const { data: activeAccounts, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
       .select("*")
       .eq("status", "active");
 
-    if (accountsError) {
-      console.error("[get-next-task] Error fetching accounts:", accountsError);
+    // Get restricted accounts too (for live chat only - they can still chat with existing contacts)
+    const { data: restrictedAccounts } = await supabase
+      .from("telegram_accounts")
+      .select("*")
+      .eq("status", "restricted");
+
+    // Combine for live chat purposes
+    const allUsableAccounts = [...(activeAccounts || []), ...(restrictedAccounts || [])];
+    const accounts = activeAccounts || []; // Only active for campaigns
+
+    if (activeAccountsError) {
+      console.error("[get-next-task] Error fetching accounts:", activeAccountsError);
       return new Response(JSON.stringify({ task: "wait", seconds: 5, reason: "Database error" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    if (!accounts || accounts.length === 0) {
-      console.log("[get-next-task] No active accounts");
-      return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No active accounts" }), {
+    if (!allUsableAccounts || allUsableAccounts.length === 0) {
+      console.log("[get-next-task] No usable accounts");
+      return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No usable accounts" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -376,6 +386,7 @@ serve(async (req) => {
     }
 
     // RUNNER: livechat - Handles ALL pending outgoing messages (not just live conversations)
+    // Restricted accounts CAN send live chat messages to existing contacts
     if (runner === "livechat") {
       // Check ALL pending outgoing messages (not just live conversations)
       const { data: pendingMessages } = await supabase
@@ -390,7 +401,8 @@ serve(async (req) => {
       if (pendingMessages && pendingMessages.length > 0) {
         const msg = pendingMessages[0];
         const conv = msg.conversations || {};
-        const account = accounts.find((a: { id: string }) => a.id === msg.account_id);
+        // Use allUsableAccounts (includes restricted) for live chat
+        const account = allUsableAccounts.find((a: { id: string }) => a.id === msg.account_id);
 
         if (account) {
           await supabase
@@ -399,7 +411,7 @@ serve(async (req) => {
             .eq("id", msg.id)
             .eq("status", "pending");
 
-          console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)} to ${conv.recipient_phone || conv.recipient_username}`);
+          console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)} to ${conv.recipient_phone || conv.recipient_username} (account status: ${account.status})`);
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -425,7 +437,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         task: "wait",
         seconds: 0.1,
-        accounts: accounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
+        accounts: allUsableAccounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
           id: a.id,
           phone_number: a.phone_number,
           session_data: a.session_data,
