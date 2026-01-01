@@ -258,100 +258,168 @@ serve(async (req) => {
           media_type,
         } = result;
 
-        // Find or create conversation
+        console.log(`[report-task-result] Processing incoming message from sender_id=${sender_id}, username=${sender_username}, phone=${sender_phone}`);
+
+        // Find or create conversation with improved matching
         const phoneDisplay = sender_username ? `@${sender_username}` : (sender_phone || `User ${sender_id}`);
         let convId = null;
         let existingConvData = null;
 
         // Priority 1: Try to find by telegram_id first (most reliable)
-        const { data: existingConv } = await supabase
-          .from("conversations")
-          .select("*")
-          .eq("account_id", account_id)
-          .eq("recipient_telegram_id", sender_id)
-          .limit(1);
+        if (sender_id) {
+          const { data: existingConv } = await supabase
+            .from("conversations")
+            .select("*")
+            .eq("account_id", account_id)
+            .eq("recipient_telegram_id", sender_id)
+            .limit(1);
 
-        if (existingConv && existingConv.length > 0) {
-          convId = existingConv[0].id;
-          existingConvData = existingConv[0];
-          console.log(`[report-task-result] Found conversation by telegram_id: ${convId}`);
+          if (existingConv && existingConv.length > 0) {
+            convId = existingConv[0].id;
+            existingConvData = existingConv[0];
+            console.log(`[report-task-result] Found conversation by telegram_id: ${convId}`);
+          }
         }
 
-        // Priority 2: Try to find by username
+        // Priority 2: Try to find by username (with and without @)
         if (!convId && sender_username) {
-          const { data: usernameConv } = await supabase
-            .from("conversations")
-            .select("*")
-            .eq("account_id", account_id)
-            .eq("recipient_username", `@${sender_username}`)
-            .limit(1);
+          const usernameVariants = [
+            `@${sender_username}`,
+            sender_username,
+            sender_username.replace(/^@/, '')
+          ];
+          
+          for (const variant of usernameVariants) {
+            const { data: usernameConv } = await supabase
+              .from("conversations")
+              .select("*")
+              .eq("account_id", account_id)
+              .or(`recipient_username.eq.${variant},recipient_phone.eq.${variant}`)
+              .limit(1);
 
-          if (usernameConv && usernameConv.length > 0) {
-            convId = usernameConv[0].id;
-            existingConvData = usernameConv[0];
-            console.log(`[report-task-result] Found conversation by username: ${convId}`);
+            if (usernameConv && usernameConv.length > 0) {
+              convId = usernameConv[0].id;
+              existingConvData = usernameConv[0];
+              console.log(`[report-task-result] Found conversation by username variant ${variant}: ${convId}`);
+              break;
+            }
           }
         }
 
-        // Priority 3: Try to find by phone number (for campaign-created conversations)
+        // Priority 3: Try to find by phone number with multiple formats
         if (!convId && sender_phone) {
-          // Try with + prefix
-          const { data: phoneConv } = await supabase
-            .from("conversations")
-            .select("*")
-            .eq("account_id", account_id)
-            .or(`recipient_phone.eq.${sender_phone},recipient_phone.eq.+${sender_phone.replace(/^\+/, '')}`)
-            .limit(1);
+          const phoneClean = sender_phone.replace(/[^\d]/g, '');
+          const phoneVariants = [
+            sender_phone,
+            `+${phoneClean}`,
+            phoneClean,
+            sender_phone.replace(/^\+/, '')
+          ];
+          
+          for (const variant of phoneVariants) {
+            const { data: phoneConv } = await supabase
+              .from("conversations")
+              .select("*")
+              .eq("account_id", account_id)
+              .eq("recipient_phone", variant)
+              .limit(1);
 
-          if (phoneConv && phoneConv.length > 0) {
-            convId = phoneConv[0].id;
-            existingConvData = phoneConv[0];
-            console.log(`[report-task-result] Found conversation by phone: ${convId}`);
+            if (phoneConv && phoneConv.length > 0) {
+              convId = phoneConv[0].id;
+              existingConvData = phoneConv[0];
+              console.log(`[report-task-result] Found conversation by phone variant ${variant}: ${convId}`);
+              break;
+            }
           }
         }
 
-        // Priority 4: Find conversation that we recently sent a message to this sender_id
-        // (This helps match when campaign created conversation with phone but we now have telegram_id)
+        // Priority 4: Look for conversations without telegram_id that we recently messaged
+        // This is crucial for campaign conversations where we only have phone number initially
         if (!convId) {
-          const { data: recentMessages } = await supabase
-            .from("messages")
-            .select("conversation_id, conversations(*)")
+          console.log(`[report-task-result] Searching for unlinked campaign conversations...`);
+          
+          // Find conversations for this account that don't have telegram_id set
+          const { data: unlinkedConvs } = await supabase
+            .from("conversations")
+            .select("*, messages!inner(direction, created_at)")
             .eq("account_id", account_id)
-            .eq("direction", "outgoing")
-            .order("created_at", { ascending: false })
-            .limit(50);
+            .is("recipient_telegram_id", null)
+            .order("last_message_at", { ascending: false })
+            .limit(20);
 
-          if (recentMessages) {
-            // Find a conversation for this account that doesn't have telegram_id set yet
-            // and has no incoming messages (meaning it's a fresh campaign conversation)
-            for (const msg of recentMessages) {
-              const conv = msg.conversations as any;
-              if (conv && !conv.recipient_telegram_id) {
-                // This could be the campaign-created conversation
-                // We'll use the first one without telegram_id
+          if (unlinkedConvs && unlinkedConvs.length > 0) {
+            // Find one that has only outgoing messages (fresh campaign conversation waiting for reply)
+            for (const conv of unlinkedConvs) {
+              const hasOnlyOutgoing = (conv.messages as any[]).every((m: any) => m.direction === 'outgoing');
+              if (hasOnlyOutgoing) {
                 convId = conv.id;
                 existingConvData = conv;
-                console.log(`[report-task-result] Found campaign conversation without telegram_id: ${convId}`);
+                console.log(`[report-task-result] Found unlinked campaign conversation: ${convId} (phone: ${conv.recipient_phone})`);
                 break;
               }
             }
           }
         }
 
-        // Update existing conversation with new info
+        // Priority 5: Check campaign_recipients for matching phone and link to that conversation
+        if (!convId && sender_phone) {
+          console.log(`[report-task-result] Searching campaign recipients for phone match...`);
+          
+          const phoneClean = sender_phone.replace(/[^\d]/g, '');
+          const { data: campaignRecipient } = await supabase
+            .from("campaign_recipients")
+            .select("*, messages!inner(conversation_id, account_id)")
+            .or(`phone_number.eq.${sender_phone},phone_number.eq.+${phoneClean},phone_number.eq.${phoneClean}`)
+            .limit(1);
+
+          if (campaignRecipient && campaignRecipient.length > 0) {
+            const msgs = campaignRecipient[0].messages as any[];
+            const matchingMsg = msgs.find((m: any) => m.account_id === account_id);
+            if (matchingMsg?.conversation_id) {
+              const { data: conv } = await supabase
+                .from("conversations")
+                .select("*")
+                .eq("id", matchingMsg.conversation_id)
+                .single();
+              
+              if (conv) {
+                convId = conv.id;
+                existingConvData = conv;
+                console.log(`[report-task-result] Found conversation via campaign recipient: ${convId}`);
+              }
+            }
+          }
+        }
+
+        // Update existing conversation with sender info (link telegram_id)
         if (convId && existingConvData) {
+          const updateData: Record<string, unknown> = {
+            last_message_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            unread_count: (existingConvData.unread_count || 0) + 1,
+            is_active: true,
+          };
+          
+          // Always update telegram_id if we have it
+          if (sender_id) {
+            updateData.recipient_telegram_id = sender_id;
+          }
+          if (sender_name) {
+            updateData.recipient_name = sender_name;
+          }
+          if (sender_username) {
+            updateData.recipient_username = `@${sender_username}`;
+          }
+          if (sender_phone && !existingConvData.recipient_phone?.startsWith('+')) {
+            updateData.recipient_phone = sender_phone;
+          }
+
           await supabase
             .from("conversations")
-            .update({
-              last_message_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-              unread_count: (existingConvData.unread_count || 0) + 1,
-              is_active: true,
-              recipient_telegram_id: sender_id,
-              recipient_name: sender_name || existingConvData.recipient_name,
-              recipient_username: sender_username ? `@${sender_username}` : existingConvData.recipient_username,
-            })
+            .update(updateData)
             .eq("id", convId);
+            
+          console.log(`[report-task-result] Updated conversation ${convId} with telegram_id=${sender_id}`);
         }
 
         if (!convId) {
@@ -421,6 +489,8 @@ serve(async (req) => {
           }
 
           console.log(`[report-task-result] Incoming message saved from ${sender_name || sender_id} to conversation ${convId}`);
+        } else {
+          console.log(`[report-task-result] ERROR: Could not find or create conversation for sender ${sender_id}`);
         }
         break;
       }
