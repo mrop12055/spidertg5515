@@ -458,7 +458,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     totalAccounts: accounts.length,
     activeAccounts: accounts.filter(a => a.status === 'active').length,
     bannedAccounts: accounts.filter(a => a.status === 'banned').length,
-    restrictedAccounts: accounts.filter(a => a.status === 'restricted' || a.status === 'cooldown').length,
+    // Count accounts with status = 'restricted' OR with restrictedUntil in the future
+    restrictedAccounts: accounts.filter(a => 
+      a.status === 'restricted' || 
+      a.status === 'cooldown' ||
+      (a.restrictedUntil && new Date(a.restrictedUntil) > new Date())
+    ).length,
     totalProxies: proxies.length,
     activeProxies: proxies.filter(p => p.status === 'active').length,
     messagesToday: accounts.reduce((sum, a) => sum + a.messagesSentToday, 0),
