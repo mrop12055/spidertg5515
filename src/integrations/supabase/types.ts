@@ -396,12 +396,15 @@ export type Database = {
         Row: {
           api_hash: string | null
           api_id: string | null
+          app_version: string | null
           avatar_url: string | null
           ban_reason: string | null
           created_at: string | null
           daily_limit: number | null
+          device_model: string | null
           first_name: string | null
           id: string
+          lang_code: string | null
           last_active: string | null
           last_name: string | null
           last_spambot_check: string | null
@@ -413,18 +416,23 @@ export type Database = {
           restricted_until: string | null
           session_data: string | null
           status: Database["public"]["Enums"]["account_status"] | null
+          system_lang_code: string | null
+          system_version: string | null
           telegram_id: number | null
           username: string | null
         }
         Insert: {
           api_hash?: string | null
           api_id?: string | null
+          app_version?: string | null
           avatar_url?: string | null
           ban_reason?: string | null
           created_at?: string | null
           daily_limit?: number | null
+          device_model?: string | null
           first_name?: string | null
           id?: string
+          lang_code?: string | null
           last_active?: string | null
           last_name?: string | null
           last_spambot_check?: string | null
@@ -436,18 +444,23 @@ export type Database = {
           restricted_until?: string | null
           session_data?: string | null
           status?: Database["public"]["Enums"]["account_status"] | null
+          system_lang_code?: string | null
+          system_version?: string | null
           telegram_id?: number | null
           username?: string | null
         }
         Update: {
           api_hash?: string | null
           api_id?: string | null
+          app_version?: string | null
           avatar_url?: string | null
           ban_reason?: string | null
           created_at?: string | null
           daily_limit?: number | null
+          device_model?: string | null
           first_name?: string | null
           id?: string
+          lang_code?: string | null
           last_active?: string | null
           last_name?: string | null
           last_spambot_check?: string | null
@@ -459,6 +472,8 @@ export type Database = {
           restricted_until?: string | null
           session_data?: string | null
           status?: Database["public"]["Enums"]["account_status"] | null
+          system_lang_code?: string | null
+          system_version?: string | null
           telegram_id?: number | null
           username?: string | null
         }

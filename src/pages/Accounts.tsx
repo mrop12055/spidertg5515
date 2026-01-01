@@ -18,7 +18,7 @@ import {
   Check, Shield, Globe, Link2, Unlink, Download, MoreVertical,
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
   Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock, 
-  LogOut, PhoneOff, Settings, FolderPlus, Layers
+  LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone
 } from 'lucide-react';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
 import { toast } from 'sonner';
@@ -972,6 +972,16 @@ const Accounts: React.FC = () => {
             <div className="font-medium text-foreground">{getAccountAge(account.createdAt)}d</div>
             <div className="text-muted-foreground">Age</div>
           </div>
+          {/* Device Fingerprint */}
+          {account.deviceModel && (
+            <div 
+              className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-blue-500/10 text-blue-600 cursor-help"
+              title={`${account.deviceModel} | ${account.systemVersion} | v${account.appVersion} | ${account.langCode}`}
+            >
+              <Smartphone className="w-3 h-3" />
+              <span className="max-w-[100px] truncate">{account.deviceModel?.split(' ')[0]}</span>
+            </div>
+          )}
           {proxyLabel && (
             <div className={cn(
               "flex items-center gap-1 px-2 py-1 rounded text-xs",

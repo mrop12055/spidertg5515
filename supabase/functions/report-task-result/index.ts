@@ -634,6 +634,24 @@ serve(async (req) => {
         break;
       }
 
+      case "fingerprint_generated": {
+        const { account_id, device_model, system_version, app_version, lang_code, system_lang_code } = result;
+
+        await supabase
+          .from("telegram_accounts")
+          .update({
+            device_model,
+            system_version,
+            app_version,
+            lang_code,
+            system_lang_code,
+          })
+          .eq("id", account_id);
+
+        console.log(`[report-task-result] Fingerprint saved for ${account_id}: ${device_model} (${system_version})`);
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }

@@ -132,7 +132,7 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
   // ========== 2. CLIENT_MANAGER.PY ==========
   const clientManagerPy = `"""
 TelegramCRM - Client Manager
-Shared Telegram client logic
+Shared Telegram client logic with device fingerprint support
 """
 
 import os
@@ -146,6 +146,7 @@ from telethon import TelegramClient
 from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
 
 from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
+from fingerprint_generator import generate_fingerprint
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
@@ -183,8 +184,41 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
     if not session_path:
         return None
     
+    # Get device fingerprint from account or generate new one
+    device_model = account.get("device_model")
+    system_version = account.get("system_version")
+    app_version = account.get("app_version") or "10.14.2"
+    lang_code = account.get("lang_code") or "en"
+    system_lang_code = account.get("system_lang_code") or "en-US"
+    
+    if not device_model or not system_version:
+        fp = generate_fingerprint()
+        device_model = fp["device_model"]
+        system_version = fp["system_version"]
+        app_version = fp["app_version"]
+        lang_code = fp["lang_code"]
+        system_lang_code = fp["system_lang_code"]
+        print(f"  [FP] Generated: {device_model} ({system_version})")
+        await report_result("fingerprint_generated", {
+            "account_id": account_id,
+            "device_model": device_model,
+            "system_version": system_version,
+            "app_version": app_version,
+            "lang_code": lang_code,
+            "system_lang_code": system_lang_code
+        })
+    else:
+        print(f"  [FP] Using: {device_model} ({system_version})")
+    
     try:
-        client = TelegramClient(session_path, int(TELEGRAM_API_ID), TELEGRAM_API_HASH)
+        client = TelegramClient(
+            session_path, int(TELEGRAM_API_ID), TELEGRAM_API_HASH,
+            device_model=device_model,
+            system_version=system_version,
+            app_version=app_version,
+            lang_code=lang_code,
+            system_lang_code=system_lang_code
+        )
         await client.connect()
         
         if not await client.is_user_authorized():
@@ -1071,12 +1105,54 @@ echo.
 timeout /t 3
 `;
 
+  // ========== FINGERPRINT_GENERATOR.PY ==========
+  const fingerprintGeneratorPy = `"""Device Fingerprint Generator - Unique device identities for each account"""
+import random
+
+ANDROID_DEVICES = [
+    {"model": "Samsung SM-G991B", "versions": ["Android 12", "Android 13"]},
+    {"model": "Samsung SM-A525F", "versions": ["Android 11", "Android 12"]},
+    {"model": "Xiaomi 12", "versions": ["Android 12", "Android 13"]},
+    {"model": "OnePlus 9 Pro", "versions": ["Android 11", "Android 12"]},
+    {"model": "Google Pixel 7", "versions": ["Android 13", "Android 14"]},
+    {"model": "HUAWEI Mate 50 Pro", "versions": ["Android 12", "Android 13"]},
+]
+IOS_DEVICES = [
+    {"model": "iPhone 13 Pro", "versions": ["iOS 16.0", "iOS 16.5", "iOS 17.0"]},
+    {"model": "iPhone 14", "versions": ["iOS 16.5", "iOS 17.0", "iOS 17.2"]},
+    {"model": "iPhone 15 Pro", "versions": ["iOS 17.0", "iOS 17.2"]},
+]
+VERSIONS = ["10.3.2", "10.4.0", "10.6.0", "10.9.0", "10.14.2", "11.0.0", "11.2.0"]
+LANGUAGES = [
+    {"code": "en", "systems": ["en-US", "en-GB"]},
+    {"code": "ar", "systems": ["ar-SA", "ar-AE"]},
+    {"code": "de", "systems": ["de-DE"]},
+    {"code": "es", "systems": ["es-ES", "es-MX"]},
+]
+
+def generate_fingerprint():
+    use_android = random.random() < 0.8
+    if use_android:
+        device = random.choice(ANDROID_DEVICES)
+    else:
+        device = random.choice(IOS_DEVICES)
+    lang = random.choice(LANGUAGES)
+    return {
+        "device_model": device["model"],
+        "system_version": random.choice(device["versions"]),
+        "app_version": random.choice(VERSIONS),
+        "lang_code": lang["code"],
+        "system_lang_code": random.choice(lang["systems"])
+    }
+`;
+
   const downloadZip = async () => {
     const zip = new JSZip();
     const folder = zip.folder("telegram_crm");
     
     folder?.file("config.py", configPy);
     folder?.file("client_manager.py", clientManagerPy);
+    folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
     folder?.file("campaign_runner.py", campaignRunnerPy);
     folder?.file("livechat_runner.py", livechatRunnerPy);
     folder?.file("account_runner.py", accountRunnerPy);
