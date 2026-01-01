@@ -37,6 +37,7 @@ interface AccountSchedulerProps {
   selectedAccountIds: string[];
   onAccountRotation: (accountId: string) => void;
   onSettingsChange: (settings: SchedulerSettings) => void;
+  accountUniqueRecipients?: Map<string, number>; // Unique recipients contacted today per account
 }
 
 interface AccountScheduleInfo {
@@ -52,7 +53,8 @@ const AccountScheduler: React.FC<AccountSchedulerProps> = ({
   accounts,
   selectedAccountIds,
   onAccountRotation,
-  onSettingsChange
+  onSettingsChange,
+  accountUniqueRecipients = new Map()
 }) => {
   const [settings, setSettings] = useState<SchedulerSettings>({
     enabled: true,
@@ -75,7 +77,9 @@ const AccountScheduler: React.FC<AccountSchedulerProps> = ({
       const cooldownEnd = accountCooldowns.get(account.id) || 0;
       const now = Date.now();
       const availableIn = Math.max(0, Math.ceil((cooldownEnd - now) / 1000));
-      const messagesRemaining = account.dailyLimit - account.messagesSentToday;
+      // Use unique recipients count instead of messages sent today
+      const uniqueRecipientsSentToday = accountUniqueRecipients.get(account.id) || 0;
+      const messagesRemaining = account.dailyLimit - uniqueRecipientsSentToday;
       
       let status: AccountScheduleInfo['status'] = 'ready';
       let reason: string | undefined;
@@ -117,7 +121,7 @@ const AccountScheduler: React.FC<AccountSchedulerProps> = ({
         
         // Balance load - lower usage today = higher priority
         if (settings.balanceLoad) {
-          priority += (account.dailyLimit - account.messagesSentToday) * 3;
+          priority += messagesRemaining * 3;
         }
       }
       

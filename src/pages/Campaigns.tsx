@@ -869,6 +869,7 @@ username123
                       console.log('Rotated to account:', accountId);
                     }}
                     onSettingsChange={(settings) => setSchedulerSettings(settings)}
+                    accountUniqueRecipients={accountUniqueRecipients}
                   />
                 </TabsContent>
                 
