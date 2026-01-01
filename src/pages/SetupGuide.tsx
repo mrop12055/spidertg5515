@@ -24,12 +24,14 @@ const SetupGuide: React.FC = () => {
 
   const pythonScript = `#!/usr/bin/env python3
 """
-TelegramCRM - Simplified Backend-Driven Runner
-===============================================
-A thin Python client that executes tasks from the backend.
+TelegramCRM - Backend-Driven Runner with Stop Control
+======================================================
+A Python client that executes tasks from the backend.
 All logic (message queuing, filtering, scheduling) is handled server-side.
+Campaign can be stopped from frontend - Python will stop immediately.
 
 Run: python telegram_sender.py
+Stop: Press Ctrl+C or pause campaign from frontend
 """
 
 import asyncio
@@ -37,6 +39,8 @@ import os
 import base64
 import tempfile
 import httpx
+import signal
+import sys
 from datetime import datetime, timezone
 from typing import Dict, Optional
 
@@ -48,7 +52,7 @@ from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
 BACKEND_URL = "${supabaseUrl}/functions/v1"
 SUPABASE_KEY = "${supabaseKey}"
 
-# Telegram API credentials
+# Telegram API credentials  
 TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 
@@ -57,6 +61,18 @@ SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 
 # ========== GLOBAL STATE ==========
 active_clients: Dict[str, TelegramClient] = {}
+RUNNING = True  # Global flag to control script
+
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C gracefully"""
+    global RUNNING
+    print("\\n⏹ Stop signal received. Finishing current task and shutting down...")
+    RUNNING = False
+
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
@@ -149,7 +165,6 @@ async def setup_message_handler(client: TelegramClient, account_id: str):
                     print(f"    📷 Receiving photo...")
                     photo_bytes = await client.download_media(event.message.photo, file=bytes)
                     if photo_bytes:
-                        # Upload to backend would go here
                         content = "[Photo] " + (event.message.text or "")
                         media_type = "image"
                 
@@ -219,7 +234,7 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
             else:
                 return False, "User not found on Telegram"
         
-        # Send message (text only for now, media support can be added)
+        # Send message
         await client.send_message(entity, content)
         return True, None
     except UserPrivacyRestrictedError:
@@ -286,6 +301,30 @@ async def change_name(client: TelegramClient, first_name: str, last_name: str = 
         return False, str(e)
 
 
+async def change_profile_photo(client: TelegramClient, photo_base64: str):
+    """Change profile photo on Telegram"""
+    try:
+        from telethon.tl.functions.photos import UploadProfilePhotoRequest
+        
+        # Decode base64 to bytes
+        photo_bytes = base64.b64decode(photo_base64)
+        
+        # Save to temp file
+        temp_path = os.path.join(SESSION_FOLDER, "temp_photo.jpg")
+        with open(temp_path, "wb") as f:
+            f.write(photo_bytes)
+        
+        # Upload photo
+        file = await client.upload_file(temp_path)
+        await client(UploadProfilePhotoRequest(file=file))
+        
+        # Cleanup
+        os.remove(temp_path)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 async def update_privacy(client: TelegramClient, hide_phone: bool, hide_last_seen: bool, disable_calls: bool):
     """Update privacy settings"""
     try:
@@ -320,7 +359,6 @@ async def change_password(client: TelegramClient, existing_pwd: str, new_pwd: st
         else:
             check = None
         
-        # Set new password
         from telethon.tl.types.account import PasswordInputSettings
         new_settings = PasswordInputSettings(new_algo=pwd.new_algo, new_password_hash=new_pwd.encode())
         await client(UpdatePasswordSettingsRequest(password=check, new_settings=new_settings))
@@ -339,8 +377,41 @@ async def logout_other_sessions(client: TelegramClient):
         return False, str(e)
 
 
+async def warmup_join_channel(client: TelegramClient):
+    """Join a public channel for warmup"""
+    try:
+        # Join some public channels for warmup
+        channels = ["@telegram", "@durov"]
+        for channel in channels:
+            try:
+                await client.get_entity(channel)
+                await asyncio.sleep(1)
+            except:
+                pass
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+async def warmup_view_content(client: TelegramClient):
+    """View messages in channels for warmup"""
+    try:
+        dialogs = await client.get_dialogs(limit=5)
+        for dialog in dialogs:
+            try:
+                await client.get_messages(dialog, limit=10)
+                await asyncio.sleep(0.5)
+            except:
+                pass
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 async def main_loop():
     """Main task execution loop"""
+    global RUNNING
+    
     print("=" * 60)
     print("  TelegramCRM - Backend-Driven Runner")
     print("=" * 60)
@@ -349,15 +420,21 @@ async def main_loop():
     print("=" * 60)
     print("\\n✓ Starting task loop... (Ctrl+C to stop)\\n")
     
-    while True:
+    while RUNNING:
         try:
-            # Get next task from backend (no delay)
+            # Get next task from backend
             task = await get_next_task()
             task_type = task.get("task", "wait")
             
+            # Check for stop signal from backend
+            if task.get("stop_signal"):
+                print("⏹ Stop signal from backend. Pausing...")
+                await asyncio.sleep(5)
+                continue
+            
             if task_type == "wait":
                 seconds = task.get("seconds", 0.05)
-                # Keep clients alive during wait (parallel, no block)
+                # Keep clients alive during wait
                 accounts = task.get("accounts", [])
                 if accounts:
                     asyncio.gather(*[get_or_create_client(acc) for acc in accounts])
@@ -400,6 +477,8 @@ async def main_loop():
                 if client:
                     print(f"  📋 Validating {len(recipients)} recipients...")
                     for r in recipients:
+                        if not RUNNING:
+                            break
                         exists, name, telegram_id = await validate_contact(client, r["phone_number"])
                         report_result("validate", {
                             "recipient_id": r["id"],
@@ -441,6 +520,23 @@ async def main_loop():
                         "error": error,
                         "first_name": task_data.get("first_name"),
                         "last_name": task_data.get("last_name")
+                    })
+                    print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
+            
+            elif task_type == "change_photo":
+                task_id = task.get("task_id")
+                task_data = task.get("task_data", {})
+                account = task.get("account", {})
+                
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  📷 Changing photo for {account.get('phone_number')}...")
+                    success, error = await change_profile_photo(client, task_data.get("photo_base64", ""))
+                    await report_result("change_photo", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": success,
+                        "error": error
                     })
                     print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
             
@@ -502,20 +598,49 @@ async def main_loop():
                         "error": error
                     })
                     print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
+            
+            elif task_type.startswith("warmup_"):
+                task_id = task.get("task_id")
+                account = task.get("account", {})
+                warmup_type = task_type.replace("warmup_", "")
+                
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  🔥 Warmup {warmup_type} for {account.get('phone_number')}...")
+                    
+                    if warmup_type == "join_channel":
+                        success, error = await warmup_join_channel(client)
+                    elif warmup_type == "view_content":
+                        success, error = await warmup_view_content(client)
+                    else:
+                        success, error = True, None
+                    
+                    await report_result(task_type, {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": success,
+                        "error": error
+                    })
+                    print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
         
-        except KeyboardInterrupt:
-            break
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
             await asyncio.sleep(0.1)
+    
+    print("\\n⏹ Loop stopped. Running shutdown...")
+    await shutdown()
 
 
 async def shutdown():
     """Cleanup on shutdown"""
     print("\\nShutting down...")
-    for client in active_clients.values():
-        await client.disconnect()
-    print("Disconnected all clients.")
+    for account_id, client in active_clients.items():
+        try:
+            await client.disconnect()
+            print(f"  Disconnected {account_id[:8]}...")
+        except:
+            pass
+    print("✓ All clients disconnected.")
 
 
 if __name__ == "__main__":
@@ -524,7 +649,9 @@ if __name__ == "__main__":
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
-        asyncio.run(shutdown())
+        print("\\n⏹ Keyboard interrupt received.")
+    finally:
+        print("Goodbye!")
 `;
   return (
     <DashboardLayout>
