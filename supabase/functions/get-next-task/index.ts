@@ -70,25 +70,35 @@ serve(async (req) => {
       }
     }
 
-    // Get all active accounts for campaigns - exclude banned, restricted
+    // NOTE: Some accounts stay `status = active` but have `restricted_until` set.
+    // We treat those as "temporarily restricted":
+    // - CAMPAIGNS: exclude (new contacts can trigger bans)
+    // - LIVE CHAT: allow only for existing conversations
+    const now = new Date();
+
+    // Get all active accounts (includes temporarily restricted via restricted_until)
     // Include API credentials for each account
     const { data: activeAccounts, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
       .select("*, telegram_api_credentials(*)")
       .eq("status", "active");
 
-    // Get ALL restricted accounts - they can still message existing conversations
-    // Restricted accounts cannot message NEW contacts, but existing conversations are safe
+    // Get accounts explicitly marked as restricted
     const { data: restrictedAccounts } = await supabase
       .from("telegram_accounts")
       .select("*, telegram_api_credentials(*)")
       .eq("status", "restricted");
 
-    // For LIVE CHAT: Include ALL restricted accounts (they can message existing conversations)
+    const isTimeRestricted = (a: any) => {
+      if (!a?.restricted_until) return false;
+      return new Date(a.restricted_until) > now;
+    };
+
+    // For LIVE CHAT: allow active + restricted status accounts
     const allUsableAccounts = [...(activeAccounts || []), ...(restrictedAccounts || [])];
-    
-    // For CAMPAIGNS: Only active accounts (campaigns target new contacts)
-    const accounts = activeAccounts || [];
+
+    // For CAMPAIGNS: only active accounts that are NOT temporarily restricted
+    const accounts = (activeAccounts || []).filter((a: any) => !isTimeRestricted(a));
 
     if (activeAccountsError) {
       console.error("[get-next-task] Error fetching accounts:", activeAccountsError);
@@ -105,20 +115,19 @@ serve(async (req) => {
     }
 
     // Separate warmed-up accounts (>5 days old) from new accounts
-    const now = new Date();
     const warmedUpAccounts = accounts.filter((a: any) => {
       const createdAt = new Date(a.created_at);
       const daysSinceCreation = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
       return daysSinceCreation >= WARMUP_DAYS;
     });
-    
+
     const newAccounts = accounts.filter((a: any) => {
       const createdAt = new Date(a.created_at);
       const daysSinceCreation = Math.floor((now.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
       return daysSinceCreation < WARMUP_DAYS;
     });
 
-    console.log(`[get-next-task] Accounts: ${warmedUpAccounts.length} warmed-up, ${newAccounts.length} warming`);
+    console.log(`[get-next-task] Accounts (campaign-eligible): ${warmedUpAccounts.length} warmed-up, ${newAccounts.length} warming`);
 
     // Get live conversation IDs (incoming messages in last 5 minutes)
     const cutoff = new Date(Date.now() - LIVE_CONVERSATION_TIMEOUT_MINUTES * 60 * 1000).toISOString();
@@ -211,9 +220,34 @@ serve(async (req) => {
           for (const recipient of pendingRecipients) {
             const campaign = recipient.campaigns;
 
-            // Find the assigned account
-            const account = accounts.find((a: { id: string }) => a.id === recipient.sent_by_account_id);
-            if (!account) continue;
+            // Find the assigned account.
+            // IMPORTANT: if the assigned account is temporarily restricted (restricted_until in future)
+            // it is excluded from `accounts` (campaign-eligible). In that case we reassign to a safe account.
+            let account = accounts.find((a: { id: string }) => a.id === recipient.sent_by_account_id);
+
+            if (!account) {
+              const fallback = accounts.find((a: any) => {
+                const limit = a.daily_limit ?? 25;
+                const sentToday = a.messages_sent_today ?? 0;
+                return sentToday < limit;
+              });
+
+              if (!fallback) {
+                console.log(`[get-next-task] No campaign-eligible fallback account for recipient ${recipient.id.slice(0, 8)}`);
+                continue;
+              }
+
+              await supabase
+                .from("campaign_recipients")
+                .update({ sent_by_account_id: fallback.id })
+                .eq("id", recipient.id);
+
+              console.log(
+                `[get-next-task] Reassigned recipient ${recipient.id.slice(0, 8)} from ${String(recipient.sent_by_account_id).slice(0, 8)} to ${fallback.phone_number} (temp restriction)`
+              );
+
+              account = fallback;
+            }
 
             // Check daily limit
             if ((account.messages_sent_today || 0) >= (account.daily_limit || 50)) {
