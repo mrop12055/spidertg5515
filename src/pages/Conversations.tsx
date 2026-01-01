@@ -96,17 +96,25 @@ const Chat: React.FC = () => {
     }
   };
 
-  // Helper to check if user sent the first message in a conversation
-  const isUserInitiated = (conv: typeof conversations[0]) => {
-    const convMessages = messages
-      .filter(m => m.conversationId === conv.id)
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  // Helper to check if conversation has a reply (we sent first AND they replied)
+  const hasReceivedReply = (conv: typeof conversations[0]) => {
+    const convMessages = messages.filter(m => m.conversationId === conv.id);
     
-    // If no messages yet, assume user-initiated (new conversation)
-    if (convMessages.length === 0) return true;
+    // Must have at least 2 messages
+    if (convMessages.length < 2) return false;
     
-    // Check if first message was outgoing
-    return convMessages[0]?.direction === 'outgoing';
+    // Sort by timestamp
+    const sorted = [...convMessages].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    // First message must be outgoing (we sent via campaign)
+    const firstIsOutgoing = sorted[0]?.direction === 'outgoing';
+    
+    // Must have at least one incoming message (reply)
+    const hasIncoming = convMessages.some(m => m.direction === 'incoming');
+    
+    return firstIsOutgoing && hasIncoming;
   };
 
   const filteredConversations = conversations
@@ -116,13 +124,13 @@ const Chat: React.FC = () => {
       const matchesSearch = 
         c.recipientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         c.recipientPhone.includes(searchQuery);
-      // Exclude SpamBot conversations from the chat list
+      // Exclude SpamBot conversations
       const isNotSpamBot = 
         c.recipientPhone !== '@SpamBot' && 
         c.recipientName?.toLowerCase() !== 'spam info bot';
-      // Only show conversations where user messaged first
-      const userStarted = isUserInitiated(c);
-      return matchesTime && matchesSearch && isNotSpamBot && userStarted;
+      // Only show conversations where we sent first AND received a reply
+      const hasReply = hasReceivedReply(c);
+      return matchesTime && matchesSearch && isNotSpamBot && hasReply;
     })
     .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 
@@ -450,63 +458,11 @@ const Chat: React.FC = () => {
             ) : (
               <>
                 <div className="flex items-center justify-between mb-2">
-                  <h2 className="text-lg font-semibold">Chats</h2>
+                  <h2 className="text-lg font-semibold">Replies Only</h2>
                   <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setIsSelectionMode(true)} title="Select chats">
                       <CheckSquare className="w-5 h-5" />
                     </Button>
-                    <Dialog open={isNewChatOpen} onOpenChange={setIsNewChatOpen}>
-                      <DialogTrigger asChild>
-                        <Button variant="ghost" size="icon" className="h-8 w-8">
-                          <Plus className="w-5 h-5" />
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>New Conversation</DialogTitle>
-                        </DialogHeader>
-                        <div className="space-y-4 pt-4">
-                          <div className="space-y-2">
-                            <Label>Select Account</Label>
-                            <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Choose account" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {activeAccounts.map(acc => (
-                                  <SelectItem key={acc.id} value={acc.id}>
-                                    {acc.firstName} ({acc.phoneNumber})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Phone Number or Username</Label>
-                            <Input
-                              placeholder="+1234567890 or @username"
-                              value={newChatPhone}
-                              onChange={(e) => setNewChatPhone(e.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              Enter a phone number with country code or Telegram @username
-                            </p>
-                          </div>
-                          <div className="space-y-2">
-                            <Label>Name (Optional)</Label>
-                            <Input
-                              placeholder="Contact name"
-                              value={newChatName}
-                              onChange={(e) => setNewChatName(e.target.value)}
-                            />
-                          </div>
-                          <Button onClick={handleStartNewChat} className="w-full">
-                            <UserPlus className="w-4 h-4 mr-2" />
-                            Start Chat
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
                   </div>
                 </div>
                 
@@ -547,14 +503,10 @@ const Chat: React.FC = () => {
               {filteredConversations.length === 0 ? (
                 <div className="px-4 py-12 text-center">
                   <MessageSquare className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
-                  <p className="text-muted-foreground text-sm">No conversations yet</p>
-                  <Button 
-                    variant="link" 
-                    className="mt-2 text-primary"
-                    onClick={() => setIsNewChatOpen(true)}
-                  >
-                    Start a new chat
-                  </Button>
+                  <p className="text-muted-foreground text-sm">No replies yet</p>
+                  <p className="text-xs text-muted-foreground/70 mt-1">
+                    Conversations will appear when campaign recipients reply
+                  </p>
                 </div>
               ) : (
                 filteredConversations.map((conv) => {
