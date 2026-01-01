@@ -117,9 +117,9 @@ serve(async (req) => {
 
     // ========== RUNNER-SPECIFIC TASK FILTERING ==========
     
-    // RUNNER: campaign - Only campaign messages
+    // RUNNER: campaign - Only campaign messages (uses ALL active accounts now)
     if (runner === "campaign") {
-      if (warmedUpAccounts.length > 0) {
+      if (accounts.length > 0) {
         const { data: campaignMessages } = await supabase
           .from("messages")
           .select("*, conversations(*), campaign_recipients(campaign_id)")
@@ -163,10 +163,11 @@ serve(async (req) => {
               });
             }
 
-            const account = warmedUpAccounts.find((a: { id: string }) => a.id === msg.account_id);
+            // Use ALL active accounts, not just warmed-up
+            const account = accounts.find((a: { id: string }) => a.id === msg.account_id);
             if (!account) continue;
 
-            if ((account.messages_sent_today || 0) >= (account.daily_limit || 10)) {
+            if ((account.messages_sent_today || 0) >= (account.daily_limit || 50)) {
               console.log(`[get-next-task] Account ${account.phone_number} at daily limit`);
               continue;
             }
@@ -208,7 +209,7 @@ serve(async (req) => {
           .limit(10);
 
         if (validatingRecipients && validatingRecipients.length > 0) {
-          const account = warmedUpAccounts[0];
+          const account = accounts[0];
           console.log(`[get-next-task] Validate task: ${validatingRecipients.length} recipients`);
           return new Response(JSON.stringify({
             task: "validate",
@@ -374,57 +375,56 @@ serve(async (req) => {
       });
     }
 
-    // RUNNER: livechat - Only for keeping connections alive and listening
+    // RUNNER: livechat - Handles ALL pending outgoing messages (not just live conversations)
     if (runner === "livechat") {
-      // Live chat messages (instant delivery for active conversations)
-      if (liveConvIds.size > 0) {
-        const { data: liveChatMessages } = await supabase
-          .from("messages")
-          .select("*, conversations(*)")
-          .eq("status", "pending")
-          .eq("direction", "outgoing")
-          .in("conversation_id", Array.from(liveConvIds))
-          .limit(1);
+      // Check ALL pending outgoing messages (not just live conversations)
+      const { data: pendingMessages } = await supabase
+        .from("messages")
+        .select("*, conversations(*)")
+        .eq("status", "pending")
+        .eq("direction", "outgoing")
+        .is("campaign_recipient_id", null)  // Non-campaign messages only
+        .order("created_at", { ascending: true })
+        .limit(1);
 
-        if (liveChatMessages && liveChatMessages.length > 0) {
-          const msg = liveChatMessages[0];
-          const conv = msg.conversations || {};
-          const account = accounts.find((a: { id: string }) => a.id === msg.account_id);
+      if (pendingMessages && pendingMessages.length > 0) {
+        const msg = pendingMessages[0];
+        const conv = msg.conversations || {};
+        const account = accounts.find((a: { id: string }) => a.id === msg.account_id);
 
-          if (account) {
-            await supabase
-              .from("messages")
-              .update({ status: "sending" })
-              .eq("id", msg.id)
-              .eq("status", "pending");
+        if (account) {
+          await supabase
+            .from("messages")
+            .update({ status: "sending" })
+            .eq("id", msg.id)
+            .eq("status", "pending");
 
-            console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)}`);
-            return new Response(JSON.stringify({
-              task: "send",
-              message: {
-                id: msg.id,
-                content: msg.content,
-                media_url: msg.media_url,
-                media_type: msg.media_type,
-                campaign_recipient_id: msg.campaign_recipient_id,
-              },
-              recipient: conv.recipient_username || conv.recipient_phone,
-              account: {
-                id: account.id,
-                phone_number: account.phone_number,
-                session_data: account.session_data,
-              },
-              mode: "live",
-            }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
+          console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)} to ${conv.recipient_phone || conv.recipient_username}`);
+          return new Response(JSON.stringify({
+            task: "send",
+            message: {
+              id: msg.id,
+              content: msg.content,
+              media_url: msg.media_url,
+              media_type: msg.media_type,
+              campaign_recipient_id: msg.campaign_recipient_id,
+            },
+            recipient: conv.recipient_username || conv.recipient_phone,
+            account: {
+              id: account.id,
+              phone_number: account.phone_number,
+              session_data: account.session_data,
+            },
+            mode: "live",
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
       }
 
       return new Response(JSON.stringify({
         task: "wait",
-        seconds: 0.05,
+        seconds: 0.1,
         accounts: accounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
           id: a.id,
           phone_number: a.phone_number,

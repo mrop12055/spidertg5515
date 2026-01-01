@@ -3,7 +3,7 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Download, CheckCircle2, XCircle, Loader2, Send, MessageSquare, UserCog, Flame } from 'lucide-react';
+import { Download, CheckCircle2, XCircle, Loader2, Send, MessageSquare, UserCog } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
@@ -44,14 +44,6 @@ const SetupGuide: React.FC = () => {
       icon: <UserCog className="h-5 w-5" />,
       color: 'text-yellow-500',
       functions: ['SpamBot check', 'Change name/photo', 'Privacy settings', 'Password', 'Logout sessions'],
-      lastSeen: null,
-      isOnline: false
-    },
-    {
-      name: 'Warmup Runner',
-      icon: <Flame className="h-5 w-5" />,
-      color: 'text-red-500',
-      functions: ['Join channels', 'View content', 'Account maturation'],
       lastSeen: null,
       isOnline: false
     }
@@ -98,15 +90,6 @@ const SetupGuide: React.FC = () => {
         
         const hasRecentMessages = activeConversations && activeConversations.length > 0;
 
-        // Check maturation tasks for warmup
-        const { data: warmupTasks } = await supabase
-          .from('maturation_tasks')
-          .select('status')
-          .eq('status', 'pending')
-          .limit(1);
-        
-        const hasWarmupTasks = warmupTasks && warmupTasks.length > 0;
-
         setRunnerStatuses(prev => prev.map((runner, index) => {
           let isOnline = false;
           
@@ -116,8 +99,6 @@ const SetupGuide: React.FC = () => {
             isOnline = hasActiveAccounts || hasRecentMessages;
           } else if (index === 2) { // Account
             isOnline = hasActiveAccounts || hasPendingAccountTasks;
-          } else if (index === 3) { // Warmup
-            isOnline = hasActiveAccounts && hasWarmupTasks;
           }
           
           return {
@@ -704,106 +685,11 @@ if __name__ == "__main__":
         print("\\nStopped.")
 `;
 
-  // ========== 6. WARMUP_RUNNER.PY ==========
-  const warmupRunnerPy = `#!/usr/bin/env python3
-"""
-TelegramCRM - Warmup Runner
-Handles: Join channels, View content
-Run: python warmup_runner.py
-"""
-
-import asyncio
-import signal
-
-from client_manager import (
-    get_or_create_client, get_next_task, report_result, shutdown_all
-)
-
-RUNNING = True
-
-def signal_handler(sig, frame):
-    global RUNNING
-    print("\\n[STOP] Shutting down...")
-    RUNNING = False
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-
-async def warmup_join_channel(client):
-    try:
-        for channel in ["@telegram", "@durov"]:
-            try:
-                await client.get_entity(channel)
-                await asyncio.sleep(1)
-            except:
-                pass
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-
-async def warmup_view_content(client):
-    try:
-        dialogs = await client.get_dialogs(limit=5)
-        for dialog in dialogs:
-            try:
-                await client.get_messages(dialog, limit=10)
-                await asyncio.sleep(0.5)
-            except:
-                pass
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-
-async def main_loop():
-    print("=" * 50)
-    print("  Warmup Runner")
-    print("=" * 50)
-    
-    while RUNNING:
-        try:
-            task = await get_next_task(runner="warmup")
-            task_type = task.get("task", "wait")
-            
-            if task_type == "wait":
-                await asyncio.sleep(task.get("seconds", 5))
-            
-            elif task_type.startswith("warmup_"):
-                account = task.get("account", {})
-                warmup_type = task_type.replace("warmup_", "")
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  {warmup_type} for {account.get('phone_number')}...")
-                    if warmup_type == "join_channel":
-                        success, error = await warmup_join_channel(client)
-                    elif warmup_type == "view_content":
-                        success, error = await warmup_view_content(client)
-                    else:
-                        success, error = True, None
-                    await report_result(task_type, {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error})
-        
-        except Exception as e:
-            print(f"  Error: {e}")
-            await asyncio.sleep(1)
-    
-    await shutdown_all()
-
-
-if __name__ == "__main__":
-    print("\\nInstall: pip install telethon httpx\\n")
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("\\nStopped.")
-`;
-
-  // ========== 7. MAIN_RUNNER.PY (All in One) ==========
+  // ========== 6. MAIN_RUNNER.PY (All in One) ==========
   const mainRunnerPy = `#!/usr/bin/env python3
 """
 TelegramCRM - Main Runner (All in One)
-Runs all 4 runners simultaneously in parallel
+Runs all 3 runners simultaneously in parallel
 Run: python main_runner.py
 """
 
@@ -913,31 +799,6 @@ async def logout_other_sessions(client):
         return False, str(e)
 
 
-async def warmup_join_channel(client):
-    try:
-        for channel in ["@telegram", "@durov"]:
-            try:
-                await client.get_entity(channel)
-                await asyncio.sleep(1)
-            except:
-                pass
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-
-async def warmup_view_content(client):
-    try:
-        dialogs = await client.get_dialogs(limit=5)
-        for dialog in dialogs:
-            try:
-                await client.get_messages(dialog, limit=10)
-                await asyncio.sleep(0.5)
-            except:
-                pass
-        return True, None
-    except Exception as e:
-        return False, str(e)
 
 
 # ========== MESSAGE HANDLER ==========
@@ -1075,40 +936,17 @@ async def account_loop():
             await asyncio.sleep(1)
 
 
-async def warmup_loop():
-    print("[WARMUP] Started")
-    while RUNNING:
-        try:
-            task = await get_next_task(runner="warmup")
-            task_type = task.get("task", "wait")
-            if task_type == "wait":
-                await asyncio.sleep(task.get("seconds", 5))
-            elif task_type.startswith("warmup_"):
-                account = task.get("account", {})
-                warmup_type = task_type.replace("warmup_", "")
-                client = await get_or_create_client(account)
-                if client:
-                    if warmup_type == "join_channel":
-                        success, error = await warmup_join_channel(client)
-                    elif warmup_type == "view_content":
-                        success, error = await warmup_view_content(client)
-                    else:
-                        success, error = True, None
-                    await report_result(task_type, {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error})
-        except:
-            await asyncio.sleep(1)
-
 
 async def main():
     print("=" * 50)
     print("  TelegramCRM - All Runners (Parallel)")
     print("=" * 50)
-    print("  Running: Campaign + LiveChat + Account + Warmup")
+    print("  Running: Campaign + LiveChat + Account")
     print("  Stop: Ctrl+C")
     print("=" * 50 + "\\n")
     
     try:
-        await asyncio.gather(campaign_loop(), livechat_loop(), account_loop(), warmup_loop())
+        await asyncio.gather(campaign_loop(), livechat_loop(), account_loop())
     finally:
         await shutdown_all()
 
@@ -1143,7 +981,7 @@ if errorlevel 1 (
 echo        Done!
 echo.
 
-echo  [2/2] Starting 4 runners in separate windows...
+echo  [2/2] Starting 3 runners in separate windows...
 echo.
 
 start "TelegramCRM - Campaign" cmd /k "title Campaign Runner && color 0B && py campaign_runner.py"
@@ -1151,18 +989,15 @@ timeout /t 1 /nobreak >nul
 start "TelegramCRM - LiveChat" cmd /k "title LiveChat Runner && color 0D && py livechat_runner.py"
 timeout /t 1 /nobreak >nul
 start "TelegramCRM - Account" cmd /k "title Account Runner && color 0E && py account_runner.py"
-timeout /t 1 /nobreak >nul
-start "TelegramCRM - Warmup" cmd /k "title Warmup Runner && color 0C && py warmup_runner.py"
 
 echo.
 echo  ================================================
-echo     All 4 runners started successfully!
+echo     All 3 runners started successfully!
 echo  ================================================
 echo.
 echo     Campaign Runner  = Blue window
 echo     LiveChat Runner  = Purple window
 echo     Account Runner   = Yellow window
-echo     Warmup Runner    = Red window
 echo.
 echo     To STOP all: Double-click STOP_ALL.bat
 echo  ================================================
@@ -1187,13 +1022,11 @@ echo.
 taskkill /FI "WINDOWTITLE eq Campaign Runner*" /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq LiveChat Runner*" /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq Account Runner*" /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq Warmup Runner*" /F >nul 2>&1
 
 :: Also kill by script name (backup method)
 taskkill /FI "WINDOWTITLE eq TelegramCRM - Campaign*" /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq TelegramCRM - LiveChat*" /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq TelegramCRM - Account*" /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq TelegramCRM - Warmup*" /F >nul 2>&1
 
 echo.
 echo  ================================================
@@ -1212,7 +1045,6 @@ timeout /t 3
     folder?.file("campaign_runner.py", campaignRunnerPy);
     folder?.file("livechat_runner.py", livechatRunnerPy);
     folder?.file("account_runner.py", accountRunnerPy);
-    folder?.file("warmup_runner.py", warmupRunnerPy);
     folder?.file("main_runner.py", mainRunnerPy);
     folder?.file("RUN_ALL.bat", runAllBat);
     folder?.file("STOP_ALL.bat", stopAllBat);
@@ -1225,7 +1057,7 @@ timeout /t 3
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded! 9 files included.");
+    toast.success("ZIP downloaded! 8 files included.");
   };
 
   return (
@@ -1241,7 +1073,7 @@ timeout /t 3
             <div className="space-y-2">
               <h2 className="text-2xl font-bold">Download Python Files</h2>
               <p className="text-muted-foreground">
-                9 files - complete stable setup
+                8 files - complete stable setup
               </p>
             </div>
 
@@ -1251,7 +1083,7 @@ timeout /t 3
             </Button>
 
             <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-              <p className="font-medium">📁 Files included (9 total):</p>
+              <p className="font-medium">📁 Files included (8 total):</p>
               <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
                 <li><code className="text-green-600 dark:text-green-400">RUN_ALL.bat</code> - <strong>Double-click to START</strong></li>
                 <li><code className="text-red-600 dark:text-red-400">STOP_ALL.bat</code> - <strong>Double-click to STOP</strong></li>
@@ -1260,8 +1092,7 @@ timeout /t 3
                 <li><code>campaign_runner.py</code> - Campaign messages</li>
                 <li><code>livechat_runner.py</code> - Incoming messages + replies</li>
                 <li><code>account_runner.py</code> - SpamBot, name, photo, privacy</li>
-                <li><code>warmup_runner.py</code> - Channel join, view content</li>
-                <li><code>main_runner.py</code> - All 4 in one (parallel)</li>
+                <li><code>main_runner.py</code> - All 3 in one (parallel)</li>
               </ul>
             </div>
 
@@ -1270,7 +1101,7 @@ timeout /t 3
               <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
                 <li>Extract ZIP folder</li>
                 <li>Double-click <code className="bg-green-100 dark:bg-green-900 px-2 py-0.5 rounded">RUN_ALL.bat</code> to start</li>
-                <li>4 colored windows will open (each runner)</li>
+                <li>3 colored windows will open (each runner)</li>
                 <li>To stop: Double-click <code className="bg-red-100 dark:bg-red-900 px-2 py-0.5 rounded">STOP_ALL.bat</code></li>
               </ol>
             </div>
