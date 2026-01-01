@@ -77,7 +77,8 @@ const Campaigns: React.FC = () => {
     name: '',
     messageTemplate: '',
     recipientCount: 0,
-    accountIds: [] as string[]
+    accountIds: [] as string[],
+    recipientsText: '' // Recipients input during creation
   });
 
   // Fetch campaign reports + auto-sync pending recipients based on already-sent messages
@@ -263,15 +264,38 @@ const Campaigns: React.FC = () => {
       return;
     }
     
+    // Parse recipients from the text input
+    const recipientLines = newCampaign.recipientsText.split('\n').filter(l => l.trim());
+    const parsedRecipients = recipientLines.map(line => {
+      const parts = line.split(/[,\t]/).map(p => p.trim());
+      const rawPhone = parts[0];
+      const normalizedPhone = normalizePhoneNumber(rawPhone);
+      return {
+        phone_number: normalizedPhone,
+        name: parts[1] || undefined
+      };
+    }).filter(r => r.phone_number && r.phone_number.length >= 8);
+
+    if (parsedRecipients.length === 0) {
+      toast.error('Please add at least one valid recipient phone number');
+      return;
+    }
+
     // Use first message as main template, store others in metadata
     const mainMessage = allMessages[0];
     
-    createCampaign({
+    // Create the campaign first
+    const createdCampaign = await createCampaign({
       name: newCampaign.name,
       messageTemplate: mainMessage,
-      recipientCount: newCampaign.recipientCount,
+      recipientCount: parsedRecipients.length,
       accountIds: newCampaign.accountIds
     });
+    
+    // Upload recipients immediately after campaign creation
+    if (createdCampaign) {
+      await uploadRecipients(createdCampaign.id, parsedRecipients);
+    }
     
     // Store campaign settings in localStorage for the sender script
     const campaignSettings = {
@@ -283,9 +307,10 @@ const Campaigns: React.FC = () => {
     };
     localStorage.setItem(`campaign_settings_${newCampaign.name}`, JSON.stringify(campaignSettings));
     
-    setNewCampaign({ name: '', messageTemplate: '', recipientCount: 0, accountIds: [] });
+    setNewCampaign({ name: '', messageTemplate: '', recipientCount: 0, accountIds: [], recipientsText: '' });
     setMessageTemplates([{ id: '1', message: '', accountCount: 10 }]);
     setIsCreateOpen(false);
+    refreshData();
   };
 
   // Normalize phone number - add + prefix if missing, strip formatting
@@ -488,15 +513,17 @@ const Campaigns: React.FC = () => {
                 </DialogDescription>
               </DialogHeader>
               
-              <Tabs defaultValue="messages" className="mt-4">
-                <TabsList className="grid w-full grid-cols-4">
-                  <TabsTrigger value="messages">Messages</TabsTrigger>
-                  <TabsTrigger value="accounts">Accounts</TabsTrigger>
-                  <TabsTrigger value="scheduler">Scheduler</TabsTrigger>
-                  <TabsTrigger value="settings">Settings</TabsTrigger>
+              <Tabs defaultValue="recipients" className="mt-4">
+                <TabsList className="grid w-full grid-cols-5">
+                  <TabsTrigger value="recipients">1. Recipients</TabsTrigger>
+                  <TabsTrigger value="messages">2. Messages</TabsTrigger>
+                  <TabsTrigger value="accounts">3. Accounts</TabsTrigger>
+                  <TabsTrigger value="scheduler">4. Scheduler</TabsTrigger>
+                  <TabsTrigger value="settings">5. Settings</TabsTrigger>
                 </TabsList>
-                
-                <TabsContent value="messages" className="space-y-4 mt-4">
+
+                {/* STEP 1: Recipients - Ask for data FIRST */}
+                <TabsContent value="recipients" className="space-y-4 mt-4">
                   <div className="space-y-2">
                     <Label>Campaign Name</Label>
                     <Input
@@ -505,6 +532,33 @@ const Campaigns: React.FC = () => {
                       onChange={(e) => setNewCampaign(prev => ({ ...prev, name: e.target.value }))}
                     />
                   </div>
+                  
+                  <div className="p-4 rounded-lg bg-accent/30 border border-border">
+                    <p className="text-xs font-semibold text-muted-foreground mb-2">Format (one per line):</p>
+                    <pre className="text-xs font-mono text-foreground">
+{`+14155551234,John Doe
++14155559876,Jane Smith
+14155550000 (+ will be added automatically)`}
+                    </pre>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Phone Numbers / Telegram IDs</Label>
+                    <Textarea
+                      placeholder={`+14155551234,John Doe\n+14155559876,Jane Smith\n14155550000 (+ added automatically)`}
+                      value={newCampaign.recipientsText}
+                      onChange={(e) => setNewCampaign(prev => ({ ...prev, recipientsText: e.target.value }))}
+                      rows={8}
+                      className="font-mono text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {newCampaign.recipientsText.split('\n').filter(l => l.trim()).length} recipients • Numbers without + will have it added automatically
+                    </p>
+                  </div>
+                </TabsContent>
+                
+                {/* STEP 2: Messages */}
+                <TabsContent value="messages" className="space-y-4 mt-4">
                   
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
@@ -725,7 +779,7 @@ const Campaigns: React.FC = () => {
                 <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
                   Cancel
                 </Button>
-                <Button onClick={handleCreateCampaign} disabled={!newCampaign.name}>
+                <Button onClick={handleCreateCampaign} disabled={!newCampaign.name || !newCampaign.recipientsText.trim()}>
                   Create Campaign
                 </Button>
               </div>

@@ -55,7 +55,7 @@ interface TelegramContextType {
   blockContacts: (conversationIds: string[]) => Promise<void>;
   
   // Campaign actions
-  createCampaign: (campaign: Partial<Campaign>) => void;
+  createCampaign: (campaign: Partial<Campaign>) => Promise<Campaign | null>;
   updateCampaign: (id: string, updates: Partial<Campaign>) => void;
   deleteCampaign: (id: string) => void;
   uploadRecipients: (campaignId: string, recipients: { phone_number: string; name?: string }[]) => Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined>;
@@ -925,7 +925,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [conversations, refreshData]);
 
-  const createCampaign = useCallback(async (campaign: Partial<Campaign>) => {
+  const createCampaign = useCallback(async (campaign: Partial<Campaign>): Promise<Campaign | null> => {
     try {
       const { data, error } = await supabase
         .from('campaigns')
@@ -952,9 +952,29 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       toast.success('Campaign created');
       refreshData();
+      
+      // Return the created campaign
+      if (data) {
+        return {
+          id: data.id,
+          name: data.name,
+          messageTemplate: data.message_template,
+          recipientCount: data.recipient_count || 0,
+          sentCount: data.sent_count || 0,
+          failedCount: data.failed_count || 0,
+          replyCount: data.reply_count || 0,
+          status: data.status as Campaign['status'],
+          scheduledAt: data.scheduled_at ? new Date(data.scheduled_at) : undefined,
+          createdAt: new Date(data.created_at || Date.now()),
+          updatedAt: new Date(data.updated_at || Date.now()),
+          accountIds: campaign.accountIds || [],
+        };
+      }
+      return null;
     } catch (error) {
       console.error('Error creating campaign:', error);
       toast.error('Failed to create campaign');
+      return null;
     }
   }, [refreshData]);
 
