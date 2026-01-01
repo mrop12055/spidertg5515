@@ -872,12 +872,16 @@ const Accounts: React.FC = () => {
     return proxy?.status || null;
   };
 
-  // Calculate stats
+  // Calculate stats - include temporarily restricted accounts in the restricted count
+  const currentTime = new Date();
   const stats = {
     total: accounts.length,
     active: accounts.filter(a => a.status === 'active').length,
     banned: accounts.filter(a => a.status === 'banned').length,
-    restricted: accounts.filter(a => a.status === 'restricted').length,
+    restricted: accounts.filter(a => 
+      a.status === 'restricted' || 
+      (a.restrictedUntil && new Date(a.restrictedUntil) > currentTime)
+    ).length,
     cooldown: accounts.filter(a => a.status === 'cooldown').length,
     disconnected: accounts.filter(a => a.status === 'disconnected').length,
   };
