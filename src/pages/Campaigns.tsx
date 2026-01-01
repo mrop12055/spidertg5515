@@ -471,6 +471,7 @@ const Campaigns: React.FC = () => {
       case 'running': return 'bg-status-active text-status-active-foreground';
       case 'paused': return 'bg-status-warning text-status-warning-foreground';
       case 'completed': return 'bg-primary/20 text-primary';
+      case 'failed': return 'bg-status-error text-status-error-foreground';
       case 'draft': return 'bg-muted text-muted-foreground';
       default: return 'bg-muted text-muted-foreground';
     }
