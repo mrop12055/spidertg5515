@@ -506,7 +506,8 @@ const Chat: React.FC = () => {
                 </div>
               ) : (
                 filteredConversations.map((conv) => {
-                  const convMessages = messages.filter(m => m.recipientPhone === conv.recipientPhone);
+                  // Filter out failed messages from last message preview
+                  const convMessages = messages.filter(m => m.recipientPhone === conv.recipientPhone && m.status !== 'failed');
                   const lastMsg = convMessages.sort((a, b) => 
                     new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
                   )[0];
