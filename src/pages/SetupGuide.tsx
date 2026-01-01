@@ -995,6 +995,35 @@ if __name__ == "__main__":
         print("\\nStopped.")
 `;
 
+  // ========== RUN_ALL.BAT ==========
+  const runAllBat = `@echo off
+title TelegramCRM - All Runners
+echo ================================================
+echo   TelegramCRM - Starting All Runners
+echo ================================================
+echo.
+
+cd /d "%~dp0"
+
+echo Installing requirements...
+py -m pip install telethon httpx --quiet
+echo.
+
+echo Starting all 4 runners in parallel...
+echo.
+
+start "Campaign Runner" cmd /k "py campaign_runner.py"
+start "LiveChat Runner" cmd /k "py livechat_runner.py"
+start "Account Runner" cmd /k "py account_runner.py"
+start "Warmup Runner" cmd /k "py warmup_runner.py"
+
+echo ================================================
+echo   All runners started in separate windows!
+echo   Close this window or press any key to exit.
+echo ================================================
+pause
+`;
+
   const downloadZip = async () => {
     const zip = new JSZip();
     const folder = zip.folder("telegram_crm");
@@ -1006,6 +1035,7 @@ if __name__ == "__main__":
     folder?.file("account_runner.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
     folder?.file("main_runner.py", mainRunnerPy);
+    folder?.file("RUN_ALL.bat", runAllBat);
     
     const blob = await zip.generateAsync({ type: "blob" });
     const url = URL.createObjectURL(blob);
@@ -1043,6 +1073,7 @@ if __name__ == "__main__":
             <div className="text-left bg-muted rounded-lg p-4 space-y-3">
               <p className="font-medium">Files included:</p>
               <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
+                <li><code>RUN_ALL.bat</code> - <strong>Double-click to start everything!</strong></li>
                 <li><code>config.py</code> - Settings</li>
                 <li><code>client_manager.py</code> - Shared logic</li>
                 <li><code>campaign_runner.py</code> - Campaigns only</li>
