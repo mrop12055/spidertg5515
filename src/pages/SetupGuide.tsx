@@ -997,31 +997,84 @@ if __name__ == "__main__":
 
   // ========== RUN_ALL.BAT ==========
   const runAllBat = `@echo off
-title TelegramCRM - All Runners
-echo ================================================
-echo   TelegramCRM - Starting All Runners
-echo ================================================
+title TelegramCRM - Starting All Runners
+color 0A
+echo.
+echo  ================================================
+echo     TelegramCRM - Starting All Runners
+echo  ================================================
 echo.
 
 cd /d "%~dp0"
 
-echo Installing requirements...
+echo  [1/2] Installing requirements...
 py -m pip install telethon httpx --quiet
+if errorlevel 1 (
+    echo  ERROR: pip install failed! Make sure Python is installed.
+    pause
+    exit /b 1
+)
+echo        Done!
 echo.
 
-echo Starting all 4 runners in parallel...
+echo  [2/2] Starting 4 runners in separate windows...
 echo.
 
-start "Campaign Runner" cmd /k "py campaign_runner.py"
-start "LiveChat Runner" cmd /k "py livechat_runner.py"
-start "Account Runner" cmd /k "py account_runner.py"
-start "Warmup Runner" cmd /k "py warmup_runner.py"
+start "TelegramCRM - Campaign" cmd /k "title Campaign Runner && color 0B && py campaign_runner.py"
+timeout /t 1 /nobreak >nul
+start "TelegramCRM - LiveChat" cmd /k "title LiveChat Runner && color 0D && py livechat_runner.py"
+timeout /t 1 /nobreak >nul
+start "TelegramCRM - Account" cmd /k "title Account Runner && color 0E && py account_runner.py"
+timeout /t 1 /nobreak >nul
+start "TelegramCRM - Warmup" cmd /k "title Warmup Runner && color 0C && py warmup_runner.py"
 
-echo ================================================
-echo   All runners started in separate windows!
-echo   Close this window or press any key to exit.
-echo ================================================
+echo.
+echo  ================================================
+echo     All 4 runners started successfully!
+echo  ================================================
+echo.
+echo     Campaign Runner  = Blue window
+echo     LiveChat Runner  = Purple window
+echo     Account Runner   = Yellow window
+echo     Warmup Runner    = Red window
+echo.
+echo     To STOP all: Double-click STOP_ALL.bat
+echo  ================================================
+echo.
 pause
+`;
+
+  // ========== STOP_ALL.BAT ==========
+  const stopAllBat = `@echo off
+title TelegramCRM - Stopping All Runners
+color 0C
+echo.
+echo  ================================================
+echo     TelegramCRM - Stopping All Runners
+echo  ================================================
+echo.
+
+echo  Stopping all Python runners...
+echo.
+
+:: Kill by window title
+taskkill /FI "WINDOWTITLE eq Campaign Runner*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq LiveChat Runner*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq Account Runner*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq Warmup Runner*" /F >nul 2>&1
+
+:: Also kill by script name (backup method)
+taskkill /FI "WINDOWTITLE eq TelegramCRM - Campaign*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq TelegramCRM - LiveChat*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq TelegramCRM - Account*" /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq TelegramCRM - Warmup*" /F >nul 2>&1
+
+echo.
+echo  ================================================
+echo     All runners stopped!
+echo  ================================================
+echo.
+timeout /t 3
 `;
 
   const downloadZip = async () => {
@@ -1036,6 +1089,7 @@ pause
     folder?.file("warmup_runner.py", warmupRunnerPy);
     folder?.file("main_runner.py", mainRunnerPy);
     folder?.file("RUN_ALL.bat", runAllBat);
+    folder?.file("STOP_ALL.bat", stopAllBat);
     
     const blob = await zip.generateAsync({ type: "blob" });
     const url = URL.createObjectURL(blob);
@@ -1045,7 +1099,7 @@ pause
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded!");
+    toast.success("ZIP downloaded! 9 files included.");
   };
 
   return (
@@ -1061,7 +1115,7 @@ pause
             <div className="space-y-2">
               <h2 className="text-2xl font-bold">Download Python Files</h2>
               <p className="text-muted-foreground">
-                7 files - each runner is separate
+                9 files - complete stable setup
               </p>
             </div>
 
@@ -1071,32 +1125,36 @@ pause
             </Button>
 
             <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-              <p className="font-medium">Files included:</p>
+              <p className="font-medium">📁 Files included (9 total):</p>
               <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                <li><code>RUN_ALL.bat</code> - <strong>Double-click to start everything!</strong></li>
-                <li><code>config.py</code> - Settings</li>
-                <li><code>client_manager.py</code> - Shared logic</li>
-                <li><code>campaign_runner.py</code> - Campaigns only</li>
-                <li><code>livechat_runner.py</code> - Live chat only</li>
-                <li><code>account_runner.py</code> - Account tasks only</li>
-                <li><code>warmup_runner.py</code> - Warmup only</li>
-                <li><code>main_runner.py</code> - All in one (parallel)</li>
+                <li><code className="text-green-600 dark:text-green-400">RUN_ALL.bat</code> - <strong>Double-click to START</strong></li>
+                <li><code className="text-red-600 dark:text-red-400">STOP_ALL.bat</code> - <strong>Double-click to STOP</strong></li>
+                <li><code>config.py</code> - Backend settings</li>
+                <li><code>client_manager.py</code> - Shared Telegram logic</li>
+                <li><code>campaign_runner.py</code> - Campaign messages</li>
+                <li><code>livechat_runner.py</code> - Incoming messages + replies</li>
+                <li><code>account_runner.py</code> - SpamBot, name, photo, privacy</li>
+                <li><code>warmup_runner.py</code> - Channel join, view content</li>
+                <li><code>main_runner.py</code> - All 4 in one (parallel)</li>
               </ul>
             </div>
 
             <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-              <p className="font-medium">How to run:</p>
+              <p className="font-medium">🚀 How to use:</p>
               <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
                 <li>Extract ZIP folder</li>
+                <li>Double-click <code className="bg-green-100 dark:bg-green-900 px-2 py-0.5 rounded">RUN_ALL.bat</code> to start</li>
+                <li>4 colored windows will open (each runner)</li>
+                <li>To stop: Double-click <code className="bg-red-100 dark:bg-red-900 px-2 py-0.5 rounded">STOP_ALL.bat</code></li>
+              </ol>
+            </div>
+
+            <div className="text-left bg-muted rounded-lg p-4 space-y-3">
+              <p className="font-medium">🔧 Alternative (manual):</p>
+              <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
                 <li>Open CMD in folder</li>
                 <li><code className="bg-background px-2 py-1 rounded">pip install telethon httpx</code></li>
-                <li>Run any file:
-                  <ul className="list-disc list-inside ml-4 mt-1">
-                    <li><code>python main_runner.py</code> - All together</li>
-                    <li><code>python campaign_runner.py</code> - Just campaigns</li>
-                    <li><code>python livechat_runner.py</code> - Just chat</li>
-                  </ul>
-                </li>
+                <li>Run: <code className="bg-background px-2 py-1 rounded">python main_runner.py</code></li>
               </ol>
             </div>
           </CardContent>
