@@ -178,29 +178,18 @@ serve(async (req) => {
       if (accounts.length > 0) {
         // NEW FLOW: Query campaign_recipients directly, not messages
         // Conversations are only created on successful delivery
+        // IMPORTANT: Only get recipients from RUNNING campaigns
         const { data: pendingRecipients } = await supabase
           .from("campaign_recipients")
           .select("*, campaigns!inner(id, status, message_template)")
           .eq("status", "pending")
+          .eq("campaigns.status", "running")  // Only running campaigns!
           .not("sent_by_account_id", "is", null)
           .limit(50);
 
         if (pendingRecipients && pendingRecipients.length > 0) {
           for (const recipient of pendingRecipients) {
             const campaign = recipient.campaigns;
-            
-            // Check if campaign is paused
-            if (campaign && (campaign.status === "paused" || campaign.status === "draft")) {
-              console.log(`[get-next-task] Campaign ${campaign.id} is paused - sending stop signal`);
-              return new Response(JSON.stringify({
-                task: "wait",
-                seconds: 5,
-                stop_signal: true,
-                reason: "Campaign paused"
-              }), {
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-              });
-            }
 
             // Find the assigned account
             const account = accounts.find((a: { id: string }) => a.id === recipient.sent_by_account_id);
