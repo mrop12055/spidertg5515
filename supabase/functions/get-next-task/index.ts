@@ -591,7 +591,30 @@ serve(async (req) => {
     // RUNNER: livechat - Handles ALL pending outgoing messages (not just live conversations)
     // Restricted accounts CAN send live chat messages to existing contacts
     if (runner === "livechat") {
-      // Check ALL pending outgoing messages (not just live conversations)
+      // Get all usable account IDs for quick lookup
+      const usableAccountIds = new Set(allUsableAccounts.map((a: { id: string }) => a.id));
+      
+      // First, fail messages from accounts that are no longer usable (banned, disconnected, etc.)
+      const { data: stuckMessages } = await supabase
+        .from("messages")
+        .select("id, account_id")
+        .eq("status", "pending")
+        .eq("direction", "outgoing")
+        .is("campaign_recipient_id", null);
+      
+      if (stuckMessages && stuckMessages.length > 0) {
+        const messagesToFail = stuckMessages.filter(m => !usableAccountIds.has(m.account_id));
+        if (messagesToFail.length > 0) {
+          const messageIds = messagesToFail.map(m => m.id);
+          await supabase
+            .from("messages")
+            .update({ status: "failed", failed_reason: "Account unavailable (restricted/banned)" })
+            .in("id", messageIds);
+          console.log(`[get-next-task] Auto-failed ${messagesToFail.length} messages from unavailable accounts`);
+        }
+      }
+      
+      // Now fetch pending messages and find one with an available account
       const { data: pendingMessages } = await supabase
         .from("messages")
         .select("*, conversations(*)")
@@ -599,49 +622,51 @@ serve(async (req) => {
         .eq("direction", "outgoing")
         .is("campaign_recipient_id", null)  // Non-campaign messages only
         .order("created_at", { ascending: true })
-        .limit(1);
+        .limit(20);  // Fetch more messages to find one with available account
 
       if (pendingMessages && pendingMessages.length > 0) {
-        const msg = pendingMessages[0];
-        const conv = msg.conversations || {};
-        // Use allUsableAccounts (includes restricted) for live chat
-        const account = allUsableAccounts.find((a: { id: string }) => a.id === msg.account_id);
+        // Loop through messages to find one with an available account
+        for (const msg of pendingMessages) {
+          const conv = msg.conversations || {};
+          // Use allUsableAccounts (includes restricted) for live chat
+          const account = allUsableAccounts.find((a: { id: string }) => a.id === msg.account_id);
 
-        if (account) {
-          await supabase
-            .from("messages")
-            .update({ status: "sending" })
-            .eq("id", msg.id)
-            .eq("status", "pending");
+          if (account) {
+            await supabase
+              .from("messages")
+              .update({ status: "sending" })
+              .eq("id", msg.id)
+              .eq("status", "pending");
 
-          console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)} to ${conv.recipient_phone || conv.recipient_username} (account status: ${account.status})`);
-          const apiCred = account.telegram_api_credentials;
-          return new Response(JSON.stringify({
-            task: "send",
-            message: {
-              id: msg.id,
-              content: msg.content,
-              media_url: msg.media_url,
-              media_type: msg.media_type,
-              campaign_recipient_id: msg.campaign_recipient_id,
-            },
-            recipient: conv.recipient_username || conv.recipient_phone,
-            account: {
-              id: account.id,
-              phone_number: account.phone_number,
-              session_data: account.session_data,
-              device_model: account.device_model,
-              system_version: account.system_version,
-              app_version: account.app_version,
-              lang_code: account.lang_code,
-              system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
-            },
-            mode: "live",
-          }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+            console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)} to ${conv.recipient_phone || conv.recipient_username} (account status: ${account.status})`);
+            const apiCred = account.telegram_api_credentials;
+            return new Response(JSON.stringify({
+              task: "send",
+              message: {
+                id: msg.id,
+                content: msg.content,
+                media_url: msg.media_url,
+                media_type: msg.media_type,
+                campaign_recipient_id: msg.campaign_recipient_id,
+              },
+              recipient: conv.recipient_username || conv.recipient_phone,
+              account: {
+                id: account.id,
+                phone_number: account.phone_number,
+                session_data: account.session_data,
+                device_model: account.device_model,
+                system_version: account.system_version,
+                app_version: account.app_version,
+                lang_code: account.lang_code,
+                system_lang_code: account.system_lang_code,
+                api_id: apiCred?.api_id || account.api_id,
+                api_hash: apiCred?.api_hash || account.api_hash,
+              },
+              mode: "live",
+            }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
         }
       }
 
