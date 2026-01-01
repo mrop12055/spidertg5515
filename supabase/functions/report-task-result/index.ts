@@ -165,7 +165,7 @@ serve(async (req) => {
           const isRestricted = restrictionErrors.some(r => errorLower.includes(r));
           
           if (isRestricted && account_id) {
-            console.log(`[report-task-result] Account ${account_id} appears restricted, stopping immediately`);
+            console.log(`[report-task-result] Account ${account_id} appears restricted`);
             
             // Mark account as restricted
             await supabase
@@ -177,54 +177,133 @@ serve(async (req) => {
               })
               .eq("id", account_id);
             
-            // Cancel ALL pending/sending campaign recipients from this account
-            const { data: cancelledRecipients } = await supabase
+            // Get pending recipients from this account
+            const { data: pendingRecipients } = await supabase
               .from("campaign_recipients")
-              .update({ status: "failed" })
+              .select("id, campaign_id")
               .eq("sent_by_account_id", account_id)
-              .in("status", ["pending", "sending"])
-              .select("id, campaign_id");
+              .in("status", ["pending", "sending"]);
             
-            if (cancelledRecipients && cancelledRecipients.length > 0) {
-              console.log(`[report-task-result] Cancelled ${cancelledRecipients.length} pending recipients from restricted account`);
+            if (pendingRecipients && pendingRecipients.length > 0) {
+              // Check if OTHER active accounts exist in the same campaigns
+              const campaignIds = [...new Set(pendingRecipients.map(r => r.campaign_id))];
               
-              // Update failed counts for affected campaigns
-              const campaignIds = [...new Set(cancelledRecipients.map(r => r.campaign_id))];
-              for (const cid of campaignIds) {
-                const failedCount = cancelledRecipients.filter(r => r.campaign_id === cid).length;
-                const { data: campaign } = await supabase
-                  .from("campaigns")
-                  .select("failed_count")
-                  .eq("id", cid)
-                  .single();
-                
-                if (campaign) {
-                  await supabase
-                    .from("campaigns")
-                    .update({ failed_count: (campaign.failed_count || 0) + failedCount })
-                    .eq("id", cid);
+              // Get all active accounts assigned to these campaigns
+              const { data: campaignAccounts } = await supabase
+                .from("campaign_accounts")
+                .select("account_id, campaign_id, telegram_accounts!inner(id, status)")
+                .in("campaign_id", campaignIds)
+                .neq("account_id", account_id);
+              
+              // Filter to only active accounts
+              const activeAccountsByCampaign: Record<string, string[]> = {};
+              for (const ca of (campaignAccounts || [])) {
+                const acc = ca.telegram_accounts as any;
+                if (acc && acc.status === 'active') {
+                  if (!activeAccountsByCampaign[ca.campaign_id]) {
+                    activeAccountsByCampaign[ca.campaign_id] = [];
+                  }
+                  activeAccountsByCampaign[ca.campaign_id].push(ca.account_id);
                 }
+              }
+              
+              // Reassign or fail recipients based on available accounts
+              const recipientsToReassign: { id: string; newAccountId: string }[] = [];
+              const recipientsToFail: { id: string; campaignId: string }[] = [];
+              const accountAssignmentCounters: Record<string, number> = {};
+              
+              for (const recipient of pendingRecipients) {
+                const availableAccounts = activeAccountsByCampaign[recipient.campaign_id] || [];
+                
+                if (availableAccounts.length > 0) {
+                  // Round-robin assignment to available accounts
+                  const accountIndex = (accountAssignmentCounters[recipient.campaign_id] || 0) % availableAccounts.length;
+                  const newAccountId = availableAccounts[accountIndex];
+                  accountAssignmentCounters[recipient.campaign_id] = (accountAssignmentCounters[recipient.campaign_id] || 0) + 1;
+                  
+                  recipientsToReassign.push({ id: recipient.id, newAccountId });
+                } else {
+                  // No other active accounts, mark as failed
+                  recipientsToFail.push({ id: recipient.id, campaignId: recipient.campaign_id });
+                }
+              }
+              
+              // Reassign recipients to other active accounts
+              for (const { id, newAccountId } of recipientsToReassign) {
+                await supabase
+                  .from("campaign_recipients")
+                  .update({ 
+                    sent_by_account_id: newAccountId,
+                    status: "pending"  // Reset to pending for new account to pick up
+                  })
+                  .eq("id", id);
+              }
+              
+              if (recipientsToReassign.length > 0) {
+                console.log(`[report-task-result] Reassigned ${recipientsToReassign.length} recipients to other active accounts`);
+              }
+              
+              // Mark remaining as failed (no other accounts available)
+              if (recipientsToFail.length > 0) {
+                const failedIds = recipientsToFail.map(r => r.id);
+                await supabase
+                  .from("campaign_recipients")
+                  .update({ status: "failed" })
+                  .in("id", failedIds);
+                
+                // Update failed counts for affected campaigns
+                const failedByCampaign: Record<string, number> = {};
+                for (const r of recipientsToFail) {
+                  failedByCampaign[r.campaignId] = (failedByCampaign[r.campaignId] || 0) + 1;
+                }
+                
+                for (const [cid, count] of Object.entries(failedByCampaign)) {
+                  const { data: campaign } = await supabase
+                    .from("campaigns")
+                    .select("failed_count")
+                    .eq("id", cid)
+                    .single();
+                  
+                  if (campaign) {
+                    await supabase
+                      .from("campaigns")
+                      .update({ failed_count: (campaign.failed_count || 0) + count })
+                      .eq("id", cid);
+                  }
+                }
+                
+                console.log(`[report-task-result] Marked ${recipientsToFail.length} recipients as failed (no other accounts available)`);
               }
             }
             
-            // Check if any active accounts remain - if not, complete all running campaigns
-            const { data: activeAccounts } = await supabase
-              .from("telegram_accounts")
-              .select("id")
-              .eq("status", "active");
+            // Check if ALL accounts for running campaigns are now restricted
+            // Get running campaigns and their assigned accounts
+            const { data: runningCampaigns } = await supabase
+              .from("campaigns")
+              .select("id, name")
+              .eq("status", "running");
             
-            if (!activeAccounts || activeAccounts.length === 0) {
-              console.log(`[report-task-result] No active accounts left - completing all running campaigns`);
-              
-              // Mark campaigns as completed (not paused) so user knows it stopped due to restrictions
-              const { data: completedCampaigns } = await supabase
-                .from("campaigns")
-                .update({ status: "completed" })
-                .eq("status", "running")
-                .select("id, name");
-              
-              if (completedCampaigns && completedCampaigns.length > 0) {
-                console.log(`[report-task-result] Completed ${completedCampaigns.length} campaigns due to no active accounts`);
+            if (runningCampaigns && runningCampaigns.length > 0) {
+              for (const campaign of runningCampaigns) {
+                // Get accounts assigned to this campaign
+                const { data: campaignAccountLinks } = await supabase
+                  .from("campaign_accounts")
+                  .select("account_id, telegram_accounts!inner(id, status)")
+                  .eq("campaign_id", campaign.id);
+                
+                // Check if any assigned account is still active
+                const hasActiveAccount = (campaignAccountLinks || []).some((ca: any) => {
+                  const acc = ca.telegram_accounts;
+                  return acc && acc.status === 'active';
+                });
+                
+                if (!hasActiveAccount) {
+                  console.log(`[report-task-result] All accounts for campaign "${campaign.name}" are restricted - completing`);
+                  await supabase
+                    .from("campaigns")
+                    .update({ status: "completed" })
+                    .eq("id", campaign.id);
+                }
               }
             }
           }

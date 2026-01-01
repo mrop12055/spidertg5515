@@ -140,32 +140,54 @@ serve(async (req) => {
     
     // RUNNER: campaign - Only campaign messages (uses ALL active accounts now)
     if (runner === "campaign") {
-      // If no active accounts, auto-pause any running campaigns
-      if (accounts.length === 0) {
-        const { data: runningCampaigns } = await supabase
-          .from("campaigns")
-          .select("id, name")
-          .eq("status", "running");
+      // Check each running campaign individually - only stop if ALL its assigned accounts are restricted
+      const { data: runningCampaigns } = await supabase
+        .from("campaigns")
+        .select("id, name")
+        .eq("status", "running");
+      
+      if (runningCampaigns && runningCampaigns.length > 0) {
+        let allCampaignsStopped = true;
         
-        if (runningCampaigns && runningCampaigns.length > 0) {
-          for (const campaign of runningCampaigns) {
-            console.log(`[get-next-task] No active accounts - pausing campaign ${campaign.name}`);
+        for (const campaign of runningCampaigns) {
+          // Get accounts assigned to this specific campaign
+          const { data: campaignAccountLinks } = await supabase
+            .from("campaign_accounts")
+            .select("account_id, telegram_accounts!inner(id, status)")
+            .eq("campaign_id", campaign.id);
+          
+          // Check if any assigned account is still active
+          const hasActiveAccount = (campaignAccountLinks || []).some((ca: any) => {
+            const acc = ca.telegram_accounts;
+            return acc && acc.status === 'active';
+          });
+          
+          if (!hasActiveAccount) {
+            console.log(`[get-next-task] All accounts for campaign "${campaign.name}" are restricted - completing`);
             await supabase
               .from("campaigns")
-              .update({ status: "paused" })
+              .update({ status: "completed" })
               .eq("id", campaign.id);
+          } else {
+            allCampaignsStopped = false;
           }
-          
+        }
+        
+        // Only send stop signal if ALL campaigns have been completed
+        if (allCampaignsStopped) {
           return new Response(JSON.stringify({
             task: "wait",
             seconds: 30,
             stop_signal: true,
-            reason: "No active accounts - campaigns paused"
+            reason: "All campaigns completed - no active accounts"
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
-        
+      }
+      
+      // If no accounts at all, wait
+      if (accounts.length === 0) {
         return new Response(JSON.stringify({
           task: "wait",
           seconds: 30,
