@@ -54,6 +54,7 @@ const Dashboard: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [messages24h, setMessages24h] = useState(0);
   const [replies24h, setReplies24h] = useState(0);
+  const [uniqueRecipientsSent, setUniqueRecipientsSent] = useState(0);
 
   const accountStats: AccountStats = {
     active: accounts.filter(a => a.status === 'active').length,
@@ -71,7 +72,7 @@ const Dashboard: React.FC = () => {
       // Fetch message counts by status
       const { data: messages, error } = await supabase
         .from('messages')
-        .select('status, direction, created_at')
+        .select('status, direction, created_at, conversation_id')
         .eq('direction', 'outgoing');
 
       if (error) throw error;
@@ -83,6 +84,11 @@ const Dashboard: React.FC = () => {
       // Messages in last 24h
       const msgs24h = messages?.filter(m => new Date(m.created_at) > yesterday).length || 0;
       setMessages24h(msgs24h);
+
+      // Count unique recipients with at least one successful message
+      const successfulMessages = messages?.filter(m => m.status === 'sent' || m.status === 'delivered') || [];
+      const uniqueConversations = new Set(successfulMessages.map(m => m.conversation_id));
+      setUniqueRecipientsSent(uniqueConversations.size);
       
       setQueueStats({
         pending,
@@ -279,8 +285,8 @@ const Dashboard: React.FC = () => {
                 </div>
                 <div className="p-4 rounded-lg bg-status-active/10 border border-status-active/30 text-center">
                   <CheckCircle2 className="w-6 h-6 mx-auto mb-2 text-status-active" />
-                  <p className="text-2xl font-bold text-status-active">{queueStats.sent}</p>
-                  <p className="text-sm text-muted-foreground">Sent</p>
+                  <p className="text-2xl font-bold text-status-active">{uniqueRecipientsSent}</p>
+                  <p className="text-sm text-muted-foreground">Recipients Reached</p>
                 </div>
                 <div className="p-4 rounded-lg bg-destructive/10 border border-destructive/30 text-center">
                   <XCircle className="w-6 h-6 mx-auto mb-2 text-destructive" />
