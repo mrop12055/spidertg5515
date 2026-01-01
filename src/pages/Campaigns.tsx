@@ -223,6 +223,16 @@ const Campaigns: React.FC = () => {
         failedRecipients
       };
 
+      // Auto-update campaign status to 'completed' when all recipients are processed
+      if (report.total > 0 && report.pending === 0 && campaign.status === 'running') {
+        await supabase
+          .from('campaigns')
+          .update({ status: 'completed', updated_at: new Date().toISOString() })
+          .eq('id', campaign.id);
+        // Refresh campaigns data to reflect the status change
+        refreshData();
+      }
+
       setCampaignReports((prev) => new Map(prev).set(campaign.id, report));
     }
   }, [campaigns]);
