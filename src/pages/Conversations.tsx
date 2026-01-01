@@ -555,18 +555,26 @@ const Chat: React.FC = () => {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-0.5">
-                            <div className="flex items-center gap-2 truncate">
-                              <span className={cn(
-                                "font-medium truncate",
-                                conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
-                              )}>
-                                {conv.recipientName || conv.recipientPhone}
-                              </span>
-                              {conv.blockedByRecipient && (
-                                <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5">
-                                  <Ban className="w-2.5 h-2.5" />
-                                  Blocked
-                                </Badge>
+                            <div className="flex flex-col min-w-0">
+                              <div className="flex items-center gap-2 truncate">
+                                <span className={cn(
+                                  "font-medium truncate",
+                                  conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
+                                )}>
+                                  {conv.recipientName || conv.recipientPhone}
+                                </span>
+                                {conv.blockedByRecipient && (
+                                  <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5">
+                                    <Ban className="w-2.5 h-2.5" />
+                                    Blocked
+                                  </Badge>
+                                )}
+                              </div>
+                              {/* Always show phone number if different from name */}
+                              {conv.recipientPhone && conv.recipientPhone !== conv.recipientName && (
+                                <span className="text-xs text-muted-foreground truncate">
+                                  {conv.recipientPhone}
+                                </span>
                               )}
                             </div>
                             <span className={cn(
@@ -659,6 +667,10 @@ const Chat: React.FC = () => {
                         </div>
                       )}
                     </div>
+                    {/* Show phone number in chat header */}
+                    {selectedConv.recipientPhone && selectedConv.recipientPhone !== selectedConv.recipientName && (
+                      <span className="text-xs text-muted-foreground">{selectedConv.recipientPhone}</span>
+                    )}
                     <p className="text-xs text-muted-foreground">
                       {isTyping ? (
                         <span className="text-primary">typing...</span>

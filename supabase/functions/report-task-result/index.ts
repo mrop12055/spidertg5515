@@ -261,7 +261,9 @@ serve(async (req) => {
         console.log(`[report-task-result] Processing incoming message from sender_id=${sender_id}, username=${sender_username}, phone=${sender_phone}`);
 
         // Find or create conversation with improved matching
-        const phoneDisplay = sender_username ? `@${sender_username}` : (sender_phone || `User ${sender_id}`);
+        // Use phone number or telegram_id as unique identifier - NEVER use generic "Contact" name
+        const phoneDisplay = sender_phone || (sender_username ? `@${sender_username}` : `ID:${sender_id}`);
+        const displayName = sender_name && sender_name !== 'Contact' ? sender_name : phoneDisplay;
         let convId = null;
         let existingConvData = null;
 
@@ -404,13 +406,17 @@ serve(async (req) => {
           if (sender_id) {
             updateData.recipient_telegram_id = sender_id;
           }
-          if (sender_name) {
+          // Only update name if we have a real name (not generic "Contact")
+          if (sender_name && sender_name !== 'Contact') {
             updateData.recipient_name = sender_name;
+          } else if (!existingConvData.recipient_name || existingConvData.recipient_name === 'Contact') {
+            // Use phone/username/id as name if current name is generic
+            updateData.recipient_name = phoneDisplay;
           }
           if (sender_username) {
             updateData.recipient_username = `@${sender_username}`;
           }
-          if (sender_phone && !existingConvData.recipient_phone?.startsWith('+')) {
+          if (sender_phone) {
             updateData.recipient_phone = sender_phone;
           }
 
@@ -424,13 +430,13 @@ serve(async (req) => {
 
         if (!convId) {
           // Create new conversation only if we really couldn't find one
-          console.log(`[report-task-result] Creating new conversation for ${sender_name || sender_id}`);
+          console.log(`[report-task-result] Creating new conversation for ${displayName}`);
           const { data: newConv } = await supabase
             .from("conversations")
             .insert({
               account_id,
               recipient_telegram_id: sender_id,
-              recipient_name: sender_name || phoneDisplay,
+              recipient_name: displayName,
               recipient_username: sender_username ? `@${sender_username}` : null,
               recipient_phone: sender_phone || phoneDisplay,
               is_active: true,
