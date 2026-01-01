@@ -38,6 +38,15 @@ interface FailedRecipient {
   failed_reason: string | null;
 }
 
+interface AccountRecipientStats {
+  accountId: string;
+  phoneNumber: string;
+  firstName: string | null;
+  uniqueRecipientsSent: number;  // Unique phone numbers this account has sent to (sent status)
+  uniqueRecipientsFailed: number; // Unique phone numbers that failed
+  uniqueRecipientsPending: number; // Unique phone numbers still pending
+}
+
 interface CampaignReport {
   successful: number;
   failed: number;
@@ -45,6 +54,7 @@ interface CampaignReport {
   unused: number;  // Recipients that were never processed (still pending when campaign ended)
   total: number;
   failedRecipients: FailedRecipient[];
+  accountStats: AccountRecipientStats[];  // Per-account unique recipient counts
 }
 
 const Campaigns: React.FC = () => {
@@ -222,6 +232,39 @@ const Campaigns: React.FC = () => {
       const failedCount = recipients.filter((r) => r.status === 'failed').length;
       const pendingCount = recipients.filter((r) => r.status === 'pending' || r.status === 'sending').length;
       
+      // Calculate per-account unique recipient stats
+      const accountStatsMap = new Map<string, { sent: Set<string>; failed: Set<string>; pending: Set<string> }>();
+      
+      recipients.forEach((r) => {
+        if (!r.sent_by_account_id) return;
+        
+        if (!accountStatsMap.has(r.sent_by_account_id)) {
+          accountStatsMap.set(r.sent_by_account_id, { sent: new Set(), failed: new Set(), pending: new Set() });
+        }
+        
+        const stats = accountStatsMap.get(r.sent_by_account_id)!;
+        if (r.status === 'sent') {
+          stats.sent.add(r.phone_number);
+        } else if (r.status === 'failed') {
+          stats.failed.add(r.phone_number);
+        } else if (r.status === 'pending' || r.status === 'sending') {
+          stats.pending.add(r.phone_number);
+        }
+      });
+      
+      // Build account stats array with account info
+      const accountStats: AccountRecipientStats[] = Array.from(accountStatsMap.entries()).map(([accountId, stats]) => {
+        const account = accounts.find(a => a.id === accountId);
+        return {
+          accountId,
+          phoneNumber: account?.phoneNumber || 'Unknown',
+          firstName: account?.firstName || null,
+          uniqueRecipientsSent: stats.sent.size,
+          uniqueRecipientsFailed: stats.failed.size,
+          uniqueRecipientsPending: stats.pending.size,
+        };
+      });
+      
       // Check if campaign should be auto-completed
       // Complete when: no pending AND (has sent/failed OR campaign was running but no active accounts left)
       const shouldComplete = campaign.status === 'running' && pendingCount === 0 && recipients.length > 0;
@@ -249,7 +292,8 @@ const Campaigns: React.FC = () => {
         pending: pendingCount,
         unused: pendingCount,  // If campaign completed, pending = unused
         total: recipients.length,
-        failedRecipients
+        failedRecipients,
+        accountStats
       };
 
       // Auto-update campaign status to 'completed' when appropriate
@@ -1191,8 +1235,44 @@ username123
                       </div>
                     </div>
                     
-                    {/* Assigned Accounts */}
-                    {campaign.accountIds.length > 0 && (
+                    {/* Per-Account Stats - Show unique recipients per account */}
+                    {report && report.accountStats && report.accountStats.length > 0 && (
+                      <div className="mt-4 pt-4 border-t border-border">
+                        <p className="text-xs text-muted-foreground mb-2">
+                          Account Performance ({report.accountStats.length} accounts)
+                        </p>
+                        <div className="space-y-2 max-h-40 overflow-y-auto">
+                          {report.accountStats.map((stat) => (
+                            <div 
+                              key={stat.accountId} 
+                              className="flex items-center justify-between text-xs bg-muted/50 rounded px-2 py-1.5"
+                            >
+                              <span className="font-medium truncate max-w-[140px]">
+                                {stat.firstName || stat.phoneNumber}
+                              </span>
+                              <div className="flex gap-3 text-muted-foreground">
+                                <span className="text-primary" title="Unique recipients sent">
+                                  ✓ {stat.uniqueRecipientsSent}
+                                </span>
+                                {stat.uniqueRecipientsFailed > 0 && (
+                                  <span className="text-destructive" title="Unique recipients failed">
+                                    ✗ {stat.uniqueRecipientsFailed}
+                                  </span>
+                                )}
+                                {stat.uniqueRecipientsPending > 0 && (
+                                  <span className="text-yellow-600" title="Unique recipients pending">
+                                    ⏳ {stat.uniqueRecipientsPending}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    
+                    {/* Fallback: Show assigned accounts count if no stats yet */}
+                    {(!report || !report.accountStats || report.accountStats.length === 0) && campaign.accountIds.length > 0 && (
                       <div className="mt-4 pt-4 border-t border-border">
                         <p className="text-xs text-muted-foreground mb-2">
                           Assigned Accounts: {campaign.accountIds.length}
