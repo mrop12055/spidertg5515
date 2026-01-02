@@ -113,10 +113,25 @@ const Chat: React.FC = () => {
     }
   };
 
-  // Helper to check if conversation should be shown - simplified to show all with last_message_at
+  // Helper to check if conversation should be shown:
+  // Only show conversations where WE sent the first message (campaign initiated)
   const shouldShowConversation = (conv: typeof conversations[0]) => {
-    // Show if conversation has any message activity
-    return conv.updatedAt != null;
+    const convMessages = messages.filter(m => m.conversationId === conv.id);
+    
+    // If no messages loaded yet but conversation exists with lastMessageAt, 
+    // assume it was initiated by us (from campaign)
+    if (convMessages.length === 0) {
+      // Only show if it has first_message_sent flag or lastMessageAt
+      return conv.firstMessageSent === true || conv.lastMessageAt != null;
+    }
+    
+    // Sort by timestamp to find the first message
+    const sorted = [...convMessages].sort((a, b) => 
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    
+    // Only show if WE sent the first message (outgoing)
+    return sorted[0]?.direction === 'outgoing';
   };
 
   // Helper to check if conversation has any successful (non-failed) messages
