@@ -90,11 +90,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     try {
       setIsLoading(true);
       
-      // Fetch accounts
+      // Fetch accounts - exclude large session_data column for performance
       const { data: accountsData } = await supabase
         .from('telegram_accounts')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id')
+        .order('created_at', { ascending: false })
+        .limit(500);
 
       if (accountsData) {
         setAccounts(accountsData.map(acc => ({
@@ -105,7 +106,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           lastName: acc.last_name || undefined,
           status: acc.status as TelegramAccount['status'],
           proxyId: acc.proxy_id || undefined,
-          sessionFile: acc.session_data || undefined,
+          sessionFile: undefined, // Not fetched for performance
           createdAt: new Date(acc.created_at),
           lastActive: acc.last_active ? new Date(acc.last_active) : undefined,
           messagesSentToday: acc.messages_sent_today || 0,
