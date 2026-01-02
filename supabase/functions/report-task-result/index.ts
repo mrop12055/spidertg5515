@@ -200,13 +200,13 @@ serve(async (req) => {
           const isRestricted = restrictionErrors.some(r => errorLower.includes(r));
           
           if (isRestricted && account_id) {
-            console.log(`[report-task-result] Account ${account_id} appears restricted`);
+            console.log(`[report-task-result] Account ${account_id} campaign-restricted for 24h (stays active for chat)`);
             
-            // Mark account as restricted
+            // Set campaign restriction timer but keep account active (can still chat)
             await supabase
               .from("telegram_accounts")
               .update({
-                status: "restricted",
+                // status stays 'active' - account can still chat with existing contacts
                 ban_reason: error,
                 restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               })
@@ -917,16 +917,17 @@ serve(async (req) => {
       case "account_restricted": {
         const { account_id, reason, restricted_until } = result;
 
+        // Set campaign restriction timer but keep account active (can still chat)
         await supabase
           .from("telegram_accounts")
           .update({
-            status: "restricted",
+            // status stays 'active' - account can still chat with existing contacts
             ban_reason: reason,
             restricted_until: restricted_until || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
           })
           .eq("id", account_id);
 
-        console.log(`[report-task-result] Account ${account_id} restricted: ${reason}`);
+        console.log(`[report-task-result] Account ${account_id} campaign-restricted: ${reason}`);
         break;
       }
 
