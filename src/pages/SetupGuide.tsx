@@ -119,10 +119,10 @@ TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
-  // ========== 2. CLIENT_MANAGER.PY ==========
+  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed) ==========
   const clientManagerPy = `"""
-TelegramCRM - Client Manager
-Shared Telegram client logic with device fingerprint support
+TelegramCRM - Client Manager (Optimized)
+Fast connections with retry logic, timeouts, and proxy support
 """
 
 import os
@@ -130,6 +130,7 @@ import base64
 import tempfile
 import asyncio
 import httpx
+import socks
 from typing import Dict, Optional
 
 from telethon import TelegramClient
@@ -140,7 +141,11 @@ from fingerprint_generator import generate_fingerprint
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
-handlers_attached: set = set()
+
+# Speed settings
+CONNECTION_TIMEOUT = 30
+CONNECTION_RETRIES = 3
+RETRY_DELAY = 2
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
@@ -151,8 +156,50 @@ def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
             f.write(session_bytes)
         return session_path
     except Exception as e:
-        print(f"  [ERROR] Session decode failed: {e}")
+        print(f"  [ERROR] Session decode: {e}")
         return None
+
+
+def get_proxy_settings(account: dict) -> Optional[tuple]:
+    proxy = account.get("proxy")
+    if not proxy:
+        return None
+    
+    proxy_type = proxy.get("proxy_type", "socks5").lower()
+    host = proxy.get("host")
+    port = proxy.get("port")
+    username = proxy.get("username")
+    password = proxy.get("password")
+    
+    if not host or not port:
+        return None
+    
+    if proxy_type == "socks5":
+        ptype = socks.SOCKS5
+    elif proxy_type == "socks4":
+        ptype = socks.SOCKS4
+    else:
+        ptype = socks.HTTP
+    
+    if username and password:
+        return (ptype, host, int(port), True, username, password)
+    return (ptype, host, int(port))
+
+
+async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> bool:
+    for attempt in range(1, max_retries + 1):
+        try:
+            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+            return True
+        except asyncio.TimeoutError:
+            print(f"    [TIMEOUT] Attempt {attempt}/{max_retries}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        except Exception as e:
+            print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+    return False
 
 
 async def get_or_create_client(account: dict, setup_handler=None) -> Optional[TelegramClient]:
@@ -160,11 +207,14 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
     
     if account_id in active_clients:
         client = active_clients[account_id]
-        if client.is_connected():
-            if setup_handler and account_id not in handlers_attached:
-                await setup_handler(client, account_id)
-                handlers_attached.add(account_id)
-            return client
+        try:
+            if client.is_connected():
+                if setup_handler and not getattr(client, "_handler", False):
+                    await setup_handler(client, account_id)
+                    setattr(client, "_handler", True)
+                return client
+        except:
+            del active_clients[account_id]
     
     session_data = account.get("session_data")
     if not session_data:
@@ -196,19 +246,35 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
             "lang_code": lang_code,
             "system_lang_code": system_lang_code
         })
-    else:
-        print(f"  [FP] Using: {device_model} ({system_version})")
+    
+    proxy = get_proxy_settings(account)
+    if proxy:
+        print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
     
     try:
+        api_id = account.get("api_id") or TELEGRAM_API_ID
+        api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+        
         client = TelegramClient(
-            session_path, int(TELEGRAM_API_ID), TELEGRAM_API_HASH,
+            session_path, int(api_id), api_hash,
             device_model=device_model,
             system_version=system_version,
             app_version=app_version,
             lang_code=lang_code,
-            system_lang_code=system_lang_code
+            system_lang_code=system_lang_code,
+            proxy=proxy,
+            timeout=CONNECTION_TIMEOUT,
+            connection_retries=CONNECTION_RETRIES,
+            retry_delay=RETRY_DELAY,
+            auto_reconnect=True,
+            request_retries=3
         )
-        await client.connect()
+        
+        print(f"  [CONNECT] {account['phone_number']}...")
+        if not await connect_with_retry(client):
+            print(f"  [FAIL] Timeout: {account['phone_number']}")
+            await report_result("account_disconnected", {"account_id": account_id, "reason": "Connection timeout"})
+            return None
         
         if not await client.is_user_authorized():
             await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
@@ -216,50 +282,43 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         
         if setup_handler:
             await setup_handler(client, account_id)
-            handlers_attached.add(account_id)
+            setattr(client, "_handler", True)
         
         active_clients[account_id] = client
         
-        me = await client.get_me()
-        if me:
-            avatar_base64 = None
-            try:
-                photos = await client.get_profile_photos(me, limit=1)
-                if photos:
-                    photo_bytes = await client.download_media(photos[0], file=bytes)
-                    if photo_bytes:
-                        avatar_base64 = base64.b64encode(photo_bytes).decode('utf-8')
-            except:
-                pass
-            
-            await report_result("account_connected", {
-                "account_id": account_id,
-                "first_name": me.first_name,
-                "last_name": me.last_name,
-                "username": me.username,
-                "telegram_id": me.id,
-                "phone": me.phone,
-                "avatar_base64": avatar_base64
-            })
+        # Fast mode: skip profile if cached
+        if account.get("first_name") or account.get("username"):
+            await report_result("account_connected", {"account_id": account_id, "skip_profile_update": True})
+        else:
+            me = await asyncio.wait_for(client.get_me(), timeout=10)
+            if me:
+                await report_result("account_connected", {
+                    "account_id": account_id,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                    "username": me.username,
+                    "telegram_id": me.id,
+                    "phone": me.phone
+                })
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
     except Exception as e:
-        print(f"  [ERROR] Connect failed: {e}")
+        print(f"  [FAIL] {account['phone_number']}: {e}")
         return None
 
 
 async def get_next_task(runner: str = None) -> dict:
     try:
         body = {"runner": runner} if runner else {}
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=15) as client:
             resp = await client.post(
                 f"{BACKEND_URL}/get-next-task",
                 headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
                 json=body
             )
             return resp.json()
-    except Exception as e:
+    except:
         return {"task": "wait", "seconds": 1}
 
 
@@ -269,7 +328,7 @@ async def report_result(task_type: str, result: dict):
 
 async def _report(task_type: str, result: dict):
     try:
-        async with httpx.AsyncClient(timeout=3) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             await client.post(
                 f"{BACKEND_URL}/report-task-result",
                 headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
@@ -281,20 +340,47 @@ async def _report(task_type: str, result: dict):
 
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
     try:
+        entity = None
         if recipient.startswith("@"):
-            entity = await client.get_entity(recipient)
+            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=15)
         else:
             from telethon.tl.functions.contacts import ImportContactsRequest
             from telethon.tl.types import InputPhoneContact
             import random
-            contact = InputPhoneContact(client_id=random.randint(0, 2**31 - 1), phone=recipient, first_name="Contact", last_name="")
-            result = await client(ImportContactsRequest([contact]))
-            if result.users:
-                entity = result.users[0]
-            else:
-                return False, "User not found on Telegram"
-        await client.send_message(entity, content)
+            
+            phone = recipient if recipient.startswith("+") else "+" + recipient
+            try:
+                entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+            except:
+                pass
+            
+            if not entity:
+                contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+                if result.users:
+                    entity = result.users[0]
+                elif result.retry_contacts:
+                    return False, "Privacy restricted"
+        
+        if not entity:
+            return False, "User not found on Telegram"
+        
+        if media_url:
+            try:
+                async with httpx.AsyncClient(timeout=30) as http:
+                    resp = await http.get(media_url)
+                    if resp.status_code == 200:
+                        await asyncio.wait_for(client.send_file(entity, resp.content, caption=content), timeout=30)
+                    else:
+                        await asyncio.wait_for(client.send_message(entity, content), timeout=15)
+            except:
+                await asyncio.wait_for(client.send_message(entity, content), timeout=15)
+        else:
+            await asyncio.wait_for(client.send_message(entity, content), timeout=15)
+        
         return True, None
+    except asyncio.TimeoutError:
+        return False, "Request timeout"
     except UserPrivacyRestrictedError:
         return False, "Privacy restricted"
     except FloodWaitError as e:
@@ -309,7 +395,7 @@ async def validate_contact(client: TelegramClient, phone: str):
         from telethon.tl.types import InputPhoneContact
         import random
         contact = InputPhoneContact(client_id=random.randint(0, 2**31 - 1), phone=phone, first_name="V", last_name="")
-        result = await client(ImportContactsRequest([contact]))
+        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
         if result.users:
             user = result.users[0]
             return True, f"{user.first_name or ''} {user.last_name or ''}".strip(), user.id
@@ -319,13 +405,14 @@ async def validate_contact(client: TelegramClient, phone: str):
 
 
 async def shutdown_all():
-    print("\\nShutting down...")
-    for account_id, client in active_clients.items():
+    print("\\n[SHUTDOWN] Disconnecting...")
+    for account_id, client in list(active_clients.items()):
         try:
-            await client.disconnect()
+            await asyncio.wait_for(client.disconnect(), timeout=5)
         except:
             pass
-    print("Done.")
+    active_clients.clear()
+    print("[OK] Done.")
 `;
 
   // ========== 3. FINGERPRINT_GENERATOR.PY ==========
@@ -1078,9 +1165,9 @@ echo.
 cd /d "%~dp0"
 
 echo  [1/2] Installing requirements...
-py -m pip install telethon httpx --quiet 2>nul
+py -m pip install telethon httpx pysocks --quiet 2>nul
 if errorlevel 1 (
-    python -m pip install telethon httpx --quiet 2>nul
+    python -m pip install telethon httpx pysocks --quiet 2>nul
 )
 echo        Done!
 echo.
@@ -1122,7 +1209,8 @@ pause
 
   // ========== REQUIREMENTS.TXT ==========
   const requirementsTxt = `telethon>=1.34.0
-httpx>=0.24.0
+httpx>=0.27.0
+pysocks>=1.7.1
 `;
 
   const downloadZip = async () => {
