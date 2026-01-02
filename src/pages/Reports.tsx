@@ -33,8 +33,10 @@ import {
   PauseCircle,
   Ban,
   UserCheck,
-  Timer
+  Timer,
+  Eye
 } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogTrigger } from '@/components/ui/dialog';
 import { format, formatDistanceToNow, subDays, startOfDay } from 'date-fns';
 
 interface AccountStats {
@@ -226,13 +228,40 @@ const Reports: React.FC = () => {
   };
 
   const getCampaignStatusBadge = (status: string) => {
+    const baseClass = "text-xs font-semibold px-2.5 py-1";
     switch (status) {
-      case 'running': return <Badge className="bg-blue-500 hover:bg-blue-600"><PlayCircle className="w-3 h-3 mr-1" /> Running</Badge>;
-      case 'completed': return <Badge className="bg-green-500 hover:bg-green-600"><CheckCircle className="w-3 h-3 mr-1" /> Completed</Badge>;
-      case 'failed': return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" /> Failed</Badge>;
-      case 'paused': return <Badge variant="secondary"><PauseCircle className="w-3 h-3 mr-1" /> Paused</Badge>;
-      case 'draft': return <Badge variant="outline">Draft</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      case 'running': 
+        return (
+          <Badge className={`${baseClass} bg-primary/20 text-primary border border-primary/30 animate-pulse`}>
+            <span className="w-1.5 h-1.5 rounded-full bg-primary mr-1.5 animate-pulse" />
+            RUNNING
+          </Badge>
+        );
+      case 'completed': 
+        return (
+          <Badge className={`${baseClass} bg-green-500/20 text-green-600 border border-green-500/30`}>
+            <CheckCircle className="w-3 h-3 mr-1" />
+            COMPLETED
+          </Badge>
+        );
+      case 'failed': 
+        return (
+          <Badge className={`${baseClass} bg-destructive/20 text-destructive border border-destructive/30`}>
+            <XCircle className="w-3 h-3 mr-1" />
+            FAILED
+          </Badge>
+        );
+      case 'paused': 
+        return (
+          <Badge className={`${baseClass} bg-yellow-500/20 text-yellow-600 border border-yellow-500/30`}>
+            <PauseCircle className="w-3 h-3 mr-1" />
+            PAUSED
+          </Badge>
+        );
+      case 'draft': 
+        return <Badge className={`${baseClass} bg-muted text-muted-foreground border border-border`}>DRAFT</Badge>;
+      default: 
+        return <Badge className={`${baseClass} bg-muted text-muted-foreground border border-border`}>{status?.toUpperCase()}</Badge>;
     }
   };
 
@@ -376,29 +405,81 @@ const Reports: React.FC = () => {
                           const progress = campaign.recipient_count > 0 
                             ? ((campaign.sent_count + campaign.failed_count) / campaign.recipient_count) * 100 
                             : 0;
+                          const pending = campaign.recipient_count - campaign.sent_count - campaign.failed_count;
                           
                           return (
                             <div key={campaign.id} className="p-3 rounded-lg border bg-card hover:bg-accent/30 transition-colors">
-                              <div className="flex items-center justify-between gap-2 mb-2">
-                                <div className="flex items-center gap-2 min-w-0">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-3 min-w-0 flex-1">
                                   <span className="font-medium truncate">{campaign.name}</span>
                                   {getCampaignStatusBadge(campaign.status)}
                                 </div>
-                                <span className="text-xs text-muted-foreground shrink-0">
-                                  {format(new Date(campaign.created_at), 'MMM d')}
-                                </span>
-                              </div>
-                              
-                              <div className="flex items-center gap-4 text-xs mb-2">
-                                <span className="text-muted-foreground">{campaign.recipient_count} recipients</span>
-                                <span className="text-green-500">✓ {campaign.sent_count}</span>
-                                <span className="text-red-500">✗ {campaign.failed_count}</span>
-                                {campaign.reply_count > 0 && <span className="text-blue-500">💬 {campaign.reply_count}</span>}
-                              </div>
-                              
-                              <div className="flex items-center gap-2">
-                                <Progress value={progress} className="h-1.5 flex-1" />
-                                <span className="text-xs text-muted-foreground w-10 text-right">{progress.toFixed(0)}%</span>
+                                
+                                {/* Stats inline */}
+                                <div className="flex items-center gap-4 text-sm shrink-0">
+                                  <span className="text-muted-foreground">{campaign.recipient_count} total</span>
+                                  <span className="text-primary font-medium">{campaign.sent_count} sent</span>
+                                  <span className="text-destructive font-medium">{campaign.failed_count} failed</span>
+                                  <span className="font-bold text-foreground">{progress.toFixed(0)}%</span>
+                                </div>
+                                
+                                {/* View Details Button */}
+                                <Dialog>
+                                  <DialogTrigger asChild>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0">
+                                      <Eye className="w-4 h-4" />
+                                    </Button>
+                                  </DialogTrigger>
+                                  <DialogContent className="max-w-lg">
+                                    <DialogHeader>
+                                      <DialogTitle className="flex items-center gap-2">
+                                        {campaign.name}
+                                        {getCampaignStatusBadge(campaign.status)}
+                                      </DialogTitle>
+                                      <DialogDescription>Campaign details</DialogDescription>
+                                    </DialogHeader>
+                                    
+                                    <div className="space-y-4 mt-4">
+                                      {/* Stats Summary */}
+                                      <div className="grid grid-cols-4 gap-3">
+                                        <div className="bg-muted/30 rounded-lg p-3 text-center">
+                                          <p className="text-2xl font-bold">{campaign.recipient_count}</p>
+                                          <p className="text-xs text-muted-foreground">Total</p>
+                                        </div>
+                                        <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                          <p className="text-2xl font-bold text-primary">{campaign.sent_count}</p>
+                                          <p className="text-xs text-muted-foreground">Sent</p>
+                                        </div>
+                                        <div className="bg-destructive/10 rounded-lg p-3 text-center">
+                                          <p className="text-2xl font-bold text-destructive">{campaign.failed_count}</p>
+                                          <p className="text-xs text-muted-foreground">Failed</p>
+                                        </div>
+                                        <div className="bg-yellow-500/10 rounded-lg p-3 text-center">
+                                          <p className="text-2xl font-bold text-yellow-600">{pending > 0 ? pending : 0}</p>
+                                          <p className="text-xs text-muted-foreground">Pending</p>
+                                        </div>
+                                      </div>
+                                      
+                                      {/* Additional Info */}
+                                      <div className="space-y-2 text-sm">
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">Created</span>
+                                          <span>{format(new Date(campaign.created_at), 'MMM d, yyyy HH:mm')}</span>
+                                        </div>
+                                        {campaign.reply_count > 0 && (
+                                          <div className="flex justify-between">
+                                            <span className="text-muted-foreground">Replies</span>
+                                            <span className="text-primary">{campaign.reply_count}</span>
+                                          </div>
+                                        )}
+                                        <div className="flex justify-between">
+                                          <span className="text-muted-foreground">Progress</span>
+                                          <span className="font-bold">{progress.toFixed(1)}%</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  </DialogContent>
+                                </Dialog>
                               </div>
                             </div>
                           );
