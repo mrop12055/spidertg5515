@@ -1807,7 +1807,7 @@ const Accounts: React.FC = () => {
         )}
 
         {/* Account Tasks Progress & Logs */}
-        {showAccountTaskLogs && (isAccountTaskRunning || accountTasksProgress.logs.length > 0 || accountTaskHistory.length > 0) && (
+        {(showAccountTaskLogs || isAccountTaskRunning) && (
           <Card className="border-blue-500/30 bg-blue-500/5">
             <CardHeader className="pb-2 pt-3 px-4">
               <div className="flex items-center justify-between">
@@ -1867,7 +1867,7 @@ const Accounts: React.FC = () => {
               )}
               
               {/* Current Session Logs */}
-              {accountTasksProgress.logs.length > 0 && (
+              {accountTasksProgress.logs.length > 0 ? (
                 <Collapsible defaultOpen>
                   <CollapsibleTrigger asChild>
                     <Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground hover:text-foreground">
@@ -1896,6 +1896,15 @@ const Accounts: React.FC = () => {
                     </div>
                   </CollapsibleContent>
                 </Collapsible>
+              ) : isAccountTaskRunning ? (
+                <div className="text-xs text-muted-foreground text-center py-2">
+                  <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
+                  Waiting for Python runner to process tasks...
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground text-center py-2">
+                  No logs yet. Run an account task to see results here.
+                </div>
               )}
               
               {/* History */}
