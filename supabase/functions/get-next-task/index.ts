@@ -565,7 +565,7 @@ serve(async (req) => {
     if (runner === "account") {
       const { data: checkTasks } = await supabase
         .from("account_check_tasks")
-        .select("*, telegram_accounts(*, telegram_api_credentials(*))")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies(*))")
         .eq("status", "pending")
         .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "change_bio"])
         .limit(1);
@@ -592,6 +592,7 @@ serve(async (req) => {
                   })
                   .eq("id", task.id);
               } else {
+                const proxyData = accountData.proxies;
                 console.log(`[get-next-task] SpamBot check for ${task.account_id}`);
                 return new Response(JSON.stringify({
                   task: "spambot_check",
@@ -607,12 +608,21 @@ serve(async (req) => {
                     system_lang_code: accountData.system_lang_code,
                     api_id: apiCred?.api_id || accountData.api_id,
                     api_hash: apiCred?.api_hash || accountData.api_hash,
+                    proxy_id: accountData.proxy_id,
+                    proxy: proxyData ? {
+                      host: proxyData.host,
+                      port: proxyData.port,
+                      username: proxyData.username,
+                      password: proxyData.password,
+                      proxy_type: proxyData.proxy_type,
+                    } : null,
                   },
                 }), {
                   headers: { ...corsHeaders, "Content-Type": "application/json" },
                 });
               }
             } else {
+              const proxyData = accountData.proxies;
               console.log(`[get-next-task] SpamBot check for ${task.account_id}`);
               return new Response(JSON.stringify({
                 task: "spambot_check",
@@ -628,12 +638,21 @@ serve(async (req) => {
                   system_lang_code: accountData.system_lang_code,
                   api_id: apiCred?.api_id || accountData.api_id,
                   api_hash: apiCred?.api_hash || accountData.api_hash,
+                  proxy_id: accountData.proxy_id,
+                  proxy: proxyData ? {
+                    host: proxyData.host,
+                    port: proxyData.port,
+                    username: proxyData.username,
+                    password: proxyData.password,
+                    proxy_type: proxyData.proxy_type,
+                  } : null,
                 },
               }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
               });
             }
           } else {
+            const proxyData = accountData.proxies;
             console.log(`[get-next-task] ${taskType} for ${task.account_id}`);
             return new Response(JSON.stringify({
               task: taskType,
@@ -650,6 +669,14 @@ serve(async (req) => {
                 system_lang_code: accountData.system_lang_code,
                 api_id: apiCred?.api_id || accountData.api_id,
                 api_hash: apiCred?.api_hash || accountData.api_hash,
+                proxy_id: accountData.proxy_id,
+                proxy: proxyData ? {
+                  host: proxyData.host,
+                  port: proxyData.port,
+                  username: proxyData.username,
+                  password: proxyData.password,
+                  proxy_type: proxyData.proxy_type,
+                } : null,
               },
             }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
