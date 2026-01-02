@@ -69,7 +69,7 @@ const GROUP_COLORS = [
 ];
 
 const Accounts: React.FC = () => {
-  const { accounts, proxies, refreshData, isLoading } = useTelegram();
+  const { accounts, proxies, refreshData, isLoading, verifyProgress, setVerifyProgress, isVerifyingLogin, setIsVerifyingLogin, showVerifyLogs, setShowVerifyLogs } = useTelegram();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -809,16 +809,7 @@ const Accounts: React.FC = () => {
   };
 
   // Verify Login - checks actual Telegram connection via Python runner
-  const [isVerifyingLogin, setIsVerifyingLogin] = useState(false);
-  const [verifyProgress, setVerifyProgress] = useState<{
-    total: number;
-    checked: number;
-    active: number;
-    disconnected: number;
-    banned: number;
-    errors: string[];
-  }>({ total: 0, checked: 0, active: 0, disconnected: 0, banned: 0, errors: [] });
-  const [showVerifyLogs, setShowVerifyLogs] = useState(false);
+  // State is now managed in TelegramContext to persist across navigation
   
   // Realtime subscription for verify_session tasks
   useEffect(() => {
