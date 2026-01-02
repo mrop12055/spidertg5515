@@ -94,11 +94,16 @@ export const useDatabase = () => {
   // Fetch all data
   const fetchData = useCallback(async () => {
     try {
+      // Important: avoid selecting very large columns (e.g. session_data) in admin UI fetches
+      const accountsSelect =
+        'id,phone_number,username,first_name,last_name,status,proxy_id,created_at,last_active,messages_sent_today,daily_limit,maturity_score,maturity_days,restricted_until,ban_reason,avatar_url,telegram_id' as const;
+
       const [accountsRes, proxiesRes, conversationsRes, messagesRes, campaignsRes] = await Promise.all([
-        supabase.from('telegram_accounts').select('*').order('created_at', { ascending: false }),
+        supabase.from('telegram_accounts').select(accountsSelect).order('created_at', { ascending: false }),
         supabase.from('proxies').select('*').order('created_at', { ascending: false }),
         supabase.from('conversations').select('*').order('updated_at', { ascending: false }),
-        supabase.from('messages').select('*').order('created_at', { ascending: true }),
+        // Keep UI responsive: load the most recent messages only (older messages can be paginated later)
+        supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(2000),
         supabase.from('campaigns').select('*').order('created_at', { ascending: false }),
       ]);
 
