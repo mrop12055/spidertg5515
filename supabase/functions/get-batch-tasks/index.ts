@@ -57,10 +57,10 @@ serve(async (req) => {
 
     const now = new Date().toISOString();
 
-    // Get all active accounts not temporarily restricted
+    // Get all active accounts not temporarily restricted, with their proxy info
     const { data: activeAccounts, error: accountsError } = await supabase
       .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*)")
+      .select("*, telegram_api_credentials(*), proxies!telegram_accounts_proxy_id_fkey(*)")
       .eq("status", "active")
       .or(`restricted_until.is.null,restricted_until.lt.${now}`);
 
@@ -75,8 +75,32 @@ serve(async (req) => {
       });
     }
 
+    // CRITICAL SAFETY CHECK: Only use accounts that have an ACTIVE proxy assigned
+    const accountsWithActiveProxy = activeAccounts.filter((a: any) => {
+      if (!a.proxy_id) {
+        console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - NO PROXY ASSIGNED`);
+        return false;
+      }
+      if (!a.proxies || a.proxies.status !== 'active') {
+        console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - PROXY NOT ACTIVE (status: ${a.proxies?.status || 'missing'})`);
+        return false;
+      }
+      return true;
+    });
+
+    if (accountsWithActiveProxy.length === 0) {
+      console.log("[get-batch-tasks] No accounts with active proxies available");
+      return new Response(JSON.stringify({
+        tasks: [],
+        delay_after: 30,
+        reason: "No accounts with active proxies - assign proxies to accounts first"
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Filter to accounts under daily limit
-    const usableAccounts = activeAccounts.filter((a: any) => {
+    const usableAccounts = accountsWithActiveProxy.filter((a: any) => {
       const limit = a.daily_limit ?? DAILY_MESSAGE_LIMIT;
       const sentToday = a.messages_sent_today ?? 0;
       return sentToday < limit;
@@ -92,6 +116,8 @@ serve(async (req) => {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    
+    console.log(`[get-batch-tasks] ${usableAccounts.length} accounts with active proxies ready`);
 
     const tasks: any[] = [];
     const usedAccountIds = new Set<string>();
@@ -164,6 +190,13 @@ serve(async (req) => {
               api_hash: apiCred?.api_hash || account.api_hash,
               proxy_id: account.proxy_id,
             },
+            proxy: account.proxies ? {
+              host: account.proxies.host,
+              port: account.proxies.port,
+              username: account.proxies.username,
+              password: account.proxies.password,
+              type: account.proxies.proxy_type,
+            } : null,
             mode: "campaign",
           });
 
@@ -233,6 +266,13 @@ serve(async (req) => {
               api_hash: apiCred?.api_hash || account.api_hash,
               proxy_id: account.proxy_id,
             },
+            proxy: account.proxies ? {
+              host: account.proxies.host,
+              port: account.proxies.port,
+              username: account.proxies.username,
+              password: account.proxies.password,
+              type: account.proxies.proxy_type,
+            } : null,
             mode: "livechat",
           });
 
