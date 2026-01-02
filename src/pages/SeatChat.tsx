@@ -9,11 +9,11 @@ import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { 
   Send, MessageSquare, Users, Eye, CheckCheck, Check, 
   RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
-  Image, X, Loader2, MessageCircle
+  Image, X, Loader2, Phone, Smile, Paperclip, Mic
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { format, isToday, isYesterday, subDays } from 'date-fns';
+import { format, isToday, isYesterday, subDays, differenceInMinutes } from 'date-fns';
 import { cn } from '@/lib/utils';
 import {
   DropdownMenu,
@@ -68,6 +68,27 @@ interface SeatStats {
   responses_received: number;
 }
 
+// Generate consistent colors for avatars based on phone number
+const getAvatarColor = (phone: string | null) => {
+  const colors = [
+    'from-rose-400 to-rose-600',
+    'from-orange-400 to-orange-600',
+    'from-amber-400 to-amber-600',
+    'from-emerald-400 to-emerald-600',
+    'from-teal-400 to-teal-600',
+    'from-cyan-400 to-cyan-600',
+    'from-blue-400 to-blue-600',
+    'from-indigo-400 to-indigo-600',
+    'from-violet-400 to-violet-600',
+    'from-purple-400 to-purple-600',
+    'from-fuchsia-400 to-fuchsia-600',
+    'from-pink-400 to-pink-600',
+  ];
+  if (!phone) return colors[0];
+  const hash = phone.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+  return colors[hash % colors.length];
+};
+
 const SeatChat: React.FC = () => {
   const { token } = useParams<{ token: string }>();
   const [seat, setSeat] = useState<Seat | null>(null);
@@ -83,10 +104,9 @@ const SeatChat: React.FC = () => {
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [hiddenConversations, setHiddenConversations] = useState<Set<string>>(new Set());
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('7d');
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [isSendingMedia, setIsSendingMedia] = useState(false);
   const [stats, setStats] = useState<SeatStats>({
     total_conversations: 0,
     messages_sent_today: 0,
@@ -133,7 +153,7 @@ const SeatChat: React.FC = () => {
       case '3d': return subDays(now, 3);
       case '5d': return subDays(now, 5);
       case '7d': return subDays(now, 7);
-      default: return subDays(now, 1);
+      default: return subDays(now, 7);
     }
   };
 
@@ -141,7 +161,6 @@ const SeatChat: React.FC = () => {
   const deduplicateConversations = (convs: Conversation[]) => {
     const phoneMap = new Map<string, Conversation>();
     
-    // Sort by last_message_at descending first
     const sorted = [...convs].sort((a, b) => {
       const timeA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
       const timeB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
@@ -150,7 +169,6 @@ const SeatChat: React.FC = () => {
     
     sorted.forEach(conv => {
       const phone = conv.recipient_phone || conv.id;
-      // Only keep the first (most recent) one for each phone
       if (!phoneMap.has(phone)) {
         phoneMap.set(phone, conv);
       }
@@ -162,15 +180,12 @@ const SeatChat: React.FC = () => {
   // Filter conversations
   const filteredConversations = deduplicateConversations(
     conversations.filter(conv => {
-      // Must not be hidden
       if (hiddenConversations.has(conv.id)) return false;
       
-      // Time filter
       const cutoff = getTimeFilterCutoff();
       const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
       if (lastMsgTime < cutoff.getTime()) return false;
       
-      // Search filter
       if (!searchQuery) return true;
       const searchLower = searchQuery.toLowerCase();
       return (
@@ -233,7 +248,6 @@ const SeatChat: React.FC = () => {
     if (!seat) return;
 
     try {
-      // Get all conversations for this seat (including those where admin replied from Conversations page)
       const { data, error } = await supabase
         .from('conversations')
         .select('*')
@@ -421,47 +435,89 @@ const SeatChat: React.FC = () => {
     setMessageInput(prev => prev + emoji);
   };
 
-  const formatMessageDate = (dateStr: string) => {
+  const formatMessageTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    return format(date, 'HH:mm');
+  };
+
+  const formatConversationTime = (dateStr: string | null) => {
+    if (!dateStr) return '';
     const date = new Date(dateStr);
     if (isToday(date)) return format(date, 'HH:mm');
-    if (isYesterday(date)) return 'Yesterday ' + format(date, 'HH:mm');
-    return format(date, 'MMM d, HH:mm');
+    if (isYesterday(date)) return 'Yesterday';
+    return format(date, 'dd/MM/yy');
+  };
+
+  const formatDateSeparator = (dateStr: string) => {
+    const date = new Date(dateStr);
+    if (isToday(date)) return 'Today';
+    if (isYesterday(date)) return 'Yesterday';
+    return format(date, 'MMMM d, yyyy');
   };
 
   const getMessageStatusIcon = (status: string) => {
     switch (status) {
       case 'read':
-        return <CheckCheck className="w-3.5 h-3.5 text-blue-500" />;
+        return <CheckCheck className="w-4 h-4 text-[#53bdeb]" />;
       case 'delivered':
-        return <CheckCheck className="w-3.5 h-3.5 text-slate-400" />;
+        return <CheckCheck className="w-4 h-4 text-[#8696a0]" />;
       case 'sent':
-        return <Check className="w-3.5 h-3.5 text-slate-400" />;
+        return <Check className="w-4 h-4 text-[#8696a0]" />;
       case 'pending':
-        return <Clock className="w-3 h-3 text-slate-400" />;
+        return <Clock className="w-3.5 h-3.5 text-[#8696a0]" />;
       case 'failed':
-        return <AlertCircle className="w-3.5 h-3.5 text-red-500" />;
+        return <AlertCircle className="w-4 h-4 text-red-500" />;
       default:
         return null;
     }
   };
 
-  // Get display name - only phone number as requested
+  // Get display name - only phone number
   const getDisplayName = (conv: Conversation) => {
     return conv.recipient_phone || 'Unknown';
   };
 
   // Get avatar initials from phone number
   const getAvatarInitial = (conv: Conversation) => {
-    if (conv.recipient_phone) return conv.recipient_phone.slice(-2);
-    return '?';
+    if (conv.recipient_phone) {
+      const digits = conv.recipient_phone.replace(/\D/g, '');
+      return digits.slice(-2) || '??';
+    }
+    return '??';
+  };
+
+  // Group messages by date
+  const groupMessagesByDate = (msgs: Message[]) => {
+    const groups: { date: string; messages: Message[] }[] = [];
+    let currentDate = '';
+    
+    msgs.forEach(msg => {
+      const msgDate = format(new Date(msg.created_at), 'yyyy-MM-dd');
+      if (msgDate !== currentDate) {
+        currentDate = msgDate;
+        groups.push({ date: msg.created_at, messages: [msg] });
+      } else {
+        groups[groups.length - 1].messages.push(msg);
+      }
+    });
+    
+    return groups;
+  };
+
+  // Get last message preview
+  const getLastMessagePreview = (conv: Conversation) => {
+    const msg = messages.find(m => m.id); // Just a placeholder, we'd need to store last message
+    return 'Tap to view messages';
   };
 
   if (isLoading) {
     return (
-      <div className="h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center">
+      <div className="h-screen bg-[#111b21] flex items-center justify-center">
         <div className="text-center">
-          <RefreshCw className="w-10 h-10 animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-slate-600 font-medium">Loading workspace...</p>
+          <div className="w-16 h-16 rounded-full bg-[#00a884] flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <Send className="w-8 h-8 text-white" />
+          </div>
+          <p className="text-[#8696a0] font-medium">Loading workspace...</p>
         </div>
       </div>
     );
@@ -469,27 +525,29 @@ const SeatChat: React.FC = () => {
 
   if (error) {
     return (
-      <div className="h-screen bg-gradient-to-br from-blue-50 via-white to-indigo-50 flex items-center justify-center p-4">
-        <Card className="max-w-md w-full bg-white shadow-xl border-0">
+      <div className="h-screen bg-[#111b21] flex items-center justify-center p-4">
+        <Card className="max-w-md w-full bg-[#202c33] border-0 shadow-2xl">
           <CardContent className="pt-8 pb-8 text-center">
-            <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
-              <AlertCircle className="w-8 h-8 text-red-500" />
+            <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-red-400" />
             </div>
-            <h2 className="text-xl font-bold mb-2 text-slate-800">Access Error</h2>
-            <p className="text-slate-500">{error}</p>
+            <h2 className="text-xl font-bold mb-2 text-white">Access Error</h2>
+            <p className="text-[#8696a0]">{error}</p>
           </CardContent>
         </Card>
       </div>
     );
   }
 
+  const messageGroups = groupMessagesByDate(filteredMessages);
+
   return (
-    <div className="h-screen flex flex-col bg-gradient-to-br from-slate-50 to-blue-50/30 overflow-hidden">
+    <div className="h-screen flex flex-col bg-[#111b21] overflow-hidden">
       {/* Message Search Dialog */}
       <Dialog open={isMessageSearchOpen} onOpenChange={setIsMessageSearchOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md bg-[#202c33] border-[#2a3942] text-white">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+            <DialogTitle className="flex items-center gap-2 text-white">
               <Search className="w-5 h-5" />
               Search Messages
             </DialogTitle>
@@ -499,10 +557,11 @@ const SeatChat: React.FC = () => {
               placeholder="Type to search messages..."
               value={messageSearchQuery}
               onChange={(e) => setMessageSearchQuery(e.target.value)}
+              className="bg-[#2a3942] border-0 text-white placeholder:text-[#8696a0] focus:ring-[#00a884]"
               autoFocus
             />
             {messageSearchQuery && (
-              <div className="text-sm text-slate-500">
+              <div className="text-sm text-[#8696a0]">
                 Found {filteredMessages.length} message{filteredMessages.length !== 1 ? 's' : ''} matching "{messageSearchQuery}"
               </div>
             )}
@@ -511,66 +570,64 @@ const SeatChat: React.FC = () => {
       </Dialog>
 
       {/* Header */}
-      <header className="bg-white border-b border-slate-200 shadow-sm flex-shrink-0">
-        <div className="px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            {/* Telegram-style Logo */}
-            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg">
-              <MessageCircle className="w-6 h-6 text-white" />
+      <header className="bg-[#202c33] border-b border-[#2a3942] flex-shrink-0 px-4 py-2">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {/* Logo */}
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00a884] to-[#25d366] flex items-center justify-center shadow-lg">
+              <Send className="w-5 h-5 text-white" />
             </div>
             <div>
-              <h1 className="font-bold text-lg text-slate-900">{seat?.name}</h1>
-              <p className="text-xs text-slate-500">Telegram Chat Workspace</p>
+              <h1 className="font-semibold text-white text-base">{seat?.name}</h1>
+              <p className="text-xs text-[#8696a0]">Telegram Chat</p>
             </div>
           </div>
           
-          {/* Stats in header */}
-          <div className="hidden md:flex items-center gap-6">
-            <div className="flex items-center gap-2 text-sm">
-              <MessageSquare className="w-4 h-4 text-blue-500" />
-              <span className="font-semibold text-slate-800">{stats.total_conversations}</span>
-              <span className="text-slate-500">Chats</span>
+          {/* Stats */}
+          <div className="hidden md:flex items-center gap-4">
+            <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
+              <MessageSquare className="w-3.5 h-3.5 text-[#00a884]" />
+              <span className="font-medium text-white">{stats.total_conversations}</span>
             </div>
-            <div className="flex items-center gap-2 text-sm">
-              <Send className="w-4 h-4 text-emerald-500" />
-              <span className="font-semibold text-slate-800">{stats.messages_sent_today}</span>
-              <span className="text-slate-500">Sent</span>
+            <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
+              <Send className="w-3.5 h-3.5 text-[#00a884]" />
+              <span className="font-medium text-white">{stats.messages_sent_today}</span>
             </div>
-            <div className="flex items-center gap-2 text-sm">
-              <Eye className="w-4 h-4 text-purple-500" />
-              <span className="font-semibold text-slate-800">{stats.messages_read}</span>
-              <span className="text-slate-500">Read</span>
+            <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
+              <Eye className="w-3.5 h-3.5 text-[#00a884]" />
+              <span className="font-medium text-white">{stats.messages_read}</span>
             </div>
-            <div className="flex items-center gap-2 text-sm">
-              <Users className="w-4 h-4 text-orange-500" />
-              <span className="font-semibold text-slate-800">{stats.responses_received}</span>
-              <span className="text-slate-500">Replies</span>
+            <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
+              <Users className="w-3.5 h-3.5 text-[#00a884]" />
+              <span className="font-medium text-white">{stats.responses_received}</span>
             </div>
           </div>
 
-          <Badge className="bg-emerald-500 text-white border-0 shadow-sm">
-            ● Online
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge className="bg-[#00a884] text-white border-0 text-xs px-2 py-0.5">
+              ● Online
+            </Badge>
+          </div>
         </div>
       </header>
 
       {/* Main Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Conversation Sidebar */}
-        <div className="w-80 lg:w-96 bg-white border-r border-slate-200 flex flex-col flex-shrink-0">
-          {/* Search & Filter Header */}
-          <div className="p-4 border-b border-slate-100 space-y-3">
-            {/* Time Filter Tabs */}
-            <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
+        <div className="w-[340px] lg:w-[420px] bg-[#111b21] border-r border-[#2a3942] flex flex-col flex-shrink-0">
+          {/* Search & Filter */}
+          <div className="p-2 bg-[#111b21]">
+            {/* Time Filters */}
+            <div className="flex gap-1 mb-2">
               {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
                 <button
                   key={filter}
                   onClick={() => setTimeFilter(filter)}
                   className={cn(
-                    "flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all",
+                    "flex-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all",
                     timeFilter === filter 
-                      ? "bg-blue-600 text-white shadow-sm" 
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-200"
+                      ? "bg-[#00a884] text-white" 
+                      : "text-[#8696a0] hover:bg-[#2a3942]"
                   )}
                 >
                   {filter}
@@ -578,27 +635,15 @@ const SeatChat: React.FC = () => {
               ))}
             </div>
 
-            {/* Search Input */}
+            {/* Search */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8696a0]" />
               <Input
-                placeholder="Search conversations..."
+                placeholder="Search or start new chat"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 bg-slate-50 border-slate-200 focus:border-blue-400 focus:ring-blue-400 rounded-full h-9"
+                className="pl-10 bg-[#202c33] border-0 text-white placeholder:text-[#8696a0] focus:ring-0 h-9 rounded-lg"
               />
-            </div>
-
-            {/* Conversation Count */}
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-slate-500">
-                {filteredConversations.length} Conversation{filteredConversations.length !== 1 ? 's' : ''}
-              </span>
-              {hiddenConversations.size > 0 && (
-                <span className="text-xs text-slate-400">
-                  {hiddenConversations.size} hidden
-                </span>
-              )}
             </div>
           </div>
 
@@ -606,51 +651,58 @@ const SeatChat: React.FC = () => {
           <div className="flex-1 overflow-y-auto">
             {filteredConversations.length === 0 ? (
               <div className="p-8 text-center">
-                <MessageSquare className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-                <p className="text-slate-500 font-medium">No conversations found</p>
-                <p className="text-xs text-slate-400 mt-1">
+                <MessageSquare className="w-12 h-12 text-[#2a3942] mx-auto mb-3" />
+                <p className="text-[#8696a0] font-medium text-sm">No conversations</p>
+                <p className="text-xs text-[#667781] mt-1">
                   {searchQuery ? 'Try a different search' : 'Conversations will appear here'}
                 </p>
               </div>
             ) : (
-              <div className="divide-y divide-slate-100">
+              <div>
                 {filteredConversations.map((conv) => (
                   <div
                     key={conv.id}
                     className={cn(
-                      "flex items-center gap-3 p-4 cursor-pointer transition-all group",
+                      "flex items-center gap-3 px-3 py-3 cursor-pointer transition-all group",
                       selectedConversation?.id === conv.id
-                        ? "bg-blue-50 border-l-4 border-l-blue-500"
-                        : "hover:bg-slate-50 border-l-4 border-l-transparent"
+                        ? "bg-[#2a3942]"
+                        : "hover:bg-[#202c33]"
                     )}
                     onClick={() => setSelectedConversation(conv)}
                   >
-                    {/* Avatar with profile picture */}
-                    <Avatar className="w-12 h-12 border-2 border-white shadow-md flex-shrink-0">
+                    {/* Avatar */}
+                    <Avatar className="w-12 h-12 flex-shrink-0">
                       <AvatarImage src={conv.recipient_avatar || ''} />
-                      <AvatarFallback className="bg-gradient-to-br from-blue-500 to-indigo-600 text-white text-sm font-semibold">
+                      <AvatarFallback className={cn(
+                        "bg-gradient-to-br text-white text-sm font-medium",
+                        getAvatarColor(conv.recipient_phone)
+                      )}>
                         {getAvatarInitial(conv)}
                       </AvatarFallback>
                     </Avatar>
                     
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-0 border-b border-[#2a3942] py-1">
                       <div className="flex items-center justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="font-semibold text-sm text-slate-800 truncate">
-                            {getDisplayName(conv)}
-                          </p>
-                        </div>
+                        <p className="font-medium text-[15px] text-white truncate">
+                          {getDisplayName(conv)}
+                        </p>
+                        <span className={cn(
+                          "text-xs flex-shrink-0",
+                          conv.unread_count > 0 ? "text-[#00a884]" : "text-[#667781]"
+                        )}>
+                          {formatConversationTime(conv.last_message_at)}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between gap-2 mt-0.5">
+                        <p className="text-sm text-[#8696a0] truncate">
+                          Tap to view messages
+                        </p>
                         {conv.unread_count > 0 && (
-                          <Badge className="bg-blue-600 text-white text-xs px-2 min-w-[22px] h-5 shadow-sm flex-shrink-0">
+                          <span className="bg-[#00a884] text-white text-[11px] font-medium min-w-[20px] h-5 rounded-full flex items-center justify-center px-1.5 flex-shrink-0">
                             {conv.unread_count}
-                          </Badge>
+                          </span>
                         )}
                       </div>
-                      {conv.last_message_at && (
-                        <p className="text-[10px] text-slate-400 mt-1">
-                          {formatMessageDate(conv.last_message_at)}
-                        </p>
-                      )}
                     </div>
 
                     {/* Actions Menu */}
@@ -659,17 +711,20 @@ const SeatChat: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-[#8696a0] hover:text-white hover:bg-transparent"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <MoreVertical className="w-4 h-4 text-slate-400" />
+                          <MoreVertical className="w-4 h-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={(e) => {
-                          e.stopPropagation();
-                          toggleHideConversation(conv.id);
-                        }}>
+                      <DropdownMenuContent align="end" className="bg-[#233138] border-[#2a3942] text-white">
+                        <DropdownMenuItem 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleHideConversation(conv.id);
+                          }}
+                          className="text-[#d1d7db] hover:bg-[#2a3942] focus:bg-[#2a3942]"
+                        >
                           <EyeOff className="w-4 h-4 mr-2" />
                           Hide conversation
                         </DropdownMenuItem>
@@ -683,42 +738,64 @@ const SeatChat: React.FC = () => {
         </div>
 
         {/* Message Area */}
-        <div className="flex-1 flex flex-col bg-slate-50 overflow-hidden">
+        <div className="flex-1 flex flex-col overflow-hidden" style={{
+          backgroundImage: `url("data:image/svg+xml,%3Csvg width='400' height='400' viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23182229' fill-opacity='0.8'%3E%3Cpath d='M20 20h10v10H20zM50 50h10v10H50zM80 20h10v10H80zM110 50h10v10H110zM140 20h10v10H140zM170 50h10v10H170zM200 20h10v10H200zM230 50h10v10H230zM260 20h10v10H260zM290 50h10v10H290zM320 20h10v10H320zM350 50h10v10H350zM20 80h10v10H20zM50 110h10v10H50zM80 80h10v10H80zM110 110h10v10H110zM140 80h10v10H140zM170 110h10v10H170zM200 80h10v10H200zM230 110h10v10H230zM260 80h10v10H260zM290 110h10v10H290zM320 80h10v10H320zM350 110h10v10H350zM20 140h10v10H20zM50 170h10v10H50zM80 140h10v10H80zM110 170h10v10H110zM140 140h10v10H140zM170 170h10v10H170zM200 140h10v10H200zM230 170h10v10H230zM260 140h10v10H260zM290 170h10v10H290zM320 140h10v10H320zM350 170h10v10H350zM20 200h10v10H20zM50 230h10v10H50zM80 200h10v10H80zM110 230h10v10H110zM140 200h10v10H140zM170 230h10v10H170zM200 200h10v10H200zM230 230h10v10H230zM260 200h10v10H260zM290 230h10v10H290zM320 200h10v10H320zM350 230h10v10H350zM20 260h10v10H20zM50 290h10v10H50zM80 260h10v10H80zM110 290h10v10H110zM140 260h10v10H140zM170 290h10v10H170zM200 260h10v10H200zM230 290h10v10H230zM260 260h10v10H260zM290 290h10v10H290zM320 260h10v10H320zM350 290h10v10H350zM20 320h10v10H20zM50 350h10v10H50zM80 320h10v10H80zM110 350h10v10H110zM140 320h10v10H140zM170 350h10v10H170zM200 320h10v10H200zM230 350h10v10H230zM260 320h10v10H260zM290 350h10v10H290zM320 320h10v10H320zM350 350h10v10H350z'/%3E%3C/g%3E%3C/svg%3E")`,
+          backgroundColor: '#0b141a'
+        }}>
           {selectedConversation ? (
             <>
               {/* Chat Header */}
-              <div className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between flex-shrink-0">
-                <div className="flex items-center gap-4">
-                  <Avatar className="w-11 h-11 border-2 border-white shadow-md">
+              <div className="bg-[#202c33] border-b border-[#2a3942] px-4 py-2 flex items-center justify-between flex-shrink-0">
+                <div className="flex items-center gap-3">
+                  <Avatar className="w-10 h-10">
                     <AvatarImage src={selectedConversation.recipient_avatar || ''} />
-                    <AvatarFallback className="bg-gradient-to-br from-blue-500 to-indigo-600 text-white font-semibold">
+                    <AvatarFallback className={cn(
+                      "bg-gradient-to-br text-white text-sm font-medium",
+                      getAvatarColor(selectedConversation.recipient_phone)
+                    )}>
                       {getAvatarInitial(selectedConversation)}
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-semibold text-slate-800">
+                    <p className="font-medium text-white text-[15px]">
                       {getDisplayName(selectedConversation)}
+                    </p>
+                    <p className="text-xs text-[#8696a0]">
+                      {selectedConversation.is_active ? 'online' : 'last seen recently'}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  {/* Search Messages Button */}
+                <div className="flex items-center gap-1">
                   <Button 
                     variant="ghost" 
                     size="icon"
                     onClick={() => setIsMessageSearchOpen(true)}
-                    title="Search messages"
+                    className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10"
                   >
-                    <Search className="w-5 h-5 text-slate-400" />
+                    <Search className="w-5 h-5" />
+                  </Button>
+                  <Button 
+                    variant="ghost" 
+                    size="icon"
+                    className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10"
+                  >
+                    <Phone className="w-5 h-5" />
                   </Button>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon">
-                        <MoreVertical className="w-5 h-5 text-slate-400" />
+                      <Button 
+                        variant="ghost" 
+                        size="icon"
+                        className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10"
+                      >
+                        <MoreVertical className="w-5 h-5" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => toggleHideConversation(selectedConversation.id)}>
+                    <DropdownMenuContent align="end" className="bg-[#233138] border-[#2a3942] text-white">
+                      <DropdownMenuItem 
+                        onClick={() => toggleHideConversation(selectedConversation.id)}
+                        className="text-[#d1d7db] hover:bg-[#2a3942] focus:bg-[#2a3942]"
+                      >
                         <EyeOff className="w-4 h-4 mr-2" />
                         Hide conversation
                       </DropdownMenuItem>
@@ -730,62 +807,76 @@ const SeatChat: React.FC = () => {
               {/* Messages Container */}
               <div 
                 ref={messagesContainerRef}
-                className="flex-1 overflow-y-auto p-6"
-                style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width=\'60\' height=\'60\' viewBox=\'0 0 60 60\' xmlns=\'http://www.w3.org/2000/svg\'%3E%3Cg fill=\'none\' fill-rule=\'evenodd\'%3E%3Cg fill=\'%23e2e8f0\' fill-opacity=\'0.3\'%3E%3Cpath d=\'M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z\'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}
+                className="flex-1 overflow-y-auto px-[5%] lg:px-[10%] py-4"
               >
-                <div className="max-w-3xl mx-auto space-y-4">
-                  {filteredMessages.length === 0 ? (
+                <div className="max-w-4xl mx-auto space-y-1">
+                  {messageGroups.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full py-20">
-                      <div className="w-16 h-16 rounded-full bg-slate-200 flex items-center justify-center mb-4">
-                        <MessageSquare className="w-8 h-8 text-slate-400" />
+                      <div className="bg-[#182229] rounded-lg px-3 py-1.5 mb-4">
+                        <p className="text-[#8696a0] text-xs">
+                          {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
+                        </p>
                       </div>
-                      <p className="text-slate-500 font-medium">
-                        {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
-                      </p>
-                      <p className="text-sm text-slate-400">
-                        {messageSearchQuery ? 'Try a different search term' : 'Start the conversation!'}
-                      </p>
                     </div>
                   ) : (
-                    filteredMessages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        className={cn(
-                          "flex",
-                          msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
-                        )}
-                      >
-                        <div
-                          className={cn(
-                            "max-w-[75%] rounded-2xl px-4 py-3 shadow-sm",
-                            msg.direction === 'outgoing'
-                              ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md'
-                              : 'bg-white border border-slate-200 text-slate-800 rounded-bl-md'
-                          )}
-                        >
-                          {msg.media_url && (
-                            <img
-                              src={msg.media_url}
-                              alt="Media"
-                              className="max-w-full rounded-lg mb-2"
-                            />
-                          )}
-                          <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{msg.content}</p>
-                          <div className={cn(
-                            "flex items-center gap-1.5 mt-2",
-                            msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
-                          )}>
-                            <span className={cn(
-                              "text-[10px]",
-                              msg.direction === 'outgoing' 
-                                ? 'text-white/70' 
-                                : 'text-slate-400'
-                            )}>
-                              {formatMessageDate(msg.created_at)}
-                            </span>
-                            {msg.direction === 'outgoing' && getMessageStatusIcon(msg.status)}
-                          </div>
+                    messageGroups.map((group, groupIndex) => (
+                      <div key={groupIndex}>
+                        {/* Date Separator */}
+                        <div className="flex justify-center my-3">
+                          <span className="bg-[#182229] text-[#8696a0] text-[11px] px-3 py-1 rounded-lg shadow">
+                            {formatDateSeparator(group.date)}
+                          </span>
                         </div>
+                        
+                        {/* Messages */}
+                        {group.messages.map((msg, msgIndex) => (
+                          <div
+                            key={msg.id}
+                            className={cn(
+                              "flex mb-0.5",
+                              msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
+                            )}
+                          >
+                            <div
+                              className={cn(
+                                "relative max-w-[65%] rounded-lg px-2.5 py-1.5 shadow-sm",
+                                msg.direction === 'outgoing'
+                                  ? 'bg-[#005c4b] text-white rounded-tr-none'
+                                  : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
+                              )}
+                            >
+                              {/* Message tail */}
+                              <div className={cn(
+                                "absolute top-0 w-2 h-3",
+                                msg.direction === 'outgoing'
+                                  ? '-right-2 border-l-8 border-l-[#005c4b] border-t-8 border-t-transparent'
+                                  : '-left-2 border-r-8 border-r-[#202c33] border-t-8 border-t-transparent'
+                              )} style={{
+                                borderLeftColor: msg.direction === 'outgoing' ? '#005c4b' : 'transparent',
+                                borderRightColor: msg.direction === 'incoming' ? '#202c33' : 'transparent',
+                              }} />
+                              
+                              {msg.media_url && (
+                                <img
+                                  src={msg.media_url}
+                                  alt="Media"
+                                  className="max-w-full rounded-lg mb-1.5"
+                                />
+                              )}
+                              <p className="text-[14.5px] leading-[19px] whitespace-pre-wrap break-words pr-12">
+                                {msg.content}
+                              </p>
+                              <div className={cn(
+                                "absolute bottom-1.5 right-2 flex items-center gap-1"
+                              )}>
+                                <span className="text-[11px] text-[#8696a0]">
+                                  {formatMessageTime(msg.created_at)}
+                                </span>
+                                {msg.direction === 'outgoing' && getMessageStatusIcon(msg.status)}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     ))
                   )}
@@ -795,17 +886,17 @@ const SeatChat: React.FC = () => {
 
               {/* Image Preview */}
               {imagePreview && (
-                <div className="bg-white border-t border-slate-200 p-4 flex-shrink-0">
+                <div className="bg-[#202c33] border-t border-[#2a3942] p-3 flex-shrink-0">
                   <div className="max-w-3xl mx-auto relative inline-block">
                     <img 
                       src={imagePreview} 
                       alt="Selected" 
-                      className="max-h-32 rounded-lg border border-slate-200"
+                      className="max-h-24 rounded-lg"
                     />
                     <Button
                       variant="destructive"
                       size="icon"
-                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-red-500 hover:bg-red-600"
                       onClick={clearSelectedImage}
                     >
                       <X className="w-3 h-3" />
@@ -815,12 +906,12 @@ const SeatChat: React.FC = () => {
               )}
 
               {/* Message Input */}
-              <div className="bg-white border-t border-slate-200 p-4 flex-shrink-0">
-                <div className="max-w-3xl mx-auto flex items-center gap-2">
-                  {/* Emoji Picker */}
+              <div className="bg-[#202c33] px-4 py-2 flex-shrink-0">
+                <div className="flex items-center gap-2">
+                  {/* Emoji */}
                   <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
                   
-                  {/* Image Upload */}
+                  {/* Attachment */}
                   <input
                     type="file"
                     ref={fileInputRef}
@@ -832,45 +923,63 @@ const SeatChat: React.FC = () => {
                     variant="ghost"
                     size="icon"
                     onClick={() => fileInputRef.current?.click()}
-                    className="text-slate-500 hover:text-slate-700 flex-shrink-0"
-                    title="Send image"
+                    className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10 flex-shrink-0"
                   >
-                    <Image className="w-5 h-5" />
+                    <Paperclip className="w-5 h-5" />
                   </Button>
 
-                  {/* Input Field */}
+                  {/* Input */}
                   <Input
-                    placeholder="Type your message..."
+                    placeholder="Type a message"
                     value={messageInput}
                     onChange={(e) => setMessageInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                     disabled={isSending}
-                    className="flex-1 bg-slate-50 border-slate-200 focus:border-blue-400 focus:ring-blue-400 h-11 rounded-full"
+                    className="flex-1 bg-[#2a3942] border-0 text-white placeholder:text-[#8696a0] focus:ring-0 h-10 rounded-lg"
                   />
 
-                  {/* Send Button */}
-                  <Button 
-                    onClick={handleSendMessage} 
-                    disabled={(!messageInput.trim() && !selectedImage) || isSending}
-                    className="bg-blue-600 hover:bg-blue-700 text-white shadow-md h-11 w-11 rounded-full flex-shrink-0"
-                  >
-                    {isSending ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <Send className="w-5 h-5" />
-                    )}
-                  </Button>
+                  {/* Send / Mic Button */}
+                  {messageInput.trim() || selectedImage ? (
+                    <Button 
+                      onClick={handleSendMessage} 
+                      disabled={isSending}
+                      className="bg-[#00a884] hover:bg-[#06cf9c] text-white h-10 w-10 rounded-full flex-shrink-0"
+                      size="icon"
+                    >
+                      {isSending ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <Send className="w-5 h-5" />
+                      )}
+                    </Button>
+                  ) : (
+                    <Button 
+                      variant="ghost"
+                      className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10 rounded-full flex-shrink-0"
+                      size="icon"
+                    >
+                      <Mic className="w-5 h-5" />
+                    </Button>
+                  )}
                 </div>
               </div>
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
-                <div className="w-24 h-24 rounded-full bg-gradient-to-br from-blue-100 to-indigo-100 flex items-center justify-center mx-auto mb-6">
-                  <MessageCircle className="w-12 h-12 text-blue-500" />
+                <div className="w-[280px] h-[280px] mx-auto mb-8 relative">
+                  <div className="absolute inset-0 bg-gradient-to-br from-[#00a884]/20 to-[#25d366]/20 rounded-full animate-pulse" />
+                  <div className="absolute inset-8 bg-gradient-to-br from-[#00a884]/30 to-[#25d366]/30 rounded-full" />
+                  <div className="absolute inset-16 bg-gradient-to-br from-[#00a884] to-[#25d366] rounded-full flex items-center justify-center">
+                    <Send className="w-16 h-16 text-white" />
+                  </div>
                 </div>
-                <p className="text-xl font-semibold text-slate-700">Select a conversation</p>
-                <p className="text-sm text-slate-400 mt-2">Choose from your conversations to start chatting</p>
+                <h2 className="text-[32px] font-light text-[#e9edef] mb-2">{seat?.name}</h2>
+                <p className="text-sm text-[#8696a0] max-w-md mx-auto">
+                  Send and receive messages without keeping your phone online.
+                  <br />
+                  Select a conversation to start chatting.
+                </p>
               </div>
             </div>
           )}
