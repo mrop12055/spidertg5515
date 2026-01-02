@@ -69,26 +69,29 @@ const Dashboard: React.FC = () => {
       const yesterday = new Date();
       yesterday.setHours(yesterday.getHours() - 24);
 
-      // Fetch message counts by status
-      const { data: messages, error } = await supabase
-        .from('messages')
-        .select('status, direction, created_at, conversation_id')
-        .eq('direction', 'outgoing');
+      // Use optimized count queries instead of fetching all messages
+      const [pendingRes, sentRes, failedRes, msgs24hRes, replies24hRes, uniqueConvsRes] = await Promise.all([
+        supabase.from('messages').select('id', { count: 'exact', head: true })
+          .eq('direction', 'outgoing').eq('status', 'pending'),
+        supabase.from('messages').select('id', { count: 'exact', head: true })
+          .eq('direction', 'outgoing').in('status', ['sent', 'delivered']),
+        supabase.from('messages').select('id', { count: 'exact', head: true })
+          .eq('direction', 'outgoing').eq('status', 'failed'),
+        supabase.from('messages').select('id', { count: 'exact', head: true })
+          .eq('direction', 'outgoing').gte('created_at', yesterday.toISOString()),
+        supabase.from('messages').select('id', { count: 'exact', head: true })
+          .eq('direction', 'incoming').gte('created_at', yesterday.toISOString()),
+        supabase.from('conversations').select('id', { count: 'exact', head: true })
+          .not('last_message_at', 'is', null),
+      ]);
 
-      if (error) throw error;
-
-      const pending = messages?.filter(m => m.status === 'pending').length || 0;
-      const sent = messages?.filter(m => m.status === 'sent' || m.status === 'delivered').length || 0;
-      const failed = messages?.filter(m => m.status === 'failed').length || 0;
+      const pending = pendingRes.count || 0;
+      const sent = sentRes.count || 0;
+      const failed = failedRes.count || 0;
       
-      // Messages in last 24h
-      const msgs24h = messages?.filter(m => new Date(m.created_at) > yesterday).length || 0;
-      setMessages24h(msgs24h);
-
-      // Count unique recipients with at least one successful message
-      const successfulMessages = messages?.filter(m => m.status === 'sent' || m.status === 'delivered') || [];
-      const uniqueConversations = new Set(successfulMessages.map(m => m.conversation_id));
-      setUniqueRecipientsSent(uniqueConversations.size);
+      setMessages24h(msgs24hRes.count || 0);
+      setReplies24h(replies24hRes.count || 0);
+      setUniqueRecipientsSent(uniqueConvsRes.count || 0);
       
       setQueueStats({
         pending,
@@ -96,15 +99,6 @@ const Dashboard: React.FC = () => {
         failed,
         total: pending + sent + failed
       });
-
-      // Fetch incoming messages (replies) in last 24h
-      const { data: incomingMessages } = await supabase
-        .from('messages')
-        .select('id')
-        .eq('direction', 'incoming')
-        .gte('created_at', yesterday.toISOString());
-      
-      setReplies24h(incomingMessages?.length || 0);
     } catch (error) {
       console.error('Error fetching queue stats:', error);
     }

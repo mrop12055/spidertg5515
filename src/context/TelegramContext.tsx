@@ -178,11 +178,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         })));
       }
 
-      // Fetch conversations
+      // Fetch conversations (limit to recent ones for performance)
       const { data: conversationsData } = await supabase
         .from('conversations')
         .select('*')
-        .order('updated_at', { ascending: false });
+        .order('updated_at', { ascending: false })
+        .limit(200);
 
       if (conversationsData) {
         setConversations(conversationsData.map(c => ({
