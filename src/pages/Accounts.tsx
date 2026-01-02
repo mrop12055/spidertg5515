@@ -127,6 +127,9 @@ const Accounts: React.FC = () => {
   const [isSpamBotChecking, setIsSpamBotChecking] = useState(false);
   const [spamBotProgress, setSpamBotProgress] = useState<{ total: number; completed: number; results: Map<string, { status: string; result?: string }> }>({ total: 0, completed: 0, results: new Map() });
   
+  // Sync profiles state
+  const [isSyncingProfiles, setIsSyncingProfiles] = useState(false);
+  
   // Messages sent today tracking
   const [messagesSentLast24h, setMessagesSentLast24h] = useState<Map<string, number>>(new Map());
 
@@ -869,6 +872,39 @@ const Accounts: React.FC = () => {
     }
   };
 
+  // Sync profiles - fetches full profile info (name, username, avatar) from Telegram
+  const handleSyncProfiles = async () => {
+    if (selectedIds.size === 0) return;
+    
+    setIsSyncingProfiles(true);
+    
+    try {
+      const tasks = Array.from(selectedIds).map(accountId => ({
+        account_id: accountId,
+        task_type: 'sync_profile',
+        status: 'pending',
+      }));
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasks);
+      
+      if (error) throw error;
+      
+      toast.success(`Queued ${selectedIds.size} account(s) for profile sync`);
+      
+      // Watch for completion
+      setTimeout(() => {
+        setIsSyncingProfiles(false);
+        refreshData();
+      }, 10000);
+    } catch (error) {
+      console.error('Error queuing profile sync:', error);
+      toast.error('Failed to queue profile sync');
+      setIsSyncingProfiles(false);
+    }
+  };
+
   const getStatusBadge = (status: AccountStatus) => {
     const option = statusOptions.find(o => o.value === status);
     return (
@@ -1370,6 +1406,11 @@ const Accounts: React.FC = () => {
                 <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting} className="gap-1.5">
                   {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                   Export
+                </Button>
+                
+                <Button variant="outline" size="sm" onClick={handleSyncProfiles} disabled={isSyncingProfiles} className="gap-1.5">
+                  {isSyncingProfiles ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  Sync Profiles
                 </Button>
 
                 <DropdownMenu>

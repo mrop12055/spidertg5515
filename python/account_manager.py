@@ -274,6 +274,29 @@ async def main_loop():
                         "error": error
                     })
                     print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
+            
+            elif task_type == "sync_profile":
+                task_id = task.get("task_id")
+                account = task.get("account", {})
+                
+                print(f"  🔄 Syncing profile for {account.get('phone_number')}...")
+                # Force full profile sync including avatar
+                client = await get_or_create_client(account, skip_avatar=False, force_profile_sync=True)
+                if client:
+                    await report_result("sync_profile", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": True
+                    })
+                    print(f"    ✓ Profile synced")
+                else:
+                    await report_result("sync_profile", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": False,
+                        "error": "Could not connect"
+                    })
+                    print(f"    ✗ Failed to connect")
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
