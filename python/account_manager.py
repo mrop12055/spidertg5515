@@ -40,24 +40,41 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def check_spambot(client):
-    """Check SpamBot for account status"""
+    """Check SpamBot for account status - detects banned, frozen, restricted"""
     try:
         spambot = await client.get_entity("@SpamBot")
         await client.send_message(spambot, "/start")
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)  # Wait longer for response
         messages = await client.get_messages(spambot, limit=1)
         response = messages[0].text if messages else "No response"
         
         response_lower = response.lower()
-        if "no limits" in response_lower or "good news" in response_lower:
-            return "active", None, response
-        elif "limited" in response_lower or "restricted" in response_lower:
-            return "restricted", None, response
-        elif "banned" in response_lower:
+        
+        # Check for FROZEN state (temporary restriction)
+        if "frozen" in response_lower or "заморожен" in response_lower:
+            return "restricted", "Account frozen", response
+        
+        # Check for BANNED/DELETED state  
+        if "banned" in response_lower or "deleted" in response_lower or "заблокирован" in response_lower:
             return "banned", response[:200], response
+        
+        # Check for LIMITED/RESTRICTED state
+        if "limited" in response_lower or "restricted" in response_lower or "ограничен" in response_lower:
+            return "restricted", "Limited by Telegram", response
+            
+        # Check for CLEAN state
+        if "no limits" in response_lower or "good news" in response_lower or "нет ограничений" in response_lower:
+            return "active", None, response
+            
         return "active", None, response
     except Exception as e:
-        return "active", None, f"Error: {e}"
+        error_str = str(e).lower()
+        # Detect ban/freeze from connection errors
+        if "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
+            return "banned", str(e), f"Connection error: {e}"
+        if "auth" in error_str or "session" in error_str or "revoked" in error_str:
+            return "disconnected", str(e), f"Session error: {e}"
+        return "active", None, f"SpamBot error: {e}"
 
 
 async def change_name(client, first_name: str, last_name: str = ""):
