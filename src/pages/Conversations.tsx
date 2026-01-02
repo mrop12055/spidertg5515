@@ -116,13 +116,17 @@ const Chat: React.FC = () => {
   // Helper to check if conversation should be shown:
   // Only show conversations where WE sent the first message (campaign initiated)
   const shouldShowConversation = (conv: typeof conversations[0]) => {
+    // STRICT: Only show if first_message_sent is explicitly TRUE
+    if (conv.firstMessageSent === true) {
+      return true;
+    }
+    
+    // Check messages to verify we initiated the conversation
     const convMessages = messages.filter(m => m.conversationId === conv.id);
     
-    // If no messages loaded yet but conversation exists with lastMessageAt, 
-    // assume it was initiated by us (from campaign)
+    // No messages AND first_message_sent is not true = don't show
     if (convMessages.length === 0) {
-      // Only show if it has first_message_sent flag or lastMessageAt
-      return conv.firstMessageSent === true || conv.lastMessageAt != null;
+      return false;
     }
     
     // Sort by timestamp to find the first message
