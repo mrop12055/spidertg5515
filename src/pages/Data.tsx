@@ -130,7 +130,7 @@ const Data: React.FC = () => {
     fetchTags();
   }, [fetchTags]);
 
-  // Poll for pending import tasks
+  // Poll for pending/in_progress import tasks
   useEffect(() => {
     if (pendingTasks.length === 0) return;
 
@@ -146,15 +146,18 @@ const Data: React.FC = () => {
       }
 
       const tasks = (data || []) as ImportTask[];
-      const stillPending = tasks.filter(t => t.status === 'pending' || t.status === 'processing');
+      const stillActive = tasks.filter(t => t.status === 'pending' || t.status === 'processing' || t.status === 'in_progress');
       const completed = tasks.filter(t => t.status === 'completed' || t.status === 'failed');
+
+      // Update tasks with latest data (for progress display)
+      setPendingTasks(stillActive.length > 0 ? stillActive : []);
 
       if (completed.length > 0) {
         completed.forEach(task => {
           if (task.status === 'completed') {
             const validCount = (task.valid_numbers || []).length;
             const invalidCount = (task.invalid_numbers || []).length;
-            toast.success(`Added ${validCount} contacts. ${invalidCount} invalid skipped.`);
+            toast.success(`Import complete: ${validCount} valid, ${invalidCount} invalid`);
           } else if (task.status === 'failed') {
             toast.error(`Import failed: ${task.result || 'Unknown error'}`);
           }
@@ -162,9 +165,7 @@ const Data: React.FC = () => {
         
         fetchTags();
       }
-
-      setPendingTasks(stillPending);
-    }, 3000);
+    }, 2000);
 
     return () => clearInterval(interval);
   }, [pendingTasks, fetchTags]);
@@ -473,6 +474,61 @@ const Data: React.FC = () => {
             </Card>
           )}
         </div>
+
+        {/* Import Progress */}
+        {pendingTasks.length > 0 && (
+          <Card className="border-amber-500/30 bg-amber-500/5">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                Import Progress
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {pendingTasks.map(task => {
+                const submitted = task.phone_numbers?.length || 0;
+                const validCount = task.valid_numbers?.length || 0;
+                const invalidCount = task.invalid_numbers?.length || 0;
+                const processed = validCount + invalidCount;
+                const progress = submitted > 0 ? Math.round((processed / submitted) * 100) : 0;
+                const tagName = tags.find(t => t.id === task.tag_id)?.name || 'Unknown';
+                
+                return (
+                  <div key={task.id} className="p-3 rounded-lg bg-background/50 border border-border/50">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs">{tagName}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {task.status === 'pending' ? 'Waiting...' : 'Validating...'}
+                        </span>
+                      </div>
+                      <span className="text-xs font-medium">{progress}%</span>
+                    </div>
+                    
+                    <div className="w-full bg-muted rounded-full h-2 mb-2">
+                      <div 
+                        className="bg-amber-500 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${progress}%` }}
+                      />
+                    </div>
+                    
+                    <div className="flex items-center gap-4 text-xs">
+                      <span className="text-muted-foreground">
+                        Submitted: <span className="font-medium text-foreground">{submitted}</span>
+                      </span>
+                      <span className="text-emerald-500">
+                        Valid: <span className="font-medium">{validCount}</span>
+                      </span>
+                      <span className="text-red-500">
+                        Invalid: <span className="font-medium">{invalidCount}</span>
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Tags List */}
         <Card>
