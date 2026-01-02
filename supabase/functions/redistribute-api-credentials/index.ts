@@ -34,36 +34,36 @@ serve(async (req) => {
 
     console.log(`[redistribute-api-credentials] Found ${apiCredentials.length} API credentials`);
 
-    // Fetch all accounts without API credential assignment
-    const { data: unassignedAccounts, error: accError } = await supabase
+    // Fetch ALL active accounts for redistribution (not just unassigned)
+    const { data: allAccounts, error: accError } = await supabase
       .from('telegram_accounts')
-      .select('id, device_model')
-      .is('api_credential_id', null);
+      .select('id, device_model, status')
+      .in('status', ['active', 'restricted', 'cooldown']);
 
     if (accError) {
       throw accError;
     }
 
-    if (!unassignedAccounts || unassignedAccounts.length === 0) {
+    if (!allAccounts || allAccounts.length === 0) {
       return new Response(
-        JSON.stringify({ message: 'All accounts already have API credentials assigned', assigned: 0 }),
+        JSON.stringify({ message: 'No accounts found to redistribute', assigned: 0 }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`[redistribute-api-credentials] Found ${unassignedAccounts.length} accounts to assign`);
+    console.log(`[redistribute-api-credentials] Found ${allAccounts.length} accounts to redistribute`);
 
     // Group credentials by type for matching
     const androidCreds = apiCredentials.filter(c => c.client_type === 'android' || c.client_type === 'desktop');
     const iosCreds = apiCredentials.filter(c => c.client_type === 'ios' || c.client_type === 'macos');
 
-    // Track assignments per credential for load balancing
+    // Reset assignment counts for fresh redistribution
     const assignmentCounts = new Map<string, number>();
-    apiCredentials.forEach(c => assignmentCounts.set(c.id, c.accounts_count || 0));
+    apiCredentials.forEach(c => assignmentCounts.set(c.id, 0));
 
     const assignments: { id: string; api_credential_id: string }[] = [];
 
-    for (const account of unassignedAccounts) {
+    for (const account of allAccounts) {
       // Determine if this is an iOS device
       const isIos = account.device_model?.toLowerCase().includes('iphone') || false;
       
