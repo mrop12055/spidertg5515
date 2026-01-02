@@ -15,6 +15,8 @@ import Settings from "./pages/Settings";
 import SetupGuide from "./pages/SetupGuide";
 import Reports from "./pages/Reports";
 import Data from "./pages/Data";
+import Seats from "./pages/Seats";
+import SeatChat from "./pages/SeatChat";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -39,6 +41,8 @@ const App = () => (
                 <Route path="/setup" element={<SetupGuide />} />
                 <Route path="/reports" element={<Reports />} />
                 <Route path="/data" element={<Data />} />
+                <Route path="/seats" element={<Seats />} />
+                <Route path="/seat/:token" element={<SeatChat />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>

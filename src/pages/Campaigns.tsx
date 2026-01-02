@@ -67,6 +67,12 @@ interface CampaignReport {
   accountStats: AccountRecipientStats[];  // Per-account unique recipient counts
 }
 
+interface Seat {
+  id: string;
+  name: string;
+  is_active: boolean;
+}
+
 const Campaigns: React.FC = () => {
   const { campaigns, accounts, createCampaign, updateCampaign, deleteCampaign, uploadRecipients, startCampaign, isLoading, refreshData } = useTelegram();
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -78,6 +84,10 @@ const Campaigns: React.FC = () => {
   const [selectedReportCampaign, setSelectedReportCampaign] = useState<Campaign | null>(null);
   const [campaignReports, setCampaignReports] = useState<Map<string, CampaignReport>>(new Map());
   const [accountUniqueRecipients, setAccountUniqueRecipients] = useState<Map<string, number>>(new Map());
+  
+  // Seats for campaign assignment
+  const [seats, setSeats] = useState<Seat[]>([]);
+  const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
   
   // Data selection for campaigns
   const [isDataSelectOpen, setIsDataSelectOpen] = useState(false);
@@ -409,6 +419,16 @@ const Campaigns: React.FC = () => {
     return () => clearInterval(interval);
   }, [fetchAccountUniqueRecipients]);
 
+  // Fetch seats for campaign assignment
+  const fetchSeats = useCallback(async () => {
+    const { data } = await supabase.from('seats').select('id, name, is_active').eq('is_active', true);
+    setSeats(data || []);
+  }, []);
+
+  useEffect(() => {
+    fetchSeats();
+  }, [fetchSeats]);
+
   // Fetch contacts data for selection
   const fetchContactsData = useCallback(async () => {
     setIsLoadingData(true);
@@ -523,9 +543,13 @@ const Campaigns: React.FC = () => {
       accountIds: newCampaign.accountIds
     });
     
-    // Upload recipients immediately after campaign creation
+    // Upload recipients and set seat_id immediately after campaign creation
     if (createdCampaign) {
       await uploadRecipients(createdCampaign.id, parsedRecipients);
+      // Set seat_id on the campaign
+      if (selectedSeatId) {
+        await supabase.from('campaigns').update({ seat_id: selectedSeatId }).eq('id', createdCampaign.id);
+      }
     }
     
     // Store campaign settings in localStorage for the sender script
@@ -757,13 +781,30 @@ const Campaigns: React.FC = () => {
 
                 {/* STEP 1: Recipients - Ask for data FIRST */}
                 <TabsContent value="recipients" className="space-y-4 mt-4">
-                  <div className="space-y-2">
-                    <Label>Campaign Name</Label>
-                    <Input
-                      placeholder="Enter campaign name"
-                      value={newCampaign.name}
-                      onChange={(e) => setNewCampaign(prev => ({ ...prev, name: e.target.value }))}
-                    />
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Campaign Name</Label>
+                      <Input
+                        placeholder="Enter campaign name"
+                        value={newCampaign.name}
+                        onChange={(e) => setNewCampaign(prev => ({ ...prev, name: e.target.value }))}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Assign to Seat (Worker)</Label>
+                      <Select value={selectedSeatId || ''} onValueChange={(v) => setSelectedSeatId(v || null)}>
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select a seat (optional)" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="">No seat (admin only)</SelectItem>
+                          {seats.map(seat => (
+                            <SelectItem key={seat.id} value={seat.id}>{seat.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground">Conversations will appear in this seat's chat</p>
+                    </div>
                   </div>
                   
                   <div className="p-4 rounded-lg bg-accent/30 border border-border">
