@@ -793,12 +793,14 @@ serve(async (req) => {
       }
       
       // Fetch pending messages and find one with an available account
+      // Prioritize by: 1) priority column DESC (seat messages = 10), 2) created_at ASC
       const { data: pendingMessages } = await supabase
         .from("messages")
         .select("*, conversations(*)")
         .eq("status", "pending")
         .eq("direction", "outgoing")
         .is("campaign_recipient_id", null)  // Non-campaign messages only
+        .order("priority", { ascending: false })  // High priority first (seat = 10)
         .order("created_at", { ascending: true })
         .limit(20);  // Fetch more messages to find one with available account
 

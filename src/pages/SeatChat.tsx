@@ -257,7 +257,8 @@ const SeatChat: React.FC = () => {
           account_id: selectedConversation.account_id,
           content: messageInput.trim(),
           direction: 'outgoing',
-          status: 'pending'
+          status: 'pending',
+          priority: 10  // High priority for seat messages - picked up faster than campaigns
         });
 
       if (error) throw error;
