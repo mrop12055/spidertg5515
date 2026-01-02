@@ -28,6 +28,23 @@ export interface VerifyProgress {
   errors: string[];
 }
 
+export interface AccountTaskLog {
+  id: string;
+  taskType: string;
+  accountPhone: string;
+  status: 'pending' | 'completed' | 'failed';
+  result?: string;
+  timestamp: Date;
+}
+
+export interface AccountTasksProgress {
+  total: number;
+  completed: number;
+  failed: number;
+  taskType: string;
+  logs: AccountTaskLog[];
+}
+
 interface TelegramContextType {
   accounts: TelegramAccount[];
   proxies: Proxy[];
@@ -46,6 +63,16 @@ interface TelegramContextType {
   setIsVerifyingLogin: React.Dispatch<React.SetStateAction<boolean>>;
   showVerifyLogs: boolean;
   setShowVerifyLogs: React.Dispatch<React.SetStateAction<boolean>>;
+  
+  // Account tasks progress (persisted across navigation)
+  accountTasksProgress: AccountTasksProgress;
+  setAccountTasksProgress: React.Dispatch<React.SetStateAction<AccountTasksProgress>>;
+  isAccountTaskRunning: boolean;
+  setIsAccountTaskRunning: React.Dispatch<React.SetStateAction<boolean>>;
+  showAccountTaskLogs: boolean;
+  setShowAccountTaskLogs: React.Dispatch<React.SetStateAction<boolean>>;
+  accountTaskHistory: AccountTaskLog[];
+  setAccountTaskHistory: React.Dispatch<React.SetStateAction<AccountTaskLog[]>>;
   
   // Account actions
   addAccount: (account: Partial<TelegramAccount>) => void;
@@ -113,6 +140,18 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   });
   const [isVerifyingLogin, setIsVerifyingLogin] = useState(false);
   const [showVerifyLogs, setShowVerifyLogs] = useState(false);
+  
+  // Account tasks progress (persisted across navigation)
+  const [accountTasksProgress, setAccountTasksProgress] = useState<AccountTasksProgress>({
+    total: 0,
+    completed: 0,
+    failed: 0,
+    taskType: '',
+    logs: [],
+  });
+  const [isAccountTaskRunning, setIsAccountTaskRunning] = useState(false);
+  const [showAccountTaskLogs, setShowAccountTaskLogs] = useState(false);
+  const [accountTaskHistory, setAccountTaskHistory] = useState<AccountTaskLog[]>([]);
 
   // Fetch data from Supabase
   const refreshData = useCallback(async () => {
@@ -1337,6 +1376,14 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     setIsVerifyingLogin,
     showVerifyLogs,
     setShowVerifyLogs,
+    accountTasksProgress,
+    setAccountTasksProgress,
+    isAccountTaskRunning,
+    setIsAccountTaskRunning,
+    showAccountTaskLogs,
+    setShowAccountTaskLogs,
+    accountTaskHistory,
+    setAccountTaskHistory,
     addAccount,
     updateAccount,
     deleteAccount,
