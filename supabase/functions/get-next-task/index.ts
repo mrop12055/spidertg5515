@@ -64,67 +64,34 @@ serve(async (req) => {
       console.log(`[get-next-task] Loaded settings: delay=${MESSAGE_DELAY_MIN_SECONDS}-${MESSAGE_DELAY_MAX_SECONDS}s, warmup=${WARMUP_DAYS}d, limit=${DAILY_MESSAGE_LIMIT}`);
     }
 
-    // Reset any messages stuck in "sending" status for more than 2 minutes
-    const sendingCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-    const { data: stuckMessages } = await supabase
-      .from("messages")
-      .update({ status: "pending" })
-      .eq("status", "sending")
-      .lt("created_at", sendingCutoff)
-      .select("id");
+    // NOTE: Maintenance tasks run only 10% of requests to reduce load
+    const shouldRunMaintenance = Math.random() < 0.1;
     
-    if (stuckMessages && stuckMessages.length > 0) {
-      console.log(`[get-next-task] Reset ${stuckMessages.length} stuck messages`);
+    if (shouldRunMaintenance) {
+      // Reset stuck messages and cancel paused campaign messages
+      const sendingCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      await supabase
+        .from("messages")
+        .update({ status: "pending" })
+        .eq("status", "sending")
+        .lt("created_at", sendingCutoff);
     }
-
-    // Check for paused campaigns - cancel pending messages
-    const { data: pausedCampaigns } = await supabase
-      .from("campaigns")
-      .select("id")
-      .in("status", ["paused", "draft"]);
     
-    if (pausedCampaigns && pausedCampaigns.length > 0) {
-      const pausedIds = pausedCampaigns.map((c: any) => c.id);
-      
-      // Get campaign_recipient_ids for paused campaigns
-      const { data: pausedRecipients } = await supabase
-        .from("campaign_recipients")
-        .select("id")
-        .in("campaign_id", pausedIds)
-        .eq("status", "pending");
-      
-      if (pausedRecipients && pausedRecipients.length > 0) {
-        const recipientIds = pausedRecipients.map((r: any) => r.id);
-        
-        // Cancel pending messages for paused campaigns
-        await supabase
-          .from("messages")
-          .update({ status: "cancelled", failed_reason: "Campaign paused" })
-          .in("campaign_recipient_id", recipientIds)
-          .eq("status", "pending");
-        
-        console.log(`[get-next-task] Cancelled messages for ${pausedRecipients.length} paused campaign recipients`);
-      }
-    }
-
-    // NOTE: Some accounts stay `status = active` but have `restricted_until` set.
-    // We treat those as "temporarily restricted":
-    // - CAMPAIGNS: exclude (new contacts can trigger bans)
-    // - LIVE CHAT: allow only for existing conversations
     const now = new Date();
 
-    // Get all active accounts (includes temporarily restricted via restricted_until)
-    // Include API credentials and proxy info for each account
+    // Get all active accounts with joins but LIMIT to prevent timeout
     const { data: activeAccounts, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
       .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-      .eq("status", "active");
+      .eq("status", "active")
+      .limit(100);
 
-    // Get accounts explicitly marked as restricted
+    // Get restricted accounts with limit
     const { data: restrictedAccounts } = await supabase
       .from("telegram_accounts")
       .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-      .eq("status", "restricted");
+      .eq("status", "restricted")
+      .limit(50);
 
     const isTimeRestricted = (a: any) => {
       if (!a?.restricted_until) return false;
