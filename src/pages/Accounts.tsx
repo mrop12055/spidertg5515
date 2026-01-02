@@ -17,8 +17,8 @@ import {
   CheckCircle, XCircle, Loader2, Search, Filter, RefreshCw, 
   Check, Shield, Globe, Link2, Unlink, Download, MoreVertical,
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
-  Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock,
-  LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone, FileEdit,
+  Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock, 
+  LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone, 
   Flame, Bot, MapPin, Key
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -100,10 +100,6 @@ const Accounts: React.FC = () => {
     hideLastSeen: false,
     disableCalls: false,
   });
-  
-  // Bulk bio dialog
-  const [isBulkBioOpen, setIsBulkBioOpen] = useState(false);
-  const [bulkBios, setBulkBios] = useState('');
   
   // Password dialog
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
@@ -485,45 +481,6 @@ const Accounts: React.FC = () => {
     } catch (error) {
       console.error('Error queuing name change:', error);
       toast.error('Failed to queue name change');
-    }
-  };
-
-  // Bulk bio change - creates tasks for Python to process
-  const handleBulkBioChange = async () => {
-    if (selectedIds.size === 0 || !bulkBios.trim()) return;
-    
-    const bios = bulkBios.split('\n').map(b => b.trim()).filter(b => b);
-    const selectedAccountIds = Array.from(selectedIds);
-    
-    if (bios.length < selectedAccountIds.length) {
-      toast.warning(`Only ${bios.length} bio(s) provided for ${selectedAccountIds.length} account(s). Some accounts will reuse bios.`);
-    }
-    
-    try {
-      // Create tasks for Python script to change bios on Telegram
-      const tasks = selectedAccountIds.map((accountId, i) => {
-        const bio = bios[i % bios.length] || bios[0];
-        
-        return {
-          account_id: accountId,
-          task_type: 'change_bio',
-          status: 'pending',
-          result: JSON.stringify({ bio }),
-        };
-      });
-      
-      const { error } = await supabase
-        .from('account_check_tasks')
-        .insert(tasks);
-      
-      if (error) throw error;
-      
-      toast.success(`Queued bio change for ${selectedAccountIds.length} account(s). Run Python script to process.`);
-      setBulkBios('');
-      setIsBulkBioOpen(false);
-    } catch (error) {
-      console.error('Error queuing bio change:', error);
-      toast.error('Failed to queue bio change');
     }
   };
 
@@ -1327,10 +1284,6 @@ const Accounts: React.FC = () => {
                       <UserCircle className="w-4 h-4 mr-2" />
                       Change Name
                     </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setIsBulkBioOpen(true)}>
-                      <FileEdit className="w-4 h-4 mr-2" />
-                      Change Bio
-                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
                       <EyeOff className="w-4 h-4 mr-2" />
                       Privacy Settings
@@ -1504,51 +1457,6 @@ const Accounts: React.FC = () => {
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setIsBulkNameOpen(false)}>Cancel</Button>
                 <Button onClick={handleBulkNameChange}>Queue Name Change</Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Bulk Bio Change Dialog */}
-        <Dialog open={isBulkBioOpen} onOpenChange={setIsBulkBioOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Change Bios</DialogTitle>
-              <DialogDescription>
-                Enter unique bios (one per line). Each bio will be assigned to a different account to avoid bans. This will queue tasks for Python to change bios on Telegram.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 pt-4">
-              <Textarea
-                placeholder="Crypto enthusiast 🚀&#10;Digital nomad | Tech lover&#10;Building the future of web3&#10;... (one bio per line)"
-                value={bulkBios}
-                onChange={(e) => setBulkBios(e.target.value)}
-                rows={8}
-              />
-              <div className="p-3 rounded-lg bg-muted/50 space-y-1">
-                <p className="text-sm font-medium flex items-center gap-2">
-                  <FileEdit className="w-4 h-4" />
-                  {bulkBios.split('\n').filter(b => b.trim()).length} unique bio(s) for {selectedIds.size} account(s)
-                </p>
-                {bulkBios.split('\n').filter(b => b.trim()).length < selectedIds.size && bulkBios.trim() && (
-                  <p className="text-xs text-status-warning">
-                    ⚠️ Not enough unique bios! Add at least {selectedIds.size} bios (one per line) to avoid duplicates.
-                  </p>
-                )}
-                {bulkBios.split('\n').filter(b => b.trim()).length >= selectedIds.size && (
-                  <p className="text-xs text-status-active">
-                    ✓ Each account will get a unique bio
-                  </p>
-                )}
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsBulkBioOpen(false)}>Cancel</Button>
-                <Button 
-                  onClick={handleBulkBioChange}
-                  disabled={!bulkBios.trim() || bulkBios.split('\n').filter(b => b.trim()).length < selectedIds.size}
-                >
-                  Queue Bio Change
-                </Button>
               </div>
             </div>
           </DialogContent>

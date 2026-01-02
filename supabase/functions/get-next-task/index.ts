@@ -563,14 +563,12 @@ serve(async (req) => {
 
     // RUNNER: account - Only account management tasks
     if (runner === "account") {
-      const { data: checkTasks, error: checkError } = await supabase
+      const { data: checkTasks } = await supabase
         .from("account_check_tasks")
-        .select("*, telegram_accounts!inner(*, telegram_api_credentials(*))")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*))")
         .eq("status", "pending")
-        .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "change_bio"])
+        .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo"])
         .limit(1);
-      
-      console.log(`[get-next-task] Account tasks query result: ${checkTasks?.length || 0} tasks, error: ${checkError?.message || 'none'}`);
 
       if (checkTasks && checkTasks.length > 0) {
         const task = checkTasks[0];
@@ -579,17 +577,6 @@ serve(async (req) => {
 
         if (accountData) {
           const apiCred = accountData.telegram_api_credentials;
-          
-          // Fetch proxy data separately if account has a proxy
-          let proxyData = null;
-          if (accountData.proxy_id) {
-            const { data: proxy } = await supabase
-              .from("proxies")
-              .select("*")
-              .eq("id", accountData.proxy_id)
-              .single();
-            proxyData = proxy;
-          }
           
           if (taskType === "spambot_check") {
             const lastCheck = accountData.last_spambot_check;
@@ -620,14 +607,6 @@ serve(async (req) => {
                     system_lang_code: accountData.system_lang_code,
                     api_id: apiCred?.api_id || accountData.api_id,
                     api_hash: apiCred?.api_hash || accountData.api_hash,
-                    proxy_id: accountData.proxy_id,
-                    proxy: proxyData ? {
-                      host: proxyData.host,
-                      port: proxyData.port,
-                      username: proxyData.username,
-                      password: proxyData.password,
-                      proxy_type: proxyData.proxy_type,
-                    } : null,
                   },
                 }), {
                   headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -649,14 +628,6 @@ serve(async (req) => {
                   system_lang_code: accountData.system_lang_code,
                   api_id: apiCred?.api_id || accountData.api_id,
                   api_hash: apiCred?.api_hash || accountData.api_hash,
-                  proxy_id: accountData.proxy_id,
-                  proxy: proxyData ? {
-                    host: proxyData.host,
-                    port: proxyData.port,
-                    username: proxyData.username,
-                    password: proxyData.password,
-                    proxy_type: proxyData.proxy_type,
-                  } : null,
                 },
               }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -679,14 +650,6 @@ serve(async (req) => {
                 system_lang_code: accountData.system_lang_code,
                 api_id: apiCred?.api_id || accountData.api_id,
                 api_hash: apiCred?.api_hash || accountData.api_hash,
-                proxy_id: accountData.proxy_id,
-                proxy: proxyData ? {
-                  host: proxyData.host,
-                  port: proxyData.port,
-                  username: proxyData.username,
-                  password: proxyData.password,
-                  proxy_type: proxyData.proxy_type,
-                } : null,
               },
             }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },

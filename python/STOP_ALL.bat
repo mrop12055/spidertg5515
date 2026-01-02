@@ -4,18 +4,17 @@ echo   Stopping All TelegramCRM Processes
 echo ============================================
 echo.
 
-:: Close windows by title
-taskkill /FI "WINDOWTITLE eq TelegramCRM - Campaign*" /F 2>nul
-taskkill /FI "WINDOWTITLE eq TelegramCRM - LiveChat*" /F 2>nul
-taskkill /FI "WINDOWTITLE eq TelegramCRM - Account*" /F 2>nul
-taskkill /FI "WINDOWTITLE eq TelegramCRM - Warmup*" /F 2>nul
-taskkill /FI "WINDOWTITLE eq TelegramCRM - All in One*" /F 2>nul
+:: Kill all Python processes running our scripts
+taskkill /F /IM python.exe /FI "WINDOWTITLE eq *TelegramCRM*" 2>nul
+taskkill /F /IM python.exe /FI "WINDOWTITLE eq *Live Chat*" 2>nul
+taskkill /F /IM python.exe /FI "WINDOWTITLE eq *Campaign*" 2>nul
+taskkill /F /IM python.exe /FI "WINDOWTITLE eq *Account*" 2>nul
 
-:: Kill Python processes running our scripts
-for /f "tokens=2 delims=," %%a in ('tasklist /FI "IMAGENAME eq python.exe" /FO CSV /NH 2^>nul') do (
-    wmic process where "ProcessId=%%~a" get CommandLine 2>nul | findstr /i "campaign_runner live_chat_listener account_manager warmup_runner main_runner" >nul && (
-        echo Stopping Python process %%~a...
-        taskkill /F /PID %%~a 2>nul
+:: Alternative method - kill by script name pattern
+for /f "tokens=2" %%a in ('tasklist /FI "IMAGENAME eq python.exe" /FO LIST ^| find "PID:"') do (
+    wmic process where "ProcessId=%%a" get CommandLine 2>nul | findstr /i "live_chat_listener campaign_runner account_manager main_runner" >nul && (
+        echo Stopping process %%a...
+        taskkill /F /PID %%a 2>nul
     )
 )
 

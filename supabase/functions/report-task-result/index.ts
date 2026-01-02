@@ -937,22 +937,6 @@ serve(async (req) => {
         break;
       }
 
-      case "change_bio": {
-        const { task_id, account_id, success, error } = result;
-
-        await supabase
-          .from("account_check_tasks")
-          .update({
-            status: success ? "completed" : "failed",
-            result: success ? "Bio changed" : error,
-            completed_at: new Date().toISOString(),
-          })
-          .eq("id", task_id);
-
-        console.log(`[report-task-result] Bio change ${success ? "completed" : "failed"} for ${account_id}`);
-        break;
-      }
-
       case "account_restricted": {
         const { account_id, reason, restricted_until } = result;
 
