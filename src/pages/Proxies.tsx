@@ -555,7 +555,7 @@ const Proxies: React.FC = () => {
                   <div className="space-y-2">
                     <Label>Proxy List</Label>
                     <Textarea
-                      placeholder="host:port:username:password&#10;host:port&#10;host:port:username:password"
+                      placeholder="gate-eu.example.com:1000:username:password&#10;proxy.example.com:8080&#10;host:port:user:pass"
                       value={bulkProxies}
                       onChange={(e) => {
                         setBulkProxies(e.target.value);
@@ -565,7 +565,7 @@ const Proxies: React.FC = () => {
                       className="font-mono text-sm"
                     />
                     <p className="text-xs text-muted-foreground">
-                      One proxy per line. Format: host:port or host:port:username:password
+                      One proxy per line. Format: <code className="px-1 py-0.5 bg-muted rounded">host:port:username:password</code> or <code className="px-1 py-0.5 bg-muted rounded">host:port</code>
                     </p>
                   </div>
                   
