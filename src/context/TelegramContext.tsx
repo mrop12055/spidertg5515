@@ -1195,20 +1195,30 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const blockContact = useCallback(async (conversationId: string) => {
     try {
-      // Mark conversation as blocked (we'll use is_active = false and add to a blocklist)
       const conv = conversations.find(c => c.id === conversationId);
       if (!conv) return;
 
-      // Delete the conversation and its messages (blocking = removing from chat)
-      await supabase
-        .from('messages')
-        .delete()
-        .eq('conversation_id', conversationId);
+      // 1) Add to blocked_contacts table (for UI list & filtering)
+      const { error: blockErr } = await supabase.from('blocked_contacts').upsert({
+        phone_number: conv.recipientPhone,
+        name: conv.recipientName || null,
+        blocked_by_account_id: conv.accountId,
+        reason: 'Blocked from chat',
+      }, { onConflict: 'phone_number' });
 
-      await supabase
-        .from('conversations')
-        .delete()
-        .eq('id', conversationId);
+      if (blockErr) console.error('Error adding to blocked_contacts:', blockErr);
+
+      // 2) Create task for Python runner to call Telegram API
+      await supabase.from('block_contact_tasks').insert({
+        account_id: conv.accountId,
+        target_phone: conv.recipientPhone,
+        target_username: conv.recipientName?.startsWith('@') ? conv.recipientName : null,
+        action: 'block',
+      });
+
+      // 3) Delete messages and conversation from local DB
+      await supabase.from('messages').delete().eq('conversation_id', conversationId);
+      await supabase.from('conversations').delete().eq('id', conversationId);
 
       toast.success(`Blocked ${conv.recipientName || conv.recipientPhone}`);
       refreshData();
@@ -1220,17 +1230,34 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const blockContacts = useCallback(async (conversationIds: string[]) => {
     try {
-      // Delete messages first
-      await supabase
-        .from('messages')
-        .delete()
-        .in('conversation_id', conversationIds);
+      const convsToBlock = conversations.filter(c => conversationIds.includes(c.id));
 
-      // Delete conversations
-      const { error } = await supabase
-        .from('conversations')
-        .delete()
-        .in('id', conversationIds);
+      // 1) Bulk insert into blocked_contacts
+      const blockedRows = convsToBlock.map(conv => ({
+        phone_number: conv.recipientPhone,
+        name: conv.recipientName || null,
+        blocked_by_account_id: conv.accountId,
+        reason: 'Blocked from chat',
+      }));
+      if (blockedRows.length > 0) {
+        const { error: blockErr } = await supabase.from('blocked_contacts').upsert(blockedRows, { onConflict: 'phone_number' });
+        if (blockErr) console.error('Error adding to blocked_contacts:', blockErr);
+      }
+
+      // 2) Create tasks for Python runner
+      const taskRows = convsToBlock.map(conv => ({
+        account_id: conv.accountId,
+        target_phone: conv.recipientPhone,
+        target_username: conv.recipientName?.startsWith('@') ? conv.recipientName : null,
+        action: 'block',
+      }));
+      if (taskRows.length > 0) {
+        await supabase.from('block_contact_tasks').insert(taskRows);
+      }
+
+      // 3) Delete messages and conversations
+      await supabase.from('messages').delete().in('conversation_id', conversationIds);
+      const { error } = await supabase.from('conversations').delete().in('id', conversationIds);
 
       if (error) throw error;
       toast.success(`Blocked ${conversationIds.length} contacts`);
@@ -1239,7 +1266,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.error('Error blocking contacts:', error);
       toast.error('Failed to block contacts');
     }
-  }, [refreshData]);
+  }, [conversations, refreshData]);
 
   const value: TelegramContextType = {
     accounts,
