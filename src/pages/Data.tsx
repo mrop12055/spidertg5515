@@ -10,17 +10,16 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Progress } from '@/components/ui/progress';
 import { 
   Plus, Upload, Trash2, Database, Tag, 
   CheckCircle, Download, RefreshCw, ArrowLeft,
-  UserCheck, UserX, FileText, FolderOpen, MoreVertical, Loader2, AlertCircle
+  UserCheck, UserX, FileText, FolderOpen, MoreVertical, Loader2, AlertCircle, Clock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { useTelegram } from '@/context/TelegramContext';
 
 interface ContactTag {
@@ -30,6 +29,7 @@ interface ContactTag {
   unused_count: number;
   used_count: number;
   total_count: number;
+  pending_count: number;
 }
 
 interface ContactData {
@@ -44,6 +44,7 @@ interface ContactData {
 
 interface ImportTask {
   id: string;
+  tag_id: string;
   status: string;
   phone_numbers: string[];
   valid_numbers: string[];
@@ -70,10 +71,9 @@ const Data: React.FC = () => {
   const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
   const [addToTagId, setAddToTagId] = useState<string>('');
-  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   
-  // Import task tracking
-  const [currentImportTask, setCurrentImportTask] = useState<ImportTask | null>(null);
+  // Import tracking
+  const [pendingTasks, setPendingTasks] = useState<ImportTask[]>([]);
   const [isImporting, setIsImporting] = useState(false);
   const [importResult, setImportResult] = useState<{ valid: number; invalid: number } | null>(null);
   
@@ -84,6 +84,7 @@ const Data: React.FC = () => {
   const fetchTags = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Fetch tags
       const { data: tagsData, error: tagsError } = await supabase
         .from('contact_tags')
         .select('*')
@@ -91,11 +92,30 @@ const Data: React.FC = () => {
 
       if (tagsError) throw tagsError;
 
+      // Fetch contact counts
       const { data: contactsData, error: contactsError } = await supabase
         .from('contacts_data')
         .select('tag_id, is_used');
 
       if (contactsError) throw contactsError;
+
+      // Fetch pending import tasks to count pending per tag
+      const { data: tasksData, error: tasksError } = await supabase
+        .from('contact_import_tasks')
+        .select('*')
+        .in('status', ['pending', 'processing']);
+
+      if (tasksError) throw tasksError;
+      
+      setPendingTasks((tasksData || []) as ImportTask[]);
+
+      // Calculate pending counts per tag
+      const pendingPerTag: Record<string, number> = {};
+      (tasksData || []).forEach((task: ImportTask) => {
+        if (task.tag_id) {
+          pendingPerTag[task.tag_id] = (pendingPerTag[task.tag_id] || 0) + task.phone_numbers.length;
+        }
+      });
 
       const tagCounts: Record<string, { unused: number; used: number; total: number }> = {};
       (contactsData || []).forEach(c => {
@@ -117,6 +137,7 @@ const Data: React.FC = () => {
         unused_count: tagCounts[tag.id]?.unused || 0,
         used_count: tagCounts[tag.id]?.used || 0,
         total_count: tagCounts[tag.id]?.total || 0,
+        pending_count: pendingPerTag[tag.id] || 0,
       }));
 
       setTags(enrichedTags);
@@ -132,52 +153,47 @@ const Data: React.FC = () => {
     fetchTags();
   }, [fetchTags]);
 
-  // Poll for import task completion
+  // Poll for pending import tasks
   useEffect(() => {
-    if (!currentImportTask || currentImportTask.status === 'completed' || currentImportTask.status === 'failed') {
-      return;
-    }
+    if (pendingTasks.length === 0) return;
 
     const interval = setInterval(async () => {
       const { data, error } = await supabase
         .from('contact_import_tasks')
         .select('*')
-        .eq('id', currentImportTask.id)
-        .maybeSingle();
+        .in('id', pendingTasks.map(t => t.id));
 
       if (error) {
-        console.error('Error polling import task:', error);
+        console.error('Error polling import tasks:', error);
         return;
       }
 
-      if (data) {
-        setCurrentImportTask(data as ImportTask);
+      const tasks = (data || []) as ImportTask[];
+      const stillPending = tasks.filter(t => t.status === 'pending' || t.status === 'processing');
+      const completed = tasks.filter(t => t.status === 'completed' || t.status === 'failed');
+
+      if (completed.length > 0) {
+        completed.forEach(task => {
+          if (task.status === 'completed') {
+            const validCount = (task.valid_numbers || []).length;
+            const invalidCount = (task.invalid_numbers || []).length;
+            toast.success(`Added ${validCount} contacts. ${invalidCount} invalid skipped.`);
+          } else if (task.status === 'failed') {
+            toast.error(`Import failed: ${task.result || 'Unknown error'}`);
+          }
+        });
         
-        if (data.status === 'completed') {
-          const validCount = (data.valid_numbers || []).length;
-          const invalidCount = (data.invalid_numbers || []).length;
-          setImportResult({ valid: validCount, invalid: invalidCount });
-          setIsImporting(false);
-          
-          if (validCount > 0) {
-            toast.success(`Added ${validCount} valid contacts. ${invalidCount} invalid skipped.`);
-          } else {
-            toast.warning(`No valid contacts found. ${invalidCount} numbers were invalid.`);
-          }
-          
-          fetchTags();
-          if (selectedTag) {
-            fetchTagContacts(selectedTag.id);
-          }
-        } else if (data.status === 'failed') {
-          setIsImporting(false);
-          toast.error(`Import failed: ${data.result || 'Unknown error'}`);
+        fetchTags();
+        if (selectedTag) {
+          fetchTagContacts(selectedTag.id);
         }
       }
-    }, 2000);
+
+      setPendingTasks(stillPending);
+    }, 3000);
 
     return () => clearInterval(interval);
-  }, [currentImportTask, selectedTag, fetchTags]);
+  }, [pendingTasks, selectedTag, fetchTags]);
 
   const handleCreateTag = async () => {
     if (!newTagName.trim()) {
@@ -249,14 +265,23 @@ const Data: React.FC = () => {
     return normalized;
   };
 
+  const getAutoSelectedAccount = () => {
+    // Auto-select first active account
+    if (activeAccounts.length > 0) {
+      return activeAccounts[0].id;
+    }
+    return null;
+  };
+
   const handleAddContacts = async () => {
     if (!addToTagId) {
       toast.error('Please select a tag');
       return;
     }
     
-    if (!selectedAccountId) {
-      toast.error('Please select a Telegram account for validation');
+    const accountId = getAutoSelectedAccount();
+    if (!accountId) {
+      toast.error('No active Telegram account available for validation');
       return;
     }
 
@@ -277,14 +302,11 @@ const Data: React.FC = () => {
     }
 
     try {
-      setIsImporting(true);
-      setImportResult(null);
-      
-      // Create import task for Python runner to validate via Telegram
+      // Create import task for Python runner to validate via Telegram in background
       const { data: task, error } = await supabase
         .from('contact_import_tasks')
         .insert({
-          account_id: selectedAccountId,
+          account_id: accountId,
           tag_id: addToTagId,
           phone_numbers: phoneNumbers,
           status: 'pending'
@@ -294,14 +316,15 @@ const Data: React.FC = () => {
 
       if (error) throw error;
 
-      setCurrentImportTask(task as ImportTask);
+      setPendingTasks(prev => [...prev, task as ImportTask]);
       setBulkText('');
+      setIsAddContactsOpen(false);
       
-      toast.info(`Validating ${phoneNumbers.length} contacts via Telegram...`);
+      toast.info(`Validating ${phoneNumbers.length} contacts in background...`);
+      fetchTags();
     } catch (error) {
       console.error('Error creating import task:', error);
       toast.error('Failed to start import');
-      setIsImporting(false);
     }
   };
 
@@ -314,8 +337,9 @@ const Data: React.FC = () => {
       return;
     }
     
-    if (!selectedAccountId) {
-      toast.error('Please select a Telegram account for validation');
+    const accountId = getAutoSelectedAccount();
+    if (!accountId) {
+      toast.error('No active Telegram account available for validation');
       return;
     }
 
@@ -338,14 +362,11 @@ const Data: React.FC = () => {
         return;
       }
 
-      setIsImporting(true);
-      setImportResult(null);
-      
-      // Create import task for Python runner
+      // Create import task for Python runner in background
       const { data: task, error } = await supabase
         .from('contact_import_tasks')
         .insert({
-          account_id: selectedAccountId,
+          account_id: accountId,
           tag_id: addToTagId,
           phone_numbers: phoneNumbers,
           status: 'pending'
@@ -355,12 +376,14 @@ const Data: React.FC = () => {
 
       if (error) throw error;
 
-      setCurrentImportTask(task as ImportTask);
-      toast.info(`Validating ${phoneNumbers.length} contacts via Telegram...`);
+      setPendingTasks(prev => [...prev, task as ImportTask]);
+      setIsAddContactsOpen(false);
+      
+      toast.info(`Validating ${phoneNumbers.length} contacts in background...`);
+      fetchTags();
     } catch (error) {
       console.error('Error importing file:', error);
       toast.error('Failed to start import');
-      setIsImporting(false);
     } finally {
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
@@ -400,30 +423,55 @@ const Data: React.FC = () => {
     fetchTags();
   };
 
-  const exportTagContacts = () => {
-    if (!selectedTag || tagContacts.length === 0) return;
+  const exportContacts = async (tagId: string, tagName: string, filter: 'all' | 'unused' | 'used') => {
+    try {
+      let query = supabase
+        .from('contacts_data')
+        .select('phone_number, name, username, is_used')
+        .eq('tag_id', tagId);
+      
+      if (filter === 'unused') {
+        query = query.eq('is_used', false);
+      } else if (filter === 'used') {
+        query = query.eq('is_used', true);
+      }
 
-    const csv = [
-      'Phone Number,Name,Username,Used',
-      ...tagContacts.map(c => 
-        `${c.phone_number},${c.name || ''},${c.username || ''},${c.is_used}`
-      )
-    ].join('\n');
+      const { data, error } = await query;
+      if (error) throw error;
 
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${selectedTag.name}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+      if (!data || data.length === 0) {
+        toast.warning('No contacts to export');
+        return;
+      }
+
+      const csv = [
+        'Phone Number,Name,Username,Used',
+        ...data.map(c => 
+          `${c.phone_number},${c.name || ''},${c.username || ''},${c.is_used}`
+        )
+      ].join('\n');
+
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${tagName}_${filter}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      toast.success(`Exported ${data.length} ${filter} contacts`);
+    } catch (error) {
+      console.error('Error exporting contacts:', error);
+      toast.error('Failed to export contacts');
+    }
   };
 
   const totalStats = tags.reduce((acc, tag) => ({
     total: acc.total + tag.total_count,
     unused: acc.unused + tag.unused_count,
     used: acc.used + tag.used_count,
-  }), { total: 0, unused: 0, used: 0 });
+    pending: acc.pending + tag.pending_count,
+  }), { total: 0, unused: 0, used: 0, pending: 0 });
 
   return (
     <DashboardLayout>
@@ -434,12 +482,12 @@ const Data: React.FC = () => {
 
       <div className="space-y-6">
         {/* Stats Cards */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <Card className="bg-muted/30 border-border/50">
             <CardContent className="pt-4 pb-3">
               <div className="flex items-center gap-2 mb-1">
                 <Database className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground uppercase tracking-wide">Total Contacts</span>
+                <span className="text-xs text-muted-foreground uppercase tracking-wide">Total</span>
               </div>
               <p className="text-2xl font-bold">{totalStats.total}</p>
             </CardContent>
@@ -464,6 +512,18 @@ const Data: React.FC = () => {
               <p className="text-2xl font-bold">{totalStats.used}</p>
             </CardContent>
           </Card>
+
+          {totalStats.pending > 0 && (
+            <Card className="bg-amber-500/10 border-amber-500/30">
+              <CardContent className="pt-4 pb-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <Clock className="w-4 h-4 text-amber-500 animate-pulse" />
+                  <span className="text-xs text-muted-foreground uppercase tracking-wide">Validating</span>
+                </div>
+                <p className="text-2xl font-bold text-amber-500">{totalStats.pending}</p>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Main Content */}
@@ -488,11 +548,10 @@ const Data: React.FC = () => {
                     setIsAddContactsOpen(open);
                     if (!open) {
                       setImportResult(null);
-                      setCurrentImportTask(null);
                     }
                   }}>
                     <DialogTrigger asChild>
-                      <Button variant="outline" size="sm">
+                      <Button variant="outline" size="sm" disabled={activeAccounts.length === 0}>
                         <Upload className="w-4 h-4 mr-2" />
                         Add Contacts
                       </Button>
@@ -501,133 +560,70 @@ const Data: React.FC = () => {
                       <DialogHeader>
                         <DialogTitle>Add Contacts to Tag</DialogTitle>
                         <DialogDescription>
-                          Contacts will be validated via Telegram before adding. Only valid Telegram users will be saved.
+                          Contacts will be validated via Telegram in background. Only valid users will be saved.
                         </DialogDescription>
                       </DialogHeader>
                       
-                      {isImporting ? (
-                        <div className="py-8 text-center">
-                          <Loader2 className="w-12 h-12 mx-auto mb-4 animate-spin text-primary" />
-                          <p className="font-medium mb-2">Validating contacts via Telegram...</p>
-                          <p className="text-sm text-muted-foreground">
-                            Checking {currentImportTask?.phone_numbers.length || 0} numbers
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-2">
-                            This may take a few moments. Make sure your Python runner is active.
-                          </p>
+                      <div className="space-y-4">
+                        <div>
+                          <Label>Select Tag *</Label>
+                          <Select value={addToTagId} onValueChange={setAddToTagId}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Choose a tag" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {tags.map(tag => (
+                                <SelectItem key={tag.id} value={tag.id}>
+                                  {tag.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
-                      ) : importResult ? (
-                        <div className="py-6">
-                          <div className="flex items-center justify-center gap-8 mb-4">
-                            <div className="text-center">
-                              <div className="flex items-center justify-center w-16 h-16 rounded-full bg-green-500/20 mb-2 mx-auto">
-                                <CheckCircle className="w-8 h-8 text-green-500" />
-                              </div>
-                              <p className="text-2xl font-bold text-green-500">{importResult.valid}</p>
-                              <p className="text-sm text-muted-foreground">Valid & Added</p>
-                            </div>
-                            <div className="text-center">
-                              <div className="flex items-center justify-center w-16 h-16 rounded-full bg-destructive/20 mb-2 mx-auto">
-                                <AlertCircle className="w-8 h-8 text-destructive" />
-                              </div>
-                              <p className="text-2xl font-bold text-destructive">{importResult.invalid}</p>
-                              <p className="text-sm text-muted-foreground">Invalid & Skipped</p>
-                            </div>
-                          </div>
+                        
+                        <div className="flex gap-2">
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            accept=".txt,.csv"
+                            onChange={handleFileImport}
+                            className="hidden"
+                          />
                           <Button 
-                            className="w-full" 
-                            onClick={() => { setImportResult(null); setCurrentImportTask(null); }}
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={!addToTagId}
                           >
-                            Import More Contacts
+                            <FileText className="w-4 h-4 mr-2" />
+                            Import File
                           </Button>
                         </div>
-                      ) : (
-                        <div className="space-y-4">
-                          <div>
-                            <Label>Select Tag *</Label>
-                            <Select value={addToTagId} onValueChange={setAddToTagId}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Choose a tag" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {tags.map(tag => (
-                                  <SelectItem key={tag.id} value={tag.id}>
-                                    {tag.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          
-                          <div>
-                            <Label>Telegram Account for Validation *</Label>
-                            <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Choose an account" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {activeAccounts.length === 0 ? (
-                                  <SelectItem value="none" disabled>No active accounts</SelectItem>
-                                ) : (
-                                  activeAccounts.map(acc => (
-                                    <SelectItem key={acc.id} value={acc.id}>
-                                      {acc.firstName || acc.phoneNumber}
-                                    </SelectItem>
-                                  ))
-                                )}
-                              </SelectContent>
-                            </Select>
-                            <p className="text-xs text-muted-foreground mt-1">
-                              This account will check if numbers are valid Telegram users
-                            </p>
-                          </div>
-                          
-                          <div className="flex gap-2">
-                            <input
-                              type="file"
-                              ref={fileInputRef}
-                              accept=".txt,.csv"
-                              onChange={handleFileImport}
-                              className="hidden"
-                            />
-                            <Button 
-                              variant="outline" 
-                              size="sm" 
-                              onClick={() => fileInputRef.current?.click()}
-                              disabled={!addToTagId || !selectedAccountId}
-                            >
-                              <FileText className="w-4 h-4 mr-2" />
-                              Import File
-                            </Button>
-                          </div>
 
-                          <div className="p-3 rounded-lg bg-accent/30 border border-border text-xs text-muted-foreground">
-                            <p className="font-semibold mb-1">Format examples:</p>
-                            <pre className="font-mono">
+                        <div className="p-3 rounded-lg bg-accent/30 border border-border text-xs text-muted-foreground">
+                          <p className="font-semibold mb-1">Format examples:</p>
+                          <pre className="font-mono">
 {`12303802803
 93282083028
 ahmadraza9392`}
-                            </pre>
-                          </div>
-                          
-                          <Textarea
-                            placeholder={`12303802803\n93282083028\nahmadraza9392`}
-                            value={bulkText}
-                            onChange={(e) => setBulkText(e.target.value)}
-                            className="min-h-[150px] font-mono text-sm"
-                          />
+                          </pre>
                         </div>
-                      )}
+                        
+                        <Textarea
+                          placeholder={`12303802803\n93282083028\nahmadraza9392`}
+                          value={bulkText}
+                          onChange={(e) => setBulkText(e.target.value)}
+                          className="min-h-[150px] font-mono text-sm"
+                        />
+                      </div>
                       
-                      {!isImporting && !importResult && (
-                        <DialogFooter>
-                          <Button variant="outline" onClick={() => setIsAddContactsOpen(false)}>Cancel</Button>
-                          <Button onClick={handleAddContacts} disabled={!addToTagId || !selectedAccountId || !bulkText.trim()}>
-                            <Plus className="w-4 h-4 mr-2" />
-                            Validate & Add
-                          </Button>
-                        </DialogFooter>
-                      )}
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsAddContactsOpen(false)}>Cancel</Button>
+                        <Button onClick={handleAddContacts} disabled={!addToTagId || !bulkText.trim()}>
+                          <Plus className="w-4 h-4 mr-2" />
+                          Validate & Add
+                        </Button>
+                      </DialogFooter>
                     </DialogContent>
                   </Dialog>
 
@@ -665,6 +661,13 @@ ahmadraza9392`}
               </div>
             </CardHeader>
             <CardContent>
+              {activeAccounts.length === 0 && (
+                <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm text-amber-600 dark:text-amber-400">
+                  <AlertCircle className="w-4 h-4 inline mr-2" />
+                  No active Telegram accounts. Add contacts feature requires an active account for validation.
+                </div>
+              )}
+              
               {isLoading ? (
                 <div className="text-center py-12">
                   <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin text-muted-foreground" />
@@ -697,6 +700,19 @@ ahmadraza9392`}
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); exportContacts(tag.id, tag.name, 'all'); }}>
+                                <Download className="w-4 h-4 mr-2" />
+                                Export All
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); exportContacts(tag.id, tag.name, 'unused'); }}>
+                                <Download className="w-4 h-4 mr-2" />
+                                Export Unused
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); exportContacts(tag.id, tag.name, 'used'); }}>
+                                <Download className="w-4 h-4 mr-2" />
+                                Export Used
+                              </DropdownMenuItem>
+                              <DropdownMenuSeparator />
                               <DropdownMenuItem 
                                 className="text-destructive"
                                 onClick={(e) => { e.stopPropagation(); handleDeleteTag(tag.id); }}
@@ -708,13 +724,13 @@ ahmadraza9392`}
                           </DropdownMenu>
                         </div>
                         
-                        <div className="flex items-center gap-4 text-sm">
+                        <div className="flex items-center gap-3 text-sm">
                           <div className="flex items-center gap-1">
                             <span className="text-muted-foreground">Total:</span>
                             <Badge variant="secondary">{tag.total_count}</Badge>
                           </div>
                           <div className="flex items-center gap-1">
-                            <span className="text-muted-foreground">Left:</span>
+                            <span className="text-muted-foreground">Unused:</span>
                             <Badge variant="secondary" className="bg-primary/20 text-primary">{tag.unused_count}</Badge>
                           </div>
                           <div className="flex items-center gap-1">
@@ -722,6 +738,13 @@ ahmadraza9392`}
                             <Badge variant="secondary">{tag.used_count}</Badge>
                           </div>
                         </div>
+                        
+                        {tag.pending_count > 0 && (
+                          <div className="flex items-center gap-2 mt-2 text-sm text-amber-500">
+                            <Loader2 className="w-3 h-3 animate-spin" />
+                            <span>{tag.pending_count} validating...</span>
+                          </div>
+                        )}
                         
                         <p className="text-xs text-muted-foreground mt-3">
                           Created {format(new Date(tag.created_at), 'MMM d, yyyy')}
@@ -749,18 +772,35 @@ ahmadraza9392`}
                     </CardTitle>
                     <CardDescription>
                       {selectedTag?.total_count} contacts • {selectedTag?.unused_count} unused • {selectedTag?.used_count} used
+                      {(selectedTag?.pending_count || 0) > 0 && ` • ${selectedTag?.pending_count} validating`}
                     </CardDescription>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={exportTagContacts} disabled={tagContacts.length === 0}>
-                    <Download className="w-4 h-4 mr-2" />
-                    Export
-                  </Button>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" disabled={tagContacts.length === 0}>
+                        <Download className="w-4 h-4 mr-2" />
+                        Export
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => exportContacts(selectedTag!.id, selectedTag!.name, 'all')}>
+                        Export All
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => exportContacts(selectedTag!.id, selectedTag!.name, 'unused')}>
+                        Export Unused
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => exportContacts(selectedTag!.id, selectedTag!.name, 'used')}>
+                        Export Used
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                   <Button 
                     variant="outline" 
                     size="sm" 
                     onClick={() => { setAddToTagId(selectedTag?.id || ''); setIsAddContactsOpen(true); }}
+                    disabled={activeAccounts.length === 0}
                   >
                     <Plus className="w-4 h-4 mr-2" />
                     Add More
