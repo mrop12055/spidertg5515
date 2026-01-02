@@ -563,12 +563,14 @@ serve(async (req) => {
 
     // RUNNER: account - Only account management tasks
     if (runner === "account") {
-      const { data: checkTasks } = await supabase
+      const { data: checkTasks, error: checkError } = await supabase
         .from("account_check_tasks")
-        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies(*))")
+        .select("*, telegram_accounts!inner(*, telegram_api_credentials(*))")
         .eq("status", "pending")
         .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "change_bio"])
         .limit(1);
+      
+      console.log(`[get-next-task] Account tasks query result: ${checkTasks?.length || 0} tasks, error: ${checkError?.message || 'none'}`);
 
       if (checkTasks && checkTasks.length > 0) {
         const task = checkTasks[0];
@@ -577,6 +579,17 @@ serve(async (req) => {
 
         if (accountData) {
           const apiCred = accountData.telegram_api_credentials;
+          
+          // Fetch proxy data separately if account has a proxy
+          let proxyData = null;
+          if (accountData.proxy_id) {
+            const { data: proxy } = await supabase
+              .from("proxies")
+              .select("*")
+              .eq("id", accountData.proxy_id)
+              .single();
+            proxyData = proxy;
+          }
           
           if (taskType === "spambot_check") {
             const lastCheck = accountData.last_spambot_check;
@@ -592,7 +605,6 @@ serve(async (req) => {
                   })
                   .eq("id", task.id);
               } else {
-                const proxyData = accountData.proxies;
                 console.log(`[get-next-task] SpamBot check for ${task.account_id}`);
                 return new Response(JSON.stringify({
                   task: "spambot_check",
@@ -622,7 +634,6 @@ serve(async (req) => {
                 });
               }
             } else {
-              const proxyData = accountData.proxies;
               console.log(`[get-next-task] SpamBot check for ${task.account_id}`);
               return new Response(JSON.stringify({
                 task: "spambot_check",
@@ -652,7 +663,6 @@ serve(async (req) => {
               });
             }
           } else {
-            const proxyData = accountData.proxies;
             console.log(`[get-next-task] ${taskType} for ${task.account_id}`);
             return new Response(JSON.stringify({
               task: taskType,
