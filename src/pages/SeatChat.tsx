@@ -9,7 +9,7 @@ import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { 
   Send, MessageSquare, Users, Eye, CheckCheck, Check, 
   RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
-  Image, X, Loader2, Phone, Smile, Paperclip, Mic
+  Image, X, Loader2, Phone, Smile, Paperclip, Mic, BarChart3, Settings
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 
 type TimeFilter = '24h' | '3d' | '5d' | '7d';
+type SeatView = 'chats' | 'reports';
 
 interface Seat {
   id: string;
@@ -107,6 +108,7 @@ const SeatChat: React.FC = () => {
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('7d');
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [currentView, setCurrentView] = useState<SeatView>('chats');
   const [stats, setStats] = useState<SeatStats>({
     total_conversations: 0,
     messages_sent_today: 0,
@@ -542,77 +544,123 @@ const SeatChat: React.FC = () => {
   const messageGroups = groupMessagesByDate(filteredMessages);
 
   return (
-    <div className="h-screen flex flex-col bg-[#111b21] overflow-hidden">
-      {/* Message Search Dialog */}
-      <Dialog open={isMessageSearchOpen} onOpenChange={setIsMessageSearchOpen}>
-        <DialogContent className="max-w-md bg-[#202c33] border-[#2a3942] text-white">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-white">
-              <Search className="w-5 h-5" />
-              Search Messages
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <Input
-              placeholder="Type to search messages..."
-              value={messageSearchQuery}
-              onChange={(e) => setMessageSearchQuery(e.target.value)}
-              className="bg-[#2a3942] border-0 text-white placeholder:text-[#8696a0] focus:ring-[#00a884]"
-              autoFocus
-            />
-            {messageSearchQuery && (
-              <div className="text-sm text-[#8696a0]">
-                Found {filteredMessages.length} message{filteredMessages.length !== 1 ? 's' : ''} matching "{messageSearchQuery}"
+    <div className="h-screen flex bg-[#111b21] overflow-hidden">
+      {/* Left Sidebar Navigation */}
+      <div className="w-16 bg-[#202c33] border-r border-[#2a3942] flex flex-col items-center py-4 flex-shrink-0">
+        {/* Logo */}
+        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00a884] to-[#25d366] flex items-center justify-center mb-6 shadow-lg">
+          <Send className="w-5 h-5 text-white" />
+        </div>
+        
+        {/* Navigation Items */}
+        <div className="flex flex-col gap-2 flex-1">
+          <button
+            onClick={() => setCurrentView('chats')}
+            className={cn(
+              "w-12 h-12 rounded-xl flex items-center justify-center transition-all",
+              currentView === 'chats'
+                ? "bg-[#00a884] text-white"
+                : "text-[#8696a0] hover:bg-[#2a3942] hover:text-white"
+            )}
+            title="Chats"
+          >
+            <MessageSquare className="w-5 h-5" />
+          </button>
+          
+          <button
+            onClick={() => setCurrentView('reports')}
+            className={cn(
+              "w-12 h-12 rounded-xl flex items-center justify-center transition-all",
+              currentView === 'reports'
+                ? "bg-[#00a884] text-white"
+                : "text-[#8696a0] hover:bg-[#2a3942] hover:text-white"
+            )}
+            title="Reports"
+          >
+            <BarChart3 className="w-5 h-5" />
+          </button>
+        </div>
+        
+        {/* Bottom - Status */}
+        <div className="mt-auto">
+          <div className="w-3 h-3 rounded-full bg-[#00a884] ring-2 ring-[#202c33]" title="Online" />
+        </div>
+      </div>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Message Search Dialog */}
+        <Dialog open={isMessageSearchOpen} onOpenChange={setIsMessageSearchOpen}>
+          <DialogContent className="max-w-md bg-[#202c33] border-[#2a3942] text-white">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-white">
+                <Search className="w-5 h-5" />
+                Search Messages
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <Input
+                placeholder="Type to search messages..."
+                value={messageSearchQuery}
+                onChange={(e) => setMessageSearchQuery(e.target.value)}
+                className="bg-[#2a3942] border-0 text-white placeholder:text-[#8696a0] focus:ring-[#00a884]"
+                autoFocus
+              />
+              {messageSearchQuery && (
+                <div className="text-sm text-[#8696a0]">
+                  Found {filteredMessages.length} message{filteredMessages.length !== 1 ? 's' : ''} matching "{messageSearchQuery}"
+                </div>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Header */}
+        <header className="bg-[#202c33] border-b border-[#2a3942] flex-shrink-0 px-4 py-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div>
+                <h1 className="font-semibold text-white text-base">{seat?.name}</h1>
+                <p className="text-xs text-[#8696a0]">
+                  {currentView === 'chats' ? 'Telegram Chats' : 'Reports & Statistics'}
+                </p>
+              </div>
+            </div>
+            
+            {/* Stats - shown only in chats view */}
+            {currentView === 'chats' && (
+              <div className="hidden md:flex items-center gap-4">
+                <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-[#00a884]" />
+                  <span className="font-medium text-white">{stats.total_conversations}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
+                  <Send className="w-3.5 h-3.5 text-[#00a884]" />
+                  <span className="font-medium text-white">{stats.messages_sent_today}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
+                  <Eye className="w-3.5 h-3.5 text-[#00a884]" />
+                  <span className="font-medium text-white">{stats.messages_read}</span>
+                </div>
+                <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
+                  <Users className="w-3.5 h-3.5 text-[#00a884]" />
+                  <span className="font-medium text-white">{stats.responses_received}</span>
+                </div>
               </div>
             )}
-          </div>
-        </DialogContent>
-      </Dialog>
 
-      {/* Header */}
-      <header className="bg-[#202c33] border-b border-[#2a3942] flex-shrink-0 px-4 py-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            {/* Logo */}
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00a884] to-[#25d366] flex items-center justify-center shadow-lg">
-              <Send className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h1 className="font-semibold text-white text-base">{seat?.name}</h1>
-              <p className="text-xs text-[#8696a0]">Telegram Chat</p>
+            <div className="flex items-center gap-2">
+              <Badge className="bg-[#00a884] text-white border-0 text-xs px-2 py-0.5">
+                ● Online
+              </Badge>
             </div>
           </div>
-          
-          {/* Stats */}
-          <div className="hidden md:flex items-center gap-4">
-            <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
-              <MessageSquare className="w-3.5 h-3.5 text-[#00a884]" />
-              <span className="font-medium text-white">{stats.total_conversations}</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
-              <Send className="w-3.5 h-3.5 text-[#00a884]" />
-              <span className="font-medium text-white">{stats.messages_sent_today}</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
-              <Eye className="w-3.5 h-3.5 text-[#00a884]" />
-              <span className="font-medium text-white">{stats.messages_read}</span>
-            </div>
-            <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
-              <Users className="w-3.5 h-3.5 text-[#00a884]" />
-              <span className="font-medium text-white">{stats.responses_received}</span>
-            </div>
-          </div>
+        </header>
 
-          <div className="flex items-center gap-2">
-            <Badge className="bg-[#00a884] text-white border-0 text-xs px-2 py-0.5">
-              ● Online
-            </Badge>
-          </div>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <div className="flex-1 flex overflow-hidden">
+        {/* View Content */}
+        {currentView === 'chats' ? (
+          /* Chats View */
+          <div className="flex-1 flex overflow-hidden">
         {/* Conversation Sidebar */}
         <div className="w-[340px] lg:w-[420px] bg-[#111b21] border-r border-[#2a3942] flex flex-col flex-shrink-0">
           {/* Search & Filter */}
@@ -984,6 +1032,99 @@ const SeatChat: React.FC = () => {
             </div>
           )}
         </div>
+      </div>
+    ) : (
+      /* Reports View */
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-5xl mx-auto space-y-6">
+          {/* Stats Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-[#202c33] rounded-xl p-4 border border-[#2a3942]">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-lg bg-[#00a884]/20 flex items-center justify-center">
+                  <MessageSquare className="w-5 h-5 text-[#00a884]" />
+                </div>
+                <span className="text-[#8696a0] text-sm">Total Chats</span>
+              </div>
+              <p className="text-3xl font-bold text-white">{stats.total_conversations}</p>
+            </div>
+            
+            <div className="bg-[#202c33] rounded-xl p-4 border border-[#2a3942]">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                  <Send className="w-5 h-5 text-blue-400" />
+                </div>
+                <span className="text-[#8696a0] text-sm">Sent Today</span>
+              </div>
+              <p className="text-3xl font-bold text-white">{stats.messages_sent_today}</p>
+            </div>
+            
+            <div className="bg-[#202c33] rounded-xl p-4 border border-[#2a3942]">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                  <Eye className="w-5 h-5 text-purple-400" />
+                </div>
+                <span className="text-[#8696a0] text-sm">Messages Read</span>
+              </div>
+              <p className="text-3xl font-bold text-white">{stats.messages_read}</p>
+            </div>
+            
+            <div className="bg-[#202c33] rounded-xl p-4 border border-[#2a3942]">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
+                  <Users className="w-5 h-5 text-amber-400" />
+                </div>
+                <span className="text-[#8696a0] text-sm">Responses</span>
+              </div>
+              <p className="text-3xl font-bold text-white">{stats.responses_received}</p>
+            </div>
+          </div>
+          
+          {/* Response Rate */}
+          <div className="bg-[#202c33] rounded-xl p-6 border border-[#2a3942]">
+            <h3 className="text-white font-medium mb-4 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-[#00a884]" />
+              Response Rate
+            </h3>
+            <div className="flex items-center gap-4">
+              <div className="flex-1 bg-[#2a3942] rounded-full h-4 overflow-hidden">
+                <div 
+                  className="h-full bg-gradient-to-r from-[#00a884] to-[#25d366] transition-all duration-500"
+                  style={{ 
+                    width: `${stats.total_conversations > 0 
+                      ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
+                      : 0}%` 
+                  }}
+                />
+              </div>
+              <span className="text-white font-bold text-lg min-w-[60px]">
+                {stats.total_conversations > 0 
+                  ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
+                  : 0}%
+              </span>
+            </div>
+            <p className="text-[#8696a0] text-sm mt-2">
+              {stats.responses_received} responses from {stats.total_conversations} conversations
+            </p>
+          </div>
+          
+          {/* Quick Info */}
+          <div className="bg-[#202c33] rounded-xl p-6 border border-[#2a3942]">
+            <h3 className="text-white font-medium mb-4">Seat Information</h3>
+            <div className="grid grid-cols-2 gap-4 text-sm">
+              <div>
+                <p className="text-[#8696a0]">Seat Name</p>
+                <p className="text-white font-medium">{seat?.name}</p>
+              </div>
+              <div>
+                <p className="text-[#8696a0]">Status</p>
+                <p className="text-[#00a884] font-medium">● Active</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
       </div>
     </div>
   );
