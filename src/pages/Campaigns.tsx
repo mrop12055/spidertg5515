@@ -348,6 +348,25 @@ const Campaigns: React.FC = () => {
         accountStats
       };
 
+      // Sync campaign counts if they're out of sync with actual data
+      const countsMatch = 
+        campaign.sentCount === sentCount && 
+        campaign.failedCount === failedCount &&
+        campaign.recipientCount === recipients.length;
+      
+      if (!countsMatch) {
+        await supabase
+          .from('campaigns')
+          .update({ 
+            sent_count: sentCount, 
+            failed_count: failedCount,
+            recipient_count: recipients.length,
+            updated_at: new Date().toISOString() 
+          })
+          .eq('id', campaign.id);
+        needsRefresh = true;
+      }
+
       // Auto-update campaign status to 'completed' when appropriate
       if (shouldComplete || shouldForceComplete) {
         await supabase
