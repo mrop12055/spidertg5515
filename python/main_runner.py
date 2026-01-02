@@ -239,6 +239,81 @@ async def main_loop():
                         exists, name, telegram_id = await validate_contact(client, r["phone_number"])
                         await report_result("validate", {"recipient_id": r["id"], "exists": exists, "name": name, "telegram_id": telegram_id})
             
+            elif task_type == "contact_import":
+                # New contact import with account fallback
+                task_id = task.get("task_id")
+                tag_id = task.get("tag_id")
+                phone_numbers = task.get("phone_numbers", [])
+                valid_numbers = list(task.get("valid_numbers", []))
+                invalid_numbers = list(task.get("invalid_numbers", []))
+                failed_account_ids = list(task.get("failed_account_ids", []))
+                account = task.get("account", {})
+                
+                print(f"  📋 Contact import: {len(phone_numbers)} numbers with {account.get('phone_number')}")
+                
+                client = await get_or_create_client(account)
+                if not client:
+                    # Can't connect - mark account as failed
+                    await report_result("contact_import", {
+                        "task_id": task_id,
+                        "success": False,
+                        "account_failed": True,
+                        "failed_account_id": account.get("id"),
+                        "remaining_numbers": phone_numbers,
+                        "valid_numbers": valid_numbers,
+                        "invalid_numbers": invalid_numbers,
+                        "error": "Could not connect to account"
+                    })
+                    continue
+                
+                # Process each phone number
+                processed = 0
+                for phone in phone_numbers:
+                    if not RUNNING:
+                        break
+                    
+                    try:
+                        exists, name, telegram_id = await validate_contact(client, phone)
+                        if exists:
+                            valid_numbers.append(phone)
+                            print(f"    ✓ {phone} - valid ({name})")
+                        else:
+                            invalid_numbers.append(phone)
+                            print(f"    ✗ {phone} - not on Telegram")
+                        processed += 1
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        # Check if account is restricted/banned
+                        if any(x in error_str for x in ['flood', 'restricted', 'banned', 'wait', 'auth_key']):
+                            print(f"    ⚠ Account restricted: {e}")
+                            # Report partial progress with account failure
+                            remaining = phone_numbers[processed:]
+                            await report_result("contact_import", {
+                                "task_id": task_id,
+                                "success": False,
+                                "account_failed": True,
+                                "failed_account_id": account.get("id"),
+                                "remaining_numbers": remaining,
+                                "valid_numbers": valid_numbers,
+                                "invalid_numbers": invalid_numbers,
+                                "error": str(e)
+                            })
+                            break
+                        else:
+                            # Other error - count as invalid
+                            invalid_numbers.append(phone)
+                            print(f"    ✗ {phone} - error: {e}")
+                            processed += 1
+                else:
+                    # All done successfully
+                    await report_result("contact_import", {
+                        "task_id": task_id,
+                        "success": True,
+                        "valid_numbers": valid_numbers,
+                        "invalid_numbers": invalid_numbers
+                    })
+                    print(f"    ✓ Import complete: {len(valid_numbers)} valid, {len(invalid_numbers)} invalid")
+            
             elif task_type == "spambot_check":
                 account = task.get("account", {})
                 client = await get_or_create_client(account)

@@ -1018,6 +1018,97 @@ serve(async (req) => {
         break;
       }
 
+      case "contact_import": {
+        const { 
+          task_id, 
+          success,
+          valid_numbers, 
+          invalid_numbers, 
+          account_failed, 
+          failed_account_id,
+          remaining_numbers,
+          error 
+        } = result;
+        
+        if (account_failed && failed_account_id) {
+          // Account failed - update task to retry with different account
+          const { data: task } = await supabase
+            .from("contact_import_tasks")
+            .select("failed_account_ids")
+            .eq("id", task_id)
+            .single();
+          
+          const existingFailed: string[] = task?.failed_account_ids || [];
+          const newFailed = [...existingFailed, failed_account_id];
+          
+          await supabase
+            .from("contact_import_tasks")
+            .update({
+              status: "pending", // Reset to pending so it gets picked up again
+              failed_account_ids: newFailed,
+              remaining_numbers: remaining_numbers || [],
+              valid_numbers: valid_numbers || [],
+              invalid_numbers: invalid_numbers || [],
+              current_account_id: null,
+              result: error || "Account failed, retrying with different account"
+            })
+            .eq("id", task_id);
+          
+          console.log(`[report-task-result] Contact import task ${task_id} - account ${failed_account_id} failed, will retry`);
+        } else if (success) {
+          // All done - insert valid contacts and complete task
+          const { data: task } = await supabase
+            .from("contact_import_tasks")
+            .select("tag_id")
+            .eq("id", task_id)
+            .single();
+          
+          if (task?.tag_id && valid_numbers && valid_numbers.length > 0) {
+            // Insert valid contacts
+            const contactsToInsert = valid_numbers.map((phone: string) => ({
+              phone_number: phone,
+              tag_id: task.tag_id,
+              is_used: false,
+            }));
+            
+            // Upsert to avoid duplicates
+            for (const contact of contactsToInsert) {
+              await supabase
+                .from("contacts_data")
+                .upsert(contact, { onConflict: "phone_number" });
+            }
+            
+            console.log(`[report-task-result] Inserted ${valid_numbers.length} valid contacts`);
+          }
+          
+          await supabase
+            .from("contact_import_tasks")
+            .update({
+              status: "completed",
+              completed_at: new Date().toISOString(),
+              valid_numbers: valid_numbers || [],
+              invalid_numbers: invalid_numbers || [],
+              result: `Added ${valid_numbers?.length || 0} contacts, ${invalid_numbers?.length || 0} invalid`
+            })
+            .eq("id", task_id);
+          
+          console.log(`[report-task-result] Contact import completed: ${valid_numbers?.length || 0} valid, ${invalid_numbers?.length || 0} invalid`);
+        } else {
+          // Task failed completely
+          await supabase
+            .from("contact_import_tasks")
+            .update({
+              status: "failed",
+              completed_at: new Date().toISOString(),
+              result: error || "Import failed"
+            })
+            .eq("id", task_id);
+          
+          console.log(`[report-task-result] Contact import failed: ${error}`);
+        }
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }

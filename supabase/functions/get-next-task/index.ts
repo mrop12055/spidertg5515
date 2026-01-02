@@ -647,6 +647,91 @@ serve(async (req) => {
         }
       }
 
+      // Check for contact import tasks with account fallback support
+      const { data: importTasks } = await supabase
+        .from("contact_import_tasks")
+        .select("*")
+        .in("status", ["pending", "processing"])
+        .order("created_at", { ascending: true })
+        .limit(1);
+
+      if (importTasks && importTasks.length > 0) {
+        const task = importTasks[0];
+        const failedAccountIds: string[] = task.failed_account_ids || [];
+        
+        // Get phone numbers to validate (remaining or all)
+        const phoneNumbers: string[] = (task.remaining_numbers && task.remaining_numbers.length > 0)
+          ? task.remaining_numbers
+          : task.phone_numbers;
+        
+        if (phoneNumbers.length === 0) {
+          // All done
+          await supabase
+            .from("contact_import_tasks")
+            .update({ status: "completed", completed_at: new Date().toISOString() })
+            .eq("id", task.id);
+        } else {
+          // Find an active account that hasn't failed for this task
+          const eligibleAccounts = accounts.filter((a: { id: string }) => !failedAccountIds.includes(a.id));
+          
+          if (eligibleAccounts.length === 0) {
+            // No accounts left - fail the task
+            await supabase
+              .from("contact_import_tasks")
+              .update({ 
+                status: "failed", 
+                result: "All accounts failed or restricted",
+                completed_at: new Date().toISOString()
+              })
+              .eq("id", task.id);
+            console.log(`[get-next-task] Contact import task ${task.id.slice(0,8)} failed - no eligible accounts`);
+          } else {
+            // Pick first eligible account (or prefer the originally assigned one if still eligible)
+            let account = eligibleAccounts.find((a: { id: string }) => a.id === task.account_id);
+            if (!account) {
+              account = eligibleAccounts[0];
+            }
+            
+            const apiCred = account.telegram_api_credentials;
+            
+            // Mark as processing
+            await supabase
+              .from("contact_import_tasks")
+              .update({ 
+                status: "processing",
+                current_account_id: account.id
+              })
+              .eq("id", task.id);
+            
+            console.log(`[get-next-task] Contact import task: ${phoneNumbers.length} numbers with account ${account.phone_number}`);
+            
+            return new Response(JSON.stringify({
+              task: "contact_import",
+              task_id: task.id,
+              tag_id: task.tag_id,
+              phone_numbers: phoneNumbers,
+              valid_numbers: task.valid_numbers || [],
+              invalid_numbers: task.invalid_numbers || [],
+              failed_account_ids: failedAccountIds,
+              account: {
+                id: account.id,
+                phone_number: account.phone_number,
+                session_data: account.session_data,
+                device_model: account.device_model,
+                system_version: account.system_version,
+                app_version: account.app_version,
+                lang_code: account.lang_code,
+                system_lang_code: account.system_lang_code,
+                api_id: apiCred?.api_id || account.api_id,
+                api_hash: apiCred?.api_hash || account.api_hash,
+              },
+            }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
+      }
+
       return new Response(JSON.stringify({
         task: "wait",
         seconds: 5,
