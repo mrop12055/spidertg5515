@@ -12,8 +12,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { 
   Plus, Upload, Trash2, Database, Tag, 
   Download, RefreshCw,
-  UserCheck, UserX, FileText, FolderOpen, MoreVertical, Loader2, AlertCircle, Clock
+  UserCheck, UserX, FileText, FolderOpen, MoreVertical, Loader2, AlertCircle, Clock, ChevronDown, ChevronUp
 } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -541,51 +542,61 @@ const Data: React.FC = () => {
           </Card>
         )}
 
-        {/* Import History */}
+        {/* Import History - Collapsible at bottom */}
         {completedTasks.length > 0 && (
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <FileText className="w-4 h-4 text-muted-foreground" />
-                Import History
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {completedTasks.map(task => {
-                  const tagName = tags.find(t => t.id === task.tag_id)?.name || 'Unknown';
-                  const validCount = task.valid_numbers?.length || 0;
-                  const invalidCount = task.invalid_numbers?.length || 0;
-                  const submitted = task.phone_numbers?.length || 0;
-                  
-                  return (
-                    <div key={task.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50">
-                      <div className="flex items-center gap-3">
-                        <Badge variant="outline" className="text-xs">{tagName}</Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {task.completed_at ? format(new Date(task.completed_at), 'MMM d, h:mm a') : 'N/A'}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs">
-                        <span className="text-muted-foreground">
-                          Submitted: <span className="font-medium text-foreground">{submitted}</span>
-                        </span>
-                        <span className="text-emerald-500">
-                          Valid: <span className="font-medium">{validCount}</span>
-                        </span>
-                        <span className="text-red-500">
-                          Invalid: <span className="font-medium">{invalidCount}</span>
-                        </span>
-                        {task.status === 'failed' && (
-                          <Badge variant="destructive" className="text-xs">Failed</Badge>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </CardContent>
-          </Card>
+          <Collapsible>
+            <Card>
+              <CollapsibleTrigger asChild>
+                <CardHeader className="pb-2 cursor-pointer hover:bg-muted/30 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                      Import History
+                      <Badge variant="secondary" className="text-xs">{completedTasks.length}</Badge>
+                    </CardTitle>
+                    <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform [[data-state=open]_&]:rotate-180" />
+                  </div>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0">
+                  <div className="space-y-2">
+                    {completedTasks.map(task => {
+                      const tagName = tags.find(t => t.id === task.tag_id)?.name || 'Unknown';
+                      const validCount = task.valid_numbers?.length || 0;
+                      const invalidCount = task.invalid_numbers?.length || 0;
+                      const submitted = task.phone_numbers?.length || 0;
+                      
+                      return (
+                        <div key={task.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50">
+                          <div className="flex items-center gap-3">
+                            <Badge variant="outline" className="text-xs">{tagName}</Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {task.completed_at ? format(new Date(task.completed_at), 'MMM d, h:mm a') : 'N/A'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4 text-xs">
+                            <span className="text-muted-foreground">
+                              Submitted: <span className="font-medium text-foreground">{submitted}</span>
+                            </span>
+                            <span className="text-emerald-500">
+                              Valid: <span className="font-medium">{validCount}</span>
+                            </span>
+                            <span className="text-red-500">
+                              Invalid: <span className="font-medium">{invalidCount}</span>
+                            </span>
+                            {task.status === 'failed' && (
+                              <Badge variant="destructive" className="text-xs">Failed</Badge>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
         )}
 
         {/* Tags List */}
