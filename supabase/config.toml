@@ -47,3 +47,6 @@ verify_jwt = false
 
 [functions.get-batch-tasks]
 verify_jwt = false
+
+[functions.system-maintenance]
+verify_jwt = false
