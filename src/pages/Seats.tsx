@@ -76,6 +76,26 @@ const Seats: React.FC = () => {
 
   useEffect(() => {
     fetchSeats();
+    
+    // Subscribe to real-time changes
+    const channel = supabase
+      .channel('seats-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'seats'
+        },
+        () => {
+          fetchSeats();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [fetchSeats]);
 
   const handleCreateSeat = async () => {
