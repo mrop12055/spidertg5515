@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   Plus, Upload, Trash2, Database, Tag, 
-  Download, RefreshCw, RefreshCcw,
+  Download, RefreshCw,
   UserCheck, UserX, FileText, FolderOpen, MoreVertical, Loader2, AlertCircle, Clock, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -54,6 +54,7 @@ const Data: React.FC = () => {
   // Add contacts dialog
   const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
   const [addToTagId, setAddToTagId] = useState<string>('');
   
   // Import tracking
@@ -251,22 +252,14 @@ const Data: React.FC = () => {
     return normalized;
   };
 
-  const getAutoSelectedAccount = () => {
-    if (activeAccounts.length > 0) {
-      return activeAccounts[0].id;
-    }
-    return null;
-  };
-
   const handleAddContacts = async () => {
     if (!addToTagId) {
       toast.error('Please select a tag');
       return;
     }
     
-    const accountId = getAutoSelectedAccount();
-    if (!accountId) {
-      toast.error('No active Telegram account available for validation');
+    if (!selectedAccountId) {
+      toast.error('Please select an account for validation');
       return;
     }
 
@@ -290,7 +283,7 @@ const Data: React.FC = () => {
       const { data: task, error } = await supabase
         .from('contact_import_tasks')
         .insert({
-          account_id: accountId,
+          account_id: selectedAccountId,
           tag_id: addToTagId,
           phone_numbers: phoneNumbers,
           status: 'pending'
@@ -321,9 +314,8 @@ const Data: React.FC = () => {
       return;
     }
     
-    const accountId = getAutoSelectedAccount();
-    if (!accountId) {
-      toast.error('No active Telegram account available for validation');
+    if (!selectedAccountId) {
+      toast.error('Please select an account for validation');
       return;
     }
 
@@ -349,7 +341,7 @@ const Data: React.FC = () => {
       const { data: task, error } = await supabase
         .from('contact_import_tasks')
         .insert({
-          account_id: accountId,
+          account_id: selectedAccountId,
           tag_id: addToTagId,
           phone_numbers: phoneNumbers,
           status: 'pending'
@@ -419,53 +411,6 @@ const Data: React.FC = () => {
 
   const [showImportHistory, setShowImportHistory] = useState(false);
 
-  // Function to manually switch account for a pending/in-progress import task
-  const handleSwitchAccount = async (taskId: string) => {
-    try {
-      // Get current task info
-      const { data: task, error: fetchError } = await supabase
-        .from('contact_import_tasks')
-        .select('current_account_id, failed_account_ids, remaining_numbers, phone_numbers')
-        .eq('id', taskId)
-        .single();
-
-      if (fetchError) throw fetchError;
-
-      const currentAccountId = task?.current_account_id;
-      const existingFailed: string[] = (task?.failed_account_ids as string[]) || [];
-      
-      // Add current account to failed list
-      const newFailed = currentAccountId && !existingFailed.includes(currentAccountId) 
-        ? [...existingFailed, currentAccountId] 
-        : existingFailed;
-
-      // Preserve remaining numbers (don't restart from scratch)
-      const remainingNumbers = (task?.remaining_numbers && task.remaining_numbers.length > 0) 
-        ? task.remaining_numbers 
-        : task?.phone_numbers || [];
-
-      // Reset task to pending with a new account
-      const { error: updateError } = await supabase
-        .from('contact_import_tasks')
-        .update({
-          status: 'pending',
-          failed_account_ids: newFailed,
-          remaining_numbers: remainingNumbers,
-          current_account_id: null,
-          result: `Switched account (tried: ${newFailed.length})`
-        })
-        .eq('id', taskId);
-
-      if (updateError) throw updateError;
-
-      toast.success('Account switch triggered - task will retry with a different account');
-      fetchTags();
-    } catch (error) {
-      console.error('Error switching account:', error);
-      toast.error('Failed to switch account');
-    }
-  };
-
   return (
     <DashboardLayout>
       <PageHeader 
@@ -522,6 +467,25 @@ const Data: React.FC = () => {
                           </SelectContent>
                         </Select>
                       </div>
+
+                      <div>
+                        <Label>Select Account for Validation *</Label>
+                        <Select value={selectedAccountId} onValueChange={setSelectedAccountId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose an account" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {activeAccounts.map(account => (
+                              <SelectItem key={account.id} value={account.id}>
+                                {account.phoneNumber} {account.firstName ? `(${account.firstName})` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {activeAccounts.length === 0 && (
+                          <p className="text-xs text-destructive mt-1">No active accounts available</p>
+                        )}
+                      </div>
                       
                       <div className="flex gap-2">
                         <input
@@ -535,7 +499,7 @@ const Data: React.FC = () => {
                           variant="outline" 
                           size="sm" 
                           onClick={() => fileInputRef.current?.click()}
-                          disabled={!addToTagId}
+                          disabled={!addToTagId || !selectedAccountId}
                         >
                           <FileText className="w-4 h-4 mr-2" />
                           Import File
@@ -561,7 +525,7 @@ ahmadraza9392`}
                     
                     <DialogFooter>
                       <Button variant="outline" onClick={() => setIsAddContactsOpen(false)}>Cancel</Button>
-                      <Button onClick={handleAddContacts} disabled={!addToTagId || !bulkText.trim()}>
+                      <Button onClick={handleAddContacts} disabled={!addToTagId || !selectedAccountId || !bulkText.trim()}>
                         <Plus className="w-4 h-4 mr-2" />
                         Validate & Add
                       </Button>
@@ -741,15 +705,6 @@ ahmadraza9392`}
                         <span className="text-red-500">
                           Invalid: {invalidCount}
                         </span>
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className="h-7 text-xs"
-                          onClick={() => handleSwitchAccount(task.id)}
-                        >
-                          <RefreshCcw className="w-3 h-3 mr-1" />
-                          Switch Account
-                        </Button>
                       </div>
                     </div>
                   );
