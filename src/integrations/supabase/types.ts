@@ -249,6 +249,7 @@ export type Database = {
           recipient_count: number | null
           reply_count: number | null
           scheduled_at: string | null
+          seat_id: string | null
           sent_count: number | null
           status: Database["public"]["Enums"]["campaign_status"] | null
           updated_at: string | null
@@ -262,6 +263,7 @@ export type Database = {
           recipient_count?: number | null
           reply_count?: number | null
           scheduled_at?: string | null
+          seat_id?: string | null
           sent_count?: number | null
           status?: Database["public"]["Enums"]["campaign_status"] | null
           updated_at?: string | null
@@ -275,11 +277,27 @@ export type Database = {
           recipient_count?: number | null
           reply_count?: number | null
           scheduled_at?: string | null
+          seat_id?: string | null
           sent_count?: number | null
           status?: Database["public"]["Enums"]["campaign_status"] | null
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "campaigns_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seat_stats"
+            referencedColumns: ["seat_id"]
+          },
+          {
+            foreignKeyName: "campaigns_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seats"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       contact_import_tasks: {
         Row: {
@@ -447,6 +465,7 @@ export type Database = {
           recipient_phone: string | null
           recipient_telegram_id: number | null
           recipient_username: string | null
+          seat_id: string | null
           unread_count: number | null
           updated_at: string | null
         }
@@ -464,6 +483,7 @@ export type Database = {
           recipient_phone?: string | null
           recipient_telegram_id?: number | null
           recipient_username?: string | null
+          seat_id?: string | null
           unread_count?: number | null
           updated_at?: string | null
         }
@@ -481,6 +501,7 @@ export type Database = {
           recipient_phone?: string | null
           recipient_telegram_id?: number | null
           recipient_username?: string | null
+          seat_id?: string | null
           unread_count?: number | null
           updated_at?: string | null
         }
@@ -490,6 +511,20 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seat_stats"
+            referencedColumns: ["seat_id"]
+          },
+          {
+            foreignKeyName: "conversations_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seats"
             referencedColumns: ["id"]
           },
         ]
@@ -787,6 +822,33 @@ export type Database = {
           },
         ]
       }
+      seats: {
+        Row: {
+          access_token: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          updated_at: string | null
+        }
+        Insert: {
+          access_token?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          updated_at?: string | null
+        }
+        Update: {
+          access_token?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       telegram_accounts: {
         Row: {
           api_credential_id: string | null
@@ -1028,7 +1090,17 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      seat_stats: {
+        Row: {
+          messages_read: number | null
+          messages_sent_today: number | null
+          responses_received: number | null
+          seat_id: string | null
+          seat_name: string | null
+          total_conversations: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       increment_campaign_failed_count: {
