@@ -57,62 +57,45 @@ const SetupGuide: React.FC = () => {
     }
   ]);
 
-  // Check runner status based on recent account activity
+  // Check runner status from heartbeats table
   useEffect(() => {
     const checkRunnerStatus = async () => {
       try {
-        // Check for recently active accounts (within last 30 seconds = runner is live)
-        const thirtySecondsAgo = new Date(Date.now() - 30000).toISOString();
+        // Get heartbeats from database (runners update this every time they call get-next-task)
+        const { data: heartbeats } = await supabase
+          .from('runner_heartbeats')
+          .select('runner_name, last_seen, status');
         
-        const { data: activeAccounts } = await supabase
-          .from('telegram_accounts')
-          .select('last_active, status')
-          .gte('last_active', thirtySecondsAgo);
+        const runnerMap = new Map<string, { lastSeen: Date; status: string }>();
+        if (heartbeats) {
+          for (const hb of heartbeats) {
+            runnerMap.set(hb.runner_name, {
+              lastSeen: new Date(hb.last_seen),
+              status: hb.status
+            });
+          }
+        }
         
-        const hasActiveAccounts = activeAccounts && activeAccounts.length > 0;
+        // A runner is online if last_seen is within 15 seconds
+        const fifteenSecondsAgo = new Date(Date.now() - 15000);
         
-        // Check for pending tasks (runners are processing)
-        const { data: pendingTasks } = await supabase
-          .from('account_check_tasks')
-          .select('task_type, status')
-          .eq('status', 'pending')
-          .limit(5);
-        
-        const hasPendingAccountTasks = pendingTasks && pendingTasks.length > 0;
-        
-        // Check for running campaigns
-        const { data: runningCampaigns } = await supabase
-          .from('campaigns')
-          .select('status')
-          .eq('status', 'running')
-          .limit(1);
-        
-        const hasCampaignRunning = runningCampaigns && runningCampaigns.length > 0;
-        
-        // Check for active conversations (livechat)
-        const { data: activeConversations } = await supabase
-          .from('conversations')
-          .select('last_message_at')
-          .gte('last_message_at', thirtySecondsAgo)
-          .limit(1);
-        
-        const hasRecentMessages = activeConversations && activeConversations.length > 0;
+        const runnerNameMap: Record<number, string> = {
+          0: 'campaign',
+          1: 'livechat', 
+          2: 'account',
+          3: 'warmup'
+        };
 
         setRunnerStatuses(prev => prev.map((runner, index) => {
-          let isOnline = false;
+          const runnerKey = runnerNameMap[index];
+          const heartbeat = runnerMap.get(runnerKey);
           
-          if (index === 0) { // Campaign
-            isOnline = hasActiveAccounts && hasCampaignRunning;
-          } else if (index === 1) { // LiveChat
-            isOnline = hasActiveAccounts || hasRecentMessages;
-          } else if (index === 2) { // Account
-            isOnline = hasActiveAccounts || hasPendingAccountTasks;
-          }
+          const isOnline = heartbeat ? heartbeat.lastSeen > fifteenSecondsAgo : false;
           
           return {
             ...runner,
             isOnline,
-            lastSeen: isOnline ? new Date() : runner.lastSeen
+            lastSeen: heartbeat?.lastSeen || runner.lastSeen
           };
         }));
       } catch (error) {
