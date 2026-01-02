@@ -79,6 +79,41 @@ export type Database = {
         }
         Relationships: []
       }
+      blocked_contacts: {
+        Row: {
+          blocked_by_account_id: string | null
+          created_at: string | null
+          id: string
+          name: string | null
+          phone_number: string
+          reason: string | null
+        }
+        Insert: {
+          blocked_by_account_id?: string | null
+          created_at?: string | null
+          id?: string
+          name?: string | null
+          phone_number: string
+          reason?: string | null
+        }
+        Update: {
+          blocked_by_account_id?: string | null
+          created_at?: string | null
+          id?: string
+          name?: string | null
+          phone_number?: string
+          reason?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "blocked_contacts_blocked_by_account_id_fkey"
+            columns: ["blocked_by_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       campaign_accounts: {
         Row: {
           account_id: string
@@ -198,6 +233,59 @@ export type Database = {
           updated_at?: string | null
         }
         Relationships: []
+      }
+      contacts_data: {
+        Row: {
+          blocked_at: string | null
+          created_at: string | null
+          id: string
+          is_blocked: boolean | null
+          is_used: boolean | null
+          name: string | null
+          notes: string | null
+          phone_number: string
+          updated_at: string | null
+          used_at: string | null
+          used_in_campaign_id: string | null
+          username: string | null
+        }
+        Insert: {
+          blocked_at?: string | null
+          created_at?: string | null
+          id?: string
+          is_blocked?: boolean | null
+          is_used?: boolean | null
+          name?: string | null
+          notes?: string | null
+          phone_number: string
+          updated_at?: string | null
+          used_at?: string | null
+          used_in_campaign_id?: string | null
+          username?: string | null
+        }
+        Update: {
+          blocked_at?: string | null
+          created_at?: string | null
+          id?: string
+          is_blocked?: boolean | null
+          is_used?: boolean | null
+          name?: string | null
+          notes?: string | null
+          phone_number?: string
+          updated_at?: string | null
+          used_at?: string | null
+          used_in_campaign_id?: string | null
+          username?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contacts_data_used_in_campaign_id_fkey"
+            columns: ["used_in_campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       conversations: {
         Row: {

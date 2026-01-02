@@ -36,7 +36,17 @@ import {
 import { cn } from '@/lib/utils';
 import { format, isToday, isYesterday, isSameDay, subDays, differenceInMinutes } from 'date-fns';
 import { toast } from 'sonner';
-type TimeFilter = '24h' | '3d' | '7d';
+import { supabase } from '@/integrations/supabase/client';
+
+type TimeFilter = '24h' | '3d' | '5d' | '7d';
+
+interface BlockedContact {
+  id: string;
+  phone_number: string;
+  name: string | null;
+  reason: string | null;
+  created_at: string;
+}
 
 const Chat: React.FC = () => {
   const { 
@@ -78,6 +88,11 @@ const Chat: React.FC = () => {
   
   // Time filter state
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
+  
+  // Block list state
+  const [isBlockListOpen, setIsBlockListOpen] = useState(false);
+  const [blockedContacts, setBlockedContacts] = useState<BlockedContact[]>([]);
+  const [isLoadingBlocked, setIsLoadingBlocked] = useState(false);
 
   const selectedConv = conversations.find(c => c.id === selectedConversation);
   // Filter out failed messages from chat view - use conversationId for accurate matching
@@ -91,6 +106,7 @@ const Chat: React.FC = () => {
     switch (timeFilter) {
       case '24h': return subDays(now, 1);
       case '3d': return subDays(now, 3);
+      case '5d': return subDays(now, 5);
       case '7d': return subDays(now, 7);
       default: return subDays(now, 1);
     }
@@ -332,6 +348,49 @@ const Chat: React.FC = () => {
     setIsBlockDialogOpen(true);
   };
 
+  // Fetch blocked contacts
+  const fetchBlockedContacts = async () => {
+    setIsLoadingBlocked(true);
+    try {
+      const { data, error } = await supabase
+        .from('blocked_contacts')
+        .select('*')
+        .order('created_at', { ascending: false });
+      
+      if (error) throw error;
+      setBlockedContacts(data || []);
+    } catch (error) {
+      console.error('Error fetching blocked contacts:', error);
+      toast.error('Failed to load blocked contacts');
+    } finally {
+      setIsLoadingBlocked(false);
+    }
+  };
+
+  const handleUnblockContact = async (id: string) => {
+    try {
+      const { error } = await supabase
+        .from('blocked_contacts')
+        .delete()
+        .eq('id', id);
+      
+      if (error) throw error;
+      
+      toast.success('Contact unblocked');
+      fetchBlockedContacts();
+    } catch (error) {
+      console.error('Error unblocking:', error);
+      toast.error('Failed to unblock contact');
+    }
+  };
+
+  // Fetch blocked contacts when dialog opens
+  useEffect(() => {
+    if (isBlockListOpen) {
+      fetchBlockedContacts();
+    }
+  }, [isBlockListOpen]);
+
   const formatMessageDate = (date: Date) => {
     if (isToday(date)) return format(date, 'HH:mm');
     if (isYesterday(date)) return 'Yesterday';
@@ -428,6 +487,62 @@ const Chat: React.FC = () => {
         </DialogContent>
       </Dialog>
 
+      {/* Block List Dialog */}
+      <Dialog open={isBlockListOpen} onOpenChange={setIsBlockListOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Ban className="w-5 h-5" />
+              Blocked Contacts
+            </DialogTitle>
+            <DialogDescription>
+              Manage your blocked contacts. Unblock to allow messages again.
+            </DialogDescription>
+          </DialogHeader>
+          <ScrollArea className="max-h-[400px]">
+            {isLoadingBlocked ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : blockedContacts.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <Ban className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>No blocked contacts</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {blockedContacts.map(contact => (
+                  <div
+                    key={contact.id}
+                    className="flex items-center justify-between p-3 rounded-lg border bg-muted/30"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium">{contact.phone_number}</p>
+                      {contact.name && (
+                        <p className="text-sm text-muted-foreground">{contact.name}</p>
+                      )}
+                      {contact.reason && (
+                        <p className="text-xs text-muted-foreground mt-1">{contact.reason}</p>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Blocked {format(new Date(contact.created_at), 'MMM d, yyyy')}
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleUnblockContact(contact.id)}
+                    >
+                      Unblock
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
       <div className="h-[calc(100vh-100px)] flex rounded-xl overflow-hidden border border-border bg-card shadow-lg">
         {/* Sidebar - Conversation List */}
         <div className="w-[340px] border-r border-border flex flex-col bg-card">
@@ -483,6 +598,15 @@ const Chat: React.FC = () => {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-7 w-7" 
+                      onClick={() => setIsBlockListOpen(true)} 
+                      title="View blocked contacts"
+                    >
+                      <Ban className="w-4 h-4" />
+                    </Button>
                     <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsSelectionMode(true)} title="Select chats">
                       <CheckSquare className="w-4 h-4" />
                     </Button>
@@ -491,18 +615,18 @@ const Chat: React.FC = () => {
                 
                 {/* Time Filter Tabs */}
                 <div className="flex gap-1 mb-3 p-1 bg-secondary/30 rounded-lg">
-                  {(['24h', '3d', '7d'] as TimeFilter[]).map((filter) => (
+                  {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter, idx) => (
                     <button
                       key={filter}
                       onClick={() => setTimeFilter(filter)}
                       className={cn(
-                        "flex-1 px-2 py-1 text-[10px] font-medium rounded transition-all",
+                        "flex-1 px-2 py-1.5 text-[10px] font-medium rounded-md transition-all",
                         timeFilter === filter 
-                          ? "bg-background shadow-sm text-foreground" 
-                          : "text-muted-foreground hover:text-foreground"
+                          ? "bg-primary text-primary-foreground shadow-sm" 
+                          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                       )}
                     >
-                      {filter === '24h' ? '24h' : filter === '3d' ? '3d' : '7d'}
+                      {filter}
                     </button>
                   ))}
                 </div>
@@ -542,8 +666,9 @@ const Chat: React.FC = () => {
                   const isUserTyping = typingUsers[conv.recipientPhone];
                   const isChecked = selectedConversations.has(conv.id);
                   
-                  // Get display name - fallback to phone if no name
-                  const displayName = conv.recipientName || conv.recipientPhone || 'Unknown';
+                  // Get display name - prefer name over phone
+                  const hasName = conv.recipientName && conv.recipientName !== conv.recipientPhone;
+                  const displayName = hasName ? conv.recipientName : conv.recipientPhone || 'Unknown';
                   const avatarInitial = conv.recipientName?.charAt(0).toUpperCase() || 
                                         (conv.recipientPhone?.startsWith('+') ? conv.recipientPhone.slice(1, 3) : '?');
                   
@@ -601,8 +726,8 @@ const Chat: React.FC = () => {
                                   </Badge>
                                 )}
                               </div>
-                              {/* Always show phone number if different from name */}
-                              {conv.recipientPhone && conv.recipientPhone !== conv.recipientName && (
+                              {/* Show phone number below name ONLY if we have a real name */}
+                              {hasName && conv.recipientPhone && (
                                 <span className="text-xs text-muted-foreground truncate">
                                   {conv.recipientPhone}
                                 </span>
