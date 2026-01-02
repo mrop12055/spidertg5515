@@ -617,7 +617,7 @@ const Accounts: React.FC = () => {
     toast.success(`Created ${newGroups.length} group(s) with ${groupSize} accounts each`);
   };
 
-  // Bulk proxy assignment
+  // Bulk proxy assignment - optimized with parallel updates
   const handleBulkProxyAssign = async () => {
     if (selectedIds.size === 0 || !selectedProxyId) return;
     
@@ -630,36 +630,39 @@ const Accounts: React.FC = () => {
       
       if (activeProxies.length === 0) {
         toast.error('No active proxies available');
+        setIsBulkProxyAssigning(false);
         return;
       }
       
       if (selectedProxyId !== 'auto') {
-        for (const accountId of selectedAccountIds) {
-          await supabase
-            .from('telegram_accounts')
-            .update({ proxy_id: selectedProxyId })
-            .eq('id', accountId);
-        }
+        // Single proxy to all accounts - parallel update
+        await Promise.all(
+          selectedAccountIds.map(accountId =>
+            supabase
+              .from('telegram_accounts')
+              .update({ proxy_id: selectedProxyId })
+              .eq('id', accountId)
+          )
+        );
         toast.success(`Assigned proxy to ${selectedAccountIds.length} account(s)`);
       } else {
-        let proxyIndex = 0;
-        let accountsAssignedToCurrentProxy = 0;
+        // Auto-rotate: pre-calculate assignments, then parallel update
+        const assignments = selectedAccountIds.map((accountId, index) => {
+          const proxyIndex = Math.floor(index / ratio) % activeProxies.length;
+          return { accountId, proxyId: activeProxies[proxyIndex].id };
+        });
         
-        for (const accountId of selectedAccountIds) {
-          const proxyToAssign = activeProxies[proxyIndex % activeProxies.length];
-          
-          await supabase
-            .from('telegram_accounts')
-            .update({ proxy_id: proxyToAssign.id })
-            .eq('id', accountId);
-          
-          accountsAssignedToCurrentProxy++;
-          if (accountsAssignedToCurrentProxy >= ratio) {
-            proxyIndex++;
-            accountsAssignedToCurrentProxy = 0;
-          }
-        }
-        toast.success(`Auto-assigned ${Math.min(proxyIndex + 1, activeProxies.length)} proxy(s) to ${selectedAccountIds.length} account(s)`);
+        await Promise.all(
+          assignments.map(({ accountId, proxyId }) =>
+            supabase
+              .from('telegram_accounts')
+              .update({ proxy_id: proxyId })
+              .eq('id', accountId)
+          )
+        );
+        
+        const uniqueProxiesUsed = new Set(assignments.map(a => a.proxyId)).size;
+        toast.success(`Auto-assigned ${uniqueProxiesUsed} proxy(s) to ${selectedAccountIds.length} account(s)`);
       }
       
       setIsBulkProxyOpen(false);
