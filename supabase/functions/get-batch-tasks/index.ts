@@ -125,13 +125,12 @@ serve(async (req) => {
 
     // CAMPAIGN RUNNER: Get pending campaign recipients
     if (runner === "campaign") {
-      // Get pending recipients from running campaigns
+      // Get pending recipients from running campaigns (include unassigned ones too)
       const { data: pendingRecipients } = await supabase
         .from("campaign_recipients")
         .select("*, campaigns!inner(id, status, message_template)")
         .eq("status", "pending")
         .eq("campaigns.status", "running")
-        .not("sent_by_account_id", "is", null)
         .limit(actualBatchSize * 2); // Fetch extra in case some accounts are already used
 
       if (pendingRecipients && pendingRecipients.length > 0) {
@@ -140,12 +139,17 @@ serve(async (req) => {
 
           const campaign = recipient.campaigns;
           
-          // Find an account that hasn't been used in this batch yet
-          let account = usableAccounts.find((a: any) => 
-            a.id === recipient.sent_by_account_id && !usedAccountIds.has(a.id)
-          );
+          // Find an account - prefer assigned one, otherwise assign dynamically
+          let account = null;
+          
+          if (recipient.sent_by_account_id) {
+            // Use pre-assigned account if available and not already used
+            account = usableAccounts.find((a: any) => 
+              a.id === recipient.sent_by_account_id && !usedAccountIds.has(a.id)
+            );
+          }
 
-          // If assigned account is used, try to find another
+          // If no assigned account or it's already used, find any available account
           if (!account) {
             account = usableAccounts.find((a: any) => !usedAccountIds.has(a.id));
           }
@@ -155,7 +159,7 @@ serve(async (req) => {
             break;
           }
 
-          // Mark recipient as "sending"
+          // Mark recipient as "sending" and assign account
           await supabase
             .from("campaign_recipients")
             .update({ status: "sending", sent_by_account_id: account.id })
