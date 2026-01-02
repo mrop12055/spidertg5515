@@ -57,6 +57,7 @@ const Data: React.FC = () => {
   
   // Import tracking
   const [pendingTasks, setPendingTasks] = useState<ImportTask[]>([]);
+  const [completedTasks, setCompletedTasks] = useState<ImportTask[]>([]);
   
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   
@@ -81,11 +82,21 @@ const Data: React.FC = () => {
       const { data: tasksData, error: tasksError } = await supabase
         .from('contact_import_tasks')
         .select('*')
-        .in('status', ['pending', 'processing']);
+        .in('status', ['pending', 'processing', 'in_progress']);
 
       if (tasksError) throw tasksError;
       
       setPendingTasks((tasksData || []) as ImportTask[]);
+      
+      // Fetch recent completed tasks for history
+      const { data: completedData } = await supabase
+        .from('contact_import_tasks')
+        .select('*')
+        .in('status', ['completed', 'failed'])
+        .order('completed_at', { ascending: false })
+        .limit(10);
+      
+      setCompletedTasks((completedData || []) as ImportTask[]);
 
       const pendingPerTag: Record<string, number> = {};
       (tasksData || []).forEach((task: ImportTask) => {
@@ -526,6 +537,53 @@ const Data: React.FC = () => {
                   </div>
                 );
               })}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Import History */}
+        {completedTasks.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <FileText className="w-4 h-4 text-muted-foreground" />
+                Import History
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {completedTasks.map(task => {
+                  const tagName = tags.find(t => t.id === task.tag_id)?.name || 'Unknown';
+                  const validCount = task.valid_numbers?.length || 0;
+                  const invalidCount = task.invalid_numbers?.length || 0;
+                  const submitted = task.phone_numbers?.length || 0;
+                  
+                  return (
+                    <div key={task.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50">
+                      <div className="flex items-center gap-3">
+                        <Badge variant="outline" className="text-xs">{tagName}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {task.completed_at ? format(new Date(task.completed_at), 'MMM d, h:mm a') : 'N/A'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-4 text-xs">
+                        <span className="text-muted-foreground">
+                          Submitted: <span className="font-medium text-foreground">{submitted}</span>
+                        </span>
+                        <span className="text-emerald-500">
+                          Valid: <span className="font-medium">{validCount}</span>
+                        </span>
+                        <span className="text-red-500">
+                          Invalid: <span className="font-medium">{invalidCount}</span>
+                        </span>
+                        {task.status === 'failed' && (
+                          <Badge variant="destructive" className="text-xs">Failed</Badge>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </CardContent>
           </Card>
         )}
