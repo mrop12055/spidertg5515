@@ -1177,26 +1177,35 @@ username123
                       
                       {/* Center Section - Stats */}
                       <div className="hidden md:flex items-center gap-6 shrink-0">
-                        <div className="text-center px-3">
-                          <p className="text-lg font-bold text-foreground">{report?.total || campaign.recipientCount}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
-                        </div>
-                        <div className="w-px h-8 bg-border" />
-                        <div className="text-center px-3">
-                          <p className="text-lg font-bold text-primary">{report?.successful || campaign.sentCount}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Sent</p>
-                        </div>
-                        <div className="w-px h-8 bg-border" />
-                        <div className="text-center px-3">
-                          <p className="text-lg font-bold text-destructive">{report?.failed || campaign.failedCount}</p>
-                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Failed</p>
-                        </div>
-                        <div className="w-px h-8 bg-border" />
-                        <div className="text-center px-4 py-1 rounded-lg bg-muted/50">
-                          <p className="text-xl font-bold text-foreground">
-                            {report && report.total > 0 ? Math.round(((report.successful + report.failed) / report.total) * 100) : 0}%
-                          </p>
-                        </div>
+                        {(() => {
+                          const total = report?.total || campaign.recipientCount || 0;
+                          const sent = report?.successful ?? campaign.sentCount ?? 0;
+                          const failed = report?.failed ?? campaign.failedCount ?? 0;
+                          const percent = total > 0 ? Math.round(((sent + failed) / total) * 100) : 0;
+                          
+                          return (
+                            <>
+                              <div className="text-center px-3">
+                                <p className="text-lg font-bold text-foreground">{total}</p>
+                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
+                              </div>
+                              <div className="w-px h-8 bg-border" />
+                              <div className="text-center px-3">
+                                <p className="text-lg font-bold text-primary">{sent}</p>
+                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Sent</p>
+                              </div>
+                              <div className="w-px h-8 bg-border" />
+                              <div className="text-center px-3">
+                                <p className="text-lg font-bold text-destructive">{failed}</p>
+                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Failed</p>
+                              </div>
+                              <div className="w-px h-8 bg-border" />
+                              <div className="text-center px-4 py-1 rounded-lg bg-muted/50">
+                                <p className="text-xl font-bold text-foreground">{percent}%</p>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                       
                       {/* Right Section - Actions */}
@@ -1246,28 +1255,37 @@ username123
                             
                             <div className="space-y-6 pt-4">
                               {/* Stats Summary */}
-                              <div className="grid grid-cols-4 gap-3">
-                                <div className="bg-muted/40 rounded-xl p-4 text-center border border-border/50">
-                                  <Users className="w-5 h-5 mx-auto mb-2 text-muted-foreground" />
-                                  <p className="text-2xl font-bold">{report?.total || campaign.recipientCount}</p>
-                                  <p className="text-xs text-muted-foreground mt-1">Total Recipients</p>
-                                </div>
-                                <div className="bg-primary/10 rounded-xl p-4 text-center border border-primary/20">
-                                  <Send className="w-5 h-5 mx-auto mb-2 text-primary" />
-                                  <p className="text-2xl font-bold text-primary">{report?.successful || campaign.sentCount}</p>
-                                  <p className="text-xs text-muted-foreground mt-1">Delivered</p>
-                                </div>
-                                <div className="bg-destructive/10 rounded-xl p-4 text-center border border-destructive/20">
-                                  <XCircle className="w-5 h-5 mx-auto mb-2 text-destructive" />
-                                  <p className="text-2xl font-bold text-destructive">{report?.failed || campaign.failedCount}</p>
-                                  <p className="text-xs text-muted-foreground mt-1">Failed</p>
-                                </div>
-                                <div className="bg-yellow-500/10 rounded-xl p-4 text-center border border-yellow-500/20">
-                                  <Clock className="w-5 h-5 mx-auto mb-2 text-yellow-600" />
-                                  <p className="text-2xl font-bold text-yellow-600">{report?.pending || 0}</p>
-                                  <p className="text-xs text-muted-foreground mt-1">Pending</p>
-                                </div>
-                              </div>
+                              {(() => {
+                                const total = report?.total || campaign.recipientCount || 0;
+                                const sent = report?.successful ?? campaign.sentCount ?? 0;
+                                const failed = report?.failed ?? campaign.failedCount ?? 0;
+                                const pending = report?.pending ?? (total - sent - failed);
+                                
+                                return (
+                                  <div className="grid grid-cols-4 gap-3">
+                                    <div className="bg-muted/40 rounded-xl p-4 text-center border border-border/50">
+                                      <Users className="w-5 h-5 mx-auto mb-2 text-muted-foreground" />
+                                      <p className="text-2xl font-bold">{total}</p>
+                                      <p className="text-xs text-muted-foreground mt-1">Total Recipients</p>
+                                    </div>
+                                    <div className="bg-primary/10 rounded-xl p-4 text-center border border-primary/20">
+                                      <Send className="w-5 h-5 mx-auto mb-2 text-primary" />
+                                      <p className="text-2xl font-bold text-primary">{sent}</p>
+                                      <p className="text-xs text-muted-foreground mt-1">Delivered</p>
+                                    </div>
+                                    <div className="bg-destructive/10 rounded-xl p-4 text-center border border-destructive/20">
+                                      <XCircle className="w-5 h-5 mx-auto mb-2 text-destructive" />
+                                      <p className="text-2xl font-bold text-destructive">{failed}</p>
+                                      <p className="text-xs text-muted-foreground mt-1">Failed</p>
+                                    </div>
+                                    <div className="bg-yellow-500/10 rounded-xl p-4 text-center border border-yellow-500/20">
+                                      <Clock className="w-5 h-5 mx-auto mb-2 text-yellow-600" />
+                                      <p className="text-2xl font-bold text-yellow-600">{pending > 0 ? pending : 0}</p>
+                                      <p className="text-xs text-muted-foreground mt-1">Pending</p>
+                                    </div>
+                                  </div>
+                                );
+                              })()}
                               
                               {/* Stop Reason if failed/stuck */}
                               {(campaignStuck || campaignFailedDueToAccounts || campaign.status === 'failed') && (
