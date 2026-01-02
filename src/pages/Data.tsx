@@ -702,6 +702,57 @@ ahmadraza9392`}
                             {task.status === 'failed' && (
                               <Badge variant="destructive" className="text-xs">Failed</Badge>
                             )}
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="icon" className="h-6 w-6">
+                                  <Download className="w-3 h-3" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem 
+                                  onClick={() => {
+                                    if (validCount === 0) {
+                                      toast.warning('No valid numbers to export');
+                                      return;
+                                    }
+                                    const csv = task.valid_numbers?.join('\n') || '';
+                                    const blob = new Blob([csv], { type: 'text/csv' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `${tagName}_valid_${format(new Date(task.completed_at || new Date()), 'yyyy-MM-dd')}.csv`;
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                    toast.success(`Exported ${validCount} valid numbers`);
+                                  }}
+                                  disabled={validCount === 0}
+                                >
+                                  <UserCheck className="w-4 h-4 mr-2 text-emerald-500" />
+                                  Export Valid ({validCount})
+                                </DropdownMenuItem>
+                                <DropdownMenuItem 
+                                  onClick={() => {
+                                    if (invalidCount === 0) {
+                                      toast.warning('No invalid numbers to export');
+                                      return;
+                                    }
+                                    const csv = task.invalid_numbers?.join('\n') || '';
+                                    const blob = new Blob([csv], { type: 'text/csv' });
+                                    const url = URL.createObjectURL(blob);
+                                    const a = document.createElement('a');
+                                    a.href = url;
+                                    a.download = `${tagName}_invalid_${format(new Date(task.completed_at || new Date()), 'yyyy-MM-dd')}.csv`;
+                                    a.click();
+                                    URL.revokeObjectURL(url);
+                                    toast.success(`Exported ${invalidCount} invalid numbers`);
+                                  }}
+                                  disabled={invalidCount === 0}
+                                >
+                                  <UserX className="w-4 h-4 mr-2 text-red-500" />
+                                  Export Invalid ({invalidCount})
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         </div>
                       );
