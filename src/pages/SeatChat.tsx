@@ -323,50 +323,50 @@ const SeatChat: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-slate-50">
       {/* Header */}
-      <header className="border-b bg-card">
+      <header className="border-b bg-white shadow-sm">
         <div className="container mx-auto px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center">
-                <Send className="w-5 h-5 text-primary-foreground" />
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 flex items-center justify-center shadow-md">
+                <Send className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h1 className="font-bold text-lg">{seat?.name}</h1>
-                <p className="text-xs text-muted-foreground">Chat Workspace</p>
+                <h1 className="font-bold text-lg text-slate-900">{seat?.name}</h1>
+                <p className="text-xs text-slate-500">Chat Workspace</p>
               </div>
             </div>
-            <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30">
-              Online
+            <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 hover:bg-emerald-100">
+              ● Online
             </Badge>
           </div>
         </div>
       </header>
 
       {/* Stats Bar */}
-      <div className="border-b bg-muted/30">
-        <div className="container mx-auto px-4 py-2">
+      <div className="border-b bg-white">
+        <div className="container mx-auto px-4 py-2.5">
           <div className="flex gap-6 text-sm">
             <div className="flex items-center gap-2">
-              <MessageSquare className="w-4 h-4 text-muted-foreground" />
-              <span className="font-medium">{stats.total_conversations}</span>
-              <span className="text-muted-foreground">Conversations</span>
+              <MessageSquare className="w-4 h-4 text-slate-400" />
+              <span className="font-semibold text-slate-800">{stats.total_conversations}</span>
+              <span className="text-slate-500">Conversations</span>
             </div>
             <div className="flex items-center gap-2">
-              <Send className="w-4 h-4 text-muted-foreground" />
-              <span className="font-medium">{stats.messages_sent_today}</span>
-              <span className="text-muted-foreground">Sent Today</span>
+              <Send className="w-4 h-4 text-slate-400" />
+              <span className="font-semibold text-slate-800">{stats.messages_sent_today}</span>
+              <span className="text-slate-500">Sent Today</span>
             </div>
             <div className="flex items-center gap-2">
-              <Eye className="w-4 h-4 text-muted-foreground" />
-              <span className="font-medium">{stats.messages_read}</span>
-              <span className="text-muted-foreground">Read</span>
+              <Eye className="w-4 h-4 text-slate-400" />
+              <span className="font-semibold text-slate-800">{stats.messages_read}</span>
+              <span className="text-slate-500">Read</span>
             </div>
             <div className="flex items-center gap-2">
-              <Users className="w-4 h-4 text-muted-foreground" />
-              <span className="font-medium">{stats.responses_received}</span>
-              <span className="text-muted-foreground">Responses</span>
+              <Users className="w-4 h-4 text-slate-400" />
+              <span className="font-semibold text-slate-800">{stats.responses_received}</span>
+              <span className="text-slate-500">Responses</span>
             </div>
           </div>
         </div>
@@ -377,14 +377,14 @@ const SeatChat: React.FC = () => {
         <div className="grid grid-cols-12 gap-4 h-[calc(100vh-180px)]">
           {/* Conversation List */}
           <div className="col-span-4 lg:col-span-3">
-            <Card className="h-full flex flex-col">
-              <CardHeader className="py-3 px-4">
-                <CardTitle className="text-sm font-medium">Conversations</CardTitle>
+            <Card className="h-full flex flex-col bg-white border-slate-200 shadow-sm">
+              <CardHeader className="py-3 px-4 bg-slate-50/50">
+                <CardTitle className="text-sm font-semibold text-slate-700">Conversations</CardTitle>
               </CardHeader>
-              <Separator />
+              <Separator className="bg-slate-100" />
               <ScrollArea className="flex-1">
                 {conversations.length === 0 ? (
-                  <div className="p-4 text-center text-muted-foreground text-sm">
+                  <div className="p-4 text-center text-slate-400 text-sm">
                     No conversations yet
                   </div>
                 ) : (
@@ -394,30 +394,30 @@ const SeatChat: React.FC = () => {
                         key={conv.id}
                         onClick={() => setSelectedConversation(conv)}
                         className={cn(
-                          "w-full flex items-center gap-3 p-3 rounded-lg transition-colors text-left",
+                          "w-full flex items-center gap-3 p-3 rounded-lg transition-all text-left",
                           selectedConversation?.id === conv.id
-                            ? "bg-primary/10"
-                            : "hover:bg-muted"
+                            ? "bg-blue-50 border border-blue-200"
+                            : "hover:bg-slate-50 border border-transparent"
                         )}
                       >
-                        <Avatar className="w-10 h-10">
+                        <Avatar className="w-10 h-10 border-2 border-white shadow-sm">
                           <AvatarImage src={conv.recipient_avatar || ''} />
-                          <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary text-primary-foreground text-sm">
-                            {(conv.recipient_name || conv.recipient_phone || '?')[0]}
+                          <AvatarFallback className="bg-gradient-to-br from-blue-500 to-blue-600 text-white text-sm font-medium">
+                            {(conv.recipient_name || conv.recipient_phone || '?')[0].toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
-                            <p className="font-medium text-sm truncate">
+                            <p className="font-medium text-sm truncate text-slate-800">
                               {conv.recipient_name || conv.recipient_phone || 'Unknown'}
                             </p>
                             {conv.unread_count > 0 && (
-                              <Badge className="bg-primary text-primary-foreground text-xs px-1.5 min-w-[20px] h-5">
+                              <Badge className="bg-blue-600 text-white text-xs px-1.5 min-w-[20px] h-5 shadow-sm">
                                 {conv.unread_count}
                               </Badge>
                             )}
                           </div>
-                          <p className="text-xs text-muted-foreground truncate">
+                          <p className="text-xs text-slate-400 truncate">
                             {conv.recipient_phone}
                           </p>
                         </div>
@@ -431,23 +431,23 @@ const SeatChat: React.FC = () => {
 
           {/* Message Area */}
           <div className="col-span-8 lg:col-span-9">
-            <Card className="h-full flex flex-col">
+            <Card className="h-full flex flex-col bg-white border-slate-200 shadow-sm">
               {selectedConversation ? (
                 <>
                   {/* Chat Header */}
-                  <CardHeader className="py-3 px-4 border-b">
+                  <CardHeader className="py-3 px-4 border-b border-slate-100 bg-slate-50/50">
                     <div className="flex items-center gap-3">
-                      <Avatar>
+                      <Avatar className="border-2 border-white shadow-sm">
                         <AvatarImage src={selectedConversation.recipient_avatar || ''} />
-                        <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary text-primary-foreground">
-                          {(selectedConversation.recipient_name || selectedConversation.recipient_phone || '?')[0]}
+                        <AvatarFallback className="bg-gradient-to-br from-blue-500 to-blue-600 text-white font-medium">
+                          {(selectedConversation.recipient_name || selectedConversation.recipient_phone || '?')[0].toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
                       <div>
-                        <p className="font-medium">
+                        <p className="font-semibold text-slate-800">
                           {selectedConversation.recipient_name || selectedConversation.recipient_phone || 'Unknown'}
                         </p>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="text-xs text-slate-400">
                           {selectedConversation.recipient_phone}
                         </p>
                       </div>
@@ -455,8 +455,8 @@ const SeatChat: React.FC = () => {
                   </CardHeader>
 
                   {/* Messages */}
-                  <ScrollArea className="flex-1 p-4">
-                    <div className="space-y-4">
+                  <ScrollArea className="flex-1 p-4 bg-slate-50/30">
+                    <div className="space-y-3">
                       {messages.map((msg) => (
                         <div
                           key={msg.id}
@@ -467,10 +467,10 @@ const SeatChat: React.FC = () => {
                         >
                           <div
                             className={cn(
-                              "max-w-[70%] rounded-2xl px-4 py-2",
+                              "max-w-[70%] rounded-2xl px-4 py-2.5 shadow-sm",
                               msg.direction === 'outgoing'
-                                ? 'bg-primary text-primary-foreground rounded-br-md'
-                                : 'bg-muted rounded-bl-md'
+                                ? 'bg-blue-600 text-white rounded-br-md'
+                                : 'bg-white border border-slate-100 text-slate-800 rounded-bl-md'
                             )}
                           >
                             {msg.media_url && (
@@ -488,8 +488,8 @@ const SeatChat: React.FC = () => {
                               <span className={cn(
                                 "text-[10px]",
                                 msg.direction === 'outgoing' 
-                                  ? 'text-primary-foreground/70' 
-                                  : 'text-muted-foreground'
+                                  ? 'text-white/70' 
+                                  : 'text-slate-400'
                               )}>
                                 {formatMessageDate(msg.created_at)}
                               </span>
@@ -503,7 +503,7 @@ const SeatChat: React.FC = () => {
                   </ScrollArea>
 
                   {/* Message Input */}
-                  <div className="p-4 border-t">
+                  <div className="p-4 border-t border-slate-100 bg-white">
                     <div className="flex gap-2">
                       <Input
                         placeholder="Type a message..."
@@ -511,10 +511,12 @@ const SeatChat: React.FC = () => {
                         onChange={(e) => setMessageInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                         disabled={isSending}
+                        className="bg-slate-50 border-slate-200 focus:border-blue-400 focus:ring-blue-400"
                       />
                       <Button 
                         onClick={handleSendMessage} 
                         disabled={!messageInput.trim() || isSending}
+                        className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm"
                       >
                         <Send className="w-4 h-4" />
                       </Button>
@@ -522,10 +524,10 @@ const SeatChat: React.FC = () => {
                   </div>
                 </>
               ) : (
-                <div className="flex-1 flex items-center justify-center">
-                  <div className="text-center text-muted-foreground">
+                <div className="flex-1 flex items-center justify-center bg-slate-50/50">
+                  <div className="text-center text-slate-400">
                     <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                    <p>Select a conversation to start chatting</p>
+                    <p className="font-medium">Select a conversation to start chatting</p>
                   </div>
                 </div>
               )}
