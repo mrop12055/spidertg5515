@@ -6,6 +6,7 @@ Handles account management tasks:
 - SpamBot check
 - Change name
 - Change photo
+- Change bio
 - Privacy settings
 - Change password
 - Logout other sessions
@@ -141,6 +142,16 @@ async def logout_other_sessions(client):
         return False, str(e)
 
 
+async def change_bio(client, bio: str):
+    """Change account bio/about on Telegram"""
+    try:
+        from telethon.tl.functions.account import UpdateProfileRequest
+        await client(UpdateProfileRequest(about=bio))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
 async def main_loop():
     """Main account management loop"""
     global RUNNING
@@ -268,6 +279,23 @@ async def main_loop():
                     print(f"  🚪 Logging out other sessions for {account.get('phone_number')}...")
                     success, error = await logout_other_sessions(client)
                     await report_result("logout_sessions", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": success,
+                        "error": error
+                    })
+                    print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
+            
+            elif task_type == "change_bio":
+                task_id = task.get("task_id")
+                task_data = task.get("task_data", {})
+                account = task.get("account", {})
+                
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  📝 Changing bio for {account.get('phone_number')}...")
+                    success, error = await change_bio(client, task_data.get("bio", ""))
+                    await report_result("change_bio", {
                         "task_id": task_id,
                         "account_id": account.get("id"),
                         "success": success,
