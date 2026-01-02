@@ -851,10 +851,28 @@ serve(async (req) => {
 
         await supabase
           .from("telegram_accounts")
-          .update({ status: "disconnected" })
+          .update({ 
+            status: "disconnected",
+            ban_reason: reason || "Session expired"
+          })
           .eq("id", account_id);
 
         console.log(`[report-task-result] Account ${account_id} disconnected: ${reason}`);
+        break;
+      }
+
+      case "account_banned": {
+        const { account_id, reason } = result;
+
+        await supabase
+          .from("telegram_accounts")
+          .update({ 
+            status: "banned",
+            ban_reason: reason || "Account deleted or banned"
+          })
+          .eq("id", account_id);
+
+        console.log(`[report-task-result] Account ${account_id} BANNED: ${reason}`);
         break;
       }
 

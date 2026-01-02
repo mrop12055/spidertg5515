@@ -280,6 +280,24 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
             await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
             return None
         
+        # Check if account is deleted/banned
+        try:
+            me = await asyncio.wait_for(client.get_me(), timeout=15)
+            if not me:
+                print(f"  [BANNED] Account deleted: {account['phone_number']}")
+                await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"})
+                return None
+        except Exception as me_err:
+            err_str = str(me_err).lower()
+            if any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
+                print(f"  [BANNED] {account['phone_number']}: {me_err}")
+                await report_result("account_banned", {"account_id": account_id, "reason": str(me_err)})
+                return None
+            elif any(x in err_str for x in ["session", "revoked", "auth"]):
+                print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)})
+                return None
+        
         if setup_handler:
             await setup_handler(client, account_id)
             setattr(client, "_handler", True)
@@ -290,7 +308,6 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         if account.get("first_name") or account.get("username"):
             await report_result("account_connected", {"account_id": account_id, "skip_profile_update": True})
         else:
-            me = await asyncio.wait_for(client.get_me(), timeout=10)
             if me:
                 await report_result("account_connected", {
                     "account_id": account_id,
@@ -304,7 +321,12 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
     except Exception as e:
-        print(f"  [FAIL] {account['phone_number']}: {e}")
+        err_str = str(e).lower()
+        if any(x in err_str for x in ["deleted", "deactivated", "banned"]):
+            print(f"  [BANNED] {account['phone_number']}: {e}")
+            await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
+        else:
+            print(f"  [FAIL] {account['phone_number']}: {e}")
         return None
 
 
