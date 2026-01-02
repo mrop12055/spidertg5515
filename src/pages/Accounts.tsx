@@ -38,11 +38,11 @@ import { Separator } from '@/components/ui/separator';
 import { CountdownTimer } from '@/components/ui/countdown-timer';
 
 const statusOptions: { value: AccountStatus; label: string; color: string; icon: React.ReactNode }[] = [
-  { value: 'active', label: 'Active', color: 'bg-emerald-500/15 text-emerald-600 border-emerald-500/30', icon: <Wifi className="w-3 h-3" /> },
-  { value: 'banned', label: 'Banned', color: 'bg-red-500/15 text-red-600 border-red-500/30', icon: <XCircle className="w-3 h-3" /> },
-  { value: 'restricted', label: 'Restricted', color: 'bg-amber-500/15 text-amber-600 border-amber-500/30', icon: <AlertTriangle className="w-3 h-3" /> },
-  { value: 'disconnected', label: 'Disconnected', color: 'bg-slate-500/15 text-slate-500 border-slate-500/30', icon: <WifiOff className="w-3 h-3" /> },
-  { value: 'cooldown', label: 'Cooldown', color: 'bg-purple-500/15 text-purple-600 border-purple-500/30', icon: <Clock className="w-3 h-3" /> },
+  { value: 'active', label: 'Active', color: 'bg-status-active/15 text-status-active border-status-active/30', icon: <Wifi className="w-3 h-3" /> },
+  { value: 'banned', label: 'Banned', color: 'bg-status-banned/15 text-status-banned border-status-banned/30', icon: <XCircle className="w-3 h-3" /> },
+  { value: 'restricted', label: 'Restricted', color: 'bg-status-restricted/15 text-status-restricted border-status-restricted/30', icon: <AlertTriangle className="w-3 h-3" /> },
+  { value: 'disconnected', label: 'Disconnected', color: 'bg-status-disconnected/15 text-status-disconnected border-status-disconnected/30', icon: <WifiOff className="w-3 h-3" /> },
+  { value: 'cooldown', label: 'Cooldown', color: 'bg-status-cooldown/15 text-status-cooldown border-status-cooldown/30', icon: <Clock className="w-3 h-3" /> },
 ];
 
 interface SessionFile {
@@ -918,12 +918,12 @@ const Accounts: React.FC = () => {
             />
           ) : (
             <div className={cn(
-              "w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium",
-              account.status === 'active' && "bg-emerald-500/15 text-emerald-600",
-              account.status === 'banned' && "bg-red-500/15 text-red-600",
-              account.status === 'restricted' && "bg-amber-500/15 text-amber-600",
-              account.status === 'cooldown' && "bg-purple-500/15 text-purple-600",
-              account.status === 'disconnected' && "bg-slate-500/15 text-slate-500",
+"w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium",
+              account.status === 'active' && "bg-status-active/15 text-status-active",
+              account.status === 'banned' && "bg-status-banned/15 text-status-banned",
+              account.status === 'restricted' && "bg-status-restricted/15 text-status-restricted",
+              account.status === 'cooldown' && "bg-status-cooldown/15 text-status-cooldown",
+              account.status === 'disconnected' && "bg-status-disconnected/15 text-status-disconnected",
             )}>
               {verifyResult?.status === 'checking' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -938,11 +938,11 @@ const Accounts: React.FC = () => {
           {/* Status indicator */}
           <div className={cn(
             "absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-card flex items-center justify-center",
-            account.status === 'active' && "bg-emerald-500",
-            account.status === 'banned' && "bg-red-500",
-            account.status === 'restricted' && "bg-amber-500",
-            account.status === 'cooldown' && "bg-purple-500",
-            account.status === 'disconnected' && "bg-slate-400",
+            account.status === 'active' && "bg-status-active",
+            account.status === 'banned' && "bg-status-banned",
+            account.status === 'restricted' && "bg-status-restricted",
+            account.status === 'cooldown' && "bg-status-cooldown",
+            account.status === 'disconnected' && "bg-status-disconnected",
           )}>
             {account.status === 'active' && <Check className="w-2 h-2 text-white" />}
             {account.status === 'banned' && <XCircle className="w-2 h-2 text-white" />}
@@ -958,7 +958,7 @@ const Accounts: React.FC = () => {
               <span className={cn("w-2 h-2 rounded-full", accountGroup.color)} title={accountGroup.name} />
             )}
             {verifyResult?.status === 'active' && (
-              <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+              <CheckCircle className="w-3.5 h-3.5 text-status-active" />
             )}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
@@ -969,12 +969,12 @@ const Accounts: React.FC = () => {
               <span className="text-primary/70">@{account.username}</span>
             )}
             {account.restrictedUntil && new Date(account.restrictedUntil) > new Date() && (
-              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 text-[10px]">
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-restricted/10 text-status-restricted text-[10px]">
                 <AlertTriangle className="w-3 h-3" />
                 <CountdownTimer 
                   targetDate={new Date(account.restrictedUntil)} 
                   compact
-                  className="text-amber-600"
+                  className="text-status-restricted"
                 />
               </div>
             )}
@@ -999,10 +999,10 @@ const Accounts: React.FC = () => {
                 <TooltipTrigger asChild>
                   <div className={cn(
                     "flex items-center gap-1 px-2 py-1 rounded text-xs",
-                    account.warmupPhase === 0 && "bg-red-500/10 text-red-600",
-                    account.warmupPhase === 1 && "bg-orange-500/10 text-orange-600",
-                    account.warmupPhase === 2 && "bg-yellow-500/10 text-yellow-600",
-                    account.warmupPhase === 3 && "bg-lime-500/10 text-lime-600",
+                    account.warmupPhase === 0 && "bg-status-banned/10 text-status-banned",
+                    account.warmupPhase === 1 && "bg-status-warning/10 text-status-warning",
+                    account.warmupPhase === 2 && "bg-status-warning/10 text-status-warning",
+                    account.warmupPhase === 3 && "bg-status-active/10 text-status-active",
                   )}>
                     <Flame className="w-3 h-3" />
                     <span>P{account.warmupPhase}/4</span>
@@ -1021,7 +1021,7 @@ const Accounts: React.FC = () => {
             </TooltipProvider>
           )}
           {account.warmupPhase === 4 && (
-            <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-emerald-500/10 text-emerald-600">
+            <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-status-active/10 text-status-active">
               <Flame className="w-3 h-3" />
               <span>Ready</span>
             </div>
@@ -1034,9 +1034,9 @@ const Accounts: React.FC = () => {
                 <TooltipTrigger asChild>
                   <div className={cn(
                     "flex items-center gap-1 px-2 py-1 rounded text-xs",
-                    account.spambotStatus === 'clean' && "bg-emerald-500/10 text-emerald-600",
-                    account.spambotStatus === 'limited' && "bg-amber-500/10 text-amber-600",
-                    account.spambotStatus === 'restricted' && "bg-red-500/10 text-red-600",
+                    account.spambotStatus === 'clean' && "bg-status-active/10 text-status-active",
+                    account.spambotStatus === 'limited' && "bg-status-warning/10 text-status-warning",
+                    account.spambotStatus === 'restricted' && "bg-status-banned/10 text-status-banned",
                   )}>
                     <Bot className="w-3 h-3" />
                     <span>{account.spambotStatus === 'clean' ? '✓' : account.spambotStatus}</span>
@@ -1054,7 +1054,7 @@ const Accounts: React.FC = () => {
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-amber-500/10 text-amber-600">
+                  <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-status-warning/10 text-status-warning">
                     <MapPin className="w-3 h-3" />
                     <span>!</span>
                   </div>
@@ -1092,7 +1092,7 @@ const Accounts: React.FC = () => {
           {proxyLabel && (
             <div className={cn(
               "flex items-center gap-1 px-2 py-1 rounded text-xs",
-              proxyStatus === 'active' ? "bg-emerald-500/10 text-emerald-600" : "bg-muted text-muted-foreground"
+              proxyStatus === 'active' ? "bg-status-active/10 text-status-active" : "bg-muted text-muted-foreground"
             )}>
               <Globe className="w-3 h-3" />
               <span className="max-w-[80px] truncate">{proxyLabel}</span>
@@ -1193,7 +1193,7 @@ const Accounts: React.FC = () => {
 
                   {uploadResults && (
                     <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 text-sm">
-                      <span className="flex items-center gap-1 text-emerald-600">
+                      <span className="flex items-center gap-1 text-status-active">
                         <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
                       </span>
                       {uploadResults.failed > 0 && (
@@ -1325,10 +1325,10 @@ const Accounts: React.FC = () => {
 
         {/* SpamBot Progress */}
         {isSpamBotChecking && (
-          <Card className="border-amber-500/30 bg-amber-500/5">
+          <Card className="border-status-warning/30 bg-status-warning/5">
             <CardContent className="p-3">
               <div className="flex items-center gap-3">
-                <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                <Loader2 className="w-4 h-4 animate-spin text-status-warning" />
                 <div className="flex-1">
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-sm font-medium">SpamBot Check</span>
