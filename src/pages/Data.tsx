@@ -11,7 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   Plus, Upload, Trash2, Database, Tag, 
-  Download, RefreshCw,
+  Download, RefreshCw, RefreshCcw,
   UserCheck, UserX, FileText, FolderOpen, MoreVertical, Loader2, AlertCircle, Clock, ChevronDown, ChevronUp
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
@@ -419,6 +419,50 @@ const Data: React.FC = () => {
 
   const [showImportHistory, setShowImportHistory] = useState(false);
 
+  // Function to manually switch account for a pending/in-progress import task
+  const handleSwitchAccount = async (taskId: string) => {
+    try {
+      // Get current task info
+      const { data: task, error: fetchError } = await supabase
+        .from('contact_import_tasks')
+        .select('current_account_id, failed_account_ids, phone_numbers')
+        .eq('id', taskId)
+        .single();
+
+      if (fetchError) throw fetchError;
+
+      const currentAccountId = task?.current_account_id;
+      const existingFailed: string[] = (task?.failed_account_ids as string[]) || [];
+      
+      // Add current account to failed list
+      const newFailed = currentAccountId && !existingFailed.includes(currentAccountId) 
+        ? [...existingFailed, currentAccountId] 
+        : existingFailed;
+
+      // Reset task to pending with a new account
+      const { error: updateError } = await supabase
+        .from('contact_import_tasks')
+        .update({
+          status: 'pending',
+          failed_account_ids: newFailed,
+          remaining_numbers: task?.phone_numbers || [],
+          valid_numbers: [],
+          invalid_numbers: [],
+          current_account_id: null,
+          result: `Manually switched account (tried: ${newFailed.length})`
+        })
+        .eq('id', taskId);
+
+      if (updateError) throw updateError;
+
+      toast.success('Account switch triggered - task will retry with a different account');
+      fetchTags();
+    } catch (error) {
+      console.error('Error switching account:', error);
+      toast.error('Failed to switch account');
+    }
+  };
+
   return (
     <DashboardLayout>
       <PageHeader 
@@ -651,6 +695,66 @@ ahmadraza9392`}
             )}
           </CardContent>
         </Card>
+
+        {/* Active Import Tasks - Show with Switch Account button for testing */}
+        {pendingTasks.length > 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                Active Imports
+                <Badge variant="secondary" className="text-xs">{pendingTasks.length}</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="space-y-2">
+                {pendingTasks.map(task => {
+                  const tagName = tags.find(t => t.id === task.tag_id)?.name || 'Unknown';
+                  const validCount = task.valid_numbers?.length || 0;
+                  const invalidCount = task.invalid_numbers?.length || 0;
+                  const submitted = task.phone_numbers?.length || 0;
+                  
+                  return (
+                    <div key={task.id} className="flex items-center justify-between p-3 rounded-lg bg-amber-500/10 border border-amber-500/30">
+                      <div className="flex items-center gap-3">
+                        <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
+                        <Badge variant="outline" className="text-xs">{tagName}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          Status: {task.status}
+                        </span>
+                        {task.result && (
+                          <span className="text-xs text-muted-foreground">
+                            ({task.result})
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-4 text-xs">
+                        <span className="text-muted-foreground">
+                          {submitted} contacts
+                        </span>
+                        <span className="text-emerald-500">
+                          Valid: {validCount}
+                        </span>
+                        <span className="text-red-500">
+                          Invalid: {invalidCount}
+                        </span>
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          className="h-7 text-xs"
+                          onClick={() => handleSwitchAccount(task.id)}
+                        >
+                          <RefreshCcw className="w-3 h-3 mr-1" />
+                          Switch Account
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Import History - Bottom */}
         {completedTasks.length > 0 && (
