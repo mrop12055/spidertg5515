@@ -6,13 +6,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   Plus, Upload, Trash2, Database, Tag, 
-  CheckCircle, Download, RefreshCw, ArrowLeft,
+  Download, RefreshCw,
   UserCheck, UserX, FileText, FolderOpen, MoreVertical, Loader2, AlertCircle, Clock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -30,16 +29,6 @@ interface ContactTag {
   used_count: number;
   total_count: number;
   pending_count: number;
-}
-
-interface ContactData {
-  id: string;
-  phone_number: string;
-  name: string | null;
-  username: string | null;
-  is_used: boolean;
-  tag_id: string | null;
-  created_at: string;
 }
 
 interface ImportTask {
@@ -61,12 +50,6 @@ const Data: React.FC = () => {
   const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   
-  // View mode: 'tags' or 'contacts'
-  const [viewMode, setViewMode] = useState<'tags' | 'contacts'>('tags');
-  const [selectedTag, setSelectedTag] = useState<ContactTag | null>(null);
-  const [tagContacts, setTagContacts] = useState<ContactData[]>([]);
-  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
-  
   // Add contacts dialog
   const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
@@ -74,8 +57,6 @@ const Data: React.FC = () => {
   
   // Import tracking
   const [pendingTasks, setPendingTasks] = useState<ImportTask[]>([]);
-  const [isImporting, setIsImporting] = useState(false);
-  const [importResult, setImportResult] = useState<{ valid: number; invalid: number } | null>(null);
   
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   
@@ -84,7 +65,6 @@ const Data: React.FC = () => {
   const fetchTags = useCallback(async () => {
     setIsLoading(true);
     try {
-      // Fetch tags
       const { data: tagsData, error: tagsError } = await supabase
         .from('contact_tags')
         .select('*')
@@ -92,14 +72,12 @@ const Data: React.FC = () => {
 
       if (tagsError) throw tagsError;
 
-      // Fetch contact counts
       const { data: contactsData, error: contactsError } = await supabase
         .from('contacts_data')
         .select('tag_id, is_used');
 
       if (contactsError) throw contactsError;
 
-      // Fetch pending import tasks to count pending per tag
       const { data: tasksData, error: tasksError } = await supabase
         .from('contact_import_tasks')
         .select('*')
@@ -109,7 +87,6 @@ const Data: React.FC = () => {
       
       setPendingTasks((tasksData || []) as ImportTask[]);
 
-      // Calculate pending counts per tag
       const pendingPerTag: Record<string, number> = {};
       (tasksData || []).forEach((task: ImportTask) => {
         if (task.tag_id) {
@@ -184,16 +161,13 @@ const Data: React.FC = () => {
         });
         
         fetchTags();
-        if (selectedTag) {
-          fetchTagContacts(selectedTag.id);
-        }
       }
 
       setPendingTasks(stillPending);
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [pendingTasks, selectedTag, fetchTags]);
+  }, [pendingTasks, fetchTags]);
 
   const handleCreateTag = async () => {
     if (!newTagName.trim()) {
@@ -244,7 +218,6 @@ const Data: React.FC = () => {
     }
   };
 
-  // Normalize input - auto-add + for phones, @ for usernames
   const normalizeContact = (input: string): string => {
     const trimmed = input.trim();
     
@@ -266,7 +239,6 @@ const Data: React.FC = () => {
   };
 
   const getAutoSelectedAccount = () => {
-    // Auto-select first active account
     if (activeAccounts.length > 0) {
       return activeAccounts[0].id;
     }
@@ -302,7 +274,6 @@ const Data: React.FC = () => {
     }
 
     try {
-      // Create import task for Python runner to validate via Telegram in background
       const { data: task, error } = await supabase
         .from('contact_import_tasks')
         .insert({
@@ -362,7 +333,6 @@ const Data: React.FC = () => {
         return;
       }
 
-      // Create import task for Python runner in background
       const { data: task, error } = await supabase
         .from('contact_import_tasks')
         .insert({
@@ -389,38 +359,6 @@ const Data: React.FC = () => {
         fileInputRef.current.value = '';
       }
     }
-  };
-
-  const fetchTagContacts = async (tagId: string) => {
-    setIsLoadingContacts(true);
-    try {
-      const { data, error } = await supabase
-        .from('contacts_data')
-        .select('id, phone_number, name, username, is_used, tag_id, created_at')
-        .eq('tag_id', tagId)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-      setTagContacts(data || []);
-    } catch (error) {
-      console.error('Error fetching contacts:', error);
-      toast.error('Failed to load contacts');
-    } finally {
-      setIsLoadingContacts(false);
-    }
-  };
-
-  const openTagView = (tag: ContactTag) => {
-    setSelectedTag(tag);
-    setViewMode('contacts');
-    fetchTagContacts(tag.id);
-  };
-
-  const backToTags = () => {
-    setViewMode('tags');
-    setSelectedTag(null);
-    setTagContacts([]);
-    fetchTags();
   };
 
   const exportContacts = async (tagId: string, tagName: string, filter: 'all' | 'unused' | 'used') => {
@@ -526,331 +464,226 @@ const Data: React.FC = () => {
           )}
         </div>
 
-        {/* Main Content */}
-        {viewMode === 'tags' ? (
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div>
-                  <CardTitle className="flex items-center gap-2">
-                    <Tag className="w-5 h-5" />
-                    Contact Tags
-                  </CardTitle>
-                  <CardDescription>Create tags to organize your contacts</CardDescription>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button variant="outline" size="sm" onClick={() => fetchTags()} disabled={isLoading}>
-                    <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
-                    Refresh
-                  </Button>
-                  
-                  <Dialog open={isAddContactsOpen} onOpenChange={(open) => {
-                    setIsAddContactsOpen(open);
-                    if (!open) {
-                      setImportResult(null);
-                    }
-                  }}>
-                    <DialogTrigger asChild>
-                      <Button variant="outline" size="sm" disabled={activeAccounts.length === 0}>
-                        <Upload className="w-4 h-4 mr-2" />
-                        Add Contacts
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent className="max-w-lg">
-                      <DialogHeader>
-                        <DialogTitle>Add Contacts to Tag</DialogTitle>
-                        <DialogDescription>
-                          Contacts will be validated via Telegram in background. Only valid users will be saved.
-                        </DialogDescription>
-                      </DialogHeader>
+        {/* Tags List */}
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="flex items-center gap-2">
+                  <Tag className="w-5 h-5" />
+                  Contact Tags
+                </CardTitle>
+                <CardDescription>Create tags to organize your contacts</CardDescription>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" onClick={() => fetchTags()} disabled={isLoading}>
+                  <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
+                  Refresh
+                </Button>
+                
+                <Dialog open={isAddContactsOpen} onOpenChange={setIsAddContactsOpen}>
+                  <DialogTrigger asChild>
+                    <Button variant="outline" size="sm" disabled={activeAccounts.length === 0}>
+                      <Upload className="w-4 h-4 mr-2" />
+                      Add Contacts
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="max-w-lg">
+                    <DialogHeader>
+                      <DialogTitle>Add Contacts to Tag</DialogTitle>
+                      <DialogDescription>
+                        Contacts will be validated via Telegram in background. Only valid users will be saved.
+                      </DialogDescription>
+                    </DialogHeader>
+                    
+                    <div className="space-y-4">
+                      <div>
+                        <Label>Select Tag *</Label>
+                        <Select value={addToTagId} onValueChange={setAddToTagId}>
+                          <SelectTrigger>
+                            <SelectValue placeholder="Choose a tag" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {tags.map(tag => (
+                              <SelectItem key={tag.id} value={tag.id}>
+                                {tag.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                       
-                      <div className="space-y-4">
-                        <div>
-                          <Label>Select Tag *</Label>
-                          <Select value={addToTagId} onValueChange={setAddToTagId}>
-                            <SelectTrigger>
-                              <SelectValue placeholder="Choose a tag" />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {tags.map(tag => (
-                                <SelectItem key={tag.id} value={tag.id}>
-                                  {tag.name}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        
-                        <div className="flex gap-2">
-                          <input
-                            type="file"
-                            ref={fileInputRef}
-                            accept=".txt,.csv"
-                            onChange={handleFileImport}
-                            className="hidden"
-                          />
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            onClick={() => fileInputRef.current?.click()}
-                            disabled={!addToTagId}
-                          >
-                            <FileText className="w-4 h-4 mr-2" />
-                            Import File
-                          </Button>
-                        </div>
+                      <div className="flex gap-2">
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          accept=".txt,.csv"
+                          onChange={handleFileImport}
+                          className="hidden"
+                        />
+                        <Button 
+                          variant="outline" 
+                          size="sm" 
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={!addToTagId}
+                        >
+                          <FileText className="w-4 h-4 mr-2" />
+                          Import File
+                        </Button>
+                      </div>
 
-                        <div className="p-3 rounded-lg bg-accent/30 border border-border text-xs text-muted-foreground">
-                          <p className="font-semibold mb-1">Format examples:</p>
-                          <pre className="font-mono">
+                      <div className="p-3 rounded-lg bg-accent/30 border border-border text-xs text-muted-foreground">
+                        <p className="font-semibold mb-1">Format examples:</p>
+                        <pre className="font-mono">
 {`12303802803
 93282083028
 ahmadraza9392`}
-                          </pre>
-                        </div>
-                        
-                        <Textarea
-                          placeholder={`12303802803\n93282083028\nahmadraza9392`}
-                          value={bulkText}
-                          onChange={(e) => setBulkText(e.target.value)}
-                          className="min-h-[150px] font-mono text-sm"
-                        />
+                        </pre>
                       </div>
                       
-                      <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsAddContactsOpen(false)}>Cancel</Button>
-                        <Button onClick={handleAddContacts} disabled={!addToTagId || !bulkText.trim()}>
-                          <Plus className="w-4 h-4 mr-2" />
-                          Validate & Add
-                        </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
-
-                  <Dialog open={isCreateTagOpen} onOpenChange={setIsCreateTagOpen}>
-                    <DialogTrigger asChild>
-                      <Button size="sm">
+                      <Textarea
+                        placeholder={`12303802803\n93282083028\nahmadraza9392`}
+                        value={bulkText}
+                        onChange={(e) => setBulkText(e.target.value)}
+                        className="min-h-[150px] font-mono text-sm"
+                      />
+                    </div>
+                    
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsAddContactsOpen(false)}>Cancel</Button>
+                      <Button onClick={handleAddContacts} disabled={!addToTagId || !bulkText.trim()}>
                         <Plus className="w-4 h-4 mr-2" />
-                        Create Tag
+                        Validate & Add
                       </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>Create New Tag</DialogTitle>
-                        <DialogDescription>
-                          Create a tag to organize your contacts
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="space-y-4">
-                        <div>
-                          <Label>Tag Name *</Label>
-                          <Input
-                            placeholder="e.g., Campaign 1, Hot Leads, etc."
-                            value={newTagName}
-                            onChange={(e) => setNewTagName(e.target.value)}
-                          />
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+
+                <Dialog open={isCreateTagOpen} onOpenChange={setIsCreateTagOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm">
+                      <Plus className="w-4 h-4 mr-2" />
+                      Create Tag
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Create New Tag</DialogTitle>
+                      <DialogDescription>
+                        Create a tag to organize your contacts
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div>
+                        <Label>Tag Name *</Label>
+                        <Input
+                          placeholder="e.g., Campaign 1, Hot Leads, etc."
+                          value={newTagName}
+                          onChange={(e) => setNewTagName(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsCreateTagOpen(false)}>Cancel</Button>
+                      <Button onClick={handleCreateTag}>Create Tag</Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {activeAccounts.length === 0 && (
+              <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm text-amber-600 dark:text-amber-400">
+                <AlertCircle className="w-4 h-4 inline mr-2" />
+                No active Telegram accounts. Add contacts feature requires an active account for validation.
+              </div>
+            )}
+            
+            {isLoading ? (
+              <div className="text-center py-12">
+                <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin text-muted-foreground" />
+                <p className="text-muted-foreground">Loading tags...</p>
+              </div>
+            ) : tags.length === 0 ? (
+              <div className="text-center py-12 text-muted-foreground">
+                <Tag className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p className="mb-2">No tags created yet</p>
+                <p className="text-sm">Create a tag to start organizing your contacts</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {tags.map(tag => (
+                  <Card key={tag.id} className="border-border/50">
+                    <CardContent className="pt-4">
+                      <div className="flex items-start justify-between mb-3">
+                        <div className="flex items-center gap-2">
+                          <FolderOpen className="w-5 h-5 text-primary" />
+                          <h3 className="font-semibold">{tag.name}</h3>
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <MoreVertical className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => exportContacts(tag.id, tag.name, 'all')}>
+                              <Download className="w-4 h-4 mr-2" />
+                              Export All
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => exportContacts(tag.id, tag.name, 'unused')}>
+                              <Download className="w-4 h-4 mr-2" />
+                              Export Unused
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => exportContacts(tag.id, tag.name, 'used')}>
+                              <Download className="w-4 h-4 mr-2" />
+                              Export Used
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              className="text-destructive"
+                              onClick={() => handleDeleteTag(tag.id)}
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete Tag
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                      
+                      <div className="flex items-center gap-3 text-sm">
+                        <div className="flex items-center gap-1">
+                          <span className="text-muted-foreground">Total:</span>
+                          <Badge variant="secondary">{tag.total_count}</Badge>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-muted-foreground">Unused:</span>
+                          <Badge variant="secondary" className="bg-primary/20 text-primary">{tag.unused_count}</Badge>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span className="text-muted-foreground">Used:</span>
+                          <Badge variant="secondary">{tag.used_count}</Badge>
                         </div>
                       </div>
-                      <DialogFooter>
-                        <Button variant="outline" onClick={() => setIsCreateTagOpen(false)}>Cancel</Button>
-                        <Button onClick={handleCreateTag}>Create Tag</Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
-                </div>
+                      
+                      {tag.pending_count > 0 && (
+                        <div className="flex items-center gap-2 mt-2 text-sm text-amber-500">
+                          <Loader2 className="w-3 h-3 animate-spin" />
+                          <span>{tag.pending_count} validating...</span>
+                        </div>
+                      )}
+                      
+                      <p className="text-xs text-muted-foreground mt-3">
+                        Created {format(new Date(tag.created_at), 'MMM d, yyyy')}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ))}
               </div>
-            </CardHeader>
-            <CardContent>
-              {activeAccounts.length === 0 && (
-                <div className="mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-sm text-amber-600 dark:text-amber-400">
-                  <AlertCircle className="w-4 h-4 inline mr-2" />
-                  No active Telegram accounts. Add contacts feature requires an active account for validation.
-                </div>
-              )}
-              
-              {isLoading ? (
-                <div className="text-center py-12">
-                  <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin text-muted-foreground" />
-                  <p className="text-muted-foreground">Loading tags...</p>
-                </div>
-              ) : tags.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Tag className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p className="mb-2">No tags created yet</p>
-                  <p className="text-sm">Create a tag to start organizing your contacts</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {tags.map(tag => (
-                    <Card 
-                      key={tag.id} 
-                      className="cursor-pointer hover:border-primary/50 transition-colors"
-                      onClick={() => openTagView(tag)}
-                    >
-                      <CardContent className="pt-4">
-                        <div className="flex items-start justify-between mb-3">
-                          <div className="flex items-center gap-2">
-                            <FolderOpen className="w-5 h-5 text-primary" />
-                            <h3 className="font-semibold">{tag.name}</h3>
-                          </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreVertical className="w-4 h-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); exportContacts(tag.id, tag.name, 'all'); }}>
-                                <Download className="w-4 h-4 mr-2" />
-                                Export All
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); exportContacts(tag.id, tag.name, 'unused'); }}>
-                                <Download className="w-4 h-4 mr-2" />
-                                Export Unused
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); exportContacts(tag.id, tag.name, 'used'); }}>
-                                <Download className="w-4 h-4 mr-2" />
-                                Export Used
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem 
-                                className="text-destructive"
-                                onClick={(e) => { e.stopPropagation(); handleDeleteTag(tag.id); }}
-                              >
-                                <Trash2 className="w-4 h-4 mr-2" />
-                                Delete Tag
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </div>
-                        
-                        <div className="flex items-center gap-3 text-sm">
-                          <div className="flex items-center gap-1">
-                            <span className="text-muted-foreground">Total:</span>
-                            <Badge variant="secondary">{tag.total_count}</Badge>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <span className="text-muted-foreground">Unused:</span>
-                            <Badge variant="secondary" className="bg-primary/20 text-primary">{tag.unused_count}</Badge>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <span className="text-muted-foreground">Used:</span>
-                            <Badge variant="secondary">{tag.used_count}</Badge>
-                          </div>
-                        </div>
-                        
-                        {tag.pending_count > 0 && (
-                          <div className="flex items-center gap-2 mt-2 text-sm text-amber-500">
-                            <Loader2 className="w-3 h-3 animate-spin" />
-                            <span>{tag.pending_count} validating...</span>
-                          </div>
-                        )}
-                        
-                        <p className="text-xs text-muted-foreground mt-3">
-                          Created {format(new Date(tag.created_at), 'MMM d, yyyy')}
-                        </p>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        ) : (
-          // Contacts view for selected tag
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <Button variant="ghost" size="icon" onClick={backToTags}>
-                    <ArrowLeft className="w-5 h-5" />
-                  </Button>
-                  <div>
-                    <CardTitle className="flex items-center gap-2">
-                      <FolderOpen className="w-5 h-5 text-primary" />
-                      {selectedTag?.name}
-                    </CardTitle>
-                    <CardDescription>
-                      {selectedTag?.total_count} contacts • {selectedTag?.unused_count} unused • {selectedTag?.used_count} used
-                      {(selectedTag?.pending_count || 0) > 0 && ` • ${selectedTag?.pending_count} validating`}
-                    </CardDescription>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" size="sm" disabled={tagContacts.length === 0}>
-                        <Download className="w-4 h-4 mr-2" />
-                        Export
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => exportContacts(selectedTag!.id, selectedTag!.name, 'all')}>
-                        Export All
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => exportContacts(selectedTag!.id, selectedTag!.name, 'unused')}>
-                        Export Unused
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => exportContacts(selectedTag!.id, selectedTag!.name, 'used')}>
-                        Export Used
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={() => { setAddToTagId(selectedTag?.id || ''); setIsAddContactsOpen(true); }}
-                    disabled={activeAccounts.length === 0}
-                  >
-                    <Plus className="w-4 h-4 mr-2" />
-                    Add More
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              {isLoadingContacts ? (
-                <div className="text-center py-12">
-                  <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin text-muted-foreground" />
-                  <p className="text-muted-foreground">Loading contacts...</p>
-                </div>
-              ) : tagContacts.length === 0 ? (
-                <div className="text-center py-12 text-muted-foreground">
-                  <Database className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                  <p>No contacts in this tag</p>
-                </div>
-              ) : (
-                <ScrollArea className="h-[400px]">
-                  <div className="space-y-2">
-                    {tagContacts.map(contact => (
-                      <div
-                        key={contact.id}
-                        className={cn(
-                          "flex items-center gap-3 p-3 rounded-lg border transition-colors",
-                          contact.is_used ? "bg-muted/30" : "bg-card"
-                        )}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium font-mono text-sm">{contact.phone_number}</span>
-                            {contact.is_used ? (
-                              <Badge variant="secondary" className="text-xs">Used</Badge>
-                            ) : (
-                              <Badge variant="secondary" className="text-xs bg-primary/20 text-primary">Available</Badge>
-                            )}
-                          </div>
-                          {contact.name && (
-                            <p className="text-sm text-muted-foreground mt-0.5">{contact.name}</p>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
-        )}
+            )}
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );
