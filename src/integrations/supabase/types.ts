@@ -1104,6 +1104,21 @@ export type Database = {
         }
         Relationships: []
       }
+      system_health: {
+        Row: {
+          active_accounts: number | null
+          active_proxies: number | null
+          checked_at: string | null
+          pending_account_tasks: number | null
+          pending_block_tasks: number | null
+          pending_import_tasks: number | null
+          pending_messages: number | null
+          pending_recipients: number | null
+          stuck_messages: number | null
+          total_conversations: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       increment_campaign_failed_count: {
