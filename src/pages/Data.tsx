@@ -420,21 +420,31 @@ const Data: React.FC = () => {
 
       <div className="space-y-6">
         {/* Stats Cards */}
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
           <Card className="bg-muted/30 border-border/50">
             <CardContent className="pt-4 pb-3">
               <div className="flex items-center gap-2 mb-1">
                 <Database className="w-4 h-4 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground uppercase tracking-wide">Total</span>
               </div>
-              <p className="text-2xl font-bold">{totalStats.total}</p>
+              <p className="text-2xl font-bold">{totalStats.total + totalStats.pending}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-emerald-500/10 border-emerald-500/30">
+            <CardContent className="pt-4 pb-3">
+              <div className="flex items-center gap-2 mb-1">
+                <UserCheck className="w-4 h-4 text-emerald-500" />
+                <span className="text-xs text-muted-foreground uppercase tracking-wide">Valid</span>
+              </div>
+              <p className="text-2xl font-bold text-emerald-500">{totalStats.total}</p>
             </CardContent>
           </Card>
 
           <Card className="bg-primary/5 border-primary/20">
             <CardContent className="pt-4 pb-3">
               <div className="flex items-center gap-2 mb-1">
-                <UserCheck className="w-4 h-4 text-primary" />
+                <FolderOpen className="w-4 h-4 text-primary" />
                 <span className="text-xs text-muted-foreground uppercase tracking-wide">Unused</span>
               </div>
               <p className="text-2xl font-bold text-primary">{totalStats.unused}</p>
