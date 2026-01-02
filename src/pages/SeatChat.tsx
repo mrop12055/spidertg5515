@@ -165,9 +165,6 @@ const SeatChat: React.FC = () => {
       // Must not be hidden
       if (hiddenConversations.has(conv.id)) return false;
       
-      // Only show campaign-initiated conversations (first_message_sent = true)
-      if (!conv.first_message_sent) return false;
-      
       // Time filter
       const cutoff = getTimeFilterCutoff();
       const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
@@ -236,11 +233,11 @@ const SeatChat: React.FC = () => {
     if (!seat) return;
 
     try {
+      // Get all conversations for this seat (including those where admin replied from Conversations page)
       const { data, error } = await supabase
         .from('conversations')
         .select('*')
         .eq('seat_id', seat.id)
-        .eq('first_message_sent', true)
         .order('last_message_at', { ascending: false, nullsFirst: false });
 
       if (error) throw error;
