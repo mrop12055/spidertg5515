@@ -90,7 +90,7 @@ const Reports: React.FC = () => {
   const fetchReportData = async () => {
     setIsLoading(true);
     try {
-      // Fetch accounts
+      // Fetch accounts - this is small, keep as is
       const { data: accountsData } = await supabase
         .from('telegram_accounts')
         .select('id, phone_number, status, messages_sent_today, daily_limit, restricted_until, ban_reason, last_active, spambot_status')
@@ -98,7 +98,7 @@ const Reports: React.FC = () => {
       
       setAccounts(accountsData || []);
 
-      // Fetch campaigns
+      // Fetch campaigns - this is small, keep as is
       const { data: campaignsData } = await supabase
         .from('campaigns')
         .select('id, name, status, recipient_count, sent_count, failed_count, reply_count, created_at')
@@ -106,26 +106,21 @@ const Reports: React.FC = () => {
       
       setCampaigns(campaignsData || []);
 
-      // Fetch recipient stats by status
-      const { data: pendingRecipients } = await supabase
-        .from('campaign_recipients')
-        .select('status')
-        .eq('status', 'pending');
-      
-      const { data: sentRecipients } = await supabase
-        .from('campaign_recipients')
-        .select('status')
-        .eq('status', 'sent');
-      
+      // Use count queries for recipient stats (much faster!)
+      const [pendingCount, sentCount, failedCount, invalidCount] = await Promise.all([
+        supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
+        supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('status', 'failed'),
+        supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('status', 'invalid'),
+      ]);
+
+      // Only fetch failed recipients with reasons (limited to avoid slowness)
       const { data: failedRecipients } = await supabase
         .from('campaign_recipients')
-        .select('status, failed_reason')
-        .eq('status', 'failed');
-      
-      const { data: invalidRecipients } = await supabase
-        .from('campaign_recipients')
-        .select('status')
-        .eq('status', 'invalid');
+        .select('failed_reason')
+        .eq('status', 'failed')
+        .not('failed_reason', 'is', null)
+        .limit(500);
 
       // Count failed reasons
       const reasonCounts: Record<string, number> = {};
@@ -141,45 +136,46 @@ const Reports: React.FC = () => {
       );
 
       setRecipientStats([
-        { status: 'pending', count: pendingRecipients?.length || 0 },
-        { status: 'sent', count: sentRecipients?.length || 0 },
-        { status: 'failed', count: failedRecipients?.length || 0 },
-        { status: 'invalid', count: invalidRecipients?.length || 0 },
+        { status: 'pending', count: pendingCount.count || 0 },
+        { status: 'sent', count: sentCount.count || 0 },
+        { status: 'failed', count: failedCount.count || 0 },
+        { status: 'invalid', count: invalidCount.count || 0 },
       ]);
 
-      // Fetch message stats
-      const { data: allMessages } = await supabase
-        .from('messages')
-        .select('status, direction');
-      
-      const msgs = allMessages || [];
+      // Use count queries for message stats (much faster!)
+      const today = startOfDay(new Date()).toISOString();
+      const [
+        totalMsgs, sentMsgs, deliveredMsgs, failedMsgs, pendingMsgs, 
+        incomingMsgs, outgoingMsgs, todaySent, todayFailed, todayConvs
+      ] = await Promise.all([
+        supabase.from('messages').select('id', { count: 'exact', head: true }),
+        supabase.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'sent'),
+        supabase.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'delivered'),
+        supabase.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'failed'),
+        supabase.from('messages').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('messages').select('id', { count: 'exact', head: true }).eq('direction', 'incoming'),
+        supabase.from('messages').select('id', { count: 'exact', head: true }).eq('direction', 'outgoing'),
+        supabase.from('messages').select('id', { count: 'exact', head: true })
+          .eq('direction', 'outgoing').in('status', ['sent', 'delivered']).gte('created_at', today),
+        supabase.from('messages').select('id', { count: 'exact', head: true })
+          .eq('status', 'failed').gte('created_at', today),
+        supabase.from('conversations').select('id', { count: 'exact', head: true }).gte('created_at', today),
+      ]);
+
       setMessageStats({
-        total: msgs.length,
-        sent: msgs.filter(m => m.status === 'sent').length,
-        delivered: msgs.filter(m => m.status === 'delivered').length,
-        failed: msgs.filter(m => m.status === 'failed').length,
-        pending: msgs.filter(m => m.status === 'pending').length,
-        incoming: msgs.filter(m => m.direction === 'incoming').length,
-        outgoing: msgs.filter(m => m.direction === 'outgoing').length,
+        total: totalMsgs.count || 0,
+        sent: sentMsgs.count || 0,
+        delivered: deliveredMsgs.count || 0,
+        failed: failedMsgs.count || 0,
+        pending: pendingMsgs.count || 0,
+        incoming: incomingMsgs.count || 0,
+        outgoing: outgoingMsgs.count || 0,
       });
 
-      // Today's stats
-      const today = startOfDay(new Date()).toISOString();
-      const { data: todayMessages } = await supabase
-        .from('messages')
-        .select('status, direction')
-        .gte('created_at', today);
-
-      const { data: todayConversations } = await supabase
-        .from('conversations')
-        .select('id')
-        .gte('created_at', today);
-
-      const todayMsgs = todayMessages || [];
       setTodayStats({
-        sent: todayMsgs.filter(m => m.direction === 'outgoing' && (m.status === 'sent' || m.status === 'delivered')).length,
-        failed: todayMsgs.filter(m => m.status === 'failed').length,
-        conversations: todayConversations?.length || 0
+        sent: todaySent.count || 0,
+        failed: todayFailed.count || 0,
+        conversations: todayConvs.count || 0
       });
 
       setLastRefresh(new Date());
@@ -193,8 +189,8 @@ const Reports: React.FC = () => {
   useEffect(() => {
     fetchReportData();
     
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(fetchReportData, 30000);
+    // Auto-refresh every 60 seconds (reduced from 30s)
+    const interval = setInterval(fetchReportData, 60000);
     return () => clearInterval(interval);
   }, []);
 
