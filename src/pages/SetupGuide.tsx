@@ -967,6 +967,51 @@ async def account_loop():
                 if client:
                     status, ban_reason, response = await check_spambot(client)
                     await report_result("spambot_check", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": status, "ban_reason": ban_reason, "response": response})
+            elif task_type == "contact_import":
+                # Validate contacts for Data page import
+                account = task.get("account", {})
+                task_id = task.get("task_id")
+                tag_id = task.get("tag_id")
+                phone_numbers = task.get("phone_numbers", [])
+                valid_numbers = task.get("valid_numbers", [])
+                invalid_numbers = task.get("invalid_numbers", [])
+                
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  [IMPORT] Validating {len(phone_numbers)} contacts...")
+                    for phone in phone_numbers:
+                        if not RUNNING:
+                            break
+                        try:
+                            exists, name, telegram_id = await validate_contact(client, phone)
+                            if exists:
+                                valid_numbers.append(phone)
+                            else:
+                                invalid_numbers.append(phone)
+                        except Exception as e:
+                            err = str(e).lower()
+                            if "flood" in err or "restricted" in err or "banned" in err:
+                                # Account failed - report partial progress
+                                remaining = [p for p in phone_numbers if p not in valid_numbers and p not in invalid_numbers]
+                                await report_result("contact_import_failed", {
+                                    "task_id": task_id,
+                                    "account_id": account.get("id"),
+                                    "valid_numbers": valid_numbers,
+                                    "invalid_numbers": invalid_numbers,
+                                    "remaining_numbers": remaining,
+                                    "error": str(e)
+                                })
+                                break
+                            invalid_numbers.append(phone)
+                    else:
+                        # All done successfully
+                        await report_result("contact_import_complete", {
+                            "task_id": task_id,
+                            "tag_id": tag_id,
+                            "valid_numbers": valid_numbers,
+                            "invalid_numbers": invalid_numbers
+                        })
+                        print(f"  [IMPORT] Done: {len(valid_numbers)} valid, {len(invalid_numbers)} invalid")
             elif task_type == "change_name":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
