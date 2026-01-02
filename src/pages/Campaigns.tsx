@@ -99,7 +99,7 @@ const Campaigns: React.FC = () => {
     for (const campaign of campaigns) {
       const { data: recipients, error } = await supabase
         .from('campaign_recipients')
-        .select('id, status, phone_number, name, sent_by_account_id')
+        .select('id, status, phone_number, name, sent_by_account_id, failed_reason')
         .eq('campaign_id', campaign.id);
 
       if (!recipients || error) continue;
@@ -225,7 +225,8 @@ const Campaigns: React.FC = () => {
           .map((r) => ({
             phone_number: r.phone_number,
             name: r.name,
-            failed_reason: reasonsByRecipientId.get(r.id) || 'Unknown error'
+            // Priority: message failed_reason > recipient failed_reason > Unknown error
+            failed_reason: reasonsByRecipientId.get(r.id) || (r as any).failed_reason || 'Unknown error'
           }));
       }
 
