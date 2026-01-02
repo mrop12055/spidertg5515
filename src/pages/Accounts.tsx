@@ -19,7 +19,7 @@ import {
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
   Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock, 
   LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone, 
-  Flame, Bot, MapPin, Key
+  Flame, Bot, MapPin, Key, Tag, X
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
@@ -115,6 +115,13 @@ const Accounts: React.FC = () => {
   
   // Active tab for account sections
   const [activeTab, setActiveTab] = useState<'active' | 'banned' | 'restricted' | 'cooldown' | 'disconnected'>('active');
+  
+  // Tags state
+  const [availableTags, setAvailableTags] = useState<string[]>([]);
+  const [tagFilter, setTagFilter] = useState<string>('all');
+  const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  const [selectedTagsForBulk, setSelectedTagsForBulk] = useState<string[]>([]);
   
   // SpamBot check state
   const [isSpamBotChecking, setIsSpamBotChecking] = useState(false);
@@ -212,6 +219,15 @@ const Accounts: React.FC = () => {
     const interval = setInterval(fetchMessageCounts, 60000);
     return () => clearInterval(interval);
   }, []);
+
+  // Extract unique tags from all accounts
+  useEffect(() => {
+    const allTags = new Set<string>();
+    accounts.forEach(acc => {
+      (acc.tags || []).forEach(tag => allTags.add(tag));
+    });
+    setAvailableTags(Array.from(allTags).sort());
+  }, [accounts]);
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
@@ -786,6 +802,63 @@ const Accounts: React.FC = () => {
     }
   };
 
+  // Bulk tag assignment
+  const handleBulkTagAssign = async () => {
+    if (selectedIds.size === 0) return;
+    
+    const tagsToAssign = [...selectedTagsForBulk];
+    if (newTagName.trim()) {
+      tagsToAssign.push(newTagName.trim());
+    }
+    
+    if (tagsToAssign.length === 0) {
+      toast.error('Select or enter at least one tag');
+      return;
+    }
+    
+    try {
+      // For each selected account, add the tags (merge with existing)
+      for (const accountId of Array.from(selectedIds)) {
+        const account = accounts.find(a => a.id === accountId);
+        const existingTags = account?.tags || [];
+        const newTags = Array.from(new Set([...existingTags, ...tagsToAssign]));
+        
+        await supabase
+          .from('telegram_accounts')
+          .update({ tags: newTags })
+          .eq('id', accountId);
+      }
+      
+      toast.success(`Added ${tagsToAssign.length} tag(s) to ${selectedIds.size} account(s)`);
+      setIsTagDialogOpen(false);
+      setNewTagName('');
+      setSelectedTagsForBulk([]);
+      refreshData();
+    } catch (error) {
+      console.error('Error assigning tags:', error);
+      toast.error('Failed to assign tags');
+    }
+  };
+
+  // Remove tag from single account
+  const handleRemoveTag = async (accountId: string, tagToRemove: string) => {
+    try {
+      const account = accounts.find(a => a.id === accountId);
+      const newTags = (account?.tags || []).filter(t => t !== tagToRemove);
+      
+      await supabase
+        .from('telegram_accounts')
+        .update({ tags: newTags })
+        .eq('id', accountId);
+      
+      toast.success('Tag removed');
+      refreshData();
+    } catch (error) {
+      console.error('Error removing tag:', error);
+      toast.error('Failed to remove tag');
+    }
+  };
+
   const getStatusBadge = (status: AccountStatus) => {
     const option = statusOptions.find(o => o.value === status);
     return (
@@ -807,11 +880,14 @@ const Accounts: React.FC = () => {
     const matchesSearch = 
       acc.phoneNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (acc.firstName?.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (acc.username?.toLowerCase().includes(searchQuery.toLowerCase()));
+      (acc.username?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (acc.tags || []).some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
     
     const matchesStatus = statusFilter === 'all' || acc.status === statusFilter;
     
-    return matchesSearch && matchesStatus;
+    const matchesTag = tagFilter === 'all' || (acc.tags || []).includes(tagFilter);
+    
+    return matchesSearch && matchesStatus && matchesTag;
   });
 
   // Split accounts by status
@@ -977,6 +1053,21 @@ const Accounts: React.FC = () => {
                   className="text-status-restricted"
                 />
               </div>
+            )}
+            {/* Account Tags */}
+            {(account.tags || []).slice(0, 3).map(tag => (
+              <span 
+                key={tag} 
+                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] cursor-pointer hover:bg-primary/20"
+                onClick={(e) => { e.stopPropagation(); handleRemoveTag(account.id, tag); }}
+              >
+                <Tag className="w-2.5 h-2.5" />
+                {tag}
+                <X className="w-2.5 h-2.5" />
+              </span>
+            ))}
+            {(account.tags || []).length > 3 && (
+              <span className="text-[10px] text-muted-foreground">+{(account.tags || []).length - 3}</span>
             )}
           </div>
         </div>
@@ -1297,6 +1388,10 @@ const Accounts: React.FC = () => {
                       Logout Other Sessions
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
+                    <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
+                      <Tag className="w-4 h-4 mr-2" />
+                      Assign Tags
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setIsGroupDialogOpen(true)}>
                       <FolderPlus className="w-4 h-4 mr-2" />
                       Create Groups
@@ -1368,6 +1463,27 @@ const Accounts: React.FC = () => {
                     <span className="flex items-center gap-2">
                       <span className={cn("w-2 h-2 rounded-full", g.color)} />
                       {g.name} ({g.accountIds.length})
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          
+          {/* Tag Filter */}
+          {availableTags.length > 0 && (
+            <Select value={tagFilter} onValueChange={setTagFilter}>
+              <SelectTrigger className="w-40 h-9">
+                <Tag className="w-4 h-4 mr-2" />
+                <SelectValue placeholder="Tag" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Tags</SelectItem>
+                {availableTags.map(tag => (
+                  <SelectItem key={tag} value={tag}>
+                    <span className="flex items-center gap-2">
+                      <Tag className="w-3 h-3" />
+                      {tag}
                     </span>
                   </SelectItem>
                 ))}
@@ -1675,6 +1791,66 @@ const Accounts: React.FC = () => {
                 <Button onClick={handleBulkProxyAssign} disabled={!selectedProxyId || isBulkProxyAssigning}>
                   {isBulkProxyAssigning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
                   Assign Proxy
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Tag Assignment Dialog */}
+        <Dialog open={isTagDialogOpen} onOpenChange={setIsTagDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Assign Tags</DialogTitle>
+              <DialogDescription>
+                Add tags to {selectedIds.size} selected account(s) for organization
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              {/* Existing tags to select */}
+              {availableTags.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Select Existing Tags</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {availableTags.map(tag => (
+                      <Badge
+                        key={tag}
+                        variant={selectedTagsForBulk.includes(tag) ? "default" : "outline"}
+                        className="cursor-pointer"
+                        onClick={() => {
+                          if (selectedTagsForBulk.includes(tag)) {
+                            setSelectedTagsForBulk(prev => prev.filter(t => t !== tag));
+                          } else {
+                            setSelectedTagsForBulk(prev => [...prev, tag]);
+                          }
+                        }}
+                      >
+                        <Tag className="w-3 h-3 mr-1" />
+                        {tag}
+                        {selectedTagsForBulk.includes(tag) && <Check className="w-3 h-3 ml-1" />}
+                      </Badge>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* New tag input */}
+              <div className="space-y-2">
+                <Label>Or Create New Tag</Label>
+                <Input
+                  placeholder="Enter new tag name..."
+                  value={newTagName}
+                  onChange={(e) => setNewTagName(e.target.value)}
+                />
+              </div>
+              
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => { setIsTagDialogOpen(false); setNewTagName(''); setSelectedTagsForBulk([]); }}>
+                  Cancel
+                </Button>
+                <Button onClick={handleBulkTagAssign} disabled={selectedTagsForBulk.length === 0 && !newTagName.trim()}>
+                  <Tag className="w-4 h-4 mr-2" />
+                  Assign Tags
                 </Button>
               </div>
             </div>

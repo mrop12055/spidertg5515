@@ -818,6 +818,7 @@ export type Database = {
           status: Database["public"]["Enums"]["account_status"] | null
           system_lang_code: string | null
           system_version: string | null
+          tags: string[] | null
           telegram_id: number | null
           username: string | null
           warmup_phase: number | null
@@ -853,6 +854,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["account_status"] | null
           system_lang_code?: string | null
           system_version?: string | null
+          tags?: string[] | null
           telegram_id?: number | null
           username?: string | null
           warmup_phase?: number | null
@@ -888,6 +890,7 @@ export type Database = {
           status?: Database["public"]["Enums"]["account_status"] | null
           system_lang_code?: string | null
           system_version?: string | null
+          tags?: string[] | null
           telegram_id?: number | null
           username?: string | null
           warmup_phase?: number | null
