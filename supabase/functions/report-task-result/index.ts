@@ -115,10 +115,10 @@ serve(async (req) => {
               })
               .eq("id", campaign_recipient_id);
 
-            // Get campaign_id and increment sent_count
+            // Get campaign_id and recipient phone, then increment sent_count and mark contact as used
             const { data: recipient } = await supabase
               .from("campaign_recipients")
-              .select("campaign_id")
+              .select("campaign_id, phone_number")
               .eq("id", campaign_recipient_id)
               .single();
 
@@ -134,6 +134,24 @@ serve(async (req) => {
                   .from("campaigns")
                   .update({ sent_count: (campaign.sent_count || 0) + 1 })
                   .eq("id", recipient.campaign_id);
+              }
+
+              // Auto-mark contact as used in contacts_data (only on successful send)
+              if (recipient.phone_number) {
+                const { error: updateContactError } = await supabase
+                  .from("contacts_data")
+                  .update({
+                    is_used: true,
+                    used_at: new Date().toISOString(),
+                    used_in_campaign_id: recipient.campaign_id
+                  })
+                  .eq("phone_number", recipient.phone_number);
+
+                if (updateContactError) {
+                  console.log(`[report-task-result] Could not mark contact as used (may not exist in contacts_data): ${updateContactError.message}`);
+                } else {
+                  console.log(`[report-task-result] Marked contact ${recipient.phone_number} as used`);
+                }
               }
             }
           } else if (message_id) {

@@ -8,17 +8,18 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CountdownTimer } from '@/components/ui/countdown-timer';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Play, Pause, Trash2, Edit, Send, Users, CheckCircle, XCircle, 
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
-  AlertCircle, RotateCcw, Eye, TrendingUp
+  AlertCircle, RotateCcw, Eye, TrendingUp, Database, Search
 } from 'lucide-react';
 import AccountScheduler from '@/components/campaigns/AccountScheduler';
 import { format } from 'date-fns';
@@ -26,6 +27,14 @@ import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
+
+interface ContactData {
+  id: string;
+  phone_number: string;
+  name: string | null;
+  username: string | null;
+  is_used: boolean;
+}
 
 interface BulkMessageTemplate {
   id: string;
@@ -69,6 +78,14 @@ const Campaigns: React.FC = () => {
   const [selectedReportCampaign, setSelectedReportCampaign] = useState<Campaign | null>(null);
   const [campaignReports, setCampaignReports] = useState<Map<string, CampaignReport>>(new Map());
   const [accountUniqueRecipients, setAccountUniqueRecipients] = useState<Map<string, number>>(new Map());
+  
+  // Data selection for campaigns
+  const [isDataSelectOpen, setIsDataSelectOpen] = useState(false);
+  const [contactsData, setContactsData] = useState<ContactData[]>([]);
+  const [selectedDataContacts, setSelectedDataContacts] = useState<Set<string>>(new Set());
+  const [dataSearchQuery, setDataSearchQuery] = useState('');
+  const [dataFilter, setDataFilter] = useState<'all' | 'unused'>('unused');
+  const [isLoadingData, setIsLoadingData] = useState(false);
   
   // Bulk messaging settings
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
@@ -369,6 +386,79 @@ const Campaigns: React.FC = () => {
     return () => clearInterval(interval);
   }, [fetchAccountUniqueRecipients]);
 
+  // Fetch contacts data for selection
+  const fetchContactsData = useCallback(async () => {
+    setIsLoadingData(true);
+    try {
+      const { data, error } = await supabase
+        .from('contacts_data')
+        .select('id, phone_number, name, username, is_used')
+        .eq('is_blocked', false)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setContactsData(data || []);
+    } catch (error) {
+      console.error('Error fetching contacts:', error);
+      toast.error('Failed to load contacts data');
+    } finally {
+      setIsLoadingData(false);
+    }
+  }, []);
+
+  // Handle opening data selection dialog
+  const handleOpenDataSelect = () => {
+    fetchContactsData();
+    setSelectedDataContacts(new Set());
+    setDataSearchQuery('');
+    setIsDataSelectOpen(true);
+  };
+
+  // Add selected contacts from data to campaign recipients
+  const handleAddFromData = () => {
+    if (selectedDataContacts.size === 0) {
+      toast.error('Please select at least one contact');
+      return;
+    }
+
+    const selectedContacts = contactsData.filter(c => selectedDataContacts.has(c.id));
+    const newLines = selectedContacts.map(c => {
+      const identifier = c.username ? `@${c.username.replace('@', '')}` : c.phone_number;
+      return c.name ? `${identifier},${c.name}` : identifier;
+    });
+
+    // Append to existing recipients
+    const currentLines = newCampaign.recipientsText.split('\n').filter(l => l.trim());
+    const allLines = [...currentLines, ...newLines];
+    setNewCampaign(prev => ({ ...prev, recipientsText: allLines.join('\n') }));
+    
+    toast.success(`Added ${selectedContacts.length} contacts from Data`);
+    setIsDataSelectOpen(false);
+  };
+
+  // Filter contacts for data selection
+  const filteredDataContacts = contactsData.filter(c => {
+    const matchesSearch = 
+      c.phone_number.includes(dataSearchQuery) ||
+      c.name?.toLowerCase().includes(dataSearchQuery.toLowerCase()) ||
+      c.username?.toLowerCase().includes(dataSearchQuery.toLowerCase());
+    
+    if (dataFilter === 'unused') return matchesSearch && !c.is_used;
+    return matchesSearch;
+  });
+
+  const dataStats = {
+    total: contactsData.length,
+    unused: contactsData.filter(c => !c.is_used).length
+  };
+
+  // Fetch data stats when create dialog opens
+  useEffect(() => {
+    if (isCreateOpen && contactsData.length === 0) {
+      fetchContactsData();
+    }
+  }, [isCreateOpen, contactsData.length, fetchContactsData]);
+
   const handleCreateCampaign = async () => {
     if (!newCampaign.name) {
       toast.error('Please enter a campaign name');
@@ -668,7 +758,13 @@ username123
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Phone Numbers or Telegram Usernames</Label>
+                    <div className="flex items-center justify-between">
+                      <Label>Phone Numbers or Telegram Usernames</Label>
+                      <Button variant="outline" size="sm" onClick={handleOpenDataSelect}>
+                        <Database className="w-4 h-4 mr-2" />
+                        Select from Data
+                      </Button>
+                    </div>
                     <Textarea
                       placeholder={`+14155551234,John Doe\n@telegram_user\nusername123\n14155550000`}
                       value={newCampaign.recipientsText}
@@ -676,9 +772,16 @@ username123
                       rows={8}
                       className="font-mono text-sm"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      {newCampaign.recipientsText.split('\n').filter(l => l.trim()).length} recipients
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-muted-foreground">
+                        {newCampaign.recipientsText.split('\n').filter(l => l.trim()).length} recipients
+                      </p>
+                      {dataStats.unused > 0 && (
+                        <p className="text-xs text-primary">
+                          You have {dataStats.unused} unused contacts in Data
+                        </p>
+                      )}
+                    </div>
                   </div>
                 </TabsContent>
                 
@@ -1067,6 +1170,142 @@ username123
               })()}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Data Selection Dialog */}
+      <Dialog open={isDataSelectOpen} onOpenChange={setIsDataSelectOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Database className="w-5 h-5" />
+              Select Contacts from Data
+            </DialogTitle>
+            <DialogDescription>
+              Choose contacts to add to your campaign. {dataStats.unused} unused contacts available.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            {/* Filters */}
+            <div className="flex items-center gap-3">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Search contacts..."
+                  value={dataSearchQuery}
+                  onChange={(e) => setDataSearchQuery(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+              <Select value={dataFilter} onValueChange={(v) => setDataFilter(v as 'all' | 'unused')}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unused">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="bg-primary/20 text-primary">{dataStats.unused}</Badge>
+                      Unused
+                    </div>
+                  </SelectItem>
+                  <SelectItem value="all">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">{dataStats.total}</Badge>
+                      All
+                    </div>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Selection actions */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Checkbox
+                  checked={selectedDataContacts.size === filteredDataContacts.length && filteredDataContacts.length > 0}
+                  onCheckedChange={(checked) => {
+                    if (checked) {
+                      setSelectedDataContacts(new Set(filteredDataContacts.map(c => c.id)));
+                    } else {
+                      setSelectedDataContacts(new Set());
+                    }
+                  }}
+                />
+                <span className="text-sm text-muted-foreground">
+                  Select All ({filteredDataContacts.length})
+                </span>
+              </div>
+              <Badge variant="outline" className={cn(selectedDataContacts.size > 0 && "bg-primary/10 text-primary border-primary/30")}>
+                {selectedDataContacts.size} selected
+              </Badge>
+            </div>
+
+            {/* Contacts list */}
+            <ScrollArea className="h-[300px] border rounded-lg">
+              {isLoadingData ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : filteredDataContacts.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <Database className="w-8 h-8 mb-2" />
+                  <p className="text-sm">No contacts found</p>
+                  <p className="text-xs">Add contacts in the Data page first</p>
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {filteredDataContacts.map((contact) => (
+                    <div
+                      key={contact.id}
+                      className={cn(
+                        "flex items-center gap-3 p-3 hover:bg-accent/50 cursor-pointer transition-colors",
+                        selectedDataContacts.has(contact.id) && "bg-primary/5"
+                      )}
+                      onClick={() => {
+                        const newSet = new Set(selectedDataContacts);
+                        if (newSet.has(contact.id)) {
+                          newSet.delete(contact.id);
+                        } else {
+                          newSet.add(contact.id);
+                        }
+                        setSelectedDataContacts(newSet);
+                      }}
+                    >
+                      <Checkbox
+                        checked={selectedDataContacts.has(contact.id)}
+                        onCheckedChange={() => {}}
+                      />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate">
+                          {contact.name || contact.phone_number}
+                        </p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {contact.username ? `@${contact.username.replace('@', '')}` : contact.phone_number}
+                          {contact.name && ` • ${contact.phone_number}`}
+                        </p>
+                      </div>
+                      {contact.is_used ? (
+                        <Badge variant="secondary" className="text-xs">Used</Badge>
+                      ) : (
+                        <Badge variant="secondary" className="text-xs bg-primary/10 text-primary">Unused</Badge>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsDataSelectOpen(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleAddFromData} disabled={selectedDataContacts.size === 0}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add {selectedDataContacts.size} Contact{selectedDataContacts.size !== 1 ? 's' : ''}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
