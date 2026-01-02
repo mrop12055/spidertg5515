@@ -479,11 +479,32 @@ const SeatChat: React.FC = () => {
     return conv.recipient_phone || 'Unknown';
   };
 
-  // Get avatar initials from phone number
+  // Get avatar initials from phone number or username
   const getAvatarInitial = (conv: Conversation) => {
+    // First try to get name initials
+    if (conv.recipient_name) {
+      const parts = conv.recipient_name.split(' ');
+      if (parts.length >= 2) {
+        return (parts[0].charAt(0) + parts[1].charAt(0)).toUpperCase();
+      }
+      return conv.recipient_name.slice(0, 2).toUpperCase();
+    }
+    // Then try phone digits
     if (conv.recipient_phone) {
       const digits = conv.recipient_phone.replace(/\D/g, '');
-      return digits.slice(-2) || '??';
+      if (digits.length >= 2) {
+        return digits.slice(-2);
+      }
+      // If it's a username (no digits), use first 2 chars after @
+      const username = conv.recipient_phone.replace('@', '');
+      if (username.length >= 2) {
+        return username.slice(0, 2).toUpperCase();
+      }
+    }
+    // Fallback to username
+    if (conv.recipient_username) {
+      const username = conv.recipient_username.replace('@', '');
+      return username.slice(0, 2).toUpperCase();
     }
     return '??';
   };
