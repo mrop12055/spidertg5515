@@ -40,8 +40,14 @@ async def setup_message_handler(client, account_id: str):
     @client.on(events.NewMessage(incoming=True))
     async def handler(event):
         try:
+            from telethon.tl.types import User, Channel, Chat
+            
             sender = await event.get_sender()
             if sender:
+                # Skip channels/groups - only handle user messages
+                if isinstance(sender, (Channel, Chat)):
+                    return
+                
                 content = event.message.text or "[Media message]"
                 media_url = None
                 media_type = None
@@ -51,6 +57,12 @@ async def setup_message_handler(client, account_id: str):
                     print(f"    📷 Receiving photo...")
                     content = "[Photo] " + (event.message.text or "")
                     media_type = "image"
+                
+                # Get sender info (safe access for User objects)
+                sender_first_name = getattr(sender, 'first_name', None) or ''
+                sender_last_name = getattr(sender, 'last_name', None) or ''
+                sender_username = getattr(sender, 'username', None)
+                sender_display = sender_first_name or sender_username or str(sender.id)
                 
                 # Get phone number if available
                 sender_phone = None
@@ -64,17 +76,17 @@ async def setup_message_handler(client, account_id: str):
                     if photo:
                         import base64
                         avatar_base64 = base64.b64encode(photo).decode('utf-8')
-                        print(f"    📸 Got profile photo for {sender.first_name or sender.id}")
+                        print(f"    📸 Got profile photo for {sender_display}")
                 except Exception as e:
                     print(f"    ⚠ Could not get profile photo: {e}")
                 
-                print(f"  📥 Message from {sender.first_name or sender.id}: {content[:50]}...")
+                print(f"  📥 Message from {sender_display}: {content[:50]}...")
                 
                 await report_result("incoming_message", {
                     "account_id": account_id,
                     "sender_id": sender.id,
-                    "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
-                    "sender_username": sender.username,
+                    "sender_name": f"{sender_first_name} {sender_last_name}".strip(),
+                    "sender_username": sender_username,
                     "sender_phone": sender_phone,
                     "sender_avatar": avatar_base64,
                     "content": content,
