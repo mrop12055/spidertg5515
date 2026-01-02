@@ -409,7 +409,7 @@ serve(async (req) => {
                 // Increment campaign failed_count
                 const { data: campaign } = await supabase
                   .from("campaigns")
-                  .select("failed_count")
+                  .select("failed_count, name")
                   .eq("id", recipient.campaign_id)
                   .single();
 
@@ -421,6 +421,47 @@ serve(async (req) => {
                 }
                 
                 console.log(`[report-task-result] No other accounts available - marked recipient as failed: ${error}`);
+                
+                // CHECK IF CAMPAIGN SHOULD STOP: No usable accounts left
+                // Check if there are still pending recipients for this campaign
+                const { count: pendingCount } = await supabase
+                  .from("campaign_recipients")
+                  .select("id", { count: "exact", head: true })
+                  .eq("campaign_id", recipient.campaign_id)
+                  .eq("status", "pending");
+                
+                // Check if ANY account is still usable for this campaign (including the failed one checking again)
+                const { data: allCampaignAccounts } = await supabase
+                  .from("campaign_accounts")
+                  .select("account_id, telegram_accounts!inner(id, status, messages_sent_today, daily_limit, restricted_until)")
+                  .eq("campaign_id", recipient.campaign_id);
+                
+                const hasAnyUsableAccount = (allCampaignAccounts || []).some((ca: any) => {
+                  const acc = ca.telegram_accounts;
+                  if (!acc || acc.status !== 'active') return false;
+                  const limit = acc.daily_limit ?? 25;
+                  const sentToday = acc.messages_sent_today ?? 0;
+                  const isRestricted = acc.restricted_until && acc.restricted_until > now;
+                  return sentToday < limit && !isRestricted;
+                });
+                
+                if (!hasAnyUsableAccount && pendingCount && pendingCount > 0) {
+                  // STOP CAMPAIGN: No accounts left but pending recipients exist
+                  await supabase
+                    .from("campaigns")
+                    .update({ status: "failed" })
+                    .eq("id", recipient.campaign_id);
+                  
+                  console.log(`[report-task-result] CAMPAIGN STOPPED: "${campaign?.name}" - No usable accounts left (${pendingCount} pending recipients)`);
+                } else if (!hasAnyUsableAccount && (!pendingCount || pendingCount === 0)) {
+                  // All done, mark as completed
+                  await supabase
+                    .from("campaigns")
+                    .update({ status: "completed" })
+                    .eq("id", recipient.campaign_id);
+                  
+                  console.log(`[report-task-result] CAMPAIGN COMPLETED: "${campaign?.name}" - All recipients processed`);
+                }
               }
             } else {
               // Fallback: no campaign found, just mark as failed
