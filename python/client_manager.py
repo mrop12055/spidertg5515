@@ -211,33 +211,77 @@ async def _report(task_type: str, result: dict):
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
     """Send a message to a recipient"""
     try:
+        entity = None
+        
         if recipient.startswith("@"):
+            # Username - direct lookup
             entity = await client.get_entity(recipient)
         else:
-            from telethon.tl.functions.contacts import ImportContactsRequest
+            # Phone number - need to import as contact first
+            from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
             from telethon.tl.types import InputPhoneContact
             import random
             
-            contact = InputPhoneContact(
-                client_id=random.randint(0, 2**31 - 1),
-                phone=recipient,
-                first_name="Contact",
-                last_name=""
-            )
-            result = await client(ImportContactsRequest([contact]))
-            if result.users:
-                entity = result.users[0]
-            else:
-                return False, "User not found on Telegram"
+            # First, try to get entity directly (if already in contacts)
+            try:
+                entity = await client.get_entity(recipient)
+                print(f"    📱 Found in existing contacts")
+            except:
+                pass
+            
+            # If not found, import as contact
+            if not entity:
+                contact = InputPhoneContact(
+                    client_id=random.randint(0, 2**31 - 1),
+                    phone=recipient,
+                    first_name="Contact",
+                    last_name=str(random.randint(1000, 9999))  # Unique identifier
+                )
+                result = await client(ImportContactsRequest([contact]))
+                
+                if result.users:
+                    entity = result.users[0]
+                    print(f"    📱 Imported contact: {entity.first_name} (ID: {entity.id})")
+                elif result.retry_contacts:
+                    # Phone exists but privacy settings prevent import
+                    return False, "User privacy prevents contact import (try username instead)"
+                else:
+                    # Not on Telegram OR privacy settings block it
+                    return False, "User not found on Telegram (or privacy settings block phone lookup)"
         
-        await client.send_message(entity, content)
+        if not entity:
+            return False, "Could not resolve recipient"
+        
+        # Send the message
+        if media_url:
+            # Download media and send
+            try:
+                import httpx
+                async with httpx.AsyncClient() as http:
+                    media_resp = await http.get(media_url, timeout=30)
+                    if media_resp.status_code == 200:
+                        await client.send_file(entity, media_resp.content, caption=content)
+                    else:
+                        await client.send_message(entity, content)
+            except Exception as e:
+                print(f"    ⚠ Media download failed, sending text only: {e}")
+                await client.send_message(entity, content)
+        else:
+            await client.send_message(entity, content)
+        
         return True, None
     except UserPrivacyRestrictedError:
         return False, "User privacy settings prevent messaging"
     except FloodWaitError as e:
-        return False, f"Rate limited: wait {e.seconds}s"
+        return False, f"Too many requests (caused by SendMessageRequest)"
     except Exception as e:
-        return False, str(e)
+        error_str = str(e)
+        # Provide cleaner error messages
+        if "No user has" in error_str:
+            return False, "Username not found"
+        if "private" in error_str.lower():
+            return False, "User has private profile"
+        return False, error_str
 
 
 async def validate_contact(client: TelegramClient, phone: str):
