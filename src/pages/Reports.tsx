@@ -220,11 +220,11 @@ const Reports: React.FC = () => {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'active': return 'bg-green-500';
-      case 'restricted': return 'bg-orange-500';
-      case 'banned': return 'bg-red-500';
-      case 'disconnected': return 'bg-gray-500';
-      default: return 'bg-gray-400';
+      case 'active': return 'bg-primary';
+      case 'restricted': return 'bg-muted-foreground';
+      case 'banned': return 'bg-destructive';
+      case 'disconnected': return 'bg-muted-foreground';
+      default: return 'bg-muted-foreground';
     }
   };
 
@@ -503,28 +503,28 @@ const Reports: React.FC = () => {
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-green-500" />
+                        <div className="w-3 h-3 rounded-full bg-primary" />
                         <span className="text-sm">Delivered</span>
                       </div>
                       <span className="font-medium">{messageStats.delivered}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-blue-500" />
+                        <div className="w-3 h-3 rounded-full bg-primary/60" />
                         <span className="text-sm">Sent</span>
                       </div>
                       <span className="font-medium">{messageStats.sent}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-yellow-500" />
+                        <div className="w-3 h-3 rounded-full bg-muted-foreground" />
                         <span className="text-sm">Pending</span>
                       </div>
                       <span className="font-medium">{messageStats.pending}</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full bg-red-500" />
+                        <div className="w-3 h-3 rounded-full bg-destructive" />
                         <span className="text-sm">Failed</span>
                       </div>
                       <span className="font-medium">{messageStats.failed}</span>
@@ -657,12 +657,15 @@ const Reports: React.FC = () => {
                 <ScrollArea className="h-[500px]">
                   <div className="space-y-3">
                     {campaigns.map(campaign => {
-                      const progress = campaign.recipient_count > 0 
+                      const successRate = campaign.recipient_count > 0 
+                        ? (campaign.sent_count / campaign.recipient_count) * 100 
+                        : 0;
+                      const progressRate = campaign.recipient_count > 0 
                         ? ((campaign.sent_count + campaign.failed_count) / campaign.recipient_count) * 100 
                         : 0;
                       
                       return (
-                        <div key={campaign.id} className="p-4 rounded-lg border hover:bg-muted/50 transition-colors">
+                        <div key={campaign.id} className="p-4 rounded-lg border bg-card hover:bg-muted/30 transition-colors">
                           <div className="flex items-center justify-between mb-3">
                             <div className="flex items-center gap-3">
                               <span className="font-medium text-lg">{campaign.name}</span>
@@ -675,29 +678,29 @@ const Reports: React.FC = () => {
                           </div>
                           
                           <div className="grid grid-cols-5 gap-4 text-sm">
-                            <div className="text-center p-2 rounded bg-muted/50">
+                            <div className="text-center p-2 rounded bg-muted/30 border border-border/50">
                               <p className="text-muted-foreground text-xs mb-1">Recipients</p>
                               <p className="font-bold text-lg">{campaign.recipient_count}</p>
                             </div>
-                            <div className="text-center p-2 rounded bg-green-500/10">
+                            <div className="text-center p-2 rounded bg-primary/10 border border-primary/20">
                               <p className="text-muted-foreground text-xs mb-1">Sent</p>
-                              <p className="font-bold text-lg text-green-500">{campaign.sent_count}</p>
+                              <p className="font-bold text-lg text-primary">{campaign.sent_count}</p>
                             </div>
-                            <div className="text-center p-2 rounded bg-red-500/10">
+                            <div className="text-center p-2 rounded bg-destructive/10 border border-destructive/20">
                               <p className="text-muted-foreground text-xs mb-1">Failed</p>
-                              <p className="font-bold text-lg text-red-500">{campaign.failed_count}</p>
+                              <p className="font-bold text-lg text-destructive">{campaign.failed_count}</p>
                             </div>
-                            <div className="text-center p-2 rounded bg-blue-500/10">
+                            <div className="text-center p-2 rounded bg-muted/30 border border-border/50">
                               <p className="text-muted-foreground text-xs mb-1">Replies</p>
-                              <p className="font-bold text-lg text-blue-500">{campaign.reply_count}</p>
+                              <p className="font-bold text-lg">{campaign.reply_count}</p>
                             </div>
-                            <div className="text-center p-2 rounded bg-muted/50">
-                              <p className="text-muted-foreground text-xs mb-1">Progress</p>
-                              <p className="font-bold text-lg">{progress.toFixed(0)}%</p>
+                            <div className="text-center p-2 rounded bg-muted/30 border border-border/50">
+                              <p className="text-muted-foreground text-xs mb-1">Success</p>
+                              <p className="font-bold text-lg">{successRate.toFixed(0)}%</p>
                             </div>
                           </div>
                           
-                          <Progress value={progress} className="h-1.5 mt-3" />
+                          <Progress value={progressRate} className="h-1.5 mt-3" />
                         </div>
                       );
                     })}
@@ -710,10 +713,10 @@ const Reports: React.FC = () => {
           {/* Accounts Tab */}
           <TabsContent value="accounts" className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-              <Card className="bg-green-500/5 border-green-500/20">
+              <Card className="bg-primary/5 border-primary/20">
                 <CardContent className="pt-4">
                   <div className="flex items-center gap-3">
-                    <CheckCircle className="w-8 h-8 text-green-500" />
+                    <CheckCircle className="w-8 h-8 text-primary" />
                     <div>
                       <p className="text-2xl font-bold">{activeAccounts.length}</p>
                       <p className="text-sm text-muted-foreground">Active</p>
@@ -721,10 +724,10 @@ const Reports: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
-              <Card className="bg-orange-500/5 border-orange-500/20">
+              <Card className="bg-muted/30 border-border/50">
                 <CardContent className="pt-4">
                   <div className="flex items-center gap-3">
-                    <AlertTriangle className="w-8 h-8 text-orange-500" />
+                    <AlertTriangle className="w-8 h-8 text-muted-foreground" />
                     <div>
                       <p className="text-2xl font-bold">{restrictedAccounts.length}</p>
                       <p className="text-sm text-muted-foreground">Restricted</p>
@@ -732,10 +735,10 @@ const Reports: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
-              <Card className="bg-blue-500/5 border-blue-500/20">
+              <Card className="bg-muted/30 border-border/50">
                 <CardContent className="pt-4">
                   <div className="flex items-center gap-3">
-                    <Zap className="w-8 h-8 text-blue-500" />
+                    <Zap className="w-8 h-8 text-muted-foreground" />
                     <div>
                       <p className="text-2xl font-bold">{usedCapacity}</p>
                       <p className="text-sm text-muted-foreground">Sent Today</p>
@@ -743,13 +746,13 @@ const Reports: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
-              <Card className="bg-purple-500/5 border-purple-500/20">
+              <Card className="bg-muted/30 border-border/50">
                 <CardContent className="pt-4">
                   <div className="flex items-center gap-3">
-                    <Target className="w-8 h-8 text-purple-500" />
+                    <Target className="w-8 h-8 text-muted-foreground" />
                     <div>
                       <p className="text-2xl font-bold">{totalDailyCapacity - usedCapacity}</p>
-                      <p className="text-sm text-muted-foreground">Remaining Capacity</p>
+                      <p className="text-sm text-muted-foreground">Remaining</p>
                     </div>
                   </div>
                 </CardContent>
@@ -769,27 +772,34 @@ const Reports: React.FC = () => {
                       const isTemporarilyRestricted = account.restricted_until && new Date(account.restricted_until) > new Date();
                       
                       return (
-                        <div key={account.id} className={`p-4 rounded-lg border transition-colors ${
+                        <div key={account.id} className={cn(
+                          "p-4 rounded-lg border transition-colors",
                           account.status === 'active' && !isTemporarilyRestricted ? 'bg-card' :
-                          isTemporarilyRestricted ? 'bg-orange-500/5 border-orange-500/20' :
-                          account.status === 'restricted' ? 'bg-orange-500/5 border-orange-500/20' :
-                          account.status === 'banned' ? 'bg-red-500/5 border-red-500/20' :
+                          isTemporarilyRestricted ? 'bg-muted/30 border-border/60' :
+                          account.status === 'restricted' ? 'bg-muted/30 border-border/60' :
+                          account.status === 'banned' ? 'bg-destructive/5 border-destructive/20' :
                           'bg-muted/50'
-                        }`}>
+                        )}>
                           <div className="flex items-center justify-between mb-2">
                             <div className="flex items-center gap-3">
-                              <div className={`w-3 h-3 rounded-full ${getStatusColor(isTemporarilyRestricted ? 'restricted' : account.status)}`} />
+                              <div className={cn(
+                                "w-3 h-3 rounded-full",
+                                (isTemporarilyRestricted || account.status === 'restricted') ? 'bg-muted-foreground' :
+                                account.status === 'active' ? 'bg-primary' :
+                                account.status === 'banned' ? 'bg-destructive' :
+                                'bg-muted-foreground'
+                              )} />
                               <div className="flex items-center gap-2">
                                 <Phone className="w-4 h-4 text-muted-foreground" />
                                 <span className="font-medium">{account.phone_number}</span>
                               </div>
                               {account.spambot_status === 'clean' && (
-                                <Badge variant="outline" className="text-green-500 border-green-500/30">
+                                <Badge variant="outline" className="text-primary border-primary/30">
                                   <Shield className="w-3 h-3 mr-1" /> Clean
                                 </Badge>
                               )}
                               {account.spambot_status === 'limited' && (
-                                <Badge variant="outline" className="text-orange-500 border-orange-500/30">
+                                <Badge variant="outline" className="text-muted-foreground border-border">
                                   <AlertCircle className="w-3 h-3 mr-1" /> Limited
                                 </Badge>
                               )}
@@ -806,7 +816,7 @@ const Reports: React.FC = () => {
                           {(account.ban_reason || isTemporarilyRestricted) && (
                             <div className="mt-2 p-2 rounded bg-muted/50 text-sm">
                               {account.ban_reason && (
-                                <div className="flex items-center gap-2 text-orange-500">
+                                <div className="flex items-center gap-2 text-muted-foreground">
                                   <AlertTriangle className="w-4 h-4" />
                                   <span>{account.ban_reason}</span>
                                 </div>
@@ -850,15 +860,15 @@ const Reports: React.FC = () => {
                   <ScrollArea className="h-[400px]">
                     {failedReasons.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground">
-                        <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-green-500" />
+                        <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
                         <p>No errors recorded</p>
                       </div>
                     ) : (
                       <div className="space-y-3">
                         {failedReasons.map((item, index) => (
-                          <div key={index} className="p-3 rounded-lg border bg-destructive/5 border-destructive/20">
+                          <div key={index} className="p-3 rounded-lg border bg-muted/30 border-border/50">
                             <div className="flex items-center justify-between mb-2">
-                              <Badge variant="destructive">{item.count} occurrences</Badge>
+                              <Badge variant="secondary" className="bg-destructive/10 text-destructive border-destructive/20">{item.count} occurrences</Badge>
                             </div>
                             <p className="text-sm">{item.reason}</p>
                           </div>
@@ -873,7 +883,7 @@ const Reports: React.FC = () => {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <Shield className="w-5 h-5 text-orange-500" />
+                    <Shield className="w-5 h-5 text-muted-foreground" />
                     Restricted Accounts
                   </CardTitle>
                   <CardDescription>Accounts with sending limitations</CardDescription>
@@ -882,13 +892,13 @@ const Reports: React.FC = () => {
                   <ScrollArea className="h-[400px]">
                     {restrictedAccounts.length === 0 ? (
                       <div className="text-center py-8 text-muted-foreground">
-                        <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-green-500" />
+                        <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
                         <p>No restricted accounts</p>
                       </div>
                     ) : (
                       <div className="space-y-3">
                         {restrictedAccounts.map(account => (
-                          <div key={account.id} className="p-3 rounded-lg border bg-orange-500/5 border-orange-500/20">
+                          <div key={account.id} className="p-3 rounded-lg border bg-muted/30 border-border/50">
                             <div className="flex items-center gap-2 mb-2">
                               <Phone className="w-4 h-4" />
                               <span className="font-medium">{account.phone_number}</span>
@@ -897,7 +907,7 @@ const Reports: React.FC = () => {
                               <p className="text-sm text-muted-foreground mb-2">{account.ban_reason}</p>
                             )}
                             {account.restricted_until && (
-                              <div className="flex items-center gap-2 text-xs text-orange-500">
+                              <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                 <Timer className="w-3 h-3" />
                                 <span>Until: {format(new Date(account.restricted_until), 'MMM d, HH:mm')}</span>
                               </div>
