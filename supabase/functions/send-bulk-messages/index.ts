@@ -193,6 +193,20 @@ serve(async (req) => {
         );
       }
 
+      // Load MESSAGES_PER_ACCOUNT setting from database
+      let messagesPerAccount = 10; // Default
+      const { data: settingsData } = await supabase
+        .from("app_settings")
+        .select("key, value")
+        .eq("key", "account_limits")
+        .single();
+      
+      if (settingsData?.value) {
+        const value = settingsData.value as Record<string, unknown>;
+        messagesPerAccount = (value.messagesPerAccount as number) || messagesPerAccount;
+      }
+      console.log(`[send-bulk-messages] Using messagesPerAccount limit: ${messagesPerAccount}`);
+
       // Get campaign with accounts
       const { data: campaign, error: campaignError } = await supabase
         .from('campaigns')
@@ -234,7 +248,14 @@ serve(async (req) => {
         );
       }
 
-      console.log(`[send-bulk-messages] Starting campaign ${campaign_id} with ${recipients?.length || 0} recipients and ${accounts.length} accounts`);
+      const totalRecipients = recipients?.length || 0;
+      const maxCapacity = accounts.length * messagesPerAccount;
+      
+      console.log(`[send-bulk-messages] Starting campaign ${campaign_id}: ${totalRecipients} recipients, ${accounts.length} accounts, limit ${messagesPerAccount}/account, capacity ${maxCapacity}`);
+
+      if (totalRecipients > maxCapacity) {
+        console.log(`[send-bulk-messages] WARNING: ${totalRecipients} recipients exceed capacity of ${maxCapacity} (${accounts.length} accounts x ${messagesPerAccount} each)`);
+      }
 
       // Update campaign status to running
       await supabase
@@ -242,25 +263,37 @@ serve(async (req) => {
         .update({ status: 'running' })
         .eq('id', campaign_id);
 
-      // Queue messages for each recipient (distribute across accounts)
-      // NOTE: We DON'T create conversations here - they're created only when message is successfully sent
-      let accountIndex = 0;
-      const queuedCount = { success: 0, failed: 0 };
+      // Queue messages for each recipient (distribute across accounts respecting limit)
+      // Each account gets at most messagesPerAccount recipients before moving to next
+      const accountAssignments: Map<string, number> = new Map();
+      accounts.forEach(acc => accountAssignments.set(acc.id, 0));
+      
+      const queuedCount = { success: 0, failed: 0, unassigned: 0 };
 
       for (const recipient of recipients || []) {
-        const account = accounts[accountIndex % accounts.length];
+        // Find an account that hasn't reached its limit yet
+        let assignedAccount = null;
+        for (const account of accounts) {
+          const currentCount = accountAssignments.get(account.id) || 0;
+          if (currentCount < messagesPerAccount) {
+            assignedAccount = account;
+            accountAssignments.set(account.id, currentCount + 1);
+            break;
+          }
+        }
         
-        // Personalize message template
-        const personalizedMessage = campaign.message_template
-          .replace(/{name}/g, recipient.name || 'there')
-          .replace(/{phone}/g, recipient.phone_number);
+        if (!assignedAccount) {
+          // All accounts have reached their limit
+          console.log(`[send-bulk-messages] All accounts at limit, cannot assign ${recipient.phone_number}`);
+          queuedCount.unassigned++;
+          continue;
+        }
 
-        // Update recipient with assigned account and message content
-        // The message will be sent by Python, conversation created on success
+        // Update recipient with assigned account
         const { error: updateError } = await supabase
           .from('campaign_recipients')
           .update({ 
-            sent_by_account_id: account.id,
+            sent_by_account_id: assignedAccount.id,
           })
           .eq('id', recipient.id);
 
@@ -270,18 +303,27 @@ serve(async (req) => {
         } else {
           queuedCount.success++;
         }
-
-        accountIndex++;
       }
 
-      console.log(`[send-bulk-messages] Assigned ${queuedCount.success} recipients for campaign ${campaign_id}`);
+      // Log final distribution
+      for (const [accId, count] of accountAssignments) {
+        const acc = accounts.find(a => a.id === accId);
+        console.log(`[send-bulk-messages] Account ${acc?.phone_number}: assigned ${count}/${messagesPerAccount} recipients`);
+      }
+
+      const warningMsg = queuedCount.unassigned > 0 
+        ? ` ${queuedCount.unassigned} recipients could not be assigned (all accounts at limit).`
+        : '';
+
+      console.log(`[send-bulk-messages] Assigned ${queuedCount.success} recipients for campaign ${campaign_id}${warningMsg}`);
 
       return new Response(
         JSON.stringify({ 
           success: true, 
           queued: queuedCount.success,
           failed: queuedCount.failed,
-          message: 'Recipients assigned. Messages will be sent when VPS backend is connected. Conversations will be created on successful delivery.'
+          unassigned: queuedCount.unassigned,
+          message: `Recipients assigned (${messagesPerAccount} per account limit).${warningMsg} Messages will be sent when VPS backend is connected.`
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
