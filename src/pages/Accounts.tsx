@@ -1117,6 +1117,30 @@ const Accounts: React.FC = () => {
             {verifyResult?.status === 'active' && (
               <CheckCircle className="w-3.5 h-3.5 text-status-active" />
             )}
+            
+            {/* Banned Badge - prominent red */}
+            {account.status === 'banned' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-banned text-white text-[10px] font-semibold animate-pulse">
+                <XCircle className="w-3 h-3" />
+                BANNED
+              </span>
+            )}
+            
+            {/* Frozen/Restricted Badge - with timer */}
+            {account.status === 'restricted' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500 text-white text-[10px] font-semibold">
+                <Clock className="w-3 h-3" />
+                FROZEN
+              </span>
+            )}
+            
+            {/* Disconnected Badge */}
+            {account.status === 'disconnected' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-disconnected text-white text-[10px] font-semibold">
+                <WifiOff className="w-3 h-3" />
+                OFFLINE
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
             {account.firstName && (
@@ -1126,14 +1150,20 @@ const Accounts: React.FC = () => {
               <span className="text-primary/70">@{account.username}</span>
             )}
             {account.restrictedUntil && new Date(account.restrictedUntil) > new Date() && (
-              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-status-restricted/10 text-status-restricted text-[10px]">
-                <AlertTriangle className="w-3 h-3" />
+              <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 text-[10px]">
+                <Clock className="w-3 h-3" />
                 <CountdownTimer 
                   targetDate={new Date(account.restrictedUntil)} 
                   compact
-                  className="text-status-restricted"
+                  className="text-blue-500"
                 />
               </div>
+            )}
+            {/* Ban Reason */}
+            {account.status === 'banned' && account.banReason && (
+              <span className="text-[10px] text-status-banned truncate max-w-[150px]" title={account.banReason}>
+                {account.banReason.slice(0, 30)}...
+              </span>
             )}
             {/* Account Tags */}
             {(account.tags || []).slice(0, 3).map(tag => (
