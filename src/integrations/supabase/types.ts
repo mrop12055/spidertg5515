@@ -79,6 +79,53 @@ export type Database = {
         }
         Relationships: []
       }
+      block_contact_tasks: {
+        Row: {
+          account_id: string
+          action: string
+          completed_at: string | null
+          created_at: string
+          id: string
+          result: string | null
+          status: string
+          target_phone: string
+          target_telegram_id: number | null
+          target_username: string | null
+        }
+        Insert: {
+          account_id: string
+          action?: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          result?: string | null
+          status?: string
+          target_phone: string
+          target_telegram_id?: number | null
+          target_username?: string | null
+        }
+        Update: {
+          account_id?: string
+          action?: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          result?: string | null
+          status?: string
+          target_phone?: string
+          target_telegram_id?: number | null
+          target_username?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "block_contact_tasks_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       blocked_contacts: {
         Row: {
           blocked_by_account_id: string | null
