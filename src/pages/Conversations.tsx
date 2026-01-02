@@ -698,19 +698,9 @@ const Chat: React.FC = () => {
                   const isUserTyping = typingUsers[conv.recipientPhone];
                   const isChecked = selectedConversations.has(conv.id);
                   
-                  // Get display name - prefer real name > username > phone
-                  const isRealName = conv.recipientName && 
-                    conv.recipientName !== conv.recipientPhone && 
-                    !conv.recipientName.startsWith('@') &&
-                    !conv.recipientName.startsWith('+');
-                  const displayName = isRealName 
-                    ? conv.recipientName 
-                    : (conv.recipientUsername || conv.recipientPhone || 'Unknown');
-                  const secondaryInfo = isRealName 
-                    ? (conv.recipientUsername || conv.recipientPhone) 
-                    : (conv.recipientUsername && conv.recipientPhone ? conv.recipientPhone : null);
-                  const avatarInitial = (isRealName ? conv.recipientName?.charAt(0) : conv.recipientUsername?.charAt(1))?.toUpperCase() || 
-                                        (conv.recipientPhone?.startsWith('+') ? conv.recipientPhone.slice(1, 3) : '?');
+                  // Show only phone number as requested
+                  const displayName = conv.recipientPhone || 'Unknown';
+                  const avatarInitial = conv.recipientPhone?.startsWith('+') ? conv.recipientPhone.slice(1, 3) : '?';
                   
                   // Get message preview - handle empty content + campaign indicator
                   const isCampaignMessage = !!lastMsg?.campaignRecipientId;
@@ -766,12 +756,6 @@ const Chat: React.FC = () => {
                                   </Badge>
                                 )}
                               </div>
-                              {/* Show secondary info (phone/username) below name if we have a real name */}
-                              {secondaryInfo && (
-                                <span className="text-xs text-muted-foreground truncate">
-                                  {secondaryInfo}
-                                </span>
-                              )}
                             </div>
                             <span className={cn(
                               "text-xs flex-shrink-0 ml-2",
