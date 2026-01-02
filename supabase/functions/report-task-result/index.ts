@@ -1112,23 +1112,32 @@ serve(async (req) => {
       case "contact_import_complete": {
         const { task_id, tag_id, valid_numbers, invalid_numbers } = result;
 
-        // Idempotency guard: runners can retry/report twice; don't overwrite a completed task
+        // Get current task state to merge results (accumulate across multiple reports)
         const { data: existingTask } = await supabase
           .from("contact_import_tasks")
-          .select("status, completed_at")
+          .select("status, completed_at, valid_numbers, invalid_numbers, phone_numbers")
           .eq("id", task_id)
           .maybeSingle();
 
-        if (existingTask?.status === "completed" && existingTask?.completed_at) {
-          console.log(
-            `[report-task-result] Contact import task ${task_id} already completed - ignoring duplicate report`
-          );
-          break;
-        }
+        // Merge incoming numbers with existing ones (deduplicate)
+        const existingValid: string[] = (existingTask?.valid_numbers as string[]) || [];
+        const existingInvalid: string[] = (existingTask?.invalid_numbers as string[]) || [];
+        const incomingValid: string[] = valid_numbers || [];
+        const incomingInvalid: string[] = invalid_numbers || [];
+        
+        const mergedValid = Array.from(new Set([...existingValid, ...incomingValid]));
+        const mergedInvalid = Array.from(new Set([...existingInvalid, ...incomingInvalid]));
+        
+        // Calculate how many numbers have been processed
+        const totalSubmitted = (existingTask?.phone_numbers as string[])?.length || 0;
+        const totalProcessed = mergedValid.length + mergedInvalid.length;
+        const isComplete = totalProcessed >= totalSubmitted;
 
-        // Insert valid contacts
-        if (tag_id && valid_numbers && valid_numbers.length > 0) {
-          const contactsToInsert = valid_numbers.map((phone: string) => ({
+        console.log(`[report-task-result] Contact import progress: ${totalProcessed}/${totalSubmitted} (valid=${mergedValid.length}, invalid=${mergedInvalid.length}, complete=${isComplete})`);
+
+        // Insert valid contacts (upsert to avoid duplicates)
+        if (tag_id && incomingValid.length > 0) {
+          const contactsToInsert = incomingValid.map((phone: string) => ({
             phone_number: phone,
             tag_id: tag_id,
             is_used: false,
@@ -1140,22 +1149,25 @@ serve(async (req) => {
               .upsert(contact, { onConflict: "phone_number" });
           }
 
-          console.log(`[report-task-result] Inserted ${valid_numbers.length} valid contacts`);
+          console.log(`[report-task-result] Inserted ${incomingValid.length} valid contacts`);
         }
 
+        // Update task with merged results
         await supabase
           .from("contact_import_tasks")
           .update({
-            status: "completed",
-            completed_at: new Date().toISOString(),
-            valid_numbers: valid_numbers || [],
-            invalid_numbers: invalid_numbers || [],
-            result: `Added ${valid_numbers?.length || 0} contacts, ${invalid_numbers?.length || 0} invalid`,
+            status: isComplete ? "completed" : "in_progress",
+            completed_at: isComplete ? new Date().toISOString() : null,
+            valid_numbers: mergedValid,
+            invalid_numbers: mergedInvalid,
+            result: isComplete 
+              ? `Added ${mergedValid.length} contacts, ${mergedInvalid.length} invalid`
+              : `Processing: ${totalProcessed}/${totalSubmitted}`,
           })
           .eq("id", task_id);
 
         console.log(
-          `[report-task-result] Contact import completed: ${valid_numbers?.length || 0} valid, ${invalid_numbers?.length || 0} invalid`
+          `[report-task-result] Contact import ${isComplete ? 'completed' : 'in progress'}: ${mergedValid.length} valid, ${mergedInvalid.length} invalid`
         );
         break;
       }
