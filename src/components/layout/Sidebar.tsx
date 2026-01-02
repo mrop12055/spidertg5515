@@ -47,8 +47,8 @@ export const Sidebar: React.FC = () => {
   const [collapsed, setCollapsed] = useState(false);
   const { conversations } = useTelegram();
 
-  // Calculate total unread count
-  const totalUnread = conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0);
+  // Calculate count of conversations with unread messages
+  const totalUnread = conversations.filter(c => (c.unreadCount || 0) > 0).length;
 
   const filteredNavItems = navItems.filter(item => 
     !item.superAdminOnly || isSuperAdmin
