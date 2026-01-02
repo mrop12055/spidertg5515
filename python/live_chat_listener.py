@@ -41,48 +41,61 @@ async def setup_message_handler(client, account_id: str):
     async def handler(event):
         try:
             sender = await event.get_sender()
-            if sender:
-                content = event.message.text or "[Media message]"
-                media_url = None
-                media_type = None
-                
-                # Handle photos
-                if event.message.photo:
-                    print(f"    📷 Receiving photo...")
-                    content = "[Photo] " + (event.message.text or "")
-                    media_type = "image"
-                
-                # Get phone number if available
-                sender_phone = None
-                if hasattr(sender, 'phone') and sender.phone:
-                    sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
-                
-                # Get profile photo
-                avatar_base64 = None
-                try:
-                    photo = await client.download_profile_photo(sender, bytes)
-                    if photo:
-                        import base64
-                        avatar_base64 = base64.b64encode(photo).decode('utf-8')
-                        print(f"    📸 Got profile photo for {sender.first_name or sender.id}")
-                except Exception as e:
-                    print(f"    ⚠ Could not get profile photo: {e}")
-                
-                print(f"  📥 Message from {sender.first_name or sender.id}: {content[:50]}...")
-                
-                await report_result("incoming_message", {
-                    "account_id": account_id,
-                    "sender_id": sender.id,
-                    "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
-                    "sender_username": sender.username,
-                    "sender_phone": sender_phone,
-                    "sender_avatar": avatar_base64,
-                    "content": content,
-                    "media_url": media_url,
-                    "media_type": media_type
-                })
+            if not sender:
+                return
+            
+            # Skip channel/group messages - only handle private chats
+            from telethon.tl.types import User
+            if not isinstance(sender, User):
+                # It's a Channel, Chat, or other non-user entity - skip
+                return
+            
+            content = event.message.text or "[Media message]"
+            media_url = None
+            media_type = None
+            
+            # Handle photos
+            if event.message.photo:
+                print(f"    📷 Receiving photo...")
+                content = "[Photo] " + (event.message.text or "")
+                media_type = "image"
+            
+            # Get phone number if available
+            sender_phone = None
+            if hasattr(sender, 'phone') and sender.phone:
+                sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+            
+            # Get sender name safely
+            first_name = getattr(sender, 'first_name', None) or ''
+            last_name = getattr(sender, 'last_name', None) or ''
+            sender_name = f"{first_name} {last_name}".strip() or str(sender.id)
+            
+            # Get profile photo
+            avatar_base64 = None
+            try:
+                photo = await client.download_profile_photo(sender, bytes)
+                if photo:
+                    import base64
+                    avatar_base64 = base64.b64encode(photo).decode('utf-8')
+                    print(f"    📸 Got profile photo for {sender_name}")
+            except Exception as e:
+                print(f"    ⚠ Could not get profile photo: {e}")
+            
+            print(f"  📥 Message from {sender_name}: {content[:50]}...")
+            
+            await report_result("incoming_message", {
+                "account_id": account_id,
+                "sender_id": sender.id,
+                "sender_name": sender_name,
+                "sender_username": getattr(sender, 'username', None),
+                "sender_phone": sender_phone,
+                "sender_avatar": avatar_base64,
+                "content": content,
+                "media_url": media_url,
+                "media_type": media_type
+            })
         except Exception as e:
-            print(f"    ⚠ Error handling incoming message: {e}")
+            print(f"    ⚠ Handler error: {e}")
 
 
 async def main_loop():
