@@ -162,7 +162,10 @@ const Chat: React.FC = () => {
       const weInitiated = isUserInitiated(c);
       // Hide conversations that only have failed messages
       const hasSuccess = hasSuccessfulMessages(c);
-      return matchesTime && matchesSearch && isNotSpamBot && weInitiated && hasSuccess;
+      // Hide locally blocked contacts
+      const isBlocked = blockedContacts.some(b => b.phone_number === c.recipientPhone);
+
+      return matchesTime && matchesSearch && isNotSpamBot && weInitiated && hasSuccess && !isBlocked;
     })
     // Sort by actual last message time, not updatedAt
     .sort((a, b) => getLastMessageTime(b) - getLastMessageTime(a));
@@ -368,8 +371,16 @@ const Chat: React.FC = () => {
     }
   };
 
+  // Keep block list in sync so blocked chats are hidden from sidebar
+  useEffect(() => {
+    fetchBlockedContacts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleUnblockContact = async (id: string) => {
     try {
+      const blockedContact = blockedContacts.find(c => c.id === id);
+
       // Remove from blocked_contacts table
       const { error } = await supabase
         .from('blocked_contacts')
@@ -377,16 +388,30 @@ const Chat: React.FC = () => {
         .eq('id', id);
       
       if (error) throw error;
+
+      await fetchBlockedContacts();
+
+      // After unblock: open existing conversation if we still have it, otherwise prefill "New chat"
+      const existing = blockedContact
+        ? conversations.find(c => c.recipientPhone === blockedContact.phone_number)
+        : undefined;
+
+      if (existing) {
+        setSelectedConversation(existing.id);
+      } else if (blockedContact) {
+        setNewChatPhone(blockedContact.phone_number);
+        setNewChatName(blockedContact.name || '');
+        setIsNewChatOpen(true);
+      }
       
       toast.success('Contact unblocked');
-      fetchBlockedContacts();
     } catch (error) {
       console.error('Error unblocking:', error);
       toast.error('Failed to unblock contact');
     }
   };
 
-  // Fetch blocked contacts when dialog opens
+  // Refresh blocked list when dialog opens
   useEffect(() => {
     if (isBlockListOpen) {
       fetchBlockedContacts();
@@ -474,7 +499,7 @@ const Chat: React.FC = () => {
           <DialogHeader>
             <DialogTitle>Block {singleActionConvId ? 'Contact' : `${selectedConversations.size} Contacts`}?</DialogTitle>
             <DialogDescription>
-              This will block {singleActionConvId ? 'this contact' : `${selectedConversations.size} selected contacts`} and delete their chats.
+              This will hide {singleActionConvId ? 'this contact' : `${selectedConversations.size} selected contacts`} from your chat list.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
