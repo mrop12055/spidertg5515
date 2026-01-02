@@ -159,17 +159,27 @@ async def logout_other_sessions(client):
 
 
 async def verify_session(client, account_id: str):
-    """Verify if session is active by checking get_me()"""
+    """Verify if session is active by checking get_me() and trying an API call"""
     try:
         me = await asyncio.wait_for(client.get_me(), timeout=10)
-        if me:
-            return "active", None, {
-                "telegram_id": me.id,
-                "username": me.username,
-                "first_name": me.first_name,
-                "last_name": me.last_name
-            }
-        return "disconnected", "Could not get user info", None
+        if not me:
+            return "disconnected", "Could not get user info", None
+        
+        # Extra verification: try to get dialogs (this fails for deleted accounts)
+        try:
+            await asyncio.wait_for(client.get_dialogs(limit=1), timeout=10)
+        except Exception as dialog_err:
+            error_str = str(dialog_err).lower()
+            if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated", "auth_key"]):
+                return "banned", f"Account deleted: {dialog_err}", None
+            # Other errors might be temporary, continue
+        
+        return "active", None, {
+            "telegram_id": me.id,
+            "username": me.username,
+            "first_name": me.first_name,
+            "last_name": me.last_name
+        }
     except asyncio.TimeoutError:
         return "disconnected", "Connection timeout", None
     except Exception as e:
