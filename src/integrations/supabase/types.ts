@@ -281,6 +281,24 @@ export type Database = {
         }
         Relationships: []
       }
+      contact_tags: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
+        }
+        Relationships: []
+      }
       contacts_data: {
         Row: {
           blocked_at: string | null
@@ -291,6 +309,7 @@ export type Database = {
           name: string | null
           notes: string | null
           phone_number: string
+          tag_id: string | null
           updated_at: string | null
           used_at: string | null
           used_in_campaign_id: string | null
@@ -305,6 +324,7 @@ export type Database = {
           name?: string | null
           notes?: string | null
           phone_number: string
+          tag_id?: string | null
           updated_at?: string | null
           used_at?: string | null
           used_in_campaign_id?: string | null
@@ -319,12 +339,20 @@ export type Database = {
           name?: string | null
           notes?: string | null
           phone_number?: string
+          tag_id?: string | null
           updated_at?: string | null
           used_at?: string | null
           used_in_campaign_id?: string | null
           username?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "contacts_data_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "contact_tags"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "contacts_data_used_in_campaign_id_fkey"
             columns: ["used_in_campaign_id"]
