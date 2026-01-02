@@ -802,7 +802,9 @@ const Accounts: React.FC = () => {
     }
   };
 
-  // Bulk tag assignment
+  // Bulk tag assignment - optimized with parallel updates
+  const [isTagAssigning, setIsTagAssigning] = useState(false);
+  
   const handleBulkTagAssign = async () => {
     if (selectedIds.size === 0) return;
     
@@ -816,18 +818,21 @@ const Accounts: React.FC = () => {
       return;
     }
     
+    setIsTagAssigning(true);
     try {
-      // For each selected account, add the tags (merge with existing)
-      for (const accountId of Array.from(selectedIds)) {
-        const account = accounts.find(a => a.id === accountId);
-        const existingTags = account?.tags || [];
-        const newTags = Array.from(new Set([...existingTags, ...tagsToAssign]));
-        
-        await supabase
-          .from('telegram_accounts')
-          .update({ tags: newTags })
-          .eq('id', accountId);
-      }
+      // Parallel updates for all selected accounts
+      await Promise.all(
+        Array.from(selectedIds).map(async (accountId) => {
+          const account = accounts.find(a => a.id === accountId);
+          const existingTags = account?.tags || [];
+          const newTags = Array.from(new Set([...existingTags, ...tagsToAssign]));
+          
+          return supabase
+            .from('telegram_accounts')
+            .update({ tags: newTags })
+            .eq('id', accountId);
+        })
+      );
       
       toast.success(`Added ${tagsToAssign.length} tag(s) to ${selectedIds.size} account(s)`);
       setIsTagDialogOpen(false);
@@ -837,6 +842,8 @@ const Accounts: React.FC = () => {
     } catch (error) {
       console.error('Error assigning tags:', error);
       toast.error('Failed to assign tags');
+    } finally {
+      setIsTagAssigning(false);
     }
   };
 
@@ -1848,9 +1855,9 @@ const Accounts: React.FC = () => {
                 <Button variant="outline" onClick={() => { setIsTagDialogOpen(false); setNewTagName(''); setSelectedTagsForBulk([]); }}>
                   Cancel
                 </Button>
-                <Button onClick={handleBulkTagAssign} disabled={selectedTagsForBulk.length === 0 && !newTagName.trim()}>
-                  <Tag className="w-4 h-4 mr-2" />
-                  Assign Tags
+                <Button onClick={handleBulkTagAssign} disabled={isTagAssigning || (selectedTagsForBulk.length === 0 && !newTagName.trim())}>
+                  {isTagAssigning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Tag className="w-4 h-4 mr-2" />}
+                  {isTagAssigning ? 'Assigning...' : 'Assign Tags'}
                 </Button>
               </div>
             </div>
