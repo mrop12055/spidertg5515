@@ -356,18 +356,26 @@ async def main_loop():
                         })
                         print(f"    Status: {status}" + (f" ({error})" if error else ""))
                     else:
+                        # get_or_create_client already reported account_banned/disconnected
+                        # Just update the task status, don't override account status
                         await report_result("verify_session", {
                             "task_id": task_id,
                             "account_id": account.get("id"),
-                            "status": "disconnected",
-                            "error": "Could not connect"
+                            "status": "skip",  # Special flag: don't update account status
+                            "error": "Connection handled by get_or_create_client"
                         })
-                        print(f"    ✗ Could not connect")
+                        print(f"    ✗ Could not connect (status already reported)")
                 except Exception as e:
+                    error_str = str(e).lower()
+                    # Detect banned status from exception
+                    if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
+                        status = "banned"
+                    else:
+                        status = "disconnected"
                     await report_result("verify_session", {
                         "task_id": task_id,
                         "account_id": account.get("id"),
-                        "status": "disconnected",
+                        "status": status,
                         "error": str(e)
                     })
                     print(f"    ✗ Error: {e}")

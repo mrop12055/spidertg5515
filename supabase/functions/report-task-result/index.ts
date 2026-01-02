@@ -998,6 +998,20 @@ serve(async (req) => {
       case "verify_session": {
         const { task_id, account_id, status, error, user_data } = result;
 
+        // Only update task status if "skip" - account status was already handled by get_or_create_client
+        if (status === "skip") {
+          await supabase
+            .from("account_check_tasks")
+            .update({
+              status: "completed",
+              result: "Status already reported during connection",
+              completed_at: new Date().toISOString(),
+            })
+            .eq("id", task_id);
+          console.log(`[report-task-result] Session verification for ${account_id}: skipped (already reported)`);
+          break;
+        }
+
         // Update account status based on verification result
         const updateData: Record<string, unknown> = {
           last_active: new Date().toISOString(),
