@@ -80,18 +80,25 @@ serve(async (req) => {
     const now = new Date();
 
     // Get all active accounts with joins but LIMIT to prevent timeout
-    const { data: activeAccounts, error: activeAccountsError } = await supabase
+    // NOTE: select only the columns runners actually need (session_data is large but required for connection)
+    const ACCOUNT_WITH_JOINS_SELECT =
+      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,telegram_api_credentials(id,api_id,api_hash,client_type,is_active),proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
+
+    const { data: activeAccountsRaw, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+      .select(ACCOUNT_WITH_JOINS_SELECT as any)
       .eq("status", "active")
-      .limit(100);
+      .limit(60);
 
     // Get restricted accounts with limit
-    const { data: restrictedAccounts } = await supabase
+    const { data: restrictedAccountsRaw } = await supabase
       .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+      .select(ACCOUNT_WITH_JOINS_SELECT as any)
       .eq("status", "restricted")
-      .limit(50);
+      .limit(40);
+
+    const activeAccounts = (activeAccountsRaw as any[]) || [];
+    const restrictedAccounts = (restrictedAccountsRaw as any[]) || [];
 
     const isTimeRestricted = (a: any) => {
       if (!a?.restricted_until) return false;
@@ -690,7 +697,7 @@ serve(async (req) => {
           // Find an active account that hasn't failed for this task
           // Use allUsableAccounts for contact validation - includes temporarily restricted accounts
           // Contact import is READ-ONLY (doesn't send messages) so restricted accounts can do it
-          const eligibleAccounts = (allUsableAccounts || []).filter((a: { id: string }) => !failedAccountIds.includes(a.id));
+          const eligibleAccounts = (allUsableAccounts || []).filter((a: any) => !failedAccountIds.includes(a.id));
           
           if (eligibleAccounts.length === 0) {
             // No accounts left - fail the task
