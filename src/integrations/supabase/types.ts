@@ -286,9 +286,12 @@ export type Database = {
           account_id: string
           completed_at: string | null
           created_at: string
+          current_account_id: string | null
+          failed_account_ids: string[] | null
           id: string
           invalid_numbers: string[] | null
           phone_numbers: string[]
+          remaining_numbers: string[] | null
           result: string | null
           status: string
           tag_id: string
@@ -298,9 +301,12 @@ export type Database = {
           account_id: string
           completed_at?: string | null
           created_at?: string
+          current_account_id?: string | null
+          failed_account_ids?: string[] | null
           id?: string
           invalid_numbers?: string[] | null
           phone_numbers: string[]
+          remaining_numbers?: string[] | null
           result?: string | null
           status?: string
           tag_id: string
@@ -310,9 +316,12 @@ export type Database = {
           account_id?: string
           completed_at?: string | null
           created_at?: string
+          current_account_id?: string | null
+          failed_account_ids?: string[] | null
           id?: string
           invalid_numbers?: string[] | null
           phone_numbers?: string[]
+          remaining_numbers?: string[] | null
           result?: string | null
           status?: string
           tag_id?: string
@@ -322,6 +331,13 @@ export type Database = {
           {
             foreignKeyName: "contact_import_tasks_account_id_fkey"
             columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_import_tasks_current_account_id_fkey"
+            columns: ["current_account_id"]
             isOneToOne: false
             referencedRelation: "telegram_accounts"
             referencedColumns: ["id"]
