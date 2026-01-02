@@ -1206,7 +1206,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         phone_number: conv.recipientPhone || conv.recipientName || 'unknown',
         name: conv.recipientName || null,
         blocked_by_account_id: conv.accountId,
-        reason: 'Blocked from chat',
+        reason: 'Hidden from chat',
       });
 
       if (blockErr) {
@@ -1216,11 +1216,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
       }
 
-      // Delete messages and conversation from UI
-      await supabase.from('messages').delete().eq('conversation_id', conversationId);
-      await supabase.from('conversations').delete().eq('id', conversationId);
-
-      toast.success(`Blocked ${conv.recipientName || conv.recipientPhone}`);
+      // NOTE: Local-only block = just hide from UI. Do NOT delete conversation/messages.
+      toast.success(`Blocked (hidden) ${conv.recipientName || conv.recipientPhone}`);
       refreshData();
     } catch (error) {
       console.error('Error blocking contact:', error);
@@ -1237,21 +1234,19 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         phone_number: conv.recipientPhone || conv.recipientName || 'unknown',
         name: conv.recipientName || null,
         blocked_by_account_id: conv.accountId,
-        reason: 'Blocked from chat',
+        reason: 'Hidden from chat',
       }));
       if (blockedRows.length > 0) {
-        const { error: blockErr } = await supabase.from('blocked_contacts').upsert(blockedRows, { onConflict: 'phone_number' });
+        const { error: blockErr } = await supabase
+          .from('blocked_contacts')
+          .upsert(blockedRows, { onConflict: 'phone_number' });
         if (blockErr && !blockErr.message?.includes('duplicate')) {
           console.error('Error adding to blocked_contacts:', blockErr);
         }
       }
 
-      // Delete messages and conversations from UI
-      await supabase.from('messages').delete().in('conversation_id', conversationIds);
-      const { error } = await supabase.from('conversations').delete().in('id', conversationIds);
-
-      if (error) throw error;
-      toast.success(`Blocked ${conversationIds.length} contacts`);
+      // NOTE: Local-only block = just hide from UI. Do NOT delete conversations/messages.
+      toast.success(`Blocked (hidden) ${conversationIds.length} contacts`);
       refreshData();
     } catch (error) {
       console.error('Error blocking contacts:', error);
