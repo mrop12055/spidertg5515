@@ -114,16 +114,16 @@ serve(async (req) => {
     const now = new Date();
 
     // Get all active accounts (includes temporarily restricted via restricted_until)
-    // Include API credentials for each account
+    // Include API credentials and proxy info for each account
     const { data: activeAccounts, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*)")
+      .select("*, telegram_api_credentials(*), proxies!telegram_accounts_proxy_id_fkey(*)")
       .eq("status", "active");
 
     // Get accounts explicitly marked as restricted
     const { data: restrictedAccounts } = await supabase
       .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*)")
+      .select("*, telegram_api_credentials(*), proxies!telegram_accounts_proxy_id_fkey(*)")
       .eq("status", "restricted");
 
     const isTimeRestricted = (a: any) => {
@@ -131,11 +131,28 @@ serve(async (req) => {
       return new Date(a.restricted_until) > now;
     };
 
-    // For LIVE CHAT: allow active + restricted status accounts
-    const allUsableAccounts = [...(activeAccounts || []), ...(restrictedAccounts || [])];
+    // CRITICAL SAFETY CHECK: Only use accounts with active proxies
+    const hasActiveProxy = (a: any) => {
+      if (!a.proxy_id) {
+        console.log(`[get-next-task] Account ${a.phone_number} has NO PROXY - skipping for safety`);
+        return false;
+      }
+      if (!a.proxies || a.proxies.status !== 'active') {
+        console.log(`[get-next-task] Account ${a.phone_number} proxy is NOT ACTIVE (${a.proxies?.status || 'missing'}) - skipping`);
+        return false;
+      }
+      return true;
+    };
 
-    // For CAMPAIGNS: only active accounts that are NOT temporarily restricted
-    const accounts = (activeAccounts || []).filter((a: any) => !isTimeRestricted(a));
+    // Filter all accounts to only those with active proxies
+    const activeAccountsWithProxy = (activeAccounts || []).filter(hasActiveProxy);
+    const restrictedAccountsWithProxy = (restrictedAccounts || []).filter(hasActiveProxy);
+
+    // For LIVE CHAT: allow active + restricted status accounts (with active proxy)
+    const allUsableAccounts = [...activeAccountsWithProxy, ...restrictedAccountsWithProxy];
+
+    // For CAMPAIGNS: only active accounts that are NOT temporarily restricted (with active proxy)
+    const accounts = activeAccountsWithProxy.filter((a: any) => !isTimeRestricted(a));
 
     if (activeAccountsError) {
       console.error("[get-next-task] Error fetching accounts:", activeAccountsError);
@@ -145,8 +162,12 @@ serve(async (req) => {
     }
 
     if (!allUsableAccounts || allUsableAccounts.length === 0) {
-      console.log("[get-next-task] No usable accounts");
-      return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No usable accounts" }), {
+      const totalAccounts = (activeAccounts?.length || 0) + (restrictedAccounts?.length || 0);
+      const reason = totalAccounts > 0 
+        ? `No accounts with active proxies (${totalAccounts} accounts exist but none have active proxy)`
+        : "No usable accounts";
+      console.log(`[get-next-task] ${reason}`);
+      return new Response(JSON.stringify({ task: "wait", seconds: 30, reason }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -164,7 +185,7 @@ serve(async (req) => {
       return daysSinceCreation < WARMUP_DAYS;
     });
 
-    console.log(`[get-next-task] Accounts (campaign-eligible): ${warmedUpAccounts.length} warmed-up, ${newAccounts.length} warming`);
+    console.log(`[get-next-task] Accounts with active proxy: ${warmedUpAccounts.length} warmed-up, ${newAccounts.length} warming`);
 
     // Get live conversation IDs (incoming messages in last 5 minutes)
     const cutoff = new Date(Date.now() - LIVE_CONVERSATION_TIMEOUT_MINUTES * 60 * 1000).toISOString();
@@ -350,6 +371,13 @@ serve(async (req) => {
                 api_hash: apiCred?.api_hash || account.api_hash,
                 proxy_id: account.proxy_id,
               },
+              proxy: account.proxies ? {
+                host: account.proxies.host,
+                port: account.proxies.port,
+                username: account.proxies.username,
+                password: account.proxies.password,
+                type: account.proxies.proxy_type,
+              } : null,
               mode: "campaign",
               delay_after: delaySeconds,
             }), {
