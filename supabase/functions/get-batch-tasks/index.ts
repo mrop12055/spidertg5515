@@ -58,11 +58,13 @@ serve(async (req) => {
     const now = new Date().toISOString();
 
     // Get all active accounts not temporarily restricted, with their proxy info
+    // LIMIT to 100 to prevent query timeout
     const { data: activeAccounts, error: accountsError } = await supabase
       .from("telegram_accounts")
       .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
       .eq("status", "active")
-      .or(`restricted_until.is.null,restricted_until.lt.${now}`);
+      .or(`restricted_until.is.null,restricted_until.lt.${now}`)
+      .limit(100);
 
     if (accountsError || !activeAccounts || activeAccounts.length === 0) {
       console.log("[get-batch-tasks] No active accounts available");
