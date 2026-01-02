@@ -417,12 +417,7 @@ const Data: React.FC = () => {
     }
   };
 
-  const totalStats = tags.reduce((acc, tag) => ({
-    total: acc.total + tag.total_count,
-    unused: acc.unused + tag.unused_count,
-    used: acc.used + tag.used_count,
-    pending: acc.pending + tag.pending_count,
-  }), { total: 0, unused: 0, used: 0, pending: 0 });
+  const [showImportHistory, setShowImportHistory] = useState(false);
 
   return (
     <DashboardLayout>
@@ -432,61 +427,6 @@ const Data: React.FC = () => {
       />
 
       <div className="space-y-6">
-        {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          <Card className="bg-muted/30 border-border/50">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2 mb-1">
-                <Database className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground uppercase tracking-wide">Total</span>
-              </div>
-              <p className="text-2xl font-bold">{totalStats.total + totalStats.pending}</p>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-emerald-500/10 border-emerald-500/30">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2 mb-1">
-                <UserCheck className="w-4 h-4 text-emerald-500" />
-                <span className="text-xs text-muted-foreground uppercase tracking-wide">Valid</span>
-              </div>
-              <p className="text-2xl font-bold text-emerald-500">{totalStats.total}</p>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-primary/5 border-primary/20">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2 mb-1">
-                <FolderOpen className="w-4 h-4 text-primary" />
-                <span className="text-xs text-muted-foreground uppercase tracking-wide">Unused</span>
-              </div>
-              <p className="text-2xl font-bold text-primary">{totalStats.unused}</p>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-muted/30 border-border/50">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2 mb-1">
-                <UserX className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground uppercase tracking-wide">Used</span>
-              </div>
-              <p className="text-2xl font-bold">{totalStats.used}</p>
-            </CardContent>
-          </Card>
-
-          {totalStats.pending > 0 && (
-            <Card className="bg-amber-500/10 border-amber-500/30">
-              <CardContent className="pt-4 pb-3">
-                <div className="flex items-center gap-2 mb-1">
-                  <Clock className="w-4 h-4 text-amber-500 animate-pulse" />
-                  <span className="text-xs text-muted-foreground uppercase tracking-wide">Validating</span>
-                </div>
-                <p className="text-2xl font-bold text-amber-500">{totalStats.pending}</p>
-              </CardContent>
-            </Card>
-          )}
-        </div>
-
         {/* Import Progress */}
         {pendingTasks.length > 0 && (
           <Card className="border-amber-500/30 bg-amber-500/5">
@@ -540,63 +480,6 @@ const Data: React.FC = () => {
               })}
             </CardContent>
           </Card>
-        )}
-
-        {/* Import History - Collapsible at bottom */}
-        {completedTasks.length > 0 && (
-          <Collapsible>
-            <Card>
-              <CollapsibleTrigger asChild>
-                <CardHeader className="pb-2 cursor-pointer hover:bg-muted/30 transition-colors">
-                  <div className="flex items-center justify-between">
-                    <CardTitle className="text-sm flex items-center gap-2">
-                      <FileText className="w-4 h-4 text-muted-foreground" />
-                      Import History
-                      <Badge variant="secondary" className="text-xs">{completedTasks.length}</Badge>
-                    </CardTitle>
-                    <ChevronDown className="w-4 h-4 text-muted-foreground transition-transform [[data-state=open]_&]:rotate-180" />
-                  </div>
-                </CardHeader>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <CardContent className="pt-0">
-                  <div className="space-y-2">
-                    {completedTasks.map(task => {
-                      const tagName = tags.find(t => t.id === task.tag_id)?.name || 'Unknown';
-                      const validCount = task.valid_numbers?.length || 0;
-                      const invalidCount = task.invalid_numbers?.length || 0;
-                      const submitted = task.phone_numbers?.length || 0;
-                      
-                      return (
-                        <div key={task.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50">
-                          <div className="flex items-center gap-3">
-                            <Badge variant="outline" className="text-xs">{tagName}</Badge>
-                            <span className="text-xs text-muted-foreground">
-                              {task.completed_at ? format(new Date(task.completed_at), 'MMM d, h:mm a') : 'N/A'}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-4 text-xs">
-                            <span className="text-muted-foreground">
-                              Submitted: <span className="font-medium text-foreground">{submitted}</span>
-                            </span>
-                            <span className="text-emerald-500">
-                              Valid: <span className="font-medium">{validCount}</span>
-                            </span>
-                            <span className="text-red-500">
-                              Invalid: <span className="font-medium">{invalidCount}</span>
-                            </span>
-                            {task.status === 'failed' && (
-                              <Badge variant="destructive" className="text-xs">Failed</Badge>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </CardContent>
-              </CollapsibleContent>
-            </Card>
-          </Collapsible>
         )}
 
         {/* Tags List */}
@@ -823,6 +706,67 @@ ahmadraza9392`}
             )}
           </CardContent>
         </Card>
+
+        {/* Import History - Bottom */}
+        {completedTasks.length > 0 && (
+          <Collapsible open={showImportHistory} onOpenChange={setShowImportHistory}>
+            <Card>
+              <CollapsibleTrigger asChild>
+                <CardHeader className="pb-2 cursor-pointer hover:bg-muted/30 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-muted-foreground" />
+                      Import History
+                      <Badge variant="secondary" className="text-xs">{completedTasks.length}</Badge>
+                    </CardTitle>
+                    {showImportHistory ? (
+                      <ChevronUp className="w-4 h-4 text-muted-foreground" />
+                    ) : (
+                      <ChevronDown className="w-4 h-4 text-muted-foreground" />
+                    )}
+                  </div>
+                </CardHeader>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0">
+                  <div className="space-y-2">
+                    {completedTasks.map(task => {
+                      const tagName = tags.find(t => t.id === task.tag_id)?.name || 'Unknown';
+                      const validCount = task.valid_numbers?.length || 0;
+                      const invalidCount = task.invalid_numbers?.length || 0;
+                      const submitted = task.phone_numbers?.length || 0;
+                      
+                      return (
+                        <div key={task.id} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border border-border/50">
+                          <div className="flex items-center gap-3">
+                            <Badge variant="outline" className="text-xs">{tagName}</Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {task.completed_at ? format(new Date(task.completed_at), 'MMM d, h:mm a') : 'N/A'}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4 text-xs">
+                            <span className="text-muted-foreground">
+                              Submitted: <span className="font-medium text-foreground">{submitted}</span>
+                            </span>
+                            <span className="text-emerald-500">
+                              Valid: <span className="font-medium">{validCount}</span>
+                            </span>
+                            <span className="text-red-500">
+                              Invalid: <span className="font-medium">{invalidCount}</span>
+                            </span>
+                            {task.status === 'failed' && (
+                              <Badge variant="destructive" className="text-xs">Failed</Badge>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+        )}
       </div>
     </DashboardLayout>
   );
