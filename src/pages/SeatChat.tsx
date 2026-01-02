@@ -301,10 +301,10 @@ const SeatChat: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
         <div className="text-center">
-          <RefreshCw className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
-          <p className="text-muted-foreground">Loading seat...</p>
+          <RefreshCw className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-slate-500">Loading seat...</p>
         </div>
       </div>
     );
@@ -312,12 +312,12 @@ const SeatChat: React.FC = () => {
 
   if (error) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <Card className="max-w-md">
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <Card className="max-w-md bg-white border-slate-200 shadow-lg">
           <CardContent className="pt-6 text-center">
-            <AlertCircle className="w-12 h-12 text-destructive mx-auto mb-4" />
-            <h2 className="text-xl font-bold mb-2">Access Error</h2>
-            <p className="text-muted-foreground">{error}</p>
+            <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold mb-2 text-slate-800">Access Error</h2>
+            <p className="text-slate-500">{error}</p>
           </CardContent>
         </Card>
       </div>
