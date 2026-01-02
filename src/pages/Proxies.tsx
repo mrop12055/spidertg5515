@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
@@ -11,9 +11,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import { 
   Plus, Trash2, Globe, Loader2, Search, RefreshCw, 
-  CheckCircle, XCircle, Wifi, WifiOff, User, Clock, Server, AlertTriangle
+  CheckCircle, XCircle, Wifi, WifiOff, User, Clock, Server, AlertTriangle,
+  Shield, Activity, Flag, Eye, EyeOff, MapPin, Zap
 } from 'lucide-react';
 import { Proxy } from '@/types/telegram';
 import { toast } from 'sonner';
@@ -33,9 +35,43 @@ const statusOptions = [
   { value: 'error', label: 'Error', color: 'bg-destructive/20 text-destructive border-destructive/30' },
 ];
 
+// Country code to flag emoji
+const getCountryFlag = (countryCode: string | null | undefined): string => {
+  if (!countryCode || countryCode.length !== 2) return '🌍';
+  try {
+    const codePoints = countryCode
+      .toUpperCase()
+      .split('')
+      .map(char => 127397 + char.charCodeAt(0));
+    return String.fromCodePoint(...codePoints);
+  } catch {
+    return '🌍';
+  }
+};
+
+// Country code to name mapping
+const countryNames: Record<string, string> = {
+  'IN': 'India',
+  'US': 'United States',
+  'UK': 'United Kingdom',
+  'GB': 'United Kingdom',
+  'DE': 'Germany',
+  'FR': 'France',
+  'NL': 'Netherlands',
+  'SG': 'Singapore',
+  'JP': 'Japan',
+  'AU': 'Australia',
+  'CA': 'Canada',
+  'BR': 'Brazil',
+  'RU': 'Russia',
+  'CN': 'China',
+  'KR': 'South Korea',
+};
+
 interface TestResult {
   status: 'testing' | 'success' | 'failed';
   responseTime?: number;
+  country?: string;
   error?: string;
 }
 
@@ -53,6 +89,8 @@ const Proxies: React.FC = () => {
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [countryFilter, setCountryFilter] = useState<string>('all');
+  const [showCredentials, setShowCredentials] = useState<Set<string>>(new Set());
   
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -75,6 +113,60 @@ const Proxies: React.FC = () => {
   const [singleTestResult, setSingleTestResult] = useState<TestResult | null>(null);
   const [parsedProxies, setParsedProxies] = useState<ProxyToAdd[]>([]);
   const [isTestingBulk, setIsTestingBulk] = useState(false);
+  
+  // Health monitoring
+  const [autoHealthCheck, setAutoHealthCheck] = useState(false);
+  const [healthCheckInterval, setHealthCheckInterval] = useState(30); // minutes
+  const [lastHealthCheck, setLastHealthCheck] = useState<Date | null>(null);
+
+  // Load settings from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('proxy_health_settings');
+    if (saved) {
+      try {
+        const settings = JSON.parse(saved);
+        setAutoHealthCheck(settings.autoHealthCheck ?? false);
+        setHealthCheckInterval(settings.healthCheckInterval ?? 30);
+      } catch {}
+    }
+  }, []);
+
+  // Save settings to localStorage
+  useEffect(() => {
+    localStorage.setItem('proxy_health_settings', JSON.stringify({
+      autoHealthCheck,
+      healthCheckInterval,
+    }));
+  }, [autoHealthCheck, healthCheckInterval]);
+
+  // Auto health check interval
+  useEffect(() => {
+    if (!autoHealthCheck || proxies.length === 0) return;
+    
+    const checkHealth = async () => {
+      console.log('Running auto health check...');
+      const proxyIds = proxies.map(p => p.id);
+      
+      try {
+        await supabase.functions.invoke('test-proxies', {
+          body: { proxy_ids: proxyIds, auto_detect_country: true }
+        });
+        setLastHealthCheck(new Date());
+        refreshData();
+        toast.success('Health check completed');
+      } catch (error) {
+        console.error('Health check failed:', error);
+      }
+    };
+    
+    const intervalMs = healthCheckInterval * 60 * 1000;
+    const interval = setInterval(checkHealth, intervalMs);
+    
+    return () => clearInterval(interval);
+  }, [autoHealthCheck, healthCheckInterval, proxies.length]);
+
+  // Get unique countries for filter
+  const uniqueCountries = [...new Set(proxies.map(p => p.country).filter(Boolean))] as string[];
 
   // Test a single proxy before adding
   const testSingleProxy = async () => {
@@ -105,14 +197,18 @@ const Proxies: React.FC = () => {
 
       // Test the proxy
       const { data, error } = await supabase.functions.invoke('test-proxies', {
-        body: { proxy_ids: [tempProxy.id] }
+        body: { proxy_ids: [tempProxy.id], auto_detect_country: true }
       });
 
       if (error) throw error;
 
       const result = data.results?.[0];
       if (result?.success) {
-        setSingleTestResult({ status: 'success', responseTime: result.responseTime });
+        setSingleTestResult({ 
+          status: 'success', 
+          responseTime: result.responseTime,
+          country: result.country 
+        });
         toast.success(`Proxy is working! Response time: ${result.responseTime}ms`);
         
         // Update proxy status to active
@@ -187,7 +283,7 @@ const Proxies: React.FC = () => {
 
       // Test all inserted proxies
       const { data, error } = await supabase.functions.invoke('test-proxies', {
-        body: { proxy_ids: insertedProxies?.map(p => p.id) || [] }
+        body: { proxy_ids: insertedProxies?.map(p => p.id) || [], auto_detect_country: true }
       });
 
       if (error) throw error;
@@ -200,6 +296,7 @@ const Proxies: React.FC = () => {
           testResult: result ? {
             status: result.success ? 'success' : 'failed',
             responseTime: result.responseTime,
+            country: result.country,
             error: result.error,
           } as TestResult : undefined,
         };
@@ -321,7 +418,7 @@ const Proxies: React.FC = () => {
 
     try {
       const { data, error } = await supabase.functions.invoke('test-proxies', {
-        body: { proxy_ids: Array.from(selectedIds) }
+        body: { proxy_ids: Array.from(selectedIds), auto_detect_country: true }
       });
 
       if (error) throw error;
@@ -331,6 +428,7 @@ const Proxies: React.FC = () => {
         newResults.set(result.id, {
           status: result.success ? 'success' : 'failed',
           responseTime: result.responseTime,
+          country: result.country,
           error: result.error,
         });
       }
@@ -343,6 +441,44 @@ const Proxies: React.FC = () => {
       toast.error('Failed to test proxies');
       selectedIds.forEach(id => newResults.set(id, { status: 'failed', error: 'Test failed' }));
       setTestResults(new Map(newResults));
+    } finally {
+      setIsBulkTesting(false);
+    }
+  };
+
+  const handleTestAll = async () => {
+    if (proxies.length === 0) return;
+    
+    setIsBulkTesting(true);
+    const allIds = proxies.map(p => p.id);
+    const newResults = new Map<string, TestResult>();
+    
+    allIds.forEach(id => newResults.set(id, { status: 'testing' }));
+    setTestResults(new Map(newResults));
+
+    try {
+      const { data, error } = await supabase.functions.invoke('test-proxies', {
+        body: { proxy_ids: allIds, auto_detect_country: true }
+      });
+
+      if (error) throw error;
+
+      for (const result of data.results || []) {
+        newResults.set(result.id, {
+          status: result.success ? 'success' : 'failed',
+          responseTime: result.responseTime,
+          country: result.country,
+          error: result.error,
+        });
+      }
+
+      setTestResults(new Map(newResults));
+      setLastHealthCheck(new Date());
+      toast.success(`Tested all: ${data.summary?.working || 0} working, ${data.summary?.failed || 0} failed`);
+      refreshData();
+    } catch (error) {
+      console.error('Error testing all proxies:', error);
+      toast.error('Failed to test proxies');
     } finally {
       setIsBulkTesting(false);
     }
@@ -363,6 +499,16 @@ const Proxies: React.FC = () => {
     }
   };
 
+  const toggleCredentialsVisibility = (id: string) => {
+    const newSet = new Set(showCredentials);
+    if (newSet.has(id)) {
+      newSet.delete(id);
+    } else {
+      newSet.add(id);
+    }
+    setShowCredentials(newSet);
+  };
+
   const getAccountsUsingProxy = (proxyId: string) => {
     return accounts.filter(a => a.proxyId === proxyId);
   };
@@ -370,9 +516,12 @@ const Proxies: React.FC = () => {
   const filteredProxies = proxies.filter(p => {
     const matchesSearch = 
       p.host.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      p.country?.toLowerCase().includes(searchQuery.toLowerCase());
+      p.country?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.username?.toLowerCase().includes(searchQuery.toLowerCase());
+    const proxyCountry = p.country;
     const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
-    return matchesSearch && matchesStatus;
+    const matchesCountry = countryFilter === 'all' || proxyCountry === countryFilter;
+    return matchesSearch && matchesStatus && matchesCountry;
   });
 
   const toggleSelect = (id: string) => {
@@ -404,216 +553,238 @@ const Proxies: React.FC = () => {
     );
   };
 
+  const formatTimeAgo = (date: string | Date | null) => {
+    if (!date) return null;
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    const diff = Date.now() - dateObj.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+    
+    if (days > 0) return `${days}d ago`;
+    if (hours > 0) return `${hours}h ago`;
+    if (minutes > 0) return `${minutes}m ago`;
+    return 'Just now';
+  };
+
   return (
     <DashboardLayout>
       <PageHeader
         title="Proxy Management"
         description="Manage your proxy servers for Telegram accounts"
         action={
-          <Dialog open={isAddOpen} onOpenChange={(open) => {
-            setIsAddOpen(open);
-            if (!open) {
-              setSingleTestResult(null);
-              setParsedProxies([]);
-            }
-          }}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="w-4 h-4" />
-                Add Proxies
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Add Proxies</DialogTitle>
-                <DialogDescription>
-                  Proxies will be tested before being added
-                </DialogDescription>
-              </DialogHeader>
-              <Tabs value={addTab} onValueChange={(v) => setAddTab(v as 'single' | 'bulk')} className="mt-4">
-                <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="single">Single Proxy</TabsTrigger>
-                  <TabsTrigger value="bulk">Bulk Import</TabsTrigger>
-                </TabsList>
-                
-                <TabsContent value="single" className="space-y-4 mt-4">
-                  <div className="grid grid-cols-2 gap-4">
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleTestAll} disabled={isBulkTesting || proxies.length === 0} className="gap-2">
+              {isBulkTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
+              Test All
+            </Button>
+            <Dialog open={isAddOpen} onOpenChange={(open) => {
+              setIsAddOpen(open);
+              if (!open) {
+                setSingleTestResult(null);
+                setParsedProxies([]);
+              }
+            }}>
+              <DialogTrigger asChild>
+                <Button className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  Add Proxies
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Add Proxies</DialogTitle>
+                  <DialogDescription>
+                    Proxies will be tested before being added
+                  </DialogDescription>
+                </DialogHeader>
+                <Tabs value={addTab} onValueChange={(v) => setAddTab(v as 'single' | 'bulk')} className="mt-4">
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="single">Single Proxy</TabsTrigger>
+                    <TabsTrigger value="bulk">Bulk Import</TabsTrigger>
+                  </TabsList>
+                  
+                  <TabsContent value="single" className="space-y-4 mt-4">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Host</Label>
+                        <Input
+                          placeholder="proxy.example.com"
+                          value={singleProxy.host}
+                          onChange={(e) => {
+                            setSingleProxy({ ...singleProxy, host: e.target.value });
+                            setSingleTestResult(null);
+                          }}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Port</Label>
+                        <Input
+                          type="number"
+                          placeholder="8080"
+                          value={singleProxy.port}
+                          onChange={(e) => {
+                            setSingleProxy({ ...singleProxy, port: e.target.value });
+                            setSingleTestResult(null);
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label>Username (optional)</Label>
+                        <Input
+                          placeholder="username"
+                          value={singleProxy.username}
+                          onChange={(e) => setSingleProxy({ ...singleProxy, username: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Password (optional)</Label>
+                        <Input
+                          type="password"
+                          placeholder="password"
+                          value={singleProxy.password}
+                          onChange={(e) => setSingleProxy({ ...singleProxy, password: e.target.value })}
+                        />
+                      </div>
+                    </div>
                     <div className="space-y-2">
-                      <Label>Host</Label>
-                      <Input
-                        placeholder="proxy.example.com"
-                        value={singleProxy.host}
+                      <Label>Type</Label>
+                      <Select
+                        value={singleProxy.type}
+                        onValueChange={(v) => setSingleProxy({ ...singleProxy, type: v as any })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {proxyTypeOptions.map(opt => (
+                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
+                    {/* Test Result */}
+                    {singleTestResult && (
+                      <div className={cn(
+                        "p-3 rounded-lg border flex items-center gap-2",
+                        singleTestResult.status === 'testing' && "bg-primary/10 border-primary/30",
+                        singleTestResult.status === 'success' && "bg-green-500/10 border-green-500/30",
+                        singleTestResult.status === 'failed' && "bg-destructive/10 border-destructive/30"
+                      )}>
+                        {singleTestResult.status === 'testing' && (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="text-sm">Testing proxy connection...</span>
+                          </>
+                        )}
+                        {singleTestResult.status === 'success' && (
+                          <>
+                            <CheckCircle className="w-4 h-4 text-green-600" />
+                            <span className="text-sm text-green-600">
+                              Connected! Response time: {singleTestResult.responseTime}ms
+                              {singleTestResult.country && ` • ${getCountryFlag(singleTestResult.country)} ${singleTestResult.country}`}
+                            </span>
+                          </>
+                        )}
+                        {singleTestResult.status === 'failed' && (
+                          <>
+                            <XCircle className="w-4 h-4 text-destructive" />
+                            <span className="text-sm text-destructive">
+                              Failed: {singleTestResult.error}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    )}
+                    
+                    <Button onClick={handleAddSingle} disabled={isTesting} className="w-full">
+                      {isTesting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Testing...
+                        </>
+                      ) : singleTestResult?.status === 'success' ? (
+                        <>
+                          <CheckCircle className="w-4 h-4 mr-2" />
+                          Proxy Added
+                        </>
+                      ) : (
+                        <>
+                          <Wifi className="w-4 h-4 mr-2" />
+                          Test & Add Proxy
+                        </>
+                      )}
+                    </Button>
+                  </TabsContent>
+                  
+                  <TabsContent value="bulk" className="space-y-4 mt-4">
+                    <div className="space-y-2">
+                      <Label>Proxy List</Label>
+                      <Textarea
+                        placeholder="gate-eu.example.com:1000:username:password&#10;proxy.example.com:8080&#10;host:port:user:pass"
+                        value={bulkProxies}
                         onChange={(e) => {
-                          setSingleProxy({ ...singleProxy, host: e.target.value });
-                          setSingleTestResult(null);
+                          setBulkProxies(e.target.value);
+                          setParsedProxies([]);
                         }}
+                        rows={6}
+                        className="font-mono text-sm"
                       />
+                      <p className="text-xs text-muted-foreground">
+                        One proxy per line. Format: <code className="px-1 py-0.5 bg-muted rounded">host:port:username:password</code> or <code className="px-1 py-0.5 bg-muted rounded">host:port</code>
+                      </p>
                     </div>
-                    <div className="space-y-2">
-                      <Label>Port</Label>
-                      <Input
-                        type="number"
-                        placeholder="8080"
-                        value={singleProxy.port}
-                        onChange={(e) => {
-                          setSingleProxy({ ...singleProxy, port: e.target.value });
-                          setSingleTestResult(null);
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Username (optional)</Label>
-                      <Input
-                        placeholder="username"
-                        value={singleProxy.username}
-                        onChange={(e) => setSingleProxy({ ...singleProxy, username: e.target.value })}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Password (optional)</Label>
-                      <Input
-                        type="password"
-                        placeholder="password"
-                        value={singleProxy.password}
-                        onChange={(e) => setSingleProxy({ ...singleProxy, password: e.target.value })}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Type</Label>
-                    <Select
-                      value={singleProxy.type}
-                      onValueChange={(v) => setSingleProxy({ ...singleProxy, type: v as any })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {proxyTypeOptions.map(opt => (
-                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                    
+                    {parsedProxies.length > 0 && (
+                      <div className="max-h-40 overflow-y-auto space-y-1">
+                        {parsedProxies.map((p, i) => (
+                          <div key={i} className={cn(
+                            "flex items-center gap-2 p-2 rounded text-sm",
+                            p.testResult?.status === 'success' && "bg-green-500/10",
+                            p.testResult?.status === 'failed' && "bg-destructive/10",
+                            !p.testResult && "bg-muted"
+                          )}>
+                            {p.testResult?.status === 'success' && <CheckCircle className="w-4 h-4 text-green-600" />}
+                            {p.testResult?.status === 'failed' && <XCircle className="w-4 h-4 text-destructive" />}
+                            {!p.testResult && <Globe className="w-4 h-4 text-muted-foreground" />}
+                            <span>{p.host}:{p.port}</span>
+                            {p.testResult?.country && <span>{getCountryFlag(p.testResult.country)}</span>}
+                            {p.testResult?.responseTime && (
+                              <span className="text-xs text-muted-foreground">{p.testResult.responseTime}ms</span>
+                            )}
+                          </div>
                         ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  
-                  {/* Test Result */}
-                  {singleTestResult && (
-                    <div className={cn(
-                      "p-3 rounded-lg border flex items-center gap-2",
-                      singleTestResult.status === 'testing' && "bg-primary/10 border-primary/30",
-                      singleTestResult.status === 'success' && "bg-green-500/10 border-green-500/30",
-                      singleTestResult.status === 'failed' && "bg-destructive/10 border-destructive/30"
-                    )}>
-                      {singleTestResult.status === 'testing' && (
-                        <>
-                          <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                          <span className="text-sm">Testing proxy connection...</span>
-                        </>
-                      )}
-                      {singleTestResult.status === 'success' && (
-                        <>
-                          <CheckCircle className="w-4 h-4 text-green-600" />
-                          <span className="text-sm text-green-600">
-                            Connected! Response time: {singleTestResult.responseTime}ms
-                          </span>
-                        </>
-                      )}
-                      {singleTestResult.status === 'failed' && (
-                        <>
-                          <XCircle className="w-4 h-4 text-destructive" />
-                          <span className="text-sm text-destructive">
-                            Failed: {singleTestResult.error}
-                          </span>
-                        </>
-                      )}
-                    </div>
-                  )}
-                  
-                  <Button onClick={handleAddSingle} disabled={isTesting} className="w-full">
-                    {isTesting ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Testing...
-                      </>
-                    ) : singleTestResult?.status === 'success' ? (
-                      <>
-                        <CheckCircle className="w-4 h-4 mr-2" />
-                        Proxy Added
-                      </>
-                    ) : (
-                      <>
-                        <Wifi className="w-4 h-4 mr-2" />
-                        Test & Add Proxy
-                      </>
+                      </div>
                     )}
-                  </Button>
-                </TabsContent>
-                
-                <TabsContent value="bulk" className="space-y-4 mt-4">
-                  <div className="space-y-2">
-                    <Label>Proxy List</Label>
-                    <Textarea
-                      placeholder="gate-eu.example.com:1000:username:password&#10;proxy.example.com:8080&#10;host:port:user:pass"
-                      value={bulkProxies}
-                      onChange={(e) => {
-                        setBulkProxies(e.target.value);
-                        setParsedProxies([]);
-                      }}
-                      rows={6}
-                      className="font-mono text-sm"
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      One proxy per line. Format: <code className="px-1 py-0.5 bg-muted rounded">host:port:username:password</code> or <code className="px-1 py-0.5 bg-muted rounded">host:port</code>
-                    </p>
-                  </div>
-                  
-                  {parsedProxies.length > 0 && (
-                    <div className="max-h-40 overflow-y-auto space-y-1">
-                      {parsedProxies.map((p, i) => (
-                        <div key={i} className={cn(
-                          "flex items-center gap-2 p-2 rounded text-sm",
-                          p.testResult?.status === 'success' && "bg-green-500/10",
-                          p.testResult?.status === 'failed' && "bg-destructive/10",
-                          !p.testResult && "bg-muted"
-                        )}>
-                          {p.testResult?.status === 'success' && <CheckCircle className="w-4 h-4 text-green-600" />}
-                          {p.testResult?.status === 'failed' && <XCircle className="w-4 h-4 text-destructive" />}
-                          {!p.testResult && <Globe className="w-4 h-4 text-muted-foreground" />}
-                          <span>{p.host}:{p.port}</span>
-                          {p.testResult?.responseTime && (
-                            <span className="text-xs text-muted-foreground">{p.testResult.responseTime}ms</span>
-                          )}
-                        </div>
-                      ))}
+                    
+                    <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-2">
+                      <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
+                      <p className="text-xs text-muted-foreground">
+                        All proxies will be tested before being added. Only working proxies will be saved.
+                      </p>
                     </div>
-                  )}
-                  
-                  <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-2">
-                    <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
-                    <p className="text-xs text-muted-foreground">
-                      All proxies will be tested before being added. Only working proxies will be saved.
-                    </p>
-                  </div>
-                  
-                  <Button onClick={handleAddBulk} disabled={isTestingBulk} className="w-full">
-                    {isTestingBulk ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Testing Proxies...
-                      </>
-                    ) : (
-                      <>
-                        <Wifi className="w-4 h-4 mr-2" />
-                        Test & Add {bulkProxies.split('\n').filter(l => l.trim()).length} Proxies
-                      </>
-                    )}
-                  </Button>
-                </TabsContent>
-              </Tabs>
-            </DialogContent>
-          </Dialog>
+                    
+                    <Button onClick={handleAddBulk} disabled={isTestingBulk} className="w-full">
+                      {isTestingBulk ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Testing Proxies...
+                        </>
+                      ) : (
+                        <>
+                          <Wifi className="w-4 h-4 mr-2" />
+                          Test & Add {bulkProxies.split('\n').filter(l => l.trim()).length} Proxies
+                        </>
+                      )}
+                    </Button>
+                  </TabsContent>
+                </Tabs>
+              </DialogContent>
+            </Dialog>
+          </div>
         }
       />
 
@@ -666,11 +837,11 @@ const Proxies: React.FC = () => {
       )}
 
       {/* Filters */}
-      <div className="flex gap-4 mb-6">
-        <div className="relative flex-1 max-w-md">
+      <div className="flex flex-wrap gap-4 mb-6">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
-            placeholder="Search by host or country..."
+            placeholder="Search by host, country, or username..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
@@ -678,7 +849,7 @@ const Proxies: React.FC = () => {
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-36">
-            <SelectValue placeholder="Filter" />
+            <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Status</SelectItem>
@@ -687,6 +858,21 @@ const Proxies: React.FC = () => {
             ))}
           </SelectContent>
         </Select>
+        {uniqueCountries.length > 0 && (
+          <Select value={countryFilter} onValueChange={setCountryFilter}>
+            <SelectTrigger className="w-40">
+              <SelectValue placeholder="Country" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Countries</SelectItem>
+              {uniqueCountries.map(country => (
+                <SelectItem key={country} value={country}>
+                  {getCountryFlag(country)} {countryNames[country] || country}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Button variant="outline" onClick={() => refreshData()} className="gap-2">
           <RefreshCw className="w-4 h-4" />
           Refresh
@@ -694,7 +880,7 @@ const Proxies: React.FC = () => {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -741,7 +927,67 @@ const Proxies: React.FC = () => {
             </div>
           </CardContent>
         </Card>
+        <Card>
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
+              <MapPin className="w-6 h-6 text-blue-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{uniqueCountries.length}</p>
+              <p className="text-sm text-muted-foreground">Countries</p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
+
+      {/* Health Monitoring Card */}
+      <Card className="mb-6">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base flex items-center gap-2">
+            <Shield className="w-4 h-4" />
+            Health Monitoring
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <div className="flex flex-wrap items-center gap-6">
+            <div className="flex items-center gap-3">
+              <Switch 
+                checked={autoHealthCheck} 
+                onCheckedChange={setAutoHealthCheck}
+                id="auto-health-check"
+              />
+              <Label htmlFor="auto-health-check" className="cursor-pointer">
+                Auto health check
+              </Label>
+            </div>
+            {autoHealthCheck && (
+              <div className="flex items-center gap-2">
+                <Label className="text-sm text-muted-foreground">Every</Label>
+                <Select 
+                  value={healthCheckInterval.toString()} 
+                  onValueChange={(v) => setHealthCheckInterval(parseInt(v))}
+                >
+                  <SelectTrigger className="w-24 h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="15">15 min</SelectItem>
+                    <SelectItem value="30">30 min</SelectItem>
+                    <SelectItem value="60">1 hour</SelectItem>
+                    <SelectItem value="120">2 hours</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {lastHealthCheck && (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Clock className="w-3 h-3" />
+                Last check: {formatTimeAgo(lastHealthCheck.toISOString())}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Proxies List */}
       {isLoading ? (
@@ -754,11 +1000,11 @@ const Proxies: React.FC = () => {
             <Globe className="w-12 h-12 text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium mb-2">No proxies found</h3>
             <p className="text-muted-foreground text-center mb-4">
-              {searchQuery || statusFilter !== 'all' 
+              {searchQuery || statusFilter !== 'all' || countryFilter !== 'all'
                 ? 'Try adjusting your filters'
                 : 'Add your first proxy to get started'}
             </p>
-            {!searchQuery && statusFilter === 'all' && (
+            {!searchQuery && statusFilter === 'all' && countryFilter === 'all' && (
               <Button onClick={() => setIsAddOpen(true)} className="gap-2">
                 <Plus className="w-4 h-4" />
                 Add Proxies
@@ -784,6 +1030,8 @@ const Proxies: React.FC = () => {
           {filteredProxies.map((proxy) => {
             const testResult = testResults.get(proxy.id);
             const accountsUsing = getAccountsUsingProxy(proxy.id);
+            const proxyCountry = proxy.country;
+            const isCredentialsVisible = showCredentials.has(proxy.id);
             
             return (
               <Card 
@@ -802,15 +1050,17 @@ const Proxies: React.FC = () => {
                       aria-label={`Select ${proxy.host}`}
                     />
 
-                    {/* Status Icon */}
+                    {/* Country Flag / Status Icon */}
                     <div className={cn(
-                      "w-10 h-10 rounded-lg flex items-center justify-center",
+                      "w-10 h-10 rounded-lg flex items-center justify-center text-xl",
                       proxy.status === 'active' && "bg-green-500/10",
                       proxy.status === 'error' && "bg-destructive/10",
                       proxy.status === 'inactive' && "bg-muted"
                     )}>
                       {testResult?.status === 'testing' ? (
                         <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                      ) : proxyCountry ? (
+                        getCountryFlag(proxyCountry)
                       ) : proxy.status === 'active' ? (
                         <Wifi className="w-5 h-5 text-green-500" />
                       ) : proxy.status === 'error' ? (
@@ -822,44 +1072,63 @@ const Proxies: React.FC = () => {
                     
                     {/* Info */}
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium font-mono">{proxy.host}:{proxy.port}</span>
                         {getStatusBadge(proxy.status)}
-                        {testResult?.status === 'success' && (
-                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-600 border border-green-500/30">
-                            {testResult.responseTime}ms
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-secondary border border-border uppercase">
+                          {proxy.type}
+                        </span>
+                        {(proxy.responseTime || testResult?.responseTime) && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-600 border border-blue-500/30 flex items-center gap-1">
+                            <Zap className="w-3 h-3" />
+                            {testResult?.responseTime || proxy.responseTime}ms
                           </span>
                         )}
                         {testResult?.status === 'failed' && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-destructive/20 text-destructive border border-destructive/30">
-                            Failed
+                            Test Failed
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
-                        <span className="uppercase">{proxy.type}</span>
-                        {proxy.username && <span>• Auth: {proxy.username}</span>}
-                        {proxy.country && <span>• {proxy.country}</span>}
-                        {proxy.responseTime && <span>• {proxy.responseTime}ms</span>}
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap">
+                        {proxyCountry && (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            {countryNames[proxyCountry] || proxyCountry}
+                          </span>
+                        )}
+                        {proxy.username && (
+                          <span className="flex items-center gap-1">
+                            <User className="w-3 h-3" />
+                            {isCredentialsVisible ? (
+                              <span className="font-mono text-xs">
+                                {proxy.username}:{proxy.password?.substring(0, 10)}...
+                              </span>
+                            ) : (
+                              <span>••••••••</span>
+                            )}
+                            <button 
+                              onClick={() => toggleCredentialsVisibility(proxy.id)}
+                              className="hover:text-foreground transition-colors"
+                            >
+                              {isCredentialsVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                            </button>
+                          </span>
+                        )}
+                        {proxy.lastChecked && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatTimeAgo(proxy.lastChecked)}
+                          </span>
+                        )}
                       </div>
                     </div>
 
                     {/* Accounts Using */}
                     {accountsUsing.length > 0 && (
-                      <div className="text-center">
+                      <div className="text-center px-3 py-1 bg-secondary/50 rounded-lg">
                         <div className="font-medium">{accountsUsing.length}</div>
                         <div className="text-xs text-muted-foreground">Accounts</div>
-                      </div>
-                    )}
-
-                    {/* Last Checked */}
-                    {proxy.lastChecked && (
-                      <div className="text-center hidden md:block">
-                        <div className="flex items-center gap-1 text-sm">
-                          <Clock className="w-3 h-3" />
-                          {new Date(proxy.lastChecked).toLocaleTimeString()}
-                        </div>
-                        <div className="text-xs text-muted-foreground">Last Check</div>
                       </div>
                     )}
 
