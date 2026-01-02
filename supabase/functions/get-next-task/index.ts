@@ -689,31 +689,11 @@ serve(async (req) => {
               .eq("id", task.id);
             console.log(`[get-next-task] Contact import task ${task.id.slice(0,8)} failed - no eligible accounts`);
           } else {
-            // MULTI-ACCOUNT BATCHING: Split numbers across multiple accounts to avoid rate limits
-            // Each account gets a batch of max 20 numbers to reduce Telegram FloodWait risk
-            const BATCH_SIZE = 20;
-            const numAccounts = Math.min(eligibleAccounts.length, Math.ceil(phoneNumbers.length / BATCH_SIZE));
-            
-            // Assign batches to accounts round-robin style
-            const accountBatches: Map<string, string[]> = new Map();
-            for (let i = 0; i < phoneNumbers.length; i++) {
-              const accountIndex = i % numAccounts;
-              const account = eligibleAccounts[accountIndex];
-              if (!accountBatches.has(account.id)) {
-                accountBatches.set(account.id, []);
-              }
-              accountBatches.get(account.id)!.push(phoneNumbers[i]);
-            }
-            
-            // Pick the first batch for this request (round-robin will distribute across runners)
-            // Prefer the originally assigned account if still eligible
+            // Pick first eligible account (or prefer the originally assigned one if still eligible)
             let account = eligibleAccounts.find((a: { id: string }) => a.id === task.account_id);
             if (!account) {
               account = eligibleAccounts[0];
             }
-            
-            // Get this account's batch (or all if only one account)
-            const accountBatch = accountBatches.get(account.id) || phoneNumbers.slice(0, BATCH_SIZE);
             
             const apiCred = account.telegram_api_credentials;
             
@@ -726,16 +706,13 @@ serve(async (req) => {
               })
               .eq("id", task.id);
             
-            console.log(`[get-next-task] Contact import task: ${accountBatch.length}/${phoneNumbers.length} numbers with account ${account.phone_number} (batch_size=${BATCH_SIZE}, accounts=${numAccounts})`);
+            console.log(`[get-next-task] Contact import task: ${phoneNumbers.length} numbers with account ${account.phone_number}`);
             
             return new Response(JSON.stringify({
               task: "contact_import",
               task_id: task.id,
               tag_id: task.tag_id,
-              phone_numbers: accountBatch, // Send only this account's batch
-              all_phone_numbers: phoneNumbers, // Full list for reference
-              batch_size: BATCH_SIZE,
-              total_numbers: phoneNumbers.length,
+              phone_numbers: phoneNumbers,
               valid_numbers: task.valid_numbers || [],
               invalid_numbers: task.invalid_numbers || [],
               failed_account_ids: failedAccountIds,
