@@ -681,21 +681,34 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def check_spambot(client):
+    """Check SpamBot - detects banned, frozen, restricted"""
     try:
         spambot = await client.get_entity("@SpamBot")
         await client.send_message(spambot, "/start")
-        await asyncio.sleep(1)
+        await asyncio.sleep(2)
         messages = await client.get_messages(spambot, limit=1)
         response = messages[0].text if messages else "No response"
         response_lower = response.lower()
+        
+        # FROZEN state
+        if "frozen" in response_lower or "заморожен" in response_lower:
+            return "restricted", "Account frozen", response
+        # BANNED state  
+        if "banned" in response_lower or "deleted" in response_lower or "заблокирован" in response_lower:
+            return "banned", response[:200], response
+        # LIMITED state
+        if "limited" in response_lower or "restricted" in response_lower or "ограничен" in response_lower:
+            return "restricted", "Limited", response
+        # CLEAN state
         if "no limits" in response_lower or "good news" in response_lower:
             return "active", None, response
-        elif "limited" in response_lower or "restricted" in response_lower:
-            return "restricted", None, response
-        elif "banned" in response_lower:
-            return "banned", response[:200], response
         return "active", None, response
     except Exception as e:
+        error_str = str(e).lower()
+        if "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
+            return "banned", str(e), f"Error: {e}"
+        if "auth" in error_str or "session" in error_str:
+            return "disconnected", str(e), f"Error: {e}"
         return "active", None, f"Error: {e}"
 
 
