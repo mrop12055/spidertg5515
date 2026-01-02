@@ -154,13 +154,13 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
 
 
 async def get_next_task(runner: str = None) -> dict:
-    """Ask backend for next task"""
+    """Ask backend for next task (single task)"""
     try:
         body = {}
         if runner:
             body["runner"] = runner
         
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 f"{BACKEND_URL}/get-next-task",
                 headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
@@ -170,6 +170,25 @@ async def get_next_task(runner: str = None) -> dict:
     except Exception as e:
         print(f"  ⚠ Failed to get task: {e}")
         return {"task": "wait", "seconds": 1}
+
+
+async def get_batch_tasks(runner: str = None, batch_size: int = 5) -> dict:
+    """Ask backend for a batch of tasks (parallel execution)"""
+    try:
+        body = {"batch_size": batch_size}
+        if runner:
+            body["runner"] = runner
+        
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}/get-batch-tasks",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json=body
+            )
+            return resp.json()
+    except Exception as e:
+        print(f"  ⚠ Failed to get batch tasks: {e}")
+        return {"tasks": [], "delay_after": 5}
 
 
 async def report_result(task_type: str, result: dict):
