@@ -1109,6 +1109,71 @@ serve(async (req) => {
         break;
       }
 
+      case "contact_import_complete": {
+        const { task_id, tag_id, valid_numbers, invalid_numbers } = result;
+        
+        // Insert valid contacts
+        if (tag_id && valid_numbers && valid_numbers.length > 0) {
+          const contactsToInsert = valid_numbers.map((phone: string) => ({
+            phone_number: phone,
+            tag_id: tag_id,
+            is_used: false,
+          }));
+          
+          for (const contact of contactsToInsert) {
+            await supabase
+              .from("contacts_data")
+              .upsert(contact, { onConflict: "phone_number" });
+          }
+          
+          console.log(`[report-task-result] Inserted ${valid_numbers.length} valid contacts`);
+        }
+        
+        await supabase
+          .from("contact_import_tasks")
+          .update({
+            status: "completed",
+            completed_at: new Date().toISOString(),
+            valid_numbers: valid_numbers || [],
+            invalid_numbers: invalid_numbers || [],
+            result: `Added ${valid_numbers?.length || 0} contacts, ${invalid_numbers?.length || 0} invalid`
+          })
+          .eq("id", task_id);
+        
+        console.log(`[report-task-result] Contact import completed: ${valid_numbers?.length || 0} valid, ${invalid_numbers?.length || 0} invalid`);
+        break;
+      }
+
+      case "contact_import_failed": {
+        const { task_id, account_id, valid_numbers, invalid_numbers, remaining_numbers, error } = result;
+        
+        // Account failed - update task to retry with different account
+        const { data: task } = await supabase
+          .from("contact_import_tasks")
+          .select("failed_account_ids")
+          .eq("id", task_id)
+          .single();
+        
+        const existingFailed: string[] = task?.failed_account_ids || [];
+        const newFailed = [...existingFailed, account_id];
+        
+        await supabase
+          .from("contact_import_tasks")
+          .update({
+            status: "pending", // Reset to pending so it gets picked up again
+            failed_account_ids: newFailed,
+            remaining_numbers: remaining_numbers || [],
+            valid_numbers: valid_numbers || [],
+            invalid_numbers: invalid_numbers || [],
+            current_account_id: null,
+            result: error || "Account failed, retrying with different account"
+          })
+          .eq("id", task_id);
+        
+        console.log(`[report-task-result] Contact import - account ${account_id} failed, will retry with another account`);
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }
