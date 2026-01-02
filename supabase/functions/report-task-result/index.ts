@@ -1161,12 +1161,12 @@ serve(async (req) => {
       }
 
       case "contact_import_complete": {
-        const { task_id, tag_id, valid_numbers, invalid_numbers } = result;
+        const { task_id, tag_id, valid_numbers, invalid_numbers, account_id } = result;
 
         // Get current task state to merge results (accumulate across multiple reports)
         const { data: existingTask } = await supabase
           .from("contact_import_tasks")
-          .select("status, completed_at, valid_numbers, invalid_numbers, phone_numbers")
+          .select("status, completed_at, valid_numbers, invalid_numbers, phone_numbers, failed_account_ids, current_account_id")
           .eq("id", task_id)
           .maybeSingle();
 
@@ -1185,6 +1185,40 @@ serve(async (req) => {
         const isComplete = totalProcessed >= totalSubmitted;
 
         console.log(`[report-task-result] Contact import progress: ${totalProcessed}/${totalSubmitted} (valid=${mergedValid.length}, invalid=${mergedInvalid.length}, complete=${isComplete})`);
+
+        // CHECK: If all numbers are invalid (0 valid) and we have 10+ numbers checked, 
+        // this might be an account issue - retry with different account
+        const MIN_NUMBERS_FOR_RETRY = 10;
+        const currentAccountId = account_id || existingTask?.current_account_id;
+        const existingFailed: string[] = (existingTask?.failed_account_ids as string[]) || [];
+        
+        if (isComplete && mergedValid.length === 0 && mergedInvalid.length >= MIN_NUMBERS_FOR_RETRY) {
+          // Check if we've already tried with this account
+          if (currentAccountId && !existingFailed.includes(currentAccountId)) {
+            // First time this account failed with all invalid - retry with different account
+            const newFailed = [...existingFailed, currentAccountId];
+            
+            console.log(`[report-task-result] All ${mergedInvalid.length} numbers invalid - switching account (tried: ${newFailed.length})`);
+            
+            // Only retry if we haven't tried too many accounts (max 3 retries)
+            if (newFailed.length < 3) {
+              await supabase
+                .from("contact_import_tasks")
+                .update({
+                  status: "pending",
+                  failed_account_ids: newFailed,
+                  remaining_numbers: existingTask?.phone_numbers || [],
+                  valid_numbers: [],
+                  invalid_numbers: [],
+                  current_account_id: null,
+                  result: `Retrying with different account (attempt ${newFailed.length + 1}/3)`
+                })
+                .eq("id", task_id);
+              
+              break;
+            }
+          }
+        }
 
         // Insert valid contacts (upsert to avoid duplicates)
         if (tag_id && incomingValid.length > 0) {
