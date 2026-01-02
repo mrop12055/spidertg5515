@@ -113,34 +113,27 @@ const Chat: React.FC = () => {
     }
   };
 
-  // Helper to check if conversation should be shown:
-  // Only show conversations where WE sent the first message (campaign initiated)
+  // Helper to check if conversation should be shown - simplified to show all with last_message_at
   const shouldShowConversation = (conv: typeof conversations[0]) => {
-    const convMessages = messages.filter(m => m.conversationId === conv.id);
-    
-    // No messages = don't show
-    if (convMessages.length === 0) return false;
-    
-    // Sort by timestamp
-    const sorted = [...convMessages].sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    
-    // Only show if WE sent the first message (campaign initiated)
-    const weInitiated = sorted[0]?.direction === 'outgoing';
-    
-    return weInitiated;
+    // Show if conversation has any message activity
+    return conv.updatedAt != null;
   };
 
   // Helper to check if conversation has any successful (non-failed) messages
   const hasSuccessfulMessages = (conv: typeof conversations[0]) => {
+    // If we don't have messages in context, still show the conversation
     const convMessages = messages.filter(m => m.conversationId === conv.id);
+    if (convMessages.length === 0) return true; // Assume success if no messages loaded yet
     // Must have at least one message that isn't failed
     return convMessages.some(m => m.status !== 'failed');
   };
 
   // Helper to get latest message timestamp for a conversation
   const getLastMessageTime = (conv: typeof conversations[0]) => {
+    // Use lastMessageAt from the conversation if available (more reliable)
+    if (conv.lastMessageAt) {
+      return new Date(conv.lastMessageAt).getTime();
+    }
     const convMessages = messages.filter(m => m.conversationId === conv.id);
     if (convMessages.length === 0) return new Date(conv.updatedAt).getTime();
     const sorted = [...convMessages].sort((a, b) => 

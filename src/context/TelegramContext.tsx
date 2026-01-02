@@ -151,7 +151,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           assignedAccountId: p.assigned_account_id || undefined,
           lastChecked: p.last_checked ? new Date(p.last_checked) : undefined,
           responseTime: p.response_time || undefined,
-          country: p.country || undefined,
+          country: p.detected_country || p.country || undefined,
         })));
       }
 
@@ -197,6 +197,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           isActive: c.is_active || false,
           createdAt: new Date(c.created_at),
           updatedAt: new Date(c.updated_at),
+          lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : undefined,
           blockedByRecipient: (c as any).blocked_by_recipient || false,
           firstMessageSent: (c as any).first_message_sent ?? false,
         })));
