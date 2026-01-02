@@ -18,9 +18,8 @@ import { CountdownTimer } from '@/components/ui/countdown-timer';
 import { 
   Plus, Play, Pause, Trash2, Edit, Send, Users, CheckCircle, XCircle, 
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
-  AlertCircle, RotateCcw, ChevronDown
+  AlertCircle, RotateCcw, Eye
 } from 'lucide-react';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import AccountScheduler from '@/components/campaigns/AccountScheduler';
 import { format } from 'date-fns';
 import { Campaign } from '@/types/telegram';
@@ -1115,13 +1114,31 @@ username123
               return (
                 <Card key={campaign.id} className={`hover:border-primary/30 transition-all duration-200 ${campaignStuck || campaignFailedDueToAccounts ? 'border-destructive/50' : ''}`}>
                   <CardContent className="p-4">
-                    {/* Compact Header Row */}
-                    <div className="flex items-center justify-between gap-3 mb-3">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <h3 className="font-semibold truncate">{campaign.name}</h3>
-                        <Badge variant={campaign.status === 'running' ? 'default' : campaign.status === 'completed' ? 'secondary' : campaign.status === 'failed' ? 'destructive' : 'outline'} className="shrink-0 text-xs">
-                          {campaign.status}
+                    {/* Header Row */}
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <h3 className="font-semibold truncate text-base">{campaign.name}</h3>
+                        
+                        {/* Status Badge - Enhanced styling */}
+                        <Badge 
+                          className={`shrink-0 text-xs font-semibold px-2.5 py-1 ${
+                            campaign.status === 'running' 
+                              ? 'bg-primary/20 text-primary border border-primary/30 animate-pulse' 
+                              : campaign.status === 'completed' 
+                                ? 'bg-green-500/20 text-green-600 border border-green-500/30' 
+                                : campaign.status === 'failed' 
+                                  ? 'bg-destructive/20 text-destructive border border-destructive/30' 
+                                  : campaign.status === 'paused'
+                                    ? 'bg-yellow-500/20 text-yellow-600 border border-yellow-500/30'
+                                    : 'bg-muted text-muted-foreground border border-border'
+                          }`}
+                        >
+                          {campaign.status === 'running' && <span className="w-1.5 h-1.5 rounded-full bg-primary mr-1.5 animate-pulse" />}
+                          {campaign.status === 'completed' && <CheckCircle className="w-3 h-3 mr-1" />}
+                          {campaign.status === 'failed' && <XCircle className="w-3 h-3 mr-1" />}
+                          {campaign.status?.toUpperCase()}
                         </Badge>
+                        
                         {campaignStuck && (
                           <Badge variant="destructive" className="gap-1 text-xs shrink-0">
                             <AlertCircle className="w-3 h-3" />
@@ -1129,7 +1146,126 @@ username123
                           </Badge>
                         )}
                       </div>
+                      
+                      {/* Stats inline */}
+                      <div className="flex items-center gap-4 text-sm shrink-0">
+                        <span className="text-muted-foreground">{report?.total || campaign.recipientCount} total</span>
+                        <span className="text-primary font-medium">{report?.successful || campaign.sentCount} sent</span>
+                        <span className="text-destructive font-medium">{report?.failed || campaign.failedCount} failed</span>
+                        {report && report.total > 0 && (
+                          <span className="font-bold text-foreground">{Math.round(((report.successful + report.failed) / report.total) * 100)}%</span>
+                        )}
+                      </div>
+                      
+                      {/* Actions */}
                       <div className="flex items-center gap-1 shrink-0">
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-8 w-8" title="View Details">
+                              <Eye className="w-4 h-4" />
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+                            <DialogHeader>
+                              <DialogTitle className="flex items-center gap-2">
+                                {campaign.name}
+                                <Badge 
+                                  className={`text-xs font-semibold px-2 py-0.5 ${
+                                    campaign.status === 'running' 
+                                      ? 'bg-primary/20 text-primary' 
+                                      : campaign.status === 'completed' 
+                                        ? 'bg-green-500/20 text-green-600' 
+                                        : campaign.status === 'failed' 
+                                          ? 'bg-destructive/20 text-destructive' 
+                                          : 'bg-muted text-muted-foreground'
+                                  }`}
+                                >
+                                  {campaign.status?.toUpperCase()}
+                                </Badge>
+                              </DialogTitle>
+                              <DialogDescription>Campaign details and performance</DialogDescription>
+                            </DialogHeader>
+                            
+                            <div className="space-y-4 mt-4">
+                              {/* Message Template */}
+                              <div>
+                                <h4 className="text-sm font-medium mb-2">Message Sent</h4>
+                                <div className="bg-muted/50 px-4 py-3 rounded-lg text-sm font-mono whitespace-pre-wrap break-words border border-border/50">
+                                  {campaign.messageTemplate}
+                                </div>
+                              </div>
+                              
+                              {/* Stop Reason if failed/stuck */}
+                              {(campaignStuck || campaignFailedDueToAccounts || campaign.status === 'failed') && (
+                                <div>
+                                  <h4 className="text-sm font-medium mb-2 text-destructive">Reason Stopped</h4>
+                                  <div className="bg-destructive/10 px-4 py-3 rounded-lg text-sm border border-destructive/30">
+                                    <div className="flex items-center gap-2">
+                                      <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
+                                      <span>
+                                        {campaignFailedDueToAccounts || campaignStuck 
+                                          ? `No usable accounts available. ${report?.pending || 0} messages still pending.`
+                                          : 'Campaign failed due to errors during message sending.'
+                                        }
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                              
+                              {/* Stats Summary */}
+                              <div>
+                                <h4 className="text-sm font-medium mb-2">Statistics</h4>
+                                <div className="grid grid-cols-4 gap-3">
+                                  <div className="bg-muted/30 rounded-lg p-3 text-center">
+                                    <p className="text-2xl font-bold">{report?.total || campaign.recipientCount}</p>
+                                    <p className="text-xs text-muted-foreground">Total</p>
+                                  </div>
+                                  <div className="bg-primary/10 rounded-lg p-3 text-center">
+                                    <p className="text-2xl font-bold text-primary">{report?.successful || campaign.sentCount}</p>
+                                    <p className="text-xs text-muted-foreground">Sent</p>
+                                  </div>
+                                  <div className="bg-destructive/10 rounded-lg p-3 text-center">
+                                    <p className="text-2xl font-bold text-destructive">{report?.failed || campaign.failedCount}</p>
+                                    <p className="text-xs text-muted-foreground">Failed</p>
+                                  </div>
+                                  <div className="bg-yellow-500/10 rounded-lg p-3 text-center">
+                                    <p className="text-2xl font-bold text-yellow-600">{report?.pending || 0}</p>
+                                    <p className="text-xs text-muted-foreground">Pending</p>
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              {/* Account Performance */}
+                              {report?.accountStats && report.accountStats.length > 0 && (
+                                <div>
+                                  <h4 className="text-sm font-medium mb-2">Account Performance</h4>
+                                  <div className="space-y-2">
+                                    {report.accountStats.map((stat) => (
+                                      <div key={stat.accountId} className="flex items-center justify-between bg-muted/30 rounded-lg px-4 py-2.5">
+                                        <span className="font-medium">{stat.firstName || 'Unknown Account'}</span>
+                                        <div className="flex items-center gap-4">
+                                          <span className="text-primary flex items-center gap-1.5">
+                                            <Send className="w-3.5 h-3.5" />
+                                            <span className="font-medium">{stat.uniqueRecipientsSent}</span>
+                                            <span className="text-muted-foreground text-xs">sent</span>
+                                          </span>
+                                          {stat.uniqueRecipientsFailed > 0 && (
+                                            <span className="text-destructive flex items-center gap-1.5">
+                                              <XCircle className="w-3.5 h-3.5" />
+                                              <span className="font-medium">{stat.uniqueRecipientsFailed}</span>
+                                              <span className="text-muted-foreground text-xs">failed</span>
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </DialogContent>
+                        </Dialog>
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setSelectedCampaignId(campaign.id); setIsUploadOpen(true); }} title="Upload Recipients">
                           <FileText className="w-4 h-4" />
                         </Button>
@@ -1144,99 +1280,6 @@ username123
                         </Button>
                       </div>
                     </div>
-
-                    {/* Warning message if stuck */}
-                    {(campaignStuck || campaignFailedDueToAccounts) && (
-                      <p className="text-xs text-destructive mb-2 flex items-center gap-1">
-                        <AlertCircle className="w-3 h-3" />
-                        {campaignFailedDueToAccounts ? `Stopped: ${report?.pending} pending` : 'No usable accounts'}
-                      </p>
-                    )}
-
-                    {/* Progress Bar */}
-                    {report && report.total > 0 && (
-                      <div className="mb-3">
-                        <div className="flex justify-between text-xs text-muted-foreground mb-1">
-                          <span>Progress</span>
-                          <span>{Math.round(((report.successful + report.failed) / report.total) * 100)}%</span>
-                        </div>
-                        <Progress value={((report.successful + report.failed) / report.total) * 100} className="h-1.5" />
-                      </div>
-                    )}
-
-                    {/* Compact Stats Row */}
-                    <div className="flex items-center gap-4 text-sm mb-2">
-                      <div className="flex items-center gap-1.5">
-                        <Users className="w-3.5 h-3.5 text-muted-foreground" />
-                        <span className="font-medium">{report?.total || campaign.recipientCount}</span>
-                        <span className="text-xs text-muted-foreground">total</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Send className="w-3.5 h-3.5 text-primary" />
-                        <span className="font-medium text-primary">{report?.successful || campaign.sentCount}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <XCircle className="w-3.5 h-3.5 text-destructive" />
-                        <span className="font-medium text-destructive">{report?.failed || campaign.failedCount}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <Clock className="w-3.5 h-3.5 text-yellow-600" />
-                        <span className="font-medium text-yellow-600">{report?.pending || 0}</span>
-                      </div>
-                      
-                      {/* Account count - compact */}
-                      {report?.accountStats && report.accountStats.length > 0 && (
-                        <div className="ml-auto flex items-center gap-1.5 text-muted-foreground">
-                          <span className="text-xs">{report.accountStats.length} account{report.accountStats.length > 1 ? 's' : ''}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Collapsible Details Section */}
-                    <Collapsible>
-                      <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full justify-center py-1 border-t border-border/50">
-                        <ChevronDown className="w-3 h-3 transition-transform duration-200 [&[data-state=open]]:rotate-180" />
-                        <span>Show details</span>
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="pt-3 space-y-3 animate-accordion-down">
-                        {/* Full Message Template */}
-                        <div>
-                          <p className="text-xs text-muted-foreground mb-1">Message Template</p>
-                          <div className="bg-muted/50 px-3 py-2 rounded text-sm font-mono text-foreground whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
-                            {campaign.messageTemplate}
-                          </div>
-                        </div>
-
-                        {/* Detailed Account Stats */}
-                        {report?.accountStats && report.accountStats.length > 0 && (
-                          <div>
-                            <p className="text-xs text-muted-foreground mb-2">Account Performance</p>
-                            <div className="space-y-1.5">
-                              {report.accountStats.map((stat) => (
-                                <div key={stat.accountId} className="flex items-center justify-between text-xs bg-muted/30 rounded px-3 py-2">
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <span className="font-medium truncate">{stat.firstName || 'Unknown'}</span>
-                                    <span className="text-muted-foreground truncate">{stat.phoneNumber}</span>
-                                  </div>
-                                  <div className="flex items-center gap-3 shrink-0">
-                                    <span className="text-primary flex items-center gap-1">
-                                      <Send className="w-3 h-3" />
-                                      {stat.uniqueRecipientsSent}
-                                    </span>
-                                    {stat.uniqueRecipientsFailed > 0 && (
-                                      <span className="text-destructive flex items-center gap-1">
-                                        <XCircle className="w-3 h-3" />
-                                        {stat.uniqueRecipientsFailed}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </CollapsibleContent>
-                    </Collapsible>
                   </CardContent>
                 </Card>
               );
