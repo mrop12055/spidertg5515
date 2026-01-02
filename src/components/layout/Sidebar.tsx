@@ -12,7 +12,8 @@ import {
   Phone,
   BookOpen,
   Globe,
-  BarChart3
+  BarChart3,
+  Database
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -34,6 +35,7 @@ const navItems: NavItem[] = [
   { icon: Globe, label: 'Proxy Management', path: '/proxies' },
   { icon: MessageSquare, label: 'Chat', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
+  { icon: Database, label: 'Data', path: '/data' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: BarChart3, label: 'Reports', path: '/reports' },
   { icon: Settings, label: 'Settings', path: '/settings' },
