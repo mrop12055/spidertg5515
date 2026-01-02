@@ -515,9 +515,14 @@ serve(async (req) => {
       case "spambot_check": {
         const { task_id, account_id, status, ban_reason, restricted_until, response } = result;
 
+        // Keep account active even if spambot says "restricted" - it can still chat
+        // Only set to 'banned' if truly banned
+        const finalStatus = status === 'restricted' ? 'active' : status;
+
         // Update account status
         const updateData: Record<string, unknown> = {
-          status: status,
+          status: finalStatus,
+          spambot_status: status, // Store original spambot response
           last_spambot_check: new Date().toISOString(),
         };
         if (ban_reason) updateData.ban_reason = ban_reason;
@@ -538,7 +543,7 @@ serve(async (req) => {
           })
           .eq("id", task_id);
 
-        console.log(`[report-task-result] SpamBot check completed for ${account_id}: ${status}`);
+        console.log(`[report-task-result] SpamBot check completed for ${account_id}: ${status} (status kept as ${finalStatus})`);
         break;
       }
 

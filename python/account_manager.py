@@ -52,8 +52,7 @@ async def check_spambot(client):
         if "no limits" in response_lower or "good news" in response_lower:
             return "active", None, response
         elif "limited" in response_lower or "restricted" in response_lower:
-            # Keep active - account can still chat, just campaign-restricted
-            return "active", None, response
+            return "restricted", None, response
         elif "banned" in response_lower:
             return "banned", response[:200], response
         return "active", None, response
