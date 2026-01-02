@@ -427,61 +427,6 @@ const Data: React.FC = () => {
       />
 
       <div className="space-y-6">
-        {/* Import Progress */}
-        {pendingTasks.length > 0 && (
-          <Card className="border-amber-500/30 bg-amber-500/5">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Loader2 className="w-4 h-4 animate-spin text-amber-500" />
-                Import Progress
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {pendingTasks.map(task => {
-                const submitted = task.phone_numbers?.length || 0;
-                const validCount = task.valid_numbers?.length || 0;
-                const invalidCount = task.invalid_numbers?.length || 0;
-                const processed = validCount + invalidCount;
-                const progress = submitted > 0 ? Math.round((processed / submitted) * 100) : 0;
-                const tagName = tags.find(t => t.id === task.tag_id)?.name || 'Unknown';
-                
-                return (
-                  <div key={task.id} className="p-3 rounded-lg bg-background/50 border border-border/50">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs">{tagName}</Badge>
-                        <span className="text-xs text-muted-foreground">
-                          {task.status === 'pending' ? 'Waiting...' : 'Validating...'}
-                        </span>
-                      </div>
-                      <span className="text-xs font-medium">{progress}%</span>
-                    </div>
-                    
-                    <div className="w-full bg-muted rounded-full h-2 mb-2">
-                      <div 
-                        className="bg-amber-500 h-2 rounded-full transition-all duration-500"
-                        style={{ width: `${progress}%` }}
-                      />
-                    </div>
-                    
-                    <div className="flex items-center gap-4 text-xs">
-                      <span className="text-muted-foreground">
-                        Submitted: <span className="font-medium text-foreground">{submitted}</span>
-                      </span>
-                      <span className="text-emerald-500">
-                        Valid: <span className="font-medium">{validCount}</span>
-                      </span>
-                      <span className="text-red-500">
-                        Invalid: <span className="font-medium">{invalidCount}</span>
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </CardContent>
-          </Card>
-        )}
-
         {/* Tags List */}
         <Card>
           <CardHeader className="pb-3">
