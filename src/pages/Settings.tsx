@@ -258,12 +258,15 @@ const Settings: React.FC = () => {
       
       if (error) throw error;
       
-      toast.success('API credential added successfully');
+      toast.success('API credential added! Now redistributing accounts...');
       setNewApiName('');
       setNewApiId('');
       setNewApiHash('');
       setNewApiType('android');
       setIsAddApiOpen(false);
+      
+      // Auto-redistribute accounts when new API is added
+      await handleRedistribute();
       fetchApiCredentials();
     } catch (error) {
       console.error('Failed to add API credential:', error);
