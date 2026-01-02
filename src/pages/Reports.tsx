@@ -8,6 +8,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
+import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { 
   AlertTriangle, 
@@ -402,8 +403,8 @@ const Reports: React.FC = () => {
                     ) : (
                       <div className="space-y-2">
                         {campaigns.slice(0, 10).map(campaign => {
-                          const progress = campaign.recipient_count > 0 
-                            ? ((campaign.sent_count + campaign.failed_count) / campaign.recipient_count) * 100 
+                          const successRate = campaign.recipient_count > 0 
+                            ? (campaign.sent_count / campaign.recipient_count) * 100 
                             : 0;
                           const pending = campaign.recipient_count - campaign.sent_count - campaign.failed_count;
                           
@@ -420,7 +421,7 @@ const Reports: React.FC = () => {
                                   <span className="text-muted-foreground">{campaign.recipient_count} total</span>
                                   <span className="text-primary font-medium">{campaign.sent_count} sent</span>
                                   <span className="text-destructive font-medium">{campaign.failed_count} failed</span>
-                                  <span className="font-bold text-foreground">{progress.toFixed(0)}%</span>
+                                  <span className="font-bold text-foreground">{successRate.toFixed(0)}%</span>
                                 </div>
                                 
                                 {/* View Details Button */}
@@ -473,8 +474,8 @@ const Reports: React.FC = () => {
                                           </div>
                                         )}
                                         <div className="flex justify-between">
-                                          <span className="text-muted-foreground">Progress</span>
-                                          <span className="font-bold">{progress.toFixed(1)}%</span>
+                                          <span className="text-muted-foreground">Success rate</span>
+                                          <span className="font-bold">{successRate.toFixed(1)}%</span>
                                         </div>
                                       </div>
                                     </div>
@@ -569,43 +570,43 @@ const Reports: React.FC = () => {
                 <CardDescription>Distribution of recipient statuses across all campaigns</CardDescription>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div className="p-4 rounded-lg border bg-yellow-500/5 border-yellow-500/20">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Clock className="w-5 h-5 text-yellow-500" />
-                      <span className="font-medium">Pending</span>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="p-4 rounded-lg border bg-muted/30 border-border/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Clock className="w-5 h-5 text-muted-foreground" />
+                        <span className="font-medium">Pending</span>
+                      </div>
+                      <p className="text-3xl font-bold">{pendingRecipientCount}</p>
+                      <p className="text-sm text-muted-foreground mt-1">Waiting to send</p>
                     </div>
-                    <p className="text-3xl font-bold">{pendingRecipientCount}</p>
-                    <p className="text-sm text-muted-foreground mt-1">Waiting to send</p>
-                  </div>
-                  
-                  <div className="p-4 rounded-lg border bg-green-500/5 border-green-500/20">
-                    <div className="flex items-center gap-2 mb-2">
-                      <CheckCircle className="w-5 h-5 text-green-500" />
-                      <span className="font-medium">Sent</span>
+
+                    <div className="p-4 rounded-lg border bg-primary/5 border-primary/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <CheckCircle className="w-5 h-5 text-primary" />
+                        <span className="font-medium">Sent</span>
+                      </div>
+                      <p className="text-3xl font-bold">{sentRecipients}</p>
+                      <p className="text-sm text-muted-foreground mt-1">Successfully sent</p>
                     </div>
-                    <p className="text-3xl font-bold">{sentRecipients}</p>
-                    <p className="text-sm text-muted-foreground mt-1">Successfully delivered</p>
-                  </div>
-                  
-                  <div className="p-4 rounded-lg border bg-red-500/5 border-red-500/20">
-                    <div className="flex items-center gap-2 mb-2">
-                      <XCircle className="w-5 h-5 text-red-500" />
-                      <span className="font-medium">Failed</span>
+
+                    <div className="p-4 rounded-lg border bg-destructive/5 border-destructive/20">
+                      <div className="flex items-center gap-2 mb-2">
+                        <XCircle className="w-5 h-5 text-destructive" />
+                        <span className="font-medium">Failed</span>
+                      </div>
+                      <p className="text-3xl font-bold">{failedRecipientCount}</p>
+                      <p className="text-sm text-muted-foreground mt-1">Delivery failed</p>
                     </div>
-                    <p className="text-3xl font-bold">{failedRecipientCount}</p>
-                    <p className="text-sm text-muted-foreground mt-1">Delivery failed</p>
-                  </div>
-                  
-                  <div className="p-4 rounded-lg border bg-gray-500/5 border-gray-500/20">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Ban className="w-5 h-5 text-gray-500" />
-                      <span className="font-medium">Invalid</span>
+
+                    <div className="p-4 rounded-lg border bg-muted/20 border-border/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Ban className="w-5 h-5 text-muted-foreground" />
+                        <span className="font-medium">Invalid</span>
+                      </div>
+                      <p className="text-3xl font-bold">{recipientStats.find(r => r.status === 'invalid')?.count || 0}</p>
+                      <p className="text-sm text-muted-foreground mt-1">Invalid numbers</p>
                     </div>
-                    <p className="text-3xl font-bold">{recipientStats.find(r => r.status === 'invalid')?.count || 0}</p>
-                    <p className="text-sm text-muted-foreground mt-1">Invalid numbers</p>
                   </div>
-                </div>
               </CardContent>
             </Card>
           </TabsContent>
@@ -613,10 +614,10 @@ const Reports: React.FC = () => {
           {/* Campaigns Tab */}
           <TabsContent value="campaigns" className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-              <Card className="bg-blue-500/5 border-blue-500/20">
+              <Card className="bg-primary/5 border-primary/20">
                 <CardContent className="pt-4">
                   <div className="flex items-center gap-3">
-                    <PlayCircle className="w-8 h-8 text-blue-500" />
+                    <PlayCircle className="w-8 h-8 text-primary" />
                     <div>
                       <p className="text-2xl font-bold">{runningCampaigns.length}</p>
                       <p className="text-sm text-muted-foreground">Running</p>
@@ -624,10 +625,10 @@ const Reports: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
-              <Card className="bg-green-500/5 border-green-500/20">
+              <Card className="bg-muted/30 border-border/50">
                 <CardContent className="pt-4">
                   <div className="flex items-center gap-3">
-                    <CheckCircle className="w-8 h-8 text-green-500" />
+                    <CheckCircle className="w-8 h-8 text-muted-foreground" />
                     <div>
                       <p className="text-2xl font-bold">{completedCampaigns.length}</p>
                       <p className="text-sm text-muted-foreground">Completed</p>
@@ -635,10 +636,10 @@ const Reports: React.FC = () => {
                   </div>
                 </CardContent>
               </Card>
-              <Card className="bg-red-500/5 border-red-500/20">
+              <Card className="bg-destructive/5 border-destructive/20">
                 <CardContent className="pt-4">
                   <div className="flex items-center gap-3">
-                    <XCircle className="w-8 h-8 text-red-500" />
+                    <XCircle className="w-8 h-8 text-destructive" />
                     <div>
                       <p className="text-2xl font-bold">{failedCampaigns.length}</p>
                       <p className="text-sm text-muted-foreground">Failed</p>
@@ -920,12 +921,15 @@ const Reports: React.FC = () => {
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className={`p-4 rounded-lg border ${activeAccounts.length > 0 ? 'bg-green-500/5 border-green-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
+                  <div className={cn(
+                    "p-4 rounded-lg border",
+                    activeAccounts.length > 0 ? "bg-primary/5 border-primary/20" : "bg-destructive/5 border-destructive/20",
+                  )}>
                     <div className="flex items-center gap-2 mb-2">
                       {activeAccounts.length > 0 ? (
-                        <CheckCircle className="w-5 h-5 text-green-500" />
+                        <CheckCircle className="w-5 h-5 text-primary" />
                       ) : (
-                        <XCircle className="w-5 h-5 text-red-500" />
+                        <XCircle className="w-5 h-5 text-destructive" />
                       )}
                       <span className="font-medium">Account Availability</span>
                     </div>
@@ -936,14 +940,21 @@ const Reports: React.FC = () => {
                     </p>
                   </div>
 
-                  <div className={`p-4 rounded-lg border ${capacityPercent < 80 ? 'bg-green-500/5 border-green-500/20' : capacityPercent < 95 ? 'bg-yellow-500/5 border-yellow-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
+                  <div className={cn(
+                    "p-4 rounded-lg border",
+                    capacityPercent < 80
+                      ? "bg-primary/5 border-primary/20"
+                      : capacityPercent < 95
+                        ? "bg-muted/30 border-border/50"
+                        : "bg-destructive/5 border-destructive/20",
+                  )}>
                     <div className="flex items-center gap-2 mb-2">
                       {capacityPercent < 80 ? (
-                        <CheckCircle className="w-5 h-5 text-green-500" />
+                        <CheckCircle className="w-5 h-5 text-primary" />
                       ) : capacityPercent < 95 ? (
-                        <AlertCircle className="w-5 h-5 text-yellow-500" />
+                        <AlertCircle className="w-5 h-5 text-muted-foreground" />
                       ) : (
-                        <XCircle className="w-5 h-5 text-red-500" />
+                        <XCircle className="w-5 h-5 text-destructive" />
                       )}
                       <span className="font-medium">Daily Capacity</span>
                     </div>
@@ -956,14 +967,21 @@ const Reports: React.FC = () => {
                     </p>
                   </div>
 
-                  <div className={`p-4 rounded-lg border ${deliveryRate >= 90 ? 'bg-green-500/5 border-green-500/20' : deliveryRate >= 70 ? 'bg-yellow-500/5 border-yellow-500/20' : 'bg-red-500/5 border-red-500/20'}`}>
+                  <div className={cn(
+                    "p-4 rounded-lg border",
+                    deliveryRate >= 90
+                      ? "bg-primary/5 border-primary/20"
+                      : deliveryRate >= 70
+                        ? "bg-muted/30 border-border/50"
+                        : "bg-destructive/5 border-destructive/20",
+                  )}>
                     <div className="flex items-center gap-2 mb-2">
                       {deliveryRate >= 90 ? (
-                        <CheckCircle className="w-5 h-5 text-green-500" />
+                        <CheckCircle className="w-5 h-5 text-primary" />
                       ) : deliveryRate >= 70 ? (
-                        <AlertCircle className="w-5 h-5 text-yellow-500" />
+                        <AlertCircle className="w-5 h-5 text-muted-foreground" />
                       ) : (
-                        <XCircle className="w-5 h-5 text-red-500" />
+                        <XCircle className="w-5 h-5 text-destructive" />
                       )}
                       <span className="font-medium">Delivery Health</span>
                     </div>

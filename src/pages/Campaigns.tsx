@@ -18,13 +18,14 @@ import { CountdownTimer } from '@/components/ui/countdown-timer';
 import { 
   Plus, Play, Pause, Trash2, Edit, Send, Users, CheckCircle, XCircle, 
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
-  AlertCircle, RotateCcw, Eye
+  AlertCircle, RotateCcw, Eye, TrendingUp
 } from 'lucide-react';
 import AccountScheduler from '@/components/campaigns/AccountScheduler';
 import { format } from 'date-fns';
 import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { cn } from '@/lib/utils';
 
 interface BulkMessageTemplate {
   id: string;
@@ -1112,19 +1113,30 @@ username123
               const campaignFailedDueToAccounts = campaign.status === 'failed' && hasPending;
               
               return (
-                <Card key={campaign.id} className={`group relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 ${campaignStuck || campaignFailedDueToAccounts ? 'border-destructive/50 bg-destructive/5' : 'hover:border-primary/40'}`}>
+                <Card
+                  key={campaign.id}
+                  className={cn(
+                    "group relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:shadow-primary/5",
+                    campaignStuck || campaignFailedDueToAccounts
+                      ? "border-border/60 bg-card"
+                      : "hover:border-primary/40",
+                  )}
+                >
                   {/* Status indicator line at top */}
-                  <div className={`absolute top-0 left-0 right-0 h-1 ${
-                    campaign.status === 'running' 
-                      ? 'bg-gradient-to-r from-primary via-primary/80 to-primary animate-pulse' 
-                      : campaign.status === 'completed' 
-                        ? 'bg-gradient-to-r from-green-500 to-green-400' 
-                        : campaign.status === 'failed' 
-                          ? 'bg-gradient-to-r from-destructive to-destructive/80' 
-                          : campaign.status === 'paused'
-                            ? 'bg-gradient-to-r from-yellow-500 to-yellow-400'
-                            : 'bg-gradient-to-r from-muted to-muted-foreground/20'
-                  }`} />
+                  <div
+                    className={cn(
+                      "absolute top-0 left-0 right-0 h-1",
+                      campaign.status === "running"
+                        ? "bg-gradient-to-r from-primary via-primary/80 to-primary animate-pulse"
+                        : campaign.status === "completed"
+                          ? "bg-gradient-to-r from-primary/70 to-primary/40"
+                          : campaign.status === "failed"
+                            ? "bg-gradient-to-r from-destructive/80 to-destructive/50"
+                            : campaign.status === "paused"
+                              ? "bg-gradient-to-r from-muted-foreground/40 to-muted-foreground/20"
+                              : "bg-gradient-to-r from-muted to-muted-foreground/20",
+                    )}
+                  />
                   
                   <CardContent className="p-5 pt-6">
                     <div className="flex items-center justify-between gap-4">
@@ -1181,7 +1193,7 @@ username123
                           const total = report?.total || campaign.recipientCount || 0;
                           const sent = report?.successful ?? campaign.sentCount ?? 0;
                           const failed = report?.failed ?? campaign.failedCount ?? 0;
-                          const percent = total > 0 ? Math.round(((sent + failed) / total) * 100) : 0;
+                          const percent = total > 0 ? Math.round((sent / total) * 100) : 0;
                           
                           return (
                             <>
@@ -1259,29 +1271,35 @@ username123
                                 const total = report?.total || campaign.recipientCount || 0;
                                 const sent = report?.successful ?? campaign.sentCount ?? 0;
                                 const failed = report?.failed ?? campaign.failedCount ?? 0;
-                                const pending = report?.pending ?? (total - sent - failed);
+                                const pending = report?.pending ?? Math.max(0, total - sent - failed);
+                                const successRate = total > 0 ? Math.round((sent / total) * 100) : 0;
                                 
                                 return (
-                                  <div className="grid grid-cols-4 gap-3">
+                                  <div className="grid grid-cols-5 gap-3">
                                     <div className="bg-muted/40 rounded-xl p-4 text-center border border-border/50">
                                       <Users className="w-5 h-5 mx-auto mb-2 text-muted-foreground" />
                                       <p className="text-2xl font-bold">{total}</p>
-                                      <p className="text-xs text-muted-foreground mt-1">Total Recipients</p>
+                                      <p className="text-xs text-muted-foreground mt-1">Total</p>
                                     </div>
                                     <div className="bg-primary/10 rounded-xl p-4 text-center border border-primary/20">
                                       <Send className="w-5 h-5 mx-auto mb-2 text-primary" />
                                       <p className="text-2xl font-bold text-primary">{sent}</p>
-                                      <p className="text-xs text-muted-foreground mt-1">Delivered</p>
+                                      <p className="text-xs text-muted-foreground mt-1">Sent</p>
                                     </div>
                                     <div className="bg-destructive/10 rounded-xl p-4 text-center border border-destructive/20">
                                       <XCircle className="w-5 h-5 mx-auto mb-2 text-destructive" />
                                       <p className="text-2xl font-bold text-destructive">{failed}</p>
                                       <p className="text-xs text-muted-foreground mt-1">Failed</p>
                                     </div>
-                                    <div className="bg-yellow-500/10 rounded-xl p-4 text-center border border-yellow-500/20">
-                                      <Clock className="w-5 h-5 mx-auto mb-2 text-yellow-600" />
-                                      <p className="text-2xl font-bold text-yellow-600">{pending > 0 ? pending : 0}</p>
+                                    <div className="bg-muted/30 rounded-xl p-4 text-center border border-border/50">
+                                      <Clock className="w-5 h-5 mx-auto mb-2 text-muted-foreground" />
+                                      <p className="text-2xl font-bold">{pending > 0 ? pending : 0}</p>
                                       <p className="text-xs text-muted-foreground mt-1">Pending</p>
+                                    </div>
+                                    <div className="bg-muted/50 rounded-xl p-4 text-center border border-border/50">
+                                      <TrendingUp className="w-5 h-5 mx-auto mb-2 text-muted-foreground" />
+                                      <p className="text-2xl font-bold">{successRate}%</p>
+                                      <p className="text-xs text-muted-foreground mt-1">Success Rate</p>
                                     </div>
                                   </div>
                                 );
