@@ -113,8 +113,22 @@ const Campaigns: React.FC = () => {
   });
 
   // Fetch campaign reports + auto-sync pending recipients based on already-sent messages
+  // Use a ref to prevent stale closures and avoid re-creating the callback
+  const campaignsRef = React.useRef(campaigns);
+  campaignsRef.current = campaigns;
+  
+  const accountsRef = React.useRef(accounts);
+  accountsRef.current = accounts;
+
   const fetchReports = useCallback(async () => {
-    for (const campaign of campaigns) {
+    const currentCampaigns = campaignsRef.current;
+    const currentAccounts = accountsRef.current;
+    
+    // Batch all reports together to do a single state update
+    const newReports = new Map<string, CampaignReport>();
+    let needsRefresh = false;
+    
+    for (const campaign of currentCampaigns) {
       const { data: recipients, error } = await supabase
         .from('campaign_recipients')
         .select('id, status, phone_number, name, sent_by_account_id, failed_reason')
@@ -274,7 +288,7 @@ const Campaigns: React.FC = () => {
       
       // Build account stats array with account info
       const accountStats: AccountRecipientStats[] = Array.from(accountStatsMap.entries()).map(([accountId, stats]) => {
-        const account = accounts.find(a => a.id === accountId);
+        const account = currentAccounts.find(a => a.id === accountId);
         return {
           accountId,
           phoneNumber: account?.phoneNumber || 'Unknown',
@@ -322,26 +336,35 @@ const Campaigns: React.FC = () => {
           .from('campaigns')
           .update({ status: 'completed', updated_at: new Date().toISOString() })
           .eq('id', campaign.id);
-        // Refresh campaigns data to reflect the status change
-        refreshData();
+        needsRefresh = true;
       }
 
-      setCampaignReports((prev) => new Map(prev).set(campaign.id, report));
+      newReports.set(campaign.id, report);
     }
-  }, [campaigns]);
+    
+    // Single state update with all reports
+    setCampaignReports(newReports);
+    
+    // Only refresh if we actually changed campaign status
+    if (needsRefresh) {
+      refreshData();
+    }
+  }, [refreshData]);
 
+  // Fetch reports on mount and when campaigns change
+  const campaignsLength = campaigns.length;
   useEffect(() => {
-    if (campaigns.length > 0) fetchReports();
-  }, [campaigns.length, fetchReports]);
+    if (campaignsLength > 0) fetchReports();
+  }, [campaignsLength, fetchReports]);
 
   // Keep progress fresh while viewing this page
   useEffect(() => {
-    if (campaigns.length === 0) return;
+    if (campaignsLength === 0) return;
     const interval = window.setInterval(() => {
       fetchReports();
     }, 5000);
     return () => window.clearInterval(interval);
-  }, [campaigns.length, fetchReports]);
+  }, [campaignsLength, fetchReports]);
 
   // Fetch unique recipients per account for today (for campaign account selection display)
   const fetchAccountUniqueRecipients = useCallback(async () => {
