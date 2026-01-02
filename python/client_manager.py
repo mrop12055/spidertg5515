@@ -217,44 +217,84 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
             # Username - direct lookup
             entity = await client.get_entity(recipient)
         else:
-            # Phone number - need to import as contact first
-            from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
-            from telethon.tl.types import InputPhoneContact
+            # Phone number - try multiple methods
+            from telethon.tl.functions.contacts import ImportContactsRequest, GetContactsRequest, AddContactRequest
+            from telethon.tl.types import InputPhoneContact, InputUser
             import random
             
-            # First, try to get entity directly (if already in contacts)
-            try:
-                entity = await client.get_entity(recipient)
-                print(f"    📱 Found in existing contacts")
-            except:
-                pass
+            # Normalize phone number - ensure it starts with +
+            phone = recipient.strip()
+            if not phone.startswith("+"):
+                phone = "+" + phone
             
-            # If not found, import as contact
+            print(f"    📱 Looking up phone: {phone}")
+            
+            # Method 1: Try to get entity directly (if already in contacts)
+            try:
+                entity = await client.get_entity(phone)
+                print(f"    ✓ Found in existing contacts")
+            except Exception as e:
+                print(f"    ℹ Not in contacts, will import: {type(e).__name__}")
+            
+            # Method 2: Import as contact if not found
             if not entity:
+                unique_id = random.randint(0, 2**62)
                 contact = InputPhoneContact(
-                    client_id=random.randint(0, 2**31 - 1),
-                    phone=recipient,
-                    first_name="Contact",
-                    last_name=str(random.randint(1000, 9999))  # Unique identifier
+                    client_id=unique_id,
+                    phone=phone,
+                    first_name="TG",
+                    last_name=str(unique_id)[-4:]
                 )
+                
+                print(f"    📱 Importing contact...")
                 result = await client(ImportContactsRequest([contact]))
+                
+                print(f"    📱 Import result: {len(result.users)} users, {len(result.imported)} imported, {len(result.retry_contacts)} retry")
                 
                 if result.users:
                     entity = result.users[0]
-                    print(f"    📱 Imported contact: {entity.first_name} (ID: {entity.id})")
+                    print(f"    ✓ Imported: {entity.first_name} {entity.last_name or ''} (ID: {entity.id})")
+                elif result.imported:
+                    # Contact was imported but user object not returned - fetch it
+                    print(f"    📱 Contact imported, fetching entity...")
+                    try:
+                        await asyncio.sleep(0.5)  # Small delay
+                        entity = await client.get_entity(phone)
+                        print(f"    ✓ Got entity after import")
+                    except Exception as e:
+                        print(f"    ⚠ Could not get entity after import: {e}")
                 elif result.retry_contacts:
-                    # Phone exists but privacy settings prevent import
-                    return False, "User privacy prevents contact import (try username instead)"
+                    return False, "User has privacy restrictions on phone lookup"
                 else:
-                    # Not on Telegram OR privacy settings block it
-                    return False, "User not found on Telegram (or privacy settings block phone lookup)"
+                    # Try one more method - AddContactRequest (newer API)
+                    print(f"    📱 Trying AddContactRequest...")
+                    try:
+                        from telethon.tl.functions.contacts import ResolvePhoneRequest
+                        resolved = await client(ResolvePhoneRequest(phone=phone))
+                        if resolved and resolved.users:
+                            entity = resolved.users[0]
+                            print(f"    ✓ Resolved via ResolvePhoneRequest")
+                    except Exception as e:
+                        print(f"    ℹ ResolvePhoneRequest not available or failed: {type(e).__name__}")
+            
+            # Method 3: Try searching in contacts after import
+            if not entity:
+                print(f"    📱 Searching contacts...")
+                try:
+                    contacts_result = await client(GetContactsRequest(hash=0))
+                    for user in contacts_result.users:
+                        if user.phone and phone.replace("+", "") in user.phone.replace("+", ""):
+                            entity = user
+                            print(f"    ✓ Found in contacts list: {user.first_name}")
+                            break
+                except Exception as e:
+                    print(f"    ⚠ GetContacts failed: {e}")
         
         if not entity:
-            return False, "Could not resolve recipient"
+            return False, "User not found - phone may not be registered on Telegram or has strict privacy"
         
         # Send the message
         if media_url:
-            # Download media and send
             try:
                 import httpx
                 async with httpx.AsyncClient() as http:
@@ -276,11 +316,13 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         return False, f"Too many requests (caused by SendMessageRequest)"
     except Exception as e:
         error_str = str(e)
-        # Provide cleaner error messages
+        print(f"    ⚠ Send error: {error_str}")
         if "No user has" in error_str:
             return False, "Username not found"
         if "private" in error_str.lower():
             return False, "User has private profile"
+        if "FLOOD" in error_str.upper():
+            return False, "Rate limited by Telegram"
         return False, error_str
 
 
