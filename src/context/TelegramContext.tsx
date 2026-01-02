@@ -180,28 +180,58 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
 
       // Fetch conversations (limit to recent ones for performance)
-      const { data: conversationsData } = await supabase
-        .from('conversations')
-        .select('*')
-        .order('updated_at', { ascending: false })
-        .limit(200);
+      // NOTE: We avoid "select *" here because the REST query can timeout under load.
+      const conversationsSelect =
+        'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,created_at,updated_at,blocked_by_recipient,first_message_sent' as const;
+
+      const fetchConversations = async () => {
+        // Prefer sorting by last_message_at and filtering out nulls for better query performance.
+        const primary = await supabase
+          .from('conversations')
+          .select(conversationsSelect)
+          .not('last_message_at', 'is', null)
+          .order('last_message_at', { ascending: false })
+          .limit(200);
+
+        if (!primary.error) return primary;
+
+        // Fallback if the DB is under load/timeouts
+        const fallback = await supabase
+          .from('conversations')
+          .select(conversationsSelect)
+          .order('created_at', { ascending: false })
+          .limit(50);
+
+        return fallback;
+      };
+
+      const { data: conversationsData, error: conversationsError } = await fetchConversations();
+
+      if (conversationsError) {
+        console.error('Error fetching conversations:', conversationsError);
+        toast.error('Failed to load conversations', {
+          description: conversationsError.message,
+        });
+      }
 
       if (conversationsData) {
-        setConversations(conversationsData.map(c => ({
-          id: c.id,
-          accountId: c.account_id,
-          recipientPhone: c.recipient_phone || '',
-          recipientName: c.recipient_name || undefined,
-          recipientUsername: c.recipient_username || undefined,
-          recipientAvatar: c.recipient_avatar || undefined,
-          unreadCount: c.unread_count || 0,
-          isActive: c.is_active || false,
-          createdAt: new Date(c.created_at),
-          updatedAt: new Date(c.updated_at),
-          lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : undefined,
-          blockedByRecipient: (c as any).blocked_by_recipient || false,
-          firstMessageSent: (c as any).first_message_sent ?? false,
-        })));
+        setConversations(
+          conversationsData.map((c: any) => ({
+            id: c.id,
+            accountId: c.account_id,
+            recipientPhone: c.recipient_phone || '',
+            recipientName: c.recipient_name || undefined,
+            recipientUsername: c.recipient_username || undefined,
+            recipientAvatar: c.recipient_avatar || undefined,
+            unreadCount: c.unread_count || 0,
+            isActive: c.is_active || false,
+            createdAt: new Date(c.created_at),
+            updatedAt: new Date(c.updated_at || c.created_at),
+            lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : undefined,
+            blockedByRecipient: (c as any).blocked_by_recipient || false,
+            firstMessageSent: (c as any).first_message_sent ?? false,
+          }))
+        );
       }
 
       // Fetch messages
