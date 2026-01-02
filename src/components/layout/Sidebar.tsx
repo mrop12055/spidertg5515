@@ -35,6 +35,7 @@ const navItems: NavItem[] = [
   { icon: Globe, label: 'Proxy Management', path: '/proxies' },
   { icon: MessageSquare, label: 'Chat', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
+  { icon: Users, label: 'Seats', path: '/seats' },
   { icon: Database, label: 'Data', path: '/data' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: BarChart3, label: 'Reports', path: '/reports' },
