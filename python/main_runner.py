@@ -161,22 +161,34 @@ async def setup_message_handler(client, account_id: str):
     async def handler(event):
         try:
             sender = await event.get_sender()
-            if sender:
-                content = event.message.text or "[Media message]"
-                media_type = "image" if event.message.photo else None
-                if event.message.photo:
-                    content = "[Photo] " + (event.message.text or "")
-                
-                await report_result("incoming_message", {
-                    "account_id": account_id,
-                    "sender_id": sender.id,
-                    "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
-                    "sender_username": sender.username,
-                    "content": content,
-                    "media_type": media_type
-                })
+            if not sender:
+                return
+            
+            # Skip channel/group messages - only handle private chats
+            from telethon.tl.types import User
+            if not isinstance(sender, User):
+                return
+            
+            content = event.message.text or "[Media message]"
+            media_type = "image" if event.message.photo else None
+            if event.message.photo:
+                content = "[Photo] " + (event.message.text or "")
+            
+            # Get sender name safely
+            first_name = getattr(sender, 'first_name', None) or ''
+            last_name = getattr(sender, 'last_name', None) or ''
+            sender_name = f"{first_name} {last_name}".strip() or str(sender.id)
+            
+            await report_result("incoming_message", {
+                "account_id": account_id,
+                "sender_id": sender.id,
+                "sender_name": sender_name,
+                "sender_username": getattr(sender, 'username', None),
+                "content": content,
+                "media_type": media_type
+            })
         except Exception as e:
-            print(f"    ⚠ Handler error: {e}")
+            print(f"    [WARN] Handler error: {e}")
 
 
 # ========== MAIN LOOP ==========
