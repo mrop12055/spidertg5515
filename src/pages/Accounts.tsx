@@ -810,11 +810,97 @@ const Accounts: React.FC = () => {
 
   // Verify Login - checks actual Telegram connection via Python runner
   const [isVerifyingLogin, setIsVerifyingLogin] = useState(false);
+  const [verifyProgress, setVerifyProgress] = useState<{
+    total: number;
+    checked: number;
+    active: number;
+    disconnected: number;
+    banned: number;
+    errors: string[];
+  }>({ total: 0, checked: 0, active: 0, disconnected: 0, banned: 0, errors: [] });
+  const [showVerifyLogs, setShowVerifyLogs] = useState(false);
+  
+  // Realtime subscription for verify_session tasks
+  useEffect(() => {
+    if (!isVerifyingLogin) return;
+    
+    const channel = supabase
+      .channel('verify-tasks')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'account_check_tasks' },
+        (payload) => {
+          const task = payload.new as any;
+          if (task && task.task_type === 'verify_session' && (task.status === 'completed' || task.status === 'failed')) {
+            setVerifyProgress(prev => {
+              const newChecked = prev.checked + 1;
+              let newActive = prev.active;
+              let newDisconnected = prev.disconnected;
+              let newBanned = prev.banned;
+              const newErrors = [...prev.errors];
+              
+              // Parse result to get status
+              const result = task.result;
+              if (result) {
+                if (result.includes('active') || result.includes('success')) {
+                  newActive++;
+                } else if (result.includes('banned') || result.includes('deleted') || result.includes('deactivated')) {
+                  newBanned++;
+                  const account = accounts.find(a => a.id === task.account_id);
+                  newErrors.push(`${account?.phoneNumber || task.account_id}: ${result}`);
+                } else if (result.includes('disconnected') || result.includes('error') || result.includes('failed')) {
+                  newDisconnected++;
+                  const account = accounts.find(a => a.id === task.account_id);
+                  newErrors.push(`${account?.phoneNumber || task.account_id}: ${result}`);
+                } else {
+                  // Unknown result, count as disconnected
+                  newDisconnected++;
+                }
+              } else if (task.status === 'failed') {
+                newDisconnected++;
+                const account = accounts.find(a => a.id === task.account_id);
+                newErrors.push(`${account?.phoneNumber || task.account_id}: Task failed`);
+              }
+              
+              // Check if all done
+              if (newChecked >= prev.total) {
+                setIsVerifyingLogin(false);
+                toast.success(`Verification complete: ${newActive} active, ${newDisconnected} offline, ${newBanned} banned`);
+                refreshData();
+              }
+              
+              return {
+                total: prev.total,
+                checked: newChecked,
+                active: newActive,
+                disconnected: newDisconnected,
+                banned: newBanned,
+                errors: newErrors.slice(-50), // Keep last 50 errors
+              };
+            });
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isVerifyingLogin, accounts, refreshData]);
   
   const handleVerifyLogin = async () => {
     if (selectedIds.size === 0) return;
     
     setIsVerifyingLogin(true);
+    setShowVerifyLogs(true);
+    setVerifyProgress({
+      total: selectedIds.size,
+      checked: 0,
+      active: 0,
+      disconnected: 0,
+      banned: 0,
+      errors: [],
+    });
     
     try {
       const tasks = Array.from(selectedIds).map(accountId => ({
@@ -829,13 +915,7 @@ const Accounts: React.FC = () => {
       
       if (error) throw error;
       
-      toast.success(`Queued ${selectedIds.size} account(s) for login verification. Run Python script to check.`);
-      
-      // Watch for completion
-      setTimeout(() => {
-        setIsVerifyingLogin(false);
-        refreshData();
-      }, 15000);
+      toast.info(`Verifying ${selectedIds.size} account(s)... Check logs panel for progress.`);
     } catch (error) {
       console.error('Error queuing login verification:', error);
       toast.error('Failed to queue verification');
@@ -1463,10 +1543,22 @@ const Accounts: React.FC = () => {
                   Verify File
                 </Button>
                 
-                <Button variant="outline" size="sm" onClick={handleVerifyLogin} disabled={isVerifyingLogin} className="gap-1.5">
-                  {isVerifyingLogin ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-                  Verify Login
-                </Button>
+                <div className="flex items-center gap-1">
+                  <Button variant="outline" size="sm" onClick={handleVerifyLogin} disabled={isVerifyingLogin} className="gap-1.5">
+                    {isVerifyingLogin ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+                    Verify Login
+                  </Button>
+                  {(isVerifyingLogin || verifyProgress.checked > 0) && (
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={() => setShowVerifyLogs(!showVerifyLogs)}
+                      className="h-8 w-8 p-0"
+                    >
+                      <FileText className="w-3.5 h-3.5" />
+                    </Button>
+                  )}
+                </div>
                 
                 <Button variant="outline" size="sm" onClick={handleSpamBotCheck} disabled={isSpamBotChecking} className="gap-1.5">
                   <Shield className="w-3.5 h-3.5" />
@@ -1556,6 +1648,94 @@ const Accounts: React.FC = () => {
                   Dismiss
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Verify Login Progress & Logs */}
+        {showVerifyLogs && (isVerifyingLogin || verifyProgress.checked > 0) && (
+          <Card className="border-primary/30 bg-primary/5">
+            <CardHeader className="pb-2 pt-3 px-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  {isVerifyingLogin && <Loader2 className="w-4 h-4 animate-spin" />}
+                  <Wifi className="w-4 h-4" />
+                  Verify Login Progress
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-muted-foreground">
+                    {verifyProgress.checked}/{verifyProgress.total}
+                  </span>
+                  <Button 
+                    variant="ghost" 
+                    size="sm" 
+                    onClick={() => {
+                      setShowVerifyLogs(false);
+                      if (!isVerifyingLogin) {
+                        setVerifyProgress({ total: 0, checked: 0, active: 0, disconnected: 0, banned: 0, errors: [] });
+                      }
+                    }}
+                    className="h-6 w-6 p-0"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="px-4 pb-3 pt-0">
+              <Progress 
+                value={verifyProgress.total > 0 ? (verifyProgress.checked / verifyProgress.total) * 100 : 0} 
+                className="h-2 mb-3" 
+              />
+              
+              {/* Stats Grid */}
+              <div className="grid grid-cols-3 gap-3 mb-3">
+                <div className="flex items-center gap-2 p-2 rounded-md bg-status-active/10 border border-status-active/20">
+                  <CheckCircle className="w-4 h-4 text-status-active" />
+                  <div>
+                    <div className="text-lg font-bold text-status-active">{verifyProgress.active}</div>
+                    <div className="text-xs text-muted-foreground">Active</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 p-2 rounded-md bg-status-disconnected/10 border border-status-disconnected/20">
+                  <WifiOff className="w-4 h-4 text-status-disconnected" />
+                  <div>
+                    <div className="text-lg font-bold text-status-disconnected">{verifyProgress.disconnected}</div>
+                    <div className="text-xs text-muted-foreground">Offline</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 p-2 rounded-md bg-status-banned/10 border border-status-banned/20">
+                  <XCircle className="w-4 h-4 text-status-banned" />
+                  <div>
+                    <div className="text-lg font-bold text-status-banned">{verifyProgress.banned}</div>
+                    <div className="text-xs text-muted-foreground">Banned</div>
+                  </div>
+                </div>
+              </div>
+              
+              {/* Error Logs */}
+              {verifyProgress.errors.length > 0 && (
+                <Collapsible>
+                  <CollapsibleTrigger asChild>
+                    <Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground hover:text-foreground">
+                      <span className="flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 text-destructive" />
+                        {verifyProgress.errors.length} error(s)
+                      </span>
+                      <ChevronDown className="w-3.5 h-3.5" />
+                    </Button>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="mt-2 max-h-32 overflow-y-auto rounded-md bg-muted/50 p-2 space-y-1">
+                      {verifyProgress.errors.map((err, i) => (
+                        <div key={i} className="text-xs font-mono text-destructive/80 break-all">
+                          {err}
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
+              )}
             </CardContent>
           </Card>
         )}
