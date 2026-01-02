@@ -204,42 +204,60 @@ serve(async (req) => {
 
           console.log(`[report-task-result] Message sent successfully for recipient ${campaign_recipient_id || message_id}`);
         } else {
-          // Check if error indicates account restriction or contact limit
-          // "User not found" often means Telegram's contact import limit is hit
-          const restrictionErrors = [
+          // Separate PERMANENT ban errors from TEMPORARY restrictions
+          const permanentBanErrors = [
+            'deactivated',
+            'user_deactivated', 
+            'input_user_deactivated',
+            'auth_key_unregistered',
+            'session_revoked',
+            'phone_number_banned',
+            'deleted',  // Account deleted
+            'account deleted'
+          ];
+          
+          const temporaryRestrictionErrors = [
             'restricted',
             'flood',
             'too many requests',
             'wait',
             'spam',
-            'banned',
-            'deactivated',
-            'phone_number_banned',
-            'user_deactivated',
-            'auth_key_unregistered',
-            'session_revoked',
             'user_is_blocked',
             'user not found',  // Contact import limit hit
             'no user',
-            'peer_id_invalid',
-            'input_user_deactivated'
+            'peer_id_invalid'
           ];
           
           const errorLower = (error || '').toLowerCase();
-          const isRestricted = restrictionErrors.some(r => errorLower.includes(r));
+          const isPermanentBan = permanentBanErrors.some(r => errorLower.includes(r));
+          const isTemporaryRestriction = temporaryRestrictionErrors.some(r => errorLower.includes(r));
           
-          if (isRestricted && account_id) {
-            console.log(`[report-task-result] Account ${account_id} campaign-restricted for 24h (stays active for chat)`);
+          if (isPermanentBan && account_id) {
+            // PERMANENT BAN - mark account as banned, cannot be used anymore
+            console.log(`[report-task-result] Account ${account_id} PERMANENTLY BANNED: ${error}`);
             
-            // Set campaign restriction timer but keep account active (can still chat)
             await supabase
               .from("telegram_accounts")
               .update({
-                // status stays 'active' - account can still chat with existing contacts
+                status: "banned",
+                ban_reason: error,
+              })
+              .eq("id", account_id);
+          } else if (isTemporaryRestriction && account_id) {
+            // TEMPORARY - 24h cooldown but stays active for chat
+            console.log(`[report-task-result] Account ${account_id} campaign-restricted for 24h (stays active for chat)`);
+            
+            await supabase
+              .from("telegram_accounts")
+              .update({
                 ban_reason: error,
                 restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               })
               .eq("id", account_id);
+          }
+          
+          // Reassign recipients if account was banned OR temporarily restricted
+          if ((isPermanentBan || isTemporaryRestriction) && account_id) {
             
             // Get pending recipients from this account
             const { data: pendingRecipients } = await supabase
