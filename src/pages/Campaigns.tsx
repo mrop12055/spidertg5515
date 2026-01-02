@@ -792,12 +792,12 @@ const Campaigns: React.FC = () => {
                     </div>
                     <div className="space-y-2">
                       <Label>Assign to Seat (Worker)</Label>
-                      <Select value={selectedSeatId || ''} onValueChange={(v) => setSelectedSeatId(v || null)}>
+                      <Select value={selectedSeatId || 'none'} onValueChange={(v) => setSelectedSeatId(v === 'none' ? null : v)}>
                         <SelectTrigger>
                           <SelectValue placeholder="Select a seat (optional)" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="">No seat (admin only)</SelectItem>
+                          <SelectItem value="none">No seat (admin only)</SelectItem>
                           {seats.map(seat => (
                             <SelectItem key={seat.id} value={seat.id}>{seat.name}</SelectItem>
                           ))}
