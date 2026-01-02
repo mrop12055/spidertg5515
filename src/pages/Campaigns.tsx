@@ -18,8 +18,9 @@ import { CountdownTimer } from '@/components/ui/countdown-timer';
 import { 
   Plus, Play, Pause, Trash2, Edit, Send, Users, CheckCircle, XCircle, 
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
-  AlertCircle, RotateCcw
+  AlertCircle, RotateCcw, ChevronDown
 } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import AccountScheduler from '@/components/campaigns/AccountScheduler';
 import { format } from 'date-fns';
 import { Campaign } from '@/types/telegram';
@@ -1152,11 +1153,6 @@ username123
                       </p>
                     )}
 
-                    {/* Message Preview - Compact */}
-                    <div className="bg-muted/50 px-3 py-2 rounded text-sm font-mono text-muted-foreground truncate mb-3">
-                      {campaign.messageTemplate.length > 80 ? campaign.messageTemplate.slice(0, 80) + '...' : campaign.messageTemplate}
-                    </div>
-
                     {/* Progress Bar */}
                     {report && report.total > 0 && (
                       <div className="mb-3">
@@ -1169,7 +1165,7 @@ username123
                     )}
 
                     {/* Compact Stats Row */}
-                    <div className="flex items-center gap-4 text-sm">
+                    <div className="flex items-center gap-4 text-sm mb-2">
                       <div className="flex items-center gap-1.5">
                         <Users className="w-3.5 h-3.5 text-muted-foreground" />
                         <span className="font-medium">{report?.total || campaign.recipientCount}</span>
@@ -1196,18 +1192,51 @@ username123
                       )}
                     </div>
 
-                    {/* Compact Account Stats - only show on hover/expand if needed */}
-                    {report?.accountStats && report.accountStats.length > 0 && report.accountStats.length <= 3 && (
-                      <div className="mt-2 pt-2 border-t border-border/50 flex flex-wrap gap-2">
-                        {report.accountStats.map((stat) => (
-                          <div key={stat.accountId} className="flex items-center gap-1.5 text-xs bg-muted/30 rounded px-2 py-1">
-                            <span className="truncate max-w-[100px]">{stat.firstName || stat.phoneNumber}</span>
-                            <span className="text-primary">✓{stat.uniqueRecipientsSent}</span>
-                            {stat.uniqueRecipientsFailed > 0 && <span className="text-destructive">✗{stat.uniqueRecipientsFailed}</span>}
+                    {/* Collapsible Details Section */}
+                    <Collapsible>
+                      <CollapsibleTrigger className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors w-full justify-center py-1 border-t border-border/50">
+                        <ChevronDown className="w-3 h-3 transition-transform duration-200 [&[data-state=open]]:rotate-180" />
+                        <span>Show details</span>
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="pt-3 space-y-3 animate-accordion-down">
+                        {/* Full Message Template */}
+                        <div>
+                          <p className="text-xs text-muted-foreground mb-1">Message Template</p>
+                          <div className="bg-muted/50 px-3 py-2 rounded text-sm font-mono text-foreground whitespace-pre-wrap break-words max-h-32 overflow-y-auto">
+                            {campaign.messageTemplate}
                           </div>
-                        ))}
-                      </div>
-                    )}
+                        </div>
+
+                        {/* Detailed Account Stats */}
+                        {report?.accountStats && report.accountStats.length > 0 && (
+                          <div>
+                            <p className="text-xs text-muted-foreground mb-2">Account Performance</p>
+                            <div className="space-y-1.5">
+                              {report.accountStats.map((stat) => (
+                                <div key={stat.accountId} className="flex items-center justify-between text-xs bg-muted/30 rounded px-3 py-2">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <span className="font-medium truncate">{stat.firstName || 'Unknown'}</span>
+                                    <span className="text-muted-foreground truncate">{stat.phoneNumber}</span>
+                                  </div>
+                                  <div className="flex items-center gap-3 shrink-0">
+                                    <span className="text-primary flex items-center gap-1">
+                                      <Send className="w-3 h-3" />
+                                      {stat.uniqueRecipientsSent}
+                                    </span>
+                                    {stat.uniqueRecipientsFailed > 0 && (
+                                      <span className="text-destructive flex items-center gap-1">
+                                        <XCircle className="w-3 h-3" />
+                                        {stat.uniqueRecipientsFailed}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CollapsibleContent>
+                    </Collapsible>
                   </CardContent>
                 </Card>
               );
