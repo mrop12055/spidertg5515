@@ -18,10 +18,10 @@ Deno.serve(async (req) => {
 
     console.log('Starting cleanup of old chats...');
 
-    // Calculate 7 days ago
-    const sevenDaysAgo = new Date();
-    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-    const cutoffDate = sevenDaysAgo.toISOString();
+    // Calculate 3 days ago
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    const cutoffDate = threeDaysAgo.toISOString();
 
     console.log(`Deleting conversations and messages older than: ${cutoffDate}`);
 
