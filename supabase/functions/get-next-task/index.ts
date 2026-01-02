@@ -673,8 +673,9 @@ serve(async (req) => {
             .eq("id", task.id);
         } else {
           // Find an active account that hasn't failed for this task
-          // Use activeAccounts (includes temporarily restricted) for contact validation - they can still check contacts
-          const eligibleAccounts = (activeAccounts || []).filter((a: { id: string }) => !failedAccountIds.includes(a.id));
+          // Use allUsableAccounts for contact validation - includes temporarily restricted accounts
+          // Contact import is READ-ONLY (doesn't send messages) so restricted accounts can do it
+          const eligibleAccounts = (allUsableAccounts || []).filter((a: { id: string }) => !failedAccountIds.includes(a.id));
           
           if (eligibleAccounts.length === 0) {
             // No accounts left - fail the task
