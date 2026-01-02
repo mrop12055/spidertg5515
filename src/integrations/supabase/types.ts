@@ -281,6 +281,60 @@ export type Database = {
         }
         Relationships: []
       }
+      contact_import_tasks: {
+        Row: {
+          account_id: string
+          completed_at: string | null
+          created_at: string
+          id: string
+          invalid_numbers: string[] | null
+          phone_numbers: string[]
+          result: string | null
+          status: string
+          tag_id: string
+          valid_numbers: string[] | null
+        }
+        Insert: {
+          account_id: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          invalid_numbers?: string[] | null
+          phone_numbers: string[]
+          result?: string | null
+          status?: string
+          tag_id: string
+          valid_numbers?: string[] | null
+        }
+        Update: {
+          account_id?: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          invalid_numbers?: string[] | null
+          phone_numbers?: string[]
+          result?: string | null
+          status?: string
+          tag_id?: string
+          valid_numbers?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "contact_import_tasks_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "contact_import_tasks_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "contact_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       contact_tags: {
         Row: {
           created_at: string
