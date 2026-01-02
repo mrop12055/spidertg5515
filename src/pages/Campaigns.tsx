@@ -1112,150 +1112,213 @@ username123
               const campaignFailedDueToAccounts = campaign.status === 'failed' && hasPending;
               
               return (
-                <Card key={campaign.id} className={`hover:border-primary/30 transition-all duration-200 ${campaignStuck || campaignFailedDueToAccounts ? 'border-destructive/50' : ''}`}>
-                  <CardContent className="p-4">
-                    {/* Header Row */}
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-3 min-w-0 flex-1">
-                        <h3 className="font-semibold truncate text-base">{campaign.name}</h3>
+                <Card key={campaign.id} className={`group relative overflow-hidden transition-all duration-300 hover:shadow-lg hover:shadow-primary/5 ${campaignStuck || campaignFailedDueToAccounts ? 'border-destructive/50 bg-destructive/5' : 'hover:border-primary/40'}`}>
+                  {/* Status indicator line at top */}
+                  <div className={`absolute top-0 left-0 right-0 h-1 ${
+                    campaign.status === 'running' 
+                      ? 'bg-gradient-to-r from-primary via-primary/80 to-primary animate-pulse' 
+                      : campaign.status === 'completed' 
+                        ? 'bg-gradient-to-r from-green-500 to-green-400' 
+                        : campaign.status === 'failed' 
+                          ? 'bg-gradient-to-r from-destructive to-destructive/80' 
+                          : campaign.status === 'paused'
+                            ? 'bg-gradient-to-r from-yellow-500 to-yellow-400'
+                            : 'bg-gradient-to-r from-muted to-muted-foreground/20'
+                  }`} />
+                  
+                  <CardContent className="p-5 pt-6">
+                    <div className="flex items-center justify-between gap-4">
+                      {/* Left Section - Name & Status */}
+                      <div className="flex items-center gap-4 min-w-0 flex-1">
+                        {/* Status Icon */}
+                        <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${
+                          campaign.status === 'running' 
+                            ? 'bg-primary/15 text-primary' 
+                            : campaign.status === 'completed' 
+                              ? 'bg-green-500/15 text-green-600' 
+                              : campaign.status === 'failed' 
+                                ? 'bg-destructive/15 text-destructive' 
+                                : campaign.status === 'paused'
+                                  ? 'bg-yellow-500/15 text-yellow-600'
+                                  : 'bg-muted text-muted-foreground'
+                        }`}>
+                          {campaign.status === 'running' && <Play className="w-5 h-5" />}
+                          {campaign.status === 'completed' && <CheckCircle className="w-5 h-5" />}
+                          {campaign.status === 'failed' && <XCircle className="w-5 h-5" />}
+                          {campaign.status === 'paused' && <Pause className="w-5 h-5" />}
+                          {campaign.status === 'draft' && <FileText className="w-5 h-5" />}
+                        </div>
                         
-                        {/* Status Badge - Enhanced styling */}
-                        <Badge 
-                          className={`shrink-0 text-xs font-semibold px-2.5 py-1 ${
-                            campaign.status === 'running' 
-                              ? 'bg-primary/20 text-primary border border-primary/30 animate-pulse' 
-                              : campaign.status === 'completed' 
-                                ? 'bg-green-500/20 text-green-600 border border-green-500/30' 
-                                : campaign.status === 'failed' 
-                                  ? 'bg-destructive/20 text-destructive border border-destructive/30' 
-                                  : campaign.status === 'paused'
-                                    ? 'bg-yellow-500/20 text-yellow-600 border border-yellow-500/30'
-                                    : 'bg-muted text-muted-foreground border border-border'
-                          }`}
-                        >
-                          {campaign.status === 'running' && <span className="w-1.5 h-1.5 rounded-full bg-primary mr-1.5 animate-pulse" />}
-                          {campaign.status === 'completed' && <CheckCircle className="w-3 h-3 mr-1" />}
-                          {campaign.status === 'failed' && <XCircle className="w-3 h-3 mr-1" />}
-                          {campaign.status?.toUpperCase()}
-                        </Badge>
-                        
-                        {campaignStuck && (
-                          <Badge variant="destructive" className="gap-1 text-xs shrink-0">
-                            <AlertCircle className="w-3 h-3" />
-                            Stuck
-                          </Badge>
-                        )}
+                        <div className="min-w-0">
+                          <h3 className="font-semibold text-base truncate group-hover:text-primary transition-colors">{campaign.name}</h3>
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <span className={`text-xs font-medium uppercase tracking-wider ${
+                              campaign.status === 'running' 
+                                ? 'text-primary' 
+                                : campaign.status === 'completed' 
+                                  ? 'text-green-600' 
+                                  : campaign.status === 'failed' 
+                                    ? 'text-destructive' 
+                                    : campaign.status === 'paused'
+                                      ? 'text-yellow-600'
+                                      : 'text-muted-foreground'
+                            }`}>
+                              {campaign.status}
+                            </span>
+                            {campaignStuck && (
+                              <span className="text-xs text-destructive flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3" />
+                                Stuck
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
                       
-                      {/* Stats inline */}
-                      <div className="flex items-center gap-4 text-sm shrink-0">
-                        <span className="text-muted-foreground">{report?.total || campaign.recipientCount} total</span>
-                        <span className="text-primary font-medium">{report?.successful || campaign.sentCount} sent</span>
-                        <span className="text-destructive font-medium">{report?.failed || campaign.failedCount} failed</span>
-                        {report && report.total > 0 && (
-                          <span className="font-bold text-foreground">{Math.round(((report.successful + report.failed) / report.total) * 100)}%</span>
-                        )}
+                      {/* Center Section - Stats */}
+                      <div className="hidden md:flex items-center gap-6 shrink-0">
+                        <div className="text-center px-3">
+                          <p className="text-lg font-bold text-foreground">{report?.total || campaign.recipientCount}</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
+                        </div>
+                        <div className="w-px h-8 bg-border" />
+                        <div className="text-center px-3">
+                          <p className="text-lg font-bold text-primary">{report?.successful || campaign.sentCount}</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Sent</p>
+                        </div>
+                        <div className="w-px h-8 bg-border" />
+                        <div className="text-center px-3">
+                          <p className="text-lg font-bold text-destructive">{report?.failed || campaign.failedCount}</p>
+                          <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Failed</p>
+                        </div>
+                        <div className="w-px h-8 bg-border" />
+                        <div className="text-center px-4 py-1 rounded-lg bg-muted/50">
+                          <p className="text-xl font-bold text-foreground">
+                            {report && report.total > 0 ? Math.round(((report.successful + report.failed) / report.total) * 100) : 0}%
+                          </p>
+                        </div>
                       </div>
                       
-                      {/* Actions */}
-                      <div className="flex items-center gap-1 shrink-0">
+                      {/* Right Section - Actions */}
+                      <div className="flex items-center gap-0.5 shrink-0">
                         <Dialog>
                           <DialogTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8" title="View Details">
+                            <Button variant="ghost" size="sm" className="h-9 px-3 gap-2 text-muted-foreground hover:text-foreground">
                               <Eye className="w-4 h-4" />
+                              <span className="hidden lg:inline text-xs">Details</span>
                             </Button>
                           </DialogTrigger>
-                          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-                            <DialogHeader>
-                              <DialogTitle className="flex items-center gap-2">
-                                {campaign.name}
-                                <Badge 
-                                  className={`text-xs font-semibold px-2 py-0.5 ${
-                                    campaign.status === 'running' 
-                                      ? 'bg-primary/20 text-primary' 
-                                      : campaign.status === 'completed' 
-                                        ? 'bg-green-500/20 text-green-600' 
-                                        : campaign.status === 'failed' 
-                                          ? 'bg-destructive/20 text-destructive' 
-                                          : 'bg-muted text-muted-foreground'
-                                  }`}
-                                >
-                                  {campaign.status?.toUpperCase()}
-                                </Badge>
-                              </DialogTitle>
-                              <DialogDescription>Campaign details and performance</DialogDescription>
+                          <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto">
+                            <DialogHeader className="pb-4 border-b">
+                              <div className="flex items-center gap-3">
+                                <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
+                                  campaign.status === 'running' 
+                                    ? 'bg-primary/15 text-primary' 
+                                    : campaign.status === 'completed' 
+                                      ? 'bg-green-500/15 text-green-600' 
+                                      : campaign.status === 'failed' 
+                                        ? 'bg-destructive/15 text-destructive' 
+                                        : 'bg-muted text-muted-foreground'
+                                }`}>
+                                  {campaign.status === 'running' && <Play className="w-6 h-6" />}
+                                  {campaign.status === 'completed' && <CheckCircle className="w-6 h-6" />}
+                                  {campaign.status === 'failed' && <XCircle className="w-6 h-6" />}
+                                  {campaign.status === 'paused' && <Pause className="w-6 h-6" />}
+                                  {campaign.status === 'draft' && <FileText className="w-6 h-6" />}
+                                </div>
+                                <div>
+                                  <DialogTitle className="text-xl">{campaign.name}</DialogTitle>
+                                  <DialogDescription className="flex items-center gap-2 mt-1">
+                                    <span className={`text-xs font-semibold uppercase tracking-wider ${
+                                      campaign.status === 'running' ? 'text-primary' 
+                                        : campaign.status === 'completed' ? 'text-green-600' 
+                                        : campaign.status === 'failed' ? 'text-destructive' 
+                                        : 'text-muted-foreground'
+                                    }`}>
+                                      {campaign.status}
+                                    </span>
+                                    <span className="text-muted-foreground">•</span>
+                                    <span>Campaign Performance</span>
+                                  </DialogDescription>
+                                </div>
+                              </div>
                             </DialogHeader>
                             
-                            <div className="space-y-4 mt-4">
-                              {/* Message Template */}
-                              <div>
-                                <h4 className="text-sm font-medium mb-2">Message Sent</h4>
-                                <div className="bg-muted/50 px-4 py-3 rounded-lg text-sm font-mono whitespace-pre-wrap break-words border border-border/50">
-                                  {campaign.messageTemplate}
+                            <div className="space-y-6 pt-4">
+                              {/* Stats Summary */}
+                              <div className="grid grid-cols-4 gap-3">
+                                <div className="bg-muted/40 rounded-xl p-4 text-center border border-border/50">
+                                  <Users className="w-5 h-5 mx-auto mb-2 text-muted-foreground" />
+                                  <p className="text-2xl font-bold">{report?.total || campaign.recipientCount}</p>
+                                  <p className="text-xs text-muted-foreground mt-1">Total Recipients</p>
+                                </div>
+                                <div className="bg-primary/10 rounded-xl p-4 text-center border border-primary/20">
+                                  <Send className="w-5 h-5 mx-auto mb-2 text-primary" />
+                                  <p className="text-2xl font-bold text-primary">{report?.successful || campaign.sentCount}</p>
+                                  <p className="text-xs text-muted-foreground mt-1">Delivered</p>
+                                </div>
+                                <div className="bg-destructive/10 rounded-xl p-4 text-center border border-destructive/20">
+                                  <XCircle className="w-5 h-5 mx-auto mb-2 text-destructive" />
+                                  <p className="text-2xl font-bold text-destructive">{report?.failed || campaign.failedCount}</p>
+                                  <p className="text-xs text-muted-foreground mt-1">Failed</p>
+                                </div>
+                                <div className="bg-yellow-500/10 rounded-xl p-4 text-center border border-yellow-500/20">
+                                  <Clock className="w-5 h-5 mx-auto mb-2 text-yellow-600" />
+                                  <p className="text-2xl font-bold text-yellow-600">{report?.pending || 0}</p>
+                                  <p className="text-xs text-muted-foreground mt-1">Pending</p>
                                 </div>
                               </div>
                               
                               {/* Stop Reason if failed/stuck */}
                               {(campaignStuck || campaignFailedDueToAccounts || campaign.status === 'failed') && (
-                                <div>
-                                  <h4 className="text-sm font-medium mb-2 text-destructive">Reason Stopped</h4>
-                                  <div className="bg-destructive/10 px-4 py-3 rounded-lg text-sm border border-destructive/30">
-                                    <div className="flex items-center gap-2">
-                                      <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
-                                      <span>
+                                <div className="bg-destructive/10 rounded-xl p-4 border border-destructive/30">
+                                  <div className="flex items-start gap-3">
+                                    <AlertCircle className="w-5 h-5 text-destructive shrink-0 mt-0.5" />
+                                    <div>
+                                      <h4 className="text-sm font-semibold text-destructive mb-1">Campaign Stopped</h4>
+                                      <p className="text-sm text-muted-foreground">
                                         {campaignFailedDueToAccounts || campaignStuck 
                                           ? `No usable accounts available. ${report?.pending || 0} messages still pending.`
                                           : 'Campaign failed due to errors during message sending.'
                                         }
-                                      </span>
+                                      </p>
                                     </div>
                                   </div>
                                 </div>
                               )}
-                              
-                              {/* Stats Summary */}
+
+                              {/* Message Template */}
                               <div>
-                                <h4 className="text-sm font-medium mb-2">Statistics</h4>
-                                <div className="grid grid-cols-4 gap-3">
-                                  <div className="bg-muted/30 rounded-lg p-3 text-center">
-                                    <p className="text-2xl font-bold">{report?.total || campaign.recipientCount}</p>
-                                    <p className="text-xs text-muted-foreground">Total</p>
-                                  </div>
-                                  <div className="bg-primary/10 rounded-lg p-3 text-center">
-                                    <p className="text-2xl font-bold text-primary">{report?.successful || campaign.sentCount}</p>
-                                    <p className="text-xs text-muted-foreground">Sent</p>
-                                  </div>
-                                  <div className="bg-destructive/10 rounded-lg p-3 text-center">
-                                    <p className="text-2xl font-bold text-destructive">{report?.failed || campaign.failedCount}</p>
-                                    <p className="text-xs text-muted-foreground">Failed</p>
-                                  </div>
-                                  <div className="bg-yellow-500/10 rounded-lg p-3 text-center">
-                                    <p className="text-2xl font-bold text-yellow-600">{report?.pending || 0}</p>
-                                    <p className="text-xs text-muted-foreground">Pending</p>
-                                  </div>
+                                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                                  <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                                  Message Template
+                                </h4>
+                                <div className="bg-muted/30 px-4 py-3 rounded-xl text-sm whitespace-pre-wrap break-words border border-border/50 max-h-40 overflow-y-auto">
+                                  {campaign.messageTemplate}
                                 </div>
                               </div>
                               
                               {/* Account Performance */}
                               {report?.accountStats && report.accountStats.length > 0 && (
                                 <div>
-                                  <h4 className="text-sm font-medium mb-2">Account Performance</h4>
+                                  <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                                    <Users className="w-4 h-4 text-muted-foreground" />
+                                    Account Performance
+                                  </h4>
                                   <div className="space-y-2">
                                     {report.accountStats.map((stat) => (
-                                      <div key={stat.accountId} className="flex items-center justify-between bg-muted/30 rounded-lg px-4 py-2.5">
+                                      <div key={stat.accountId} className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3 border border-border/50">
                                         <span className="font-medium">{stat.firstName || 'Unknown Account'}</span>
                                         <div className="flex items-center gap-4">
-                                          <span className="text-primary flex items-center gap-1.5">
-                                            <Send className="w-3.5 h-3.5" />
-                                            <span className="font-medium">{stat.uniqueRecipientsSent}</span>
-                                            <span className="text-muted-foreground text-xs">sent</span>
-                                          </span>
+                                          <div className="flex items-center gap-2 text-primary">
+                                            <Send className="w-4 h-4" />
+                                            <span className="font-semibold">{stat.uniqueRecipientsSent}</span>
+                                          </div>
                                           {stat.uniqueRecipientsFailed > 0 && (
-                                            <span className="text-destructive flex items-center gap-1.5">
-                                              <XCircle className="w-3.5 h-3.5" />
-                                              <span className="font-medium">{stat.uniqueRecipientsFailed}</span>
-                                              <span className="text-muted-foreground text-xs">failed</span>
-                                            </span>
+                                            <div className="flex items-center gap-2 text-destructive">
+                                              <XCircle className="w-4 h-4" />
+                                              <span className="font-semibold">{stat.uniqueRecipientsFailed}</span>
+                                            </div>
                                           )}
                                         </div>
                                       </div>
@@ -1266,16 +1329,41 @@ username123
                             </div>
                           </DialogContent>
                         </Dialog>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setSelectedCampaignId(campaign.id); setIsUploadOpen(true); }} title="Upload Recipients">
+                        
+                        <div className="w-px h-6 bg-border mx-1" />
+                        
+                        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setSelectedCampaignId(campaign.id); setIsUploadOpen(true); }} title="Upload Recipients">
                           <FileText className="w-4 h-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setSelectedReportCampaign(campaign); setIsReportOpen(true); }} title="View Report">
+                        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setSelectedReportCampaign(campaign); setIsReportOpen(true); }} title="View Report">
                           <MessageSquare className="w-4 h-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleStatusToggle(campaign)} disabled={campaign.status === 'completed' || isStarting === campaign.id}>
-                          {isStarting === campaign.id ? <Loader2 className="w-4 h-4 animate-spin" /> : campaign.status === 'running' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                        
+                        <div className="w-px h-6 bg-border mx-1" />
+                        
+                        <Button 
+                          variant={campaign.status === 'running' ? 'secondary' : 'default'}
+                          size="sm" 
+                          className="h-9 px-3 gap-2"
+                          onClick={() => handleStatusToggle(campaign)} 
+                          disabled={campaign.status === 'completed' || isStarting === campaign.id}
+                        >
+                          {isStarting === campaign.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : campaign.status === 'running' ? (
+                            <>
+                              <Pause className="w-4 h-4" />
+                              <span className="hidden lg:inline text-xs">Pause</span>
+                            </>
+                          ) : (
+                            <>
+                              <Play className="w-4 h-4" />
+                              <span className="hidden lg:inline text-xs">Start</span>
+                            </>
+                          )}
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => deleteCampaign(campaign.id)}>
+                        
+                        <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => deleteCampaign(campaign.id)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
