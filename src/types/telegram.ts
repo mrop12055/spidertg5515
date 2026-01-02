@@ -79,6 +79,8 @@ export interface Conversation {
   createdAt: Date;
   updatedAt: Date;
   blockedByRecipient?: boolean;
+  /** True when our side sent the first message (campaign/user-initiated). */
+  firstMessageSent?: boolean;
 }
 
 export interface Campaign {
