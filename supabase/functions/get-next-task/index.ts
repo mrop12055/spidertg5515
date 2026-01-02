@@ -383,9 +383,14 @@ serve(async (req) => {
         }
       }
 
+      // Calculate delay based on settings (backend controls all timing)
+      const waitSeconds = Math.floor(
+        Math.random() * (MESSAGE_DELAY_MAX_SECONDS - MESSAGE_DELAY_MIN_SECONDS + 1) + MESSAGE_DELAY_MIN_SECONDS
+      );
+      
       return new Response(JSON.stringify({
         task: "wait",
-        seconds: 1,
+        seconds: waitSeconds,
         accounts: accounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
           id: a.id,
           phone_number: a.phone_number,
