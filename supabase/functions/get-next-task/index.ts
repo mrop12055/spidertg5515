@@ -595,7 +595,7 @@ serve(async (req) => {
         .from("account_check_tasks")
         .select("*, telegram_accounts(*, telegram_api_credentials(*))")
         .eq("status", "pending")
-        .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo"])
+        .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "sync_profile"])
         .limit(1);
 
       if (checkTasks && checkTasks.length > 0) {

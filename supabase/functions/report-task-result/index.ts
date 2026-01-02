@@ -811,7 +811,20 @@ serve(async (req) => {
       }
 
       case "account_connected": {
-        const { account_id, first_name, last_name, username, telegram_id, phone, avatar_base64 } = result;
+        const { account_id, first_name, last_name, username, telegram_id, phone, avatar_base64, skip_profile_update } = result;
+
+        // If skip_profile_update is true, only update last_active
+        if (skip_profile_update) {
+          await supabase
+            .from("telegram_accounts")
+            .update({
+              status: "active",
+              last_active: new Date().toISOString(),
+            })
+            .eq("id", account_id);
+          console.log(`[report-task-result] Account ${account_id} connected (cached profile)`);
+          break;
+        }
 
         const updateData: Record<string, unknown> = {
           status: "active",
@@ -829,7 +842,7 @@ serve(async (req) => {
           .update(updateData)
           .eq("id", account_id);
 
-        console.log(`[report-task-result] Account ${account_id} connected`);
+        console.log(`[report-task-result] Account ${account_id} connected with profile sync`);
         break;
       }
 
@@ -945,6 +958,22 @@ serve(async (req) => {
           .eq("id", task_id);
 
         console.log(`[report-task-result] Photo change ${success ? "completed" : "failed"} for ${account_id}`);
+        break;
+      }
+
+      case "sync_profile": {
+        const { task_id, account_id, success, error } = result;
+
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: success ? "completed" : "failed",
+            result: success ? "Profile synced" : error,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Profile sync ${success ? "completed" : "failed"} for ${account_id}`);
         break;
       }
 

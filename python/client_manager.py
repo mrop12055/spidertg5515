@@ -37,8 +37,16 @@ def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
         return None
 
 
-async def get_or_create_client(account: dict, setup_handler=None) -> Optional[TelegramClient]:
-    """Get existing client or create new one with unique device fingerprint"""
+async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False) -> Optional[TelegramClient]:
+    """
+    Get existing client or create new one with unique device fingerprint.
+    
+    Args:
+        account: Account data dict
+        setup_handler: Optional handler for incoming messages
+        skip_avatar: If True, skip avatar download for faster connection (default True)
+        force_profile_sync: If True, always fetch and report profile data even if cached
+    """
     account_id = account["id"]
     
     if account_id in active_clients:
@@ -51,6 +59,14 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
                     setattr(client, "_telegramcrm_handler_installed", True)
                 except Exception as e:
                     print(f"  ⚠ Failed to set up handler for {account.get('phone_number', 'unknown')}: {e}")
+            
+            # Handle force profile sync on cached client
+            if force_profile_sync:
+                try:
+                    await _sync_profile(client, account_id, skip_avatar=False)
+                except Exception as e:
+                    print(f"  ⚠ Profile sync error: {e}")
+            
             return client
     
     session_data = account.get("session_data")
@@ -123,18 +139,46 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         
         active_clients[account_id] = client
         
-        # Report connection
+        # Check if we already have profile data cached
+        has_cached_profile = account.get("first_name") or account.get("username")
+        
+        # Skip profile fetch if cached and not forcing sync (FAST MODE)
+        if has_cached_profile and not force_profile_sync:
+            print(f"  ✓ Connected (cached profile): {account['phone_number']}")
+            # Just report connection without profile update
+            await report_result("account_connected", {
+                "account_id": account_id,
+                "skip_profile_update": True
+            })
+        else:
+            # Fetch profile (normal or force sync mode)
+            await _sync_profile(client, account_id, skip_avatar=skip_avatar)
+        
+        print(f"  ✓ Connected: {account['phone_number']}")
+        return client
+    except Exception as e:
+        print(f"  ⚠ Failed to connect {account['phone_number']}: {e}")
+        return None
+
+
+async def _sync_profile(client: TelegramClient, account_id: str, skip_avatar: bool = True):
+    """Fetch and report account profile data"""
+    try:
         me = await client.get_me()
         if me:
             avatar_base64 = None
-            try:
-                photos = await client.get_profile_photos(me, limit=1)
-                if photos:
-                    photo_bytes = await client.download_media(photos[0], file=bytes)
-                    if photo_bytes:
-                        avatar_base64 = base64.b64encode(photo_bytes).decode('utf-8')
-            except:
-                pass
+            
+            # Only download avatar if not skipping
+            if not skip_avatar:
+                try:
+                    photos = await client.get_profile_photos(me, limit=1)
+                    if photos:
+                        photo_bytes = await client.download_media(photos[0], file=bytes)
+                        if photo_bytes:
+                            avatar_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+                            print(f"    📷 Downloaded avatar for {me.phone}")
+                except Exception as e:
+                    print(f"    ⚠ Avatar download failed: {e}")
             
             await report_result("account_connected", {
                 "account_id": account_id,
@@ -145,12 +189,8 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
                 "phone": me.phone,
                 "avatar_base64": avatar_base64
             })
-        
-        print(f"  ✓ Connected: {account['phone_number']}")
-        return client
     except Exception as e:
-        print(f"  ⚠ Failed to connect {account['phone_number']}: {e}")
-        return None
+        print(f"  ⚠ Profile sync error: {e}")
 
 
 async def get_next_task(runner: str = None) -> dict:
