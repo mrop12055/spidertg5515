@@ -72,8 +72,6 @@ async def main_loop():
                 delay_after = task.get("delay_after", 30)  # Default 30 sec delay
                 content = msg.get("content", "")
                 
-                print(f"  ⏱ Delay after this message: {delay_after}s")
-                
                 client = await get_or_create_client(account)
                 if client and recipient:
                     print(f"  📨 Sending to {recipient}...")
@@ -84,6 +82,7 @@ async def main_loop():
                     )
                     
                     # Report result with full details for conversation creation
+                    # Backend handles all timing and account rotation
                     await report_result("send", {
                         "success": success,
                         "error": error,
@@ -95,14 +94,10 @@ async def main_loop():
                     })
                     
                     if success:
-                        print(f"    ✓ Sent! Waiting {delay_after}s before next message...")
-                        await asyncio.sleep(delay_after)  # Human-like delay between messages
+                        print(f"    ✓ Sent!")
                     else:
                         print(f"    ✗ Failed: {error}")
-                        # Add extra delay after errors to avoid hammering
-                        error_delay = 60
-                        print(f"    ⏳ Error back-off: waiting {error_delay}s...")
-                        await asyncio.sleep(error_delay)
+                    # NO LOCAL DELAYS - Backend controls all timing via "wait" task
             
             elif task_type == "validate":
                 recipients = task.get("recipients", [])

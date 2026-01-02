@@ -353,33 +353,84 @@ serve(async (req) => {
             }
           }
 
-          // Update campaign recipient as failed
+          // AUTOMATIC ACCOUNT ROTATION: Try to reassign to next available account
           if (campaign_recipient_id) {
-            await supabase
-              .from("campaign_recipients")
-              .update({ status: "failed" })
-              .eq("id", campaign_recipient_id);
-
-            // Get campaign_id and increment failed_count
+            // Get recipient details including campaign
             const { data: recipient } = await supabase
               .from("campaign_recipients")
-              .select("campaign_id")
+              .select("campaign_id, sent_by_account_id")
               .eq("id", campaign_recipient_id)
               .single();
 
             if (recipient?.campaign_id) {
-              const { data: campaign } = await supabase
-                .from("campaigns")
-                .select("failed_count")
-                .eq("id", recipient.campaign_id)
-                .single();
-
-              if (campaign) {
+              const failedAccountId = account_id || recipient.sent_by_account_id;
+              
+              // Find OTHER active accounts assigned to this campaign
+              const { data: campaignAccounts } = await supabase
+                .from("campaign_accounts")
+                .select("account_id, telegram_accounts!inner(id, status, messages_sent_today, daily_limit, restricted_until)")
+                .eq("campaign_id", recipient.campaign_id)
+                .neq("account_id", failedAccountId);
+              
+              // Filter to only usable accounts (active, under limit, not temporarily restricted)
+              const now = new Date().toISOString();
+              const usableAccounts = (campaignAccounts || []).filter((ca: any) => {
+                const acc = ca.telegram_accounts;
+                if (!acc || acc.status !== 'active') return false;
+                const limit = acc.daily_limit ?? 25;
+                const sentToday = acc.messages_sent_today ?? 0;
+                const isRestricted = acc.restricted_until && acc.restricted_until > now;
+                return sentToday < limit && !isRestricted;
+              });
+              
+              if (usableAccounts.length > 0) {
+                // REASSIGN: Pick the first available account and reset to pending
+                const nextAccount = usableAccounts[0];
                 await supabase
+                  .from("campaign_recipients")
+                  .update({ 
+                    status: "pending",  // Reset to pending for new account
+                    sent_by_account_id: nextAccount.account_id,
+                    failed_reason: error  // Save the error for reference
+                  })
+                  .eq("id", campaign_recipient_id);
+                
+                console.log(`[report-task-result] AUTO-ROTATION: Reassigned recipient ${campaign_recipient_id.slice(0, 8)} from account ${failedAccountId?.slice(0, 8)} to ${nextAccount.account_id.slice(0, 8)}`);
+              } else {
+                // NO OTHER ACCOUNTS: Mark as failed
+                await supabase
+                  .from("campaign_recipients")
+                  .update({ 
+                    status: "failed",
+                    failed_reason: error  // Save the actual error
+                  })
+                  .eq("id", campaign_recipient_id);
+
+                // Increment campaign failed_count
+                const { data: campaign } = await supabase
                   .from("campaigns")
-                  .update({ failed_count: (campaign.failed_count || 0) + 1 })
-                  .eq("id", recipient.campaign_id);
+                  .select("failed_count")
+                  .eq("id", recipient.campaign_id)
+                  .single();
+
+                if (campaign) {
+                  await supabase
+                    .from("campaigns")
+                    .update({ failed_count: (campaign.failed_count || 0) + 1 })
+                    .eq("id", recipient.campaign_id);
+                }
+                
+                console.log(`[report-task-result] No other accounts available - marked recipient as failed: ${error}`);
               }
+            } else {
+              // Fallback: no campaign found, just mark as failed
+              await supabase
+                .from("campaign_recipients")
+                .update({ 
+                  status: "failed",
+                  failed_reason: error
+                })
+                .eq("id", campaign_recipient_id);
             }
           } else if (message_id) {
             // Non-campaign message: update existing message as failed
