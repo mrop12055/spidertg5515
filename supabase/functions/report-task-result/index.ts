@@ -1030,6 +1030,57 @@ serve(async (req) => {
           error 
         } = result;
         
+        // Check for consecutive invalid numbers - switch account after 5
+        const CONSECUTIVE_INVALID_THRESHOLD = 5;
+        const invalidArr = invalid_numbers || [];
+        const validArr = valid_numbers || [];
+        
+        // Calculate consecutive invalid at the end of this batch
+        let consecutiveInvalidAtEnd = 0;
+        if (invalidArr.length > 0 && remaining_numbers && remaining_numbers.length > 0) {
+          // Count how many invalid numbers are at the end (no valid in between)
+          // Simple heuristic: if last 5+ were invalid, trigger switch
+          const totalProcessed = validArr.length + invalidArr.length;
+          if (totalProcessed >= CONSECUTIVE_INVALID_THRESHOLD) {
+            // Check if all recent are invalid (simple: if no valid found recently)
+            // We track by checking if invalid count is growing without valid
+            const { data: task } = await supabase
+              .from("contact_import_tasks")
+              .select("valid_numbers, invalid_numbers, failed_account_ids")
+              .eq("id", task_id)
+              .single();
+            
+            const prevValid = (task?.valid_numbers as string[] || []).length;
+            const prevInvalid = (task?.invalid_numbers as string[] || []).length;
+            const newValid = validArr.length - prevValid;
+            const newInvalid = invalidArr.length - prevInvalid;
+            
+            // If we got 5+ new invalid and 0 new valid, switch account
+            if (newInvalid >= CONSECUTIVE_INVALID_THRESHOLD && newValid === 0) {
+              console.log(`[report-task-result] ${newInvalid} consecutive invalid numbers - switching account`);
+              
+              const existingFailed: string[] = task?.failed_account_ids || [];
+              const currentAccountId = failed_account_id || result.current_account_id;
+              const newFailed = currentAccountId ? [...existingFailed, currentAccountId] : existingFailed;
+              
+              await supabase
+                .from("contact_import_tasks")
+                .update({
+                  status: "pending",
+                  failed_account_ids: newFailed,
+                  remaining_numbers: remaining_numbers || [],
+                  valid_numbers: validArr,
+                  invalid_numbers: invalidArr,
+                  current_account_id: null,
+                  result: `Switched account after ${newInvalid} consecutive invalid numbers`
+                })
+                .eq("id", task_id);
+              
+              break;
+            }
+          }
+        }
+        
         if (account_failed && failed_account_id) {
           // Account failed - update task to retry with different account
           const { data: task } = await supabase
@@ -1047,8 +1098,8 @@ serve(async (req) => {
               status: "pending", // Reset to pending so it gets picked up again
               failed_account_ids: newFailed,
               remaining_numbers: remaining_numbers || [],
-              valid_numbers: valid_numbers || [],
-              invalid_numbers: invalid_numbers || [],
+              valid_numbers: validArr,
+              invalid_numbers: invalidArr,
               current_account_id: null,
               result: error || "Account failed, retrying with different account"
             })
@@ -1063,9 +1114,9 @@ serve(async (req) => {
             .eq("id", task_id)
             .single();
           
-          if (task?.tag_id && valid_numbers && valid_numbers.length > 0) {
+          if (task?.tag_id && validArr.length > 0) {
             // Insert valid contacts
-            const contactsToInsert = valid_numbers.map((phone: string) => ({
+            const contactsToInsert = validArr.map((phone: string) => ({
               phone_number: phone,
               tag_id: task.tag_id,
               is_used: false,
@@ -1078,7 +1129,7 @@ serve(async (req) => {
                 .upsert(contact, { onConflict: "phone_number" });
             }
             
-            console.log(`[report-task-result] Inserted ${valid_numbers.length} valid contacts`);
+            console.log(`[report-task-result] Inserted ${validArr.length} valid contacts`);
           }
           
           await supabase
@@ -1086,13 +1137,13 @@ serve(async (req) => {
             .update({
               status: "completed",
               completed_at: new Date().toISOString(),
-              valid_numbers: valid_numbers || [],
-              invalid_numbers: invalid_numbers || [],
-              result: `Added ${valid_numbers?.length || 0} contacts, ${invalid_numbers?.length || 0} invalid`
+              valid_numbers: validArr,
+              invalid_numbers: invalidArr,
+              result: `Added ${validArr.length} contacts, ${invalidArr.length} invalid`
             })
             .eq("id", task_id);
           
-          console.log(`[report-task-result] Contact import completed: ${valid_numbers?.length || 0} valid, ${invalid_numbers?.length || 0} invalid`);
+          console.log(`[report-task-result] Contact import completed: ${validArr.length} valid, ${invalidArr.length} invalid`);
         } else {
           // Task failed completely
           await supabase
