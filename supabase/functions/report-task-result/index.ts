@@ -1111,7 +1111,21 @@ serve(async (req) => {
 
       case "contact_import_complete": {
         const { task_id, tag_id, valid_numbers, invalid_numbers } = result;
-        
+
+        // Idempotency guard: runners can retry/report twice; don't overwrite a completed task
+        const { data: existingTask } = await supabase
+          .from("contact_import_tasks")
+          .select("status, completed_at")
+          .eq("id", task_id)
+          .maybeSingle();
+
+        if (existingTask?.status === "completed" && existingTask?.completed_at) {
+          console.log(
+            `[report-task-result] Contact import task ${task_id} already completed - ignoring duplicate report`
+          );
+          break;
+        }
+
         // Insert valid contacts
         if (tag_id && valid_numbers && valid_numbers.length > 0) {
           const contactsToInsert = valid_numbers.map((phone: string) => ({
@@ -1119,16 +1133,16 @@ serve(async (req) => {
             tag_id: tag_id,
             is_used: false,
           }));
-          
+
           for (const contact of contactsToInsert) {
             await supabase
               .from("contacts_data")
               .upsert(contact, { onConflict: "phone_number" });
           }
-          
+
           console.log(`[report-task-result] Inserted ${valid_numbers.length} valid contacts`);
         }
-        
+
         await supabase
           .from("contact_import_tasks")
           .update({
@@ -1136,27 +1150,36 @@ serve(async (req) => {
             completed_at: new Date().toISOString(),
             valid_numbers: valid_numbers || [],
             invalid_numbers: invalid_numbers || [],
-            result: `Added ${valid_numbers?.length || 0} contacts, ${invalid_numbers?.length || 0} invalid`
+            result: `Added ${valid_numbers?.length || 0} contacts, ${invalid_numbers?.length || 0} invalid`,
           })
           .eq("id", task_id);
-        
-        console.log(`[report-task-result] Contact import completed: ${valid_numbers?.length || 0} valid, ${invalid_numbers?.length || 0} invalid`);
+
+        console.log(
+          `[report-task-result] Contact import completed: ${valid_numbers?.length || 0} valid, ${invalid_numbers?.length || 0} invalid`
+        );
         break;
       }
 
       case "contact_import_failed": {
         const { task_id, account_id, valid_numbers, invalid_numbers, remaining_numbers, error } = result;
-        
-        // Account failed - update task to retry with different account
-        const { data: task } = await supabase
+
+        // Idempotency guard: don't downgrade/overwrite a task that's already completed
+        const { data: existingTask } = await supabase
           .from("contact_import_tasks")
-          .select("failed_account_ids")
+          .select("status, completed_at, failed_account_ids")
           .eq("id", task_id)
-          .single();
-        
-        const existingFailed: string[] = task?.failed_account_ids || [];
-        const newFailed = [...existingFailed, account_id];
-        
+          .maybeSingle();
+
+        if (existingTask?.status === "completed" && existingTask?.completed_at) {
+          console.log(
+            `[report-task-result] Contact import task ${task_id} already completed - ignoring failure report from account ${account_id}`
+          );
+          break;
+        }
+
+        const existingFailed: string[] = (existingTask?.failed_account_ids as any) || [];
+        const newFailed = Array.from(new Set([...(existingFailed || []), account_id].filter(Boolean)));
+
         await supabase
           .from("contact_import_tasks")
           .update({
@@ -1166,11 +1189,13 @@ serve(async (req) => {
             valid_numbers: valid_numbers || [],
             invalid_numbers: invalid_numbers || [],
             current_account_id: null,
-            result: error || "Account failed, retrying with different account"
+            result: error || "Account failed, retrying with different account",
           })
           .eq("id", task_id);
-        
-        console.log(`[report-task-result] Contact import - account ${account_id} failed, will retry with another account`);
+
+        console.log(
+          `[report-task-result] Contact import - account ${account_id} failed, will retry with another account`
+        );
         break;
       }
 
