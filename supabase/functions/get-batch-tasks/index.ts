@@ -60,7 +60,7 @@ serve(async (req) => {
     // Get all active accounts not temporarily restricted, with their proxy info
     const { data: activeAccounts, error: accountsError } = await supabase
       .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*), proxies!telegram_accounts_proxy_id_fkey(*)")
+      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
       .eq("status", "active")
       .or(`restricted_until.is.null,restricted_until.lt.${now}`);
 

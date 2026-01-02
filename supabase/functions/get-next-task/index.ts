@@ -117,13 +117,13 @@ serve(async (req) => {
     // Include API credentials and proxy info for each account
     const { data: activeAccounts, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*), proxies!telegram_accounts_proxy_id_fkey(*)")
+      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
       .eq("status", "active");
 
     // Get accounts explicitly marked as restricted
     const { data: restrictedAccounts } = await supabase
       .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*), proxies!telegram_accounts_proxy_id_fkey(*)")
+      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
       .eq("status", "restricted");
 
     const isTimeRestricted = (a: any) => {
