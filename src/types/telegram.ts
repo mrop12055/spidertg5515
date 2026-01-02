@@ -74,6 +74,7 @@ export interface Conversation {
   accountId: string;
   recipientPhone: string;
   recipientName?: string;
+  recipientUsername?: string;
   recipientAvatar?: string;
   lastMessage?: Message;
   unreadCount: number;
