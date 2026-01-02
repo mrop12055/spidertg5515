@@ -204,7 +204,8 @@ serve(async (req) => {
 
           console.log(`[report-task-result] Message sent successfully for recipient ${campaign_recipient_id || message_id}`);
         } else {
-          // Check if error indicates account restriction
+          // Check if error indicates account restriction or contact limit
+          // "User not found" often means Telegram's contact import limit is hit
           const restrictionErrors = [
             'restricted',
             'flood',
@@ -217,7 +218,11 @@ serve(async (req) => {
             'user_deactivated',
             'auth_key_unregistered',
             'session_revoked',
-            'user_is_blocked'
+            'user_is_blocked',
+            'user not found',  // Contact import limit hit
+            'no user',
+            'peer_id_invalid',
+            'input_user_deactivated'
           ];
           
           const errorLower = (error || '').toLowerCase();

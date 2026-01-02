@@ -291,7 +291,7 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                     print(f"    ⚠ GetContacts failed: {e}")
         
         if not entity:
-            return False, "User not found - phone may not be registered on Telegram or has strict privacy"
+            return False, "User not found on Telegram"  # Triggers account switch in backend
         
         # Send the message
         if media_url:
