@@ -712,6 +712,33 @@ export type Database = {
           },
         ]
       }
+      runner_heartbeats: {
+        Row: {
+          created_at: string
+          id: string
+          ip_address: string | null
+          last_seen: string
+          runner_name: string
+          status: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          last_seen?: string
+          runner_name: string
+          status?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          ip_address?: string | null
+          last_seen?: string
+          runner_name?: string
+          status?: string | null
+        }
+        Relationships: []
+      }
       scheduled_interactions: {
         Row: {
           created_at: string | null

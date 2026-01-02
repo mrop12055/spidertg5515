@@ -32,6 +32,17 @@ serve(async (req) => {
 
     console.log(`[get-next-task] Request for runner: ${runner || 'all'}, account: ${account_id || 'any'}`);
 
+    // Record runner heartbeat if runner name provided
+    if (runner) {
+      await supabase
+        .from("runner_heartbeats")
+        .upsert({
+          runner_name: runner,
+          last_seen: new Date().toISOString(),
+          status: 'online'
+        }, { onConflict: 'runner_name' });
+    }
+
     // Load settings from database
     const { data: settingsData } = await supabase
       .from("app_settings")
