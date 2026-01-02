@@ -45,7 +45,7 @@ const SetupGuide: React.FC = () => {
       name: 'Account Runner',
       icon: <UserCog className="h-5 w-5" />,
       color: 'text-yellow-500',
-      functions: ['SpamBot', 'Name/Photo', 'Privacy', 'Import'],
+      functions: ['SpamBot', 'Name/Photo', 'Privacy', 'Import', 'Verify Login'],
       runnerKey: 'account',
       lastSeen: null,
       isOnline: false
@@ -762,6 +762,29 @@ async def logout_other_sessions(client):
         return False, str(e)
 
 
+async def verify_session(client, account_id):
+    """Verify if session is active by checking get_me()"""
+    try:
+        me = await asyncio.wait_for(client.get_me(), timeout=10)
+        if me:
+            return "active", None, {
+                "telegram_id": me.id,
+                "username": me.username,
+                "first_name": me.first_name,
+                "last_name": me.last_name
+            }
+        return "disconnected", "Could not get user info", None
+    except asyncio.TimeoutError:
+        return "disconnected", "Connection timeout", None
+    except Exception as e:
+        error_str = str(e).lower()
+        if "auth" in error_str or "session" in error_str or "revoked" in error_str:
+            return "disconnected", str(e), None
+        elif "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
+            return "banned", str(e), None
+        return "disconnected", str(e), None
+
+
 async def main_loop():
     print("=" * 50)
     print("  Account Runner")
@@ -875,6 +898,22 @@ async def main_loop():
                     print(f"  [LOGOUT] Logging out other sessions...")
                     success, error = await logout_other_sessions(client)
                     await report_result("logout_sessions", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error})
+            
+            elif task_type == "verify_session":
+                account = task.get("account", {})
+                print(f"  [VERIFY] Checking {account.get('phone_number')}...")
+                try:
+                    client = await get_or_create_client(account)
+                    if client:
+                        status, error, user_data = await verify_session(client, account.get("id"))
+                        await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": status, "error": error, "user_data": user_data})
+                        print(f"    Status: {status}" + (f" ({error})" if error else ""))
+                    else:
+                        await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": "disconnected", "error": "Could not connect"})
+                        print(f"    Could not connect")
+                except Exception as e:
+                    await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": "disconnected", "error": str(e)})
+                    print(f"    Error: {e}")
         
         except Exception as e:
             print(f"  [ERROR] {e}")

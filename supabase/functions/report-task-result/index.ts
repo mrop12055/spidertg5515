@@ -977,6 +977,50 @@ serve(async (req) => {
         break;
       }
 
+      case "verify_session": {
+        const { task_id, account_id, status, error, user_data } = result;
+
+        // Update account status based on verification result
+        const updateData: Record<string, unknown> = {
+          last_active: new Date().toISOString(),
+        };
+
+        if (status === "active") {
+          updateData.status = "active";
+          // Update user data if provided
+          if (user_data) {
+            if (user_data.telegram_id) updateData.telegram_id = user_data.telegram_id;
+            if (user_data.username) updateData.username = user_data.username;
+            if (user_data.first_name) updateData.first_name = user_data.first_name;
+            if (user_data.last_name) updateData.last_name = user_data.last_name;
+          }
+        } else if (status === "banned") {
+          updateData.status = "banned";
+          updateData.ban_reason = error || "Session revoked or account banned";
+        } else {
+          updateData.status = "disconnected";
+          updateData.ban_reason = error || "Session invalid or connection failed";
+        }
+
+        await supabase
+          .from("telegram_accounts")
+          .update(updateData)
+          .eq("id", account_id);
+
+        // Update task status
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: "completed",
+            result: status === "active" ? "Session verified - active" : `${status}: ${error || 'Unknown error'}`,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Session verification for ${account_id}: ${status}${error ? ` (${error})` : ''}`);
+        break;
+      }
+
       case "account_restricted": {
         const { account_id, reason, restricted_until } = result;
 

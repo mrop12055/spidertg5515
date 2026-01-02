@@ -771,7 +771,7 @@ const Accounts: React.FC = () => {
     }
   };
 
-  // Real session verification
+  // Real session verification via edge function (checks file validity)
   const handleBulkCheck = async () => {
     if (selectedIds.size === 0) return;
     
@@ -805,6 +805,41 @@ const Accounts: React.FC = () => {
       setVerifyResults(new Map(newResults));
     } finally {
       setIsBulkChecking(false);
+    }
+  };
+
+  // Verify Login - checks actual Telegram connection via Python runner
+  const [isVerifyingLogin, setIsVerifyingLogin] = useState(false);
+  
+  const handleVerifyLogin = async () => {
+    if (selectedIds.size === 0) return;
+    
+    setIsVerifyingLogin(true);
+    
+    try {
+      const tasks = Array.from(selectedIds).map(accountId => ({
+        account_id: accountId,
+        task_type: 'verify_session',
+        status: 'pending',
+      }));
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasks);
+      
+      if (error) throw error;
+      
+      toast.success(`Queued ${selectedIds.size} account(s) for login verification. Run Python script to check.`);
+      
+      // Watch for completion
+      setTimeout(() => {
+        setIsVerifyingLogin(false);
+        refreshData();
+      }, 15000);
+    } catch (error) {
+      console.error('Error queuing login verification:', error);
+      toast.error('Failed to queue verification');
+      setIsVerifyingLogin(false);
     }
   };
 
@@ -1395,7 +1430,12 @@ const Accounts: React.FC = () => {
                 
                 <Button variant="outline" size="sm" onClick={handleBulkCheck} disabled={isBulkChecking} className="gap-1.5">
                   {isBulkChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
-                  Verify
+                  Verify File
+                </Button>
+                
+                <Button variant="outline" size="sm" onClick={handleVerifyLogin} disabled={isVerifyingLogin} className="gap-1.5">
+                  {isVerifyingLogin ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+                  Verify Login
                 </Button>
                 
                 <Button variant="outline" size="sm" onClick={handleSpamBotCheck} disabled={isSpamBotChecking} className="gap-1.5">
