@@ -254,21 +254,22 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
       const fetchConversations = async () => {
         // Prefer sorting by last_message_at and filtering out nulls for better query performance.
+        // Reduced limit to 100 to prevent statement timeouts under load.
         const primary = await supabase
           .from('conversations')
           .select(conversationsSelect)
           .not('last_message_at', 'is', null)
           .order('last_message_at', { ascending: false })
-          .limit(200);
+          .limit(100);
 
         if (!primary.error) return primary;
 
-        // Fallback if the DB is under load/timeouts
+        // Fallback if the DB is under load/timeouts - minimal limit
         const fallback = await supabase
           .from('conversations')
           .select(conversationsSelect)
           .order('created_at', { ascending: false })
-          .limit(50);
+          .limit(30);
 
         return fallback;
       };
