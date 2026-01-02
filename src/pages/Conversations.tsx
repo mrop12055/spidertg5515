@@ -113,8 +113,10 @@ const Chat: React.FC = () => {
     }
   };
 
-  // Helper to check if we sent the first message (campaign initiated)
-  const isUserInitiated = (conv: typeof conversations[0]) => {
+  // Helper to check if conversation should be shown:
+  // - We sent the first message (campaign initiated), OR
+  // - They replied / messaged us (has incoming messages)
+  const shouldShowConversation = (conv: typeof conversations[0]) => {
     const convMessages = messages.filter(m => m.conversationId === conv.id);
     
     // No messages = don't show
@@ -125,8 +127,11 @@ const Chat: React.FC = () => {
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     
-    // First message must be outgoing (we sent via campaign)
-    return sorted[0]?.direction === 'outgoing';
+    // Show if: we sent first message (campaign) OR they have replied/messaged us
+    const weInitiated = sorted[0]?.direction === 'outgoing';
+    const hasIncoming = convMessages.some(m => m.direction === 'incoming');
+    
+    return weInitiated || hasIncoming;
   };
 
   // Helper to check if conversation has any successful (non-failed) messages
@@ -158,14 +163,14 @@ const Chat: React.FC = () => {
       const isNotSpamBot = 
         c.recipientPhone !== '@SpamBot' && 
         c.recipientName?.toLowerCase() !== 'spam info bot';
-      // Only show conversations where WE sent first message
-      const weInitiated = isUserInitiated(c);
+      // Show if campaign initiated OR has incoming messages
+      const showConv = shouldShowConversation(c);
       // Hide conversations that only have failed messages
       const hasSuccess = hasSuccessfulMessages(c);
       // Hide locally blocked contacts
       const isBlocked = blockedContacts.some(b => b.phone_number === c.recipientPhone);
 
-      return matchesTime && matchesSearch && isNotSpamBot && weInitiated && hasSuccess && !isBlocked;
+      return matchesTime && matchesSearch && isNotSpamBot && showConv && hasSuccess && !isBlocked;
     })
     // Sort by actual last message time, not updatedAt
     .sort((a, b) => getLastMessageTime(b) - getLastMessageTime(a));
