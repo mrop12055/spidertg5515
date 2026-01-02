@@ -34,6 +34,12 @@ interface ContactData {
   name: string | null;
   username: string | null;
   is_used: boolean;
+  tag_id: string | null;
+}
+
+interface ContactTag {
+  id: string;
+  name: string;
 }
 
 interface BulkMessageTemplate {
@@ -96,6 +102,8 @@ const Campaigns: React.FC = () => {
   const [dataSearchQuery, setDataSearchQuery] = useState('');
   const [dataFilter, setDataFilter] = useState<'all' | 'unused'>('unused');
   const [isLoadingData, setIsLoadingData] = useState(false);
+  const [contactTags, setContactTags] = useState<ContactTag[]>([]);
+  const [selectedTagFilter, setSelectedTagFilter] = useState<string>('all');
   
   // Bulk messaging settings
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
@@ -429,13 +437,28 @@ const Campaigns: React.FC = () => {
     fetchSeats();
   }, [fetchSeats]);
 
+  // Fetch contact tags
+  const fetchContactTags = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('contact_tags')
+        .select('id, name')
+        .order('name', { ascending: true });
+
+      if (error) throw error;
+      setContactTags(data || []);
+    } catch (error) {
+      console.error('Error fetching tags:', error);
+    }
+  }, []);
+
   // Fetch contacts data for selection
   const fetchContactsData = useCallback(async () => {
     setIsLoadingData(true);
     try {
       const { data, error } = await supabase
         .from('contacts_data')
-        .select('id, phone_number, name, username, is_used')
+        .select('id, phone_number, name, username, is_used, tag_id')
         .eq('is_blocked', false)
         .order('created_at', { ascending: false });
 
@@ -451,9 +474,11 @@ const Campaigns: React.FC = () => {
 
   // Handle opening data selection dialog
   const handleOpenDataSelect = () => {
+    fetchContactTags();
     fetchContactsData();
     setSelectedDataContacts(new Set());
     setDataSearchQuery('');
+    setSelectedTagFilter('all');
     setIsDataSelectOpen(true);
   };
 
@@ -481,6 +506,11 @@ const Campaigns: React.FC = () => {
 
   // Filter contacts for data selection
   const filteredDataContacts = contactsData.filter(c => {
+    // First filter by tag
+    if (selectedTagFilter !== 'all' && c.tag_id !== selectedTagFilter) {
+      return false;
+    }
+    
     const matchesSearch = 
       c.phone_number.includes(dataSearchQuery) ||
       c.name?.toLowerCase().includes(dataSearchQuery.toLowerCase()) ||
@@ -490,9 +520,14 @@ const Campaigns: React.FC = () => {
     return matchesSearch;
   });
 
+  // Stats based on current tag filter
+  const tagFilteredContacts = selectedTagFilter === 'all' 
+    ? contactsData 
+    : contactsData.filter(c => c.tag_id === selectedTagFilter);
+  
   const dataStats = {
-    total: contactsData.length,
-    unused: contactsData.filter(c => !c.is_used).length
+    total: tagFilteredContacts.length,
+    unused: tagFilteredContacts.filter(c => !c.is_used).length
   };
 
   // Fetch data stats when create dialog opens
@@ -1251,7 +1286,38 @@ username123
           </DialogHeader>
           
           <div className="space-y-4">
-            {/* Filters */}
+            {/* Tag Filter - First Step */}
+            <div className="space-y-2">
+              <Label className="text-sm font-medium">1. Select Tag</Label>
+              <Select value={selectedTagFilter} onValueChange={setSelectedTagFilter}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a tag..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">{contactsData.length}</Badge>
+                      All Tags
+                    </div>
+                  </SelectItem>
+                  {contactTags.map((tag) => {
+                    const tagContacts = contactsData.filter(c => c.tag_id === tag.id);
+                    const unusedCount = tagContacts.filter(c => !c.is_used).length;
+                    return (
+                      <SelectItem key={tag.id} value={tag.id}>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="secondary" className="bg-primary/20 text-primary">{unusedCount}</Badge>
+                          {tag.name}
+                          <span className="text-muted-foreground text-xs">({tagContacts.length} total)</span>
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {/* Search and Status Filters */}
             <div className="flex items-center gap-3">
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
