@@ -32,6 +32,8 @@ export interface TelegramAccount {
   phoneCountry?: string;
   geoMismatch?: boolean;
   apiCredentialId?: string;
+  // Tags for organization
+  tags?: string[];
 }
 
 export interface Proxy {
