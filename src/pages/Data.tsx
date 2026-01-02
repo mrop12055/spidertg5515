@@ -662,18 +662,22 @@ ahmadraza9392`}
                         </DropdownMenu>
                       </div>
                       
-                      <div className="flex items-center gap-3 text-sm">
-                        <div className="flex items-center gap-1">
-                          <span className="text-muted-foreground">Total:</span>
-                          <Badge variant="secondary">{tag.total_count}</Badge>
+                      <div className="grid grid-cols-4 gap-2 text-sm">
+                        <div className="text-center p-2 rounded-md bg-muted/50">
+                          <p className="text-xs text-muted-foreground mb-0.5">Total</p>
+                          <p className="font-bold">{tag.total_count + tag.pending_count}</p>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-muted-foreground">Unused:</span>
-                          <Badge variant="secondary" className="bg-primary/20 text-primary">{tag.unused_count}</Badge>
+                        <div className="text-center p-2 rounded-md bg-emerald-500/10">
+                          <p className="text-xs text-muted-foreground mb-0.5">Valid</p>
+                          <p className="font-bold text-emerald-500">{tag.total_count}</p>
                         </div>
-                        <div className="flex items-center gap-1">
-                          <span className="text-muted-foreground">Used:</span>
-                          <Badge variant="secondary">{tag.used_count}</Badge>
+                        <div className="text-center p-2 rounded-md bg-primary/10">
+                          <p className="text-xs text-muted-foreground mb-0.5">Unused</p>
+                          <p className="font-bold text-primary">{tag.unused_count}</p>
+                        </div>
+                        <div className="text-center p-2 rounded-md bg-muted/50">
+                          <p className="text-xs text-muted-foreground mb-0.5">Used</p>
+                          <p className="font-bold">{tag.used_count}</p>
                         </div>
                       </div>
                       
