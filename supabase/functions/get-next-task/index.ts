@@ -648,6 +648,7 @@ serve(async (req) => {
       }
 
       // Check for contact import tasks with account fallback support
+      // NOTE: Contact imports can use temporarily restricted accounts (they only read, not send)
       const { data: importTasks } = await supabase
         .from("contact_import_tasks")
         .select("*")
@@ -672,7 +673,8 @@ serve(async (req) => {
             .eq("id", task.id);
         } else {
           // Find an active account that hasn't failed for this task
-          const eligibleAccounts = accounts.filter((a: { id: string }) => !failedAccountIds.includes(a.id));
+          // Use activeAccounts (includes temporarily restricted) for contact validation - they can still check contacts
+          const eligibleAccounts = (activeAccounts || []).filter((a: { id: string }) => !failedAccountIds.includes(a.id));
           
           if (eligibleAccounts.length === 0) {
             // No accounts left - fail the task
