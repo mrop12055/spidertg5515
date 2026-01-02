@@ -31,22 +31,26 @@ serve(async (req) => {
           // For campaign messages: Create conversation and message ONLY on successful send
           if (campaign_recipient_id && account_id) {
             // FALLBACK: If content/recipient_phone/name are missing, fetch from campaign_recipients
-            if (!content || !recipient_phone) {
-              const { data: recipientData } = await supabase
-                .from("campaign_recipients")
-                .select("phone_number, name, campaigns(message_template)")
-                .eq("id", campaign_recipient_id)
-                .single();
-              
-              if (recipientData) {
-                recipient_phone = recipient_phone || recipientData.phone_number;
-                recipient_name = recipient_name || recipientData.name;
+            // Also fetch seat_id from campaign for proper seat assignment
+            let campaignSeatId: string | null = null;
+            
+            const { data: recipientData } = await supabase
+              .from("campaign_recipients")
+              .select("phone_number, name, campaign_id, campaigns(message_template, seat_id)")
+              .eq("id", campaign_recipient_id)
+              .single();
+            
+            if (recipientData) {
+              recipient_phone = recipient_phone || recipientData.phone_number;
+              recipient_name = recipient_name || recipientData.name;
+              campaignSeatId = (recipientData.campaigns as any)?.seat_id || null;
+              if (!content) {
                 const template = (recipientData.campaigns as any)?.message_template || '';
-                content = content || template
+                content = template
                   .replace(/{name}/g, recipientData.name || 'there')
                   .replace(/{phone}/g, recipientData.phone_number);
-                console.log(`[report-task-result] Fetched missing data from recipient: content="${content}", phone=${recipient_phone}`);
               }
+              console.log(`[report-task-result] Fetched recipient data: phone=${recipient_phone}, seat_id=${campaignSeatId}`);
             }
             
             // Get or create conversation
@@ -64,6 +68,7 @@ serve(async (req) => {
               console.log(`[report-task-result] Using existing conversation ${conversationId}`);
             } else {
               // Create new conversation only on successful delivery
+              // Include seat_id from campaign for proper workspace routing
               isNewConversation = true;
               const { data: newConv, error: convError } = await supabase
                 .from("conversations")
@@ -74,6 +79,7 @@ serve(async (req) => {
                   is_active: true,
                   first_message_sent: true,
                   last_message_at: new Date().toISOString(),
+                  seat_id: campaignSeatId,  // Route to correct seat workspace
                 })
                 .select()
                 .single();

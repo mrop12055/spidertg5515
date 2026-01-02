@@ -44,3 +44,6 @@ verify_jwt = false
 
 [functions.get-antibot-stats]
 verify_jwt = false
+
+[functions.get-batch-tasks]
+verify_jwt = false
