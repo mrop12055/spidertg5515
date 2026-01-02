@@ -19,11 +19,12 @@ serve(async (req) => {
 
     console.log('[redistribute-api-credentials] Starting redistribution...');
 
-    // Fetch all API credentials
+    // Fetch all API credentials - order by created_at DESC so newest are preferred
     const { data: apiCredentials, error: credError } = await supabase
       .from('telegram_api_credentials')
       .select('*')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
 
     if (credError || !apiCredentials || apiCredentials.length === 0) {
       return new Response(
@@ -64,25 +65,9 @@ serve(async (req) => {
     const assignments: { id: string; api_credential_id: string }[] = [];
 
     for (const account of allAccounts) {
-      // Determine if this is an iOS device
-      const isIos = account.device_model?.toLowerCase().includes('iphone') || false;
-      
-      // Select matching credentials pool
-      let pool = isIos && iosCreds.length > 0 ? iosCreds : 
-                 !isIos && androidCreds.length > 0 ? androidCreds : 
-                 apiCredentials;
-
-      // Find credential with lowest count (load balancing)
-      let minCount = Infinity;
-      let selectedCred = pool[0];
-      
-      for (const cred of pool) {
-        const count = assignmentCounts.get(cred.id) || 0;
-        if (count < minCount) {
-          minCount = count;
-          selectedCred = cred;
-        }
-      }
+      // Simply use the newest credential (first in the list since ordered by created_at DESC)
+      // This prioritizes newer API credentials for all accounts
+      const selectedCred = apiCredentials[0];
 
       // Increment count for selected credential
       assignmentCounts.set(selectedCred.id, (assignmentCounts.get(selectedCred.id) || 0) + 1);
