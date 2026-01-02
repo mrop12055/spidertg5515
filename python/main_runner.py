@@ -267,7 +267,12 @@ async def main_loop():
                     continue
                 
                 # Process each phone number
+                # Track consecutive invalid numbers - switch account after 5
+                CONSECUTIVE_INVALID_THRESHOLD = 5
                 processed = 0
+                consecutive_invalid = 0
+                should_switch_account = False
+                
                 for phone in phone_numbers:
                     if not RUNNING:
                         break
@@ -277,34 +282,53 @@ async def main_loop():
                         if exists:
                             valid_numbers.append(phone)
                             print(f"    ✓ {phone} - valid ({name})")
+                            consecutive_invalid = 0  # Reset counter on valid
                         else:
                             invalid_numbers.append(phone)
                             print(f"    ✗ {phone} - not on Telegram")
+                            consecutive_invalid += 1
+                            
+                            # Check if we hit threshold for account switch
+                            if consecutive_invalid >= CONSECUTIVE_INVALID_THRESHOLD:
+                                print(f"    ⚠ {consecutive_invalid} consecutive invalid - switching account")
+                                should_switch_account = True
+                                processed += 1
+                                break
                         processed += 1
                     except Exception as e:
                         error_str = str(e).lower()
                         # Check if account is restricted/banned
                         if any(x in error_str for x in ['flood', 'restricted', 'banned', 'wait', 'auth_key']):
                             print(f"    ⚠ Account restricted: {e}")
-                            # Report partial progress with account failure
-                            remaining = phone_numbers[processed:]
-                            await report_result("contact_import", {
-                                "task_id": task_id,
-                                "success": False,
-                                "account_failed": True,
-                                "failed_account_id": account.get("id"),
-                                "remaining_numbers": remaining,
-                                "valid_numbers": valid_numbers,
-                                "invalid_numbers": invalid_numbers,
-                                "error": str(e)
-                            })
+                            should_switch_account = True
                             break
                         else:
                             # Other error - count as invalid
                             invalid_numbers.append(phone)
                             print(f"    ✗ {phone} - error: {e}")
+                            consecutive_invalid += 1
+                            
+                            if consecutive_invalid >= CONSECUTIVE_INVALID_THRESHOLD:
+                                print(f"    ⚠ {consecutive_invalid} consecutive invalid/errors - switching account")
+                                should_switch_account = True
+                                processed += 1
+                                break
                             processed += 1
-                else:
+                
+                if should_switch_account:
+                    # Report partial progress with account failure to trigger switch
+                    remaining = phone_numbers[processed:]
+                    await report_result("contact_import", {
+                        "task_id": task_id,
+                        "success": False,
+                        "account_failed": True,
+                        "failed_account_id": account.get("id"),
+                        "remaining_numbers": remaining,
+                        "valid_numbers": valid_numbers,
+                        "invalid_numbers": invalid_numbers,
+                        "error": f"Switched after {consecutive_invalid} consecutive invalid numbers"
+                    })
+                elif processed == len(phone_numbers):
                     # All done successfully
                     await report_result("contact_import", {
                         "task_id": task_id,
