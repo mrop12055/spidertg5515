@@ -425,7 +425,7 @@ const Data: React.FC = () => {
       // Get current task info
       const { data: task, error: fetchError } = await supabase
         .from('contact_import_tasks')
-        .select('current_account_id, failed_account_ids, phone_numbers')
+        .select('current_account_id, failed_account_ids, remaining_numbers, phone_numbers')
         .eq('id', taskId)
         .single();
 
@@ -439,17 +439,20 @@ const Data: React.FC = () => {
         ? [...existingFailed, currentAccountId] 
         : existingFailed;
 
+      // Preserve remaining numbers (don't restart from scratch)
+      const remainingNumbers = (task?.remaining_numbers && task.remaining_numbers.length > 0) 
+        ? task.remaining_numbers 
+        : task?.phone_numbers || [];
+
       // Reset task to pending with a new account
       const { error: updateError } = await supabase
         .from('contact_import_tasks')
         .update({
           status: 'pending',
           failed_account_ids: newFailed,
-          remaining_numbers: task?.phone_numbers || [],
-          valid_numbers: [],
-          invalid_numbers: [],
+          remaining_numbers: remainingNumbers,
           current_account_id: null,
-          result: `Manually switched account (tried: ${newFailed.length})`
+          result: `Switched account (tried: ${newFailed.length})`
         })
         .eq('id', taskId);
 
