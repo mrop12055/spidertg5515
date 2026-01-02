@@ -6,128 +6,160 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
-import { Progress } from '@/components/ui/progress';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
-  Plus, Upload, Trash2, Search, Database, Users, Phone, 
-  CheckCircle, XCircle, Ban, Download, RefreshCw, Filter,
-  UserCheck, UserX, FileText
+  Plus, Upload, Trash2, Database, Tag, 
+  CheckCircle, Ban, Download, RefreshCw, ArrowLeft,
+  UserCheck, UserX, FileText, FolderOpen, MoreVertical
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+
+interface ContactTag {
+  id: string;
+  name: string;
+  created_at: string;
+  unused_count: number;
+  used_count: number;
+  total_count: number;
+}
 
 interface ContactData {
   id: string;
   phone_number: string;
   name: string | null;
   username: string | null;
-  notes: string | null;
   is_used: boolean;
-  used_in_campaign_id: string | null;
-  used_at: string | null;
-  is_blocked: boolean;
-  blocked_at: string | null;
-  created_at: string;
-}
-
-interface BlockedContact {
-  id: string;
-  phone_number: string;
-  name: string | null;
-  blocked_by_account_id: string | null;
-  reason: string | null;
+  tag_id: string | null;
   created_at: string;
 }
 
 const Data: React.FC = () => {
-  const [contacts, setContacts] = useState<ContactData[]>([]);
-  const [blockedContacts, setBlockedContacts] = useState<BlockedContact[]>([]);
+  const [tags, setTags] = useState<ContactTag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [searchQuery, setSearchQuery] = useState('');
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
-  const [isBulkAddOpen, setIsBulkAddOpen] = useState(false);
+  const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
+  const [newTagName, setNewTagName] = useState('');
+  
+  // View mode: 'tags' or 'contacts'
+  const [viewMode, setViewMode] = useState<'tags' | 'contacts'>('tags');
+  const [selectedTag, setSelectedTag] = useState<ContactTag | null>(null);
+  const [tagContacts, setTagContacts] = useState<ContactData[]>([]);
+  const [isLoadingContacts, setIsLoadingContacts] = useState(false);
+  
+  // Add contacts dialog
+  const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
   const [bulkText, setBulkText] = useState('');
-  const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
-  const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [activeTab, setActiveTab] = useState('all');
-  const [isFileImportOpen, setIsFileImportOpen] = useState(false);
+  const [addToTagId, setAddToTagId] = useState<string>('');
+  
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const [newContact, setNewContact] = useState({
-    phone_number: '',
-    name: '',
-    username: '',
-    notes: ''
-  });
-
-  const fetchData = useCallback(async () => {
+  const fetchTags = useCallback(async () => {
     setIsLoading(true);
     try {
+      // Fetch tags
+      const { data: tagsData, error: tagsError } = await supabase
+        .from('contact_tags')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (tagsError) throw tagsError;
+
+      // Fetch contact counts per tag
       const { data: contactsData, error: contactsError } = await supabase
         .from('contacts_data')
-        .select('*')
-        .order('created_at', { ascending: false });
+        .select('tag_id, is_used');
 
       if (contactsError) throw contactsError;
-      setContacts(contactsData || []);
 
-      const { data: blockedData, error: blockedError } = await supabase
-        .from('blocked_contacts')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // Calculate counts per tag
+      const tagCounts: Record<string, { unused: number; used: number; total: number }> = {};
+      (contactsData || []).forEach(c => {
+        if (c.tag_id) {
+          if (!tagCounts[c.tag_id]) {
+            tagCounts[c.tag_id] = { unused: 0, used: 0, total: 0 };
+          }
+          tagCounts[c.tag_id].total++;
+          if (c.is_used) {
+            tagCounts[c.tag_id].used++;
+          } else {
+            tagCounts[c.tag_id].unused++;
+          }
+        }
+      });
 
-      if (blockedError) throw blockedError;
-      setBlockedContacts(blockedData || []);
+      const enrichedTags: ContactTag[] = (tagsData || []).map(tag => ({
+        ...tag,
+        unused_count: tagCounts[tag.id]?.unused || 0,
+        used_count: tagCounts[tag.id]?.used || 0,
+        total_count: tagCounts[tag.id]?.total || 0,
+      }));
+
+      setTags(enrichedTags);
     } catch (error) {
-      console.error('Error fetching data:', error);
-      toast.error('Failed to load data');
+      console.error('Error fetching tags:', error);
+      toast.error('Failed to load tags');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    fetchTags();
+  }, [fetchTags]);
 
-  const handleAddContact = async () => {
-    if (!newContact.phone_number.trim()) {
-      toast.error('Phone number is required');
+  const handleCreateTag = async () => {
+    if (!newTagName.trim()) {
+      toast.error('Tag name is required');
       return;
     }
 
     try {
       const { error } = await supabase
-        .from('contacts_data')
-        .insert({
-          phone_number: newContact.phone_number.trim(),
-          name: newContact.name.trim() || null,
-          username: newContact.username.trim() || null,
-          notes: newContact.notes.trim() || null
-        });
+        .from('contact_tags')
+        .insert({ name: newTagName.trim() });
 
       if (error) {
         if (error.code === '23505') {
-          toast.error('This phone number already exists');
+          toast.error('Tag name already exists');
         } else {
           throw error;
         }
         return;
       }
 
-      toast.success('Contact added');
-      setNewContact({ phone_number: '', name: '', username: '', notes: '' });
-      setIsAddDialogOpen(false);
-      fetchData();
+      toast.success('Tag created');
+      setNewTagName('');
+      setIsCreateTagOpen(false);
+      fetchTags();
     } catch (error) {
-      console.error('Error adding contact:', error);
-      toast.error('Failed to add contact');
+      console.error('Error creating tag:', error);
+      toast.error('Failed to create tag');
+    }
+  };
+
+  const handleDeleteTag = async (tagId: string) => {
+    try {
+      // Delete contacts in this tag first
+      await supabase.from('contacts_data').delete().eq('tag_id', tagId);
+      
+      const { error } = await supabase
+        .from('contact_tags')
+        .delete()
+        .eq('id', tagId);
+
+      if (error) throw error;
+
+      toast.success('Tag deleted');
+      fetchTags();
+    } catch (error) {
+      console.error('Error deleting tag:', error);
+      toast.error('Failed to delete tag');
     }
   };
 
@@ -135,18 +167,15 @@ const Data: React.FC = () => {
   const normalizeContact = (input: string): { phone_number: string; isUsername: boolean } => {
     const trimmed = input.trim();
     
-    // Check if it looks like a username (letters only, no numbers at start, or has @)
     if (trimmed.startsWith('@')) {
       return { phone_number: trimmed.toLowerCase(), isUsername: true };
     }
     
-    // Check if it's purely letters/underscores (username pattern)
     const isLikelyUsername = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(trimmed) && !/^\d+$/.test(trimmed);
     if (isLikelyUsername) {
       return { phone_number: '@' + trimmed.toLowerCase(), isUsername: true };
     }
     
-    // Treat as phone number - remove non-digits except +
     let normalized = trimmed.replace(/[^\d+]/g, '');
     if (normalized && !normalized.startsWith('+')) {
       normalized = '+' + normalized;
@@ -155,7 +184,12 @@ const Data: React.FC = () => {
     return { phone_number: normalized, isUsername: false };
   };
 
-  const handleBulkAdd = async () => {
+  const handleAddContacts = async () => {
+    if (!addToTagId) {
+      toast.error('Please select a tag');
+      return;
+    }
+
     const lines = bulkText.split('\n').filter(l => l.trim());
     if (lines.length === 0) {
       toast.error('Please enter at least one contact');
@@ -169,6 +203,7 @@ const Data: React.FC = () => {
         phone_number,
         name: parts[1] || null,
         username: isUsername ? phone_number.replace('@', '') : (parts[2] || null),
+        tag_id: addToTagId,
         notes: null
       };
     }).filter(c => c.phone_number && c.phone_number.length >= 2);
@@ -182,18 +217,25 @@ const Data: React.FC = () => {
 
       toast.success(`Added ${contacts.length} contacts`);
       setBulkText('');
-      setIsBulkAddOpen(false);
-      fetchData();
+      setIsAddContactsOpen(false);
+      fetchTags();
+      if (selectedTag && selectedTag.id === addToTagId) {
+        fetchTagContacts(selectedTag.id);
+      }
     } catch (error) {
-      console.error('Error bulk adding:', error);
+      console.error('Error adding contacts:', error);
       toast.error('Failed to add contacts');
     }
   };
 
-  // Handle file import
   const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (!addToTagId) {
+      toast.error('Please select a tag first');
+      return;
+    }
 
     try {
       const text = await file.text();
@@ -211,6 +253,7 @@ const Data: React.FC = () => {
           phone_number,
           name: parts[1] || null,
           username: isUsername ? phone_number.replace('@', '') : (parts[2] || null),
+          tag_id: addToTagId,
           notes: null
         };
       }).filter(c => c.phone_number && c.phone_number.length >= 2);
@@ -226,106 +269,60 @@ const Data: React.FC = () => {
 
       if (error) throw error;
 
-      toast.success(`Imported ${contacts.length} contacts from file`);
-      fetchData();
+      toast.success(`Imported ${contacts.length} contacts`);
+      fetchTags();
+      if (selectedTag && selectedTag.id === addToTagId) {
+        fetchTagContacts(selectedTag.id);
+      }
     } catch (error) {
       console.error('Error importing file:', error);
       toast.error('Failed to import file');
     } finally {
-      // Reset file input
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
     }
   };
 
-  const handleDeleteContacts = async (ids: string[]) => {
+  const fetchTagContacts = async (tagId: string) => {
+    setIsLoadingContacts(true);
     try {
-      const { error } = await supabase
+      const { data, error } = await supabase
         .from('contacts_data')
-        .delete()
-        .in('id', ids);
+        .select('id, phone_number, name, username, is_used, tag_id, created_at')
+        .eq('tag_id', tagId)
+        .order('created_at', { ascending: false });
 
       if (error) throw error;
-
-      toast.success(`Deleted ${ids.length} contact(s)`);
-      setSelectedContacts(new Set());
-      setIsSelectionMode(false);
-      fetchData();
+      setTagContacts(data || []);
     } catch (error) {
-      console.error('Error deleting:', error);
-      toast.error('Failed to delete contacts');
+      console.error('Error fetching contacts:', error);
+      toast.error('Failed to load contacts');
+    } finally {
+      setIsLoadingContacts(false);
     }
   };
 
-  const handleMarkAsUsed = async (ids: string[], campaignId?: string) => {
-    try {
-      const { error } = await supabase
-        .from('contacts_data')
-        .update({
-          is_used: true,
-          used_at: new Date().toISOString(),
-          used_in_campaign_id: campaignId || null
-        })
-        .in('id', ids);
-
-      if (error) throw error;
-
-      toast.success(`Marked ${ids.length} as used`);
-      fetchData();
-    } catch (error) {
-      console.error('Error marking as used:', error);
-      toast.error('Failed to update');
-    }
+  const openTagView = (tag: ContactTag) => {
+    setSelectedTag(tag);
+    setViewMode('contacts');
+    fetchTagContacts(tag.id);
   };
 
-  const handleMarkAsUnused = async (ids: string[]) => {
-    try {
-      const { error } = await supabase
-        .from('contacts_data')
-        .update({
-          is_used: false,
-          used_at: null,
-          used_in_campaign_id: null
-        })
-        .in('id', ids);
-
-      if (error) throw error;
-
-      toast.success(`Marked ${ids.length} as unused`);
-      fetchData();
-    } catch (error) {
-      console.error('Error marking as unused:', error);
-      toast.error('Failed to update');
-    }
+  const backToTags = () => {
+    setViewMode('tags');
+    setSelectedTag(null);
+    setTagContacts([]);
+    fetchTags();
   };
 
-  const handleUnblock = async (id: string) => {
-    try {
-      const { error } = await supabase
-        .from('blocked_contacts')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-
-      toast.success('Contact unblocked');
-      fetchData();
-    } catch (error) {
-      console.error('Error unblocking:', error);
-      toast.error('Failed to unblock');
-    }
-  };
-
-  const exportContacts = (type: 'all' | 'unused' | 'used') => {
-    let data = contacts;
-    if (type === 'unused') data = contacts.filter(c => !c.is_used);
-    if (type === 'used') data = contacts.filter(c => c.is_used);
+  const exportTagContacts = () => {
+    if (!selectedTag || tagContacts.length === 0) return;
 
     const csv = [
-      'Phone Number,Name,Username,Notes,Used,Used At',
-      ...data.map(c => 
-        `${c.phone_number},${c.name || ''},${c.username || ''},${c.notes || ''},${c.is_used},${c.used_at || ''}`
+      'Phone Number,Name,Username,Used',
+      ...tagContacts.map(c => 
+        `${c.phone_number},${c.name || ''},${c.username || ''},${c.is_used}`
       )
     ].join('\n');
 
@@ -333,46 +330,34 @@ const Data: React.FC = () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `contacts_${type}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
+    a.download = `${selectedTag.name}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
 
-  const filteredContacts = contacts.filter(c => {
-    const matchesSearch = 
-      c.phone_number.includes(searchQuery) ||
-      c.name?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.username?.toLowerCase().includes(searchQuery.toLowerCase());
-    
-    if (activeTab === 'unused') return matchesSearch && !c.is_used;
-    if (activeTab === 'used') return matchesSearch && c.is_used;
-    return matchesSearch;
-  });
-
-  const stats = {
-    total: contacts.length,
-    unused: contacts.filter(c => !c.is_used).length,
-    used: contacts.filter(c => c.is_used).length,
-    blocked: blockedContacts.length
-  };
+  const totalStats = tags.reduce((acc, tag) => ({
+    total: acc.total + tag.total_count,
+    unused: acc.unused + tag.unused_count,
+    used: acc.used + tag.used_count,
+  }), { total: 0, unused: 0, used: 0 });
 
   return (
     <DashboardLayout>
       <PageHeader 
         title="Data Management" 
-        description="Store and manage phone numbers and usernames for campaigns"
+        description="Organize contacts into tags for campaigns"
       />
 
       <div className="space-y-6">
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-3 gap-4">
           <Card className="bg-muted/30 border-border/50">
             <CardContent className="pt-4 pb-3">
               <div className="flex items-center gap-2 mb-1">
                 <Database className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground uppercase tracking-wide">Total</span>
+                <span className="text-xs text-muted-foreground uppercase tracking-wide">Total Contacts</span>
               </div>
-              <p className="text-2xl font-bold">{stats.total}</p>
+              <p className="text-2xl font-bold">{totalStats.total}</p>
             </CardContent>
           </Card>
 
@@ -382,7 +367,7 @@ const Data: React.FC = () => {
                 <UserCheck className="w-4 h-4 text-primary" />
                 <span className="text-xs text-muted-foreground uppercase tracking-wide">Unused</span>
               </div>
-              <p className="text-2xl font-bold text-primary">{stats.unused}</p>
+              <p className="text-2xl font-bold text-primary">{totalStats.unused}</p>
             </CardContent>
           </Card>
 
@@ -392,402 +377,287 @@ const Data: React.FC = () => {
                 <UserX className="w-4 h-4 text-muted-foreground" />
                 <span className="text-xs text-muted-foreground uppercase tracking-wide">Used</span>
               </div>
-              <p className="text-2xl font-bold">{stats.used}</p>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-destructive/5 border-destructive/20">
-            <CardContent className="pt-4 pb-3">
-              <div className="flex items-center gap-2 mb-1">
-                <Ban className="w-4 h-4 text-destructive" />
-                <span className="text-xs text-muted-foreground uppercase tracking-wide">Blocked</span>
-              </div>
-              <p className="text-2xl font-bold text-destructive">{stats.blocked}</p>
+              <p className="text-2xl font-bold">{totalStats.used}</p>
             </CardContent>
           </Card>
         </div>
 
         {/* Main Content */}
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Users className="w-5 h-5" />
-                  Contacts Data
-                </CardTitle>
-                <CardDescription>Manage your contact list for campaigns</CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => fetchData()} disabled={isLoading}>
-                  <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
-                  Refresh
-                </Button>
-                
-                {/* File Import */}
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  accept=".txt,.csv"
-                  onChange={handleFileImport}
-                  className="hidden"
-                />
-                <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
-                  <FileText className="w-4 h-4 mr-2" />
-                  Import File
-                </Button>
-                
-                <Dialog open={isBulkAddOpen} onOpenChange={setIsBulkAddOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Upload className="w-4 h-4 mr-2" />
-                      Bulk Add
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Bulk Add Contacts</DialogTitle>
-                      <DialogDescription>
-                        Paste contacts (one per line). Phone numbers get + added, usernames get @ added automatically.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="p-3 rounded-lg bg-accent/30 border border-border text-xs text-muted-foreground mb-2">
-                      <p className="font-semibold mb-1">Format examples:</p>
-                      <pre className="font-mono">
+        {viewMode === 'tags' ? (
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Tag className="w-5 h-5" />
+                    Contact Tags
+                  </CardTitle>
+                  <CardDescription>Create tags to organize your contacts</CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => fetchTags()} disabled={isLoading}>
+                    <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
+                    Refresh
+                  </Button>
+                  
+                  <Dialog open={isAddContactsOpen} onOpenChange={setIsAddContactsOpen}>
+                    <DialogTrigger asChild>
+                      <Button variant="outline" size="sm">
+                        <Upload className="w-4 h-4 mr-2" />
+                        Add Contacts
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-lg">
+                      <DialogHeader>
+                        <DialogTitle>Add Contacts to Tag</DialogTitle>
+                        <DialogDescription>
+                          Select a tag and paste contacts (one per line)
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div>
+                          <Label>Select Tag *</Label>
+                          <Select value={addToTagId} onValueChange={setAddToTagId}>
+                            <SelectTrigger>
+                              <SelectValue placeholder="Choose a tag" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {tags.map(tag => (
+                                <SelectItem key={tag.id} value={tag.id}>
+                                  {tag.name}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        
+                        <div className="flex gap-2">
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            accept=".txt,.csv"
+                            onChange={handleFileImport}
+                            className="hidden"
+                          />
+                          <Button 
+                            variant="outline" 
+                            size="sm" 
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={!addToTagId}
+                          >
+                            <FileText className="w-4 h-4 mr-2" />
+                            Import File
+                          </Button>
+                        </div>
+
+                        <div className="p-3 rounded-lg bg-accent/30 border border-border text-xs text-muted-foreground">
+                          <p className="font-semibold mb-1">Format examples:</p>
+                          <pre className="font-mono">
 {`12303802803
 93282083028
-ahmadraza9392
-sahsl2302`}
-                      </pre>
-                      <p className="mt-2">• Numbers → +12303802803</p>
-                      <p>• Usernames → @ahmadraza9392</p>
-                    </div>
-                    <Textarea
-                      placeholder={`12303802803\n93282083028\nahmadraza9392\nsahsl2302`}
-                      value={bulkText}
-                      onChange={(e) => setBulkText(e.target.value)}
-                      className="min-h-[200px] font-mono text-sm"
-                    />
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsBulkAddOpen(false)}>Cancel</Button>
-                      <Button onClick={handleBulkAdd}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add All
-                      </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-                <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-                  <DialogTrigger asChild>
-                    <Button size="sm">
-                      <Plus className="w-4 h-4 mr-2" />
-                      Add Contact
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Add New Contact</DialogTitle>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div>
-                        <Label>Phone Number *</Label>
-                        <Input
-                          placeholder="+1234567890"
-                          value={newContact.phone_number}
-                          onChange={(e) => setNewContact({ ...newContact, phone_number: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label>Name</Label>
-                        <Input
-                          placeholder="John Doe"
-                          value={newContact.name}
-                          onChange={(e) => setNewContact({ ...newContact, name: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label>Username</Label>
-                        <Input
-                          placeholder="@username"
-                          value={newContact.username}
-                          onChange={(e) => setNewContact({ ...newContact, username: e.target.value })}
-                        />
-                      </div>
-                      <div>
-                        <Label>Notes</Label>
+ahmadraza9392`}
+                          </pre>
+                        </div>
+                        
                         <Textarea
-                          placeholder="Optional notes..."
-                          value={newContact.notes}
-                          onChange={(e) => setNewContact({ ...newContact, notes: e.target.value })}
+                          placeholder={`12303802803\n93282083028\nahmadraza9392`}
+                          value={bulkText}
+                          onChange={(e) => setBulkText(e.target.value)}
+                          className="min-h-[150px] font-mono text-sm"
                         />
                       </div>
-                    </div>
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-                      <Button onClick={handleAddContact}>Add Contact</Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Tabs value={activeTab} onValueChange={setActiveTab}>
-              <div className="flex items-center justify-between mb-4">
-                <TabsList>
-                  <TabsTrigger value="all" className="gap-2">
-                    All <Badge variant="secondary" className="ml-1">{stats.total}</Badge>
-                  </TabsTrigger>
-                  <TabsTrigger value="unused" className="gap-2">
-                    Unused <Badge variant="secondary" className="ml-1 bg-primary/20 text-primary">{stats.unused}</Badge>
-                  </TabsTrigger>
-                  <TabsTrigger value="used" className="gap-2">
-                    Used <Badge variant="secondary" className="ml-1">{stats.used}</Badge>
-                  </TabsTrigger>
-                  <TabsTrigger value="blocked" className="gap-2">
-                    Blocked <Badge variant="secondary" className="ml-1 bg-destructive/20 text-destructive">{stats.blocked}</Badge>
-                  </TabsTrigger>
-                </TabsList>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsAddContactsOpen(false)}>Cancel</Button>
+                        <Button onClick={handleAddContacts} disabled={!addToTagId}>
+                          <Plus className="w-4 h-4 mr-2" />
+                          Add Contacts
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
 
-                <div className="flex items-center gap-2">
-                  <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="pl-10 w-[200px]"
-                    />
+                  <Dialog open={isCreateTagOpen} onOpenChange={setIsCreateTagOpen}>
+                    <DialogTrigger asChild>
+                      <Button size="sm">
+                        <Plus className="w-4 h-4 mr-2" />
+                        Create Tag
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>Create New Tag</DialogTitle>
+                        <DialogDescription>
+                          Create a tag to organize your contacts
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="space-y-4">
+                        <div>
+                          <Label>Tag Name *</Label>
+                          <Input
+                            placeholder="e.g., Campaign 1, Hot Leads, etc."
+                            value={newTagName}
+                            onChange={(e) => setNewTagName(e.target.value)}
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={() => setIsCreateTagOpen(false)}>Cancel</Button>
+                        <Button onClick={handleCreateTag}>Create Tag</Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {isLoading ? (
+                <div className="text-center py-12">
+                  <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin text-muted-foreground" />
+                  <p className="text-muted-foreground">Loading tags...</p>
+                </div>
+              ) : tags.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Tag className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p className="mb-2">No tags created yet</p>
+                  <p className="text-sm">Create a tag to start organizing your contacts</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {tags.map(tag => (
+                    <Card 
+                      key={tag.id} 
+                      className="cursor-pointer hover:border-primary/50 transition-colors"
+                      onClick={() => openTagView(tag)}
+                    >
+                      <CardContent className="pt-4">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <FolderOpen className="w-5 h-5 text-primary" />
+                            <h3 className="font-semibold">{tag.name}</h3>
+                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <MoreVertical className="w-4 h-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem 
+                                className="text-destructive"
+                                onClick={(e) => { e.stopPropagation(); handleDeleteTag(tag.id); }}
+                              >
+                                <Trash2 className="w-4 h-4 mr-2" />
+                                Delete Tag
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                        
+                        <div className="flex items-center gap-4 text-sm">
+                          <div className="flex items-center gap-1">
+                            <span className="text-muted-foreground">Total:</span>
+                            <Badge variant="secondary">{tag.total_count}</Badge>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-muted-foreground">Left:</span>
+                            <Badge variant="secondary" className="bg-primary/20 text-primary">{tag.unused_count}</Badge>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-muted-foreground">Used:</span>
+                            <Badge variant="secondary">{tag.used_count}</Badge>
+                          </div>
+                        </div>
+                        
+                        <p className="text-xs text-muted-foreground mt-3">
+                          Created {format(new Date(tag.created_at), 'MMM d, yyyy')}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          // Contacts view for selected tag
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <Button variant="ghost" size="icon" onClick={backToTags}>
+                    <ArrowLeft className="w-5 h-5" />
+                  </Button>
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <FolderOpen className="w-5 h-5 text-primary" />
+                      {selectedTag?.name}
+                    </CardTitle>
+                    <CardDescription>
+                      {selectedTag?.total_count} contacts • {selectedTag?.unused_count} unused • {selectedTag?.used_count} used
+                    </CardDescription>
                   </div>
-                  <Button variant="outline" size="sm" onClick={() => exportContacts(activeTab as 'all' | 'unused' | 'used')}>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={exportTagContacts} disabled={tagContacts.length === 0}>
                     <Download className="w-4 h-4 mr-2" />
                     Export
                   </Button>
-                </div>
-              </div>
-
-              <TabsContent value="all" className="mt-0">
-                <ContactsList 
-                  contacts={filteredContacts}
-                  selectedContacts={selectedContacts}
-                  setSelectedContacts={setSelectedContacts}
-                  isSelectionMode={isSelectionMode}
-                  setIsSelectionMode={setIsSelectionMode}
-                  onDelete={handleDeleteContacts}
-                  onMarkAsUsed={handleMarkAsUsed}
-                  onMarkAsUnused={handleMarkAsUnused}
-                />
-              </TabsContent>
-
-              <TabsContent value="unused" className="mt-0">
-                <ContactsList 
-                  contacts={filteredContacts}
-                  selectedContacts={selectedContacts}
-                  setSelectedContacts={setSelectedContacts}
-                  isSelectionMode={isSelectionMode}
-                  setIsSelectionMode={setIsSelectionMode}
-                  onDelete={handleDeleteContacts}
-                  onMarkAsUsed={handleMarkAsUsed}
-                  onMarkAsUnused={handleMarkAsUnused}
-                />
-              </TabsContent>
-
-              <TabsContent value="used" className="mt-0">
-                <ContactsList 
-                  contacts={filteredContacts}
-                  selectedContacts={selectedContacts}
-                  setSelectedContacts={setSelectedContacts}
-                  isSelectionMode={isSelectionMode}
-                  setIsSelectionMode={setIsSelectionMode}
-                  onDelete={handleDeleteContacts}
-                  onMarkAsUsed={handleMarkAsUsed}
-                  onMarkAsUnused={handleMarkAsUnused}
-                />
-              </TabsContent>
-
-              <TabsContent value="blocked" className="mt-0">
-                <BlockedList 
-                  contacts={blockedContacts}
-                  onUnblock={handleUnblock}
-                  searchQuery={searchQuery}
-                />
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-      </div>
-    </DashboardLayout>
-  );
-};
-
-// Contacts List Component
-interface ContactsListProps {
-  contacts: ContactData[];
-  selectedContacts: Set<string>;
-  setSelectedContacts: React.Dispatch<React.SetStateAction<Set<string>>>;
-  isSelectionMode: boolean;
-  setIsSelectionMode: React.Dispatch<React.SetStateAction<boolean>>;
-  onDelete: (ids: string[]) => void;
-  onMarkAsUsed: (ids: string[]) => void;
-  onMarkAsUnused: (ids: string[]) => void;
-}
-
-const ContactsList: React.FC<ContactsListProps> = ({
-  contacts,
-  selectedContacts,
-  setSelectedContacts,
-  isSelectionMode,
-  setIsSelectionMode,
-  onDelete,
-  onMarkAsUsed,
-  onMarkAsUnused
-}) => {
-  const toggleSelection = (id: string) => {
-    setSelectedContacts(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
-  if (contacts.length === 0) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        <Database className="w-12 h-12 mx-auto mb-3 opacity-50" />
-        <p>No contacts found</p>
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      {isSelectionMode && selectedContacts.size > 0 && (
-        <div className="flex items-center gap-2 mb-4 p-3 bg-muted/50 rounded-lg">
-          <span className="text-sm font-medium">{selectedContacts.size} selected</span>
-          <div className="flex-1" />
-          <Button variant="outline" size="sm" onClick={() => onMarkAsUnused(Array.from(selectedContacts))}>
-            Mark Unused
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => onMarkAsUsed(Array.from(selectedContacts))}>
-            Mark Used
-          </Button>
-          <Button variant="destructive" size="sm" onClick={() => onDelete(Array.from(selectedContacts))}>
-            <Trash2 className="w-4 h-4 mr-1" />
-            Delete
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => { setSelectedContacts(new Set()); setIsSelectionMode(false); }}>
-            Cancel
-          </Button>
-        </div>
-      )}
-
-      <ScrollArea className="h-[500px]">
-        <div className="space-y-2">
-          {contacts.map(contact => (
-            <div
-              key={contact.id}
-              className={cn(
-                "flex items-center gap-3 p-3 rounded-lg border transition-colors",
-                contact.is_used ? "bg-muted/30" : "bg-card hover:bg-muted/30",
-                selectedContacts.has(contact.id) && "bg-primary/10 border-primary/30"
-              )}
-              onClick={() => isSelectionMode && toggleSelection(contact.id)}
-            >
-              {isSelectionMode && (
-                <Checkbox
-                  checked={selectedContacts.has(contact.id)}
-                  onCheckedChange={() => toggleSelection(contact.id)}
-                />
-              )}
-              
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <Phone className="w-4 h-4 text-muted-foreground" />
-                  <span className="font-medium">{contact.phone_number}</span>
-                  {contact.is_used ? (
-                    <Badge variant="secondary" className="text-xs">Used</Badge>
-                  ) : (
-                    <Badge variant="secondary" className="text-xs bg-primary/20 text-primary">Available</Badge>
-                  )}
-                </div>
-                {(contact.name || contact.username) && (
-                  <p className="text-sm text-muted-foreground mt-0.5">
-                    {contact.name}{contact.name && contact.username && ' • '}{contact.username}
-                  </p>
-                )}
-              </div>
-
-              {!isSelectionMode && (
-                <div className="flex items-center gap-1">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={(e) => { e.stopPropagation(); setIsSelectionMode(true); toggleSelection(contact.id); }}
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={() => { setAddToTagId(selectedTag?.id || ''); setIsAddContactsOpen(true); }}
                   >
-                    <Checkbox checked={false} />
+                    <Plus className="w-4 h-4 mr-2" />
+                    Add More
                   </Button>
                 </div>
-              )}
-            </div>
-          ))}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-};
-
-// Blocked List Component
-interface BlockedListProps {
-  contacts: BlockedContact[];
-  onUnblock: (id: string) => void;
-  searchQuery: string;
-}
-
-const BlockedList: React.FC<BlockedListProps> = ({ contacts, onUnblock, searchQuery }) => {
-  const filtered = contacts.filter(c =>
-    c.phone_number.includes(searchQuery) ||
-    c.name?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  if (filtered.length === 0) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        <Ban className="w-12 h-12 mx-auto mb-3 opacity-50" />
-        <p>No blocked contacts</p>
-      </div>
-    );
-  }
-
-  return (
-    <ScrollArea className="h-[500px]">
-      <div className="space-y-2">
-        {filtered.map(contact => (
-          <div
-            key={contact.id}
-            className="flex items-center gap-3 p-3 rounded-lg border bg-destructive/5 border-destructive/20"
-          >
-            <Ban className="w-5 h-5 text-destructive" />
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
-                <span className="font-medium">{contact.phone_number}</span>
-                {contact.name && <span className="text-sm text-muted-foreground">({contact.name})</span>}
               </div>
-              {contact.reason && (
-                <p className="text-sm text-muted-foreground mt-0.5">{contact.reason}</p>
+            </CardHeader>
+            <CardContent>
+              {isLoadingContacts ? (
+                <div className="text-center py-12">
+                  <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin text-muted-foreground" />
+                  <p className="text-muted-foreground">Loading contacts...</p>
+                </div>
+              ) : tagContacts.length === 0 ? (
+                <div className="text-center py-12 text-muted-foreground">
+                  <Database className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                  <p>No contacts in this tag</p>
+                </div>
+              ) : (
+                <ScrollArea className="h-[400px]">
+                  <div className="space-y-2">
+                    {tagContacts.map(contact => (
+                      <div
+                        key={contact.id}
+                        className={cn(
+                          "flex items-center gap-3 p-3 rounded-lg border transition-colors",
+                          contact.is_used ? "bg-muted/30" : "bg-card"
+                        )}
+                      >
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium font-mono text-sm">{contact.phone_number}</span>
+                            {contact.is_used ? (
+                              <Badge variant="secondary" className="text-xs">Used</Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-xs bg-primary/20 text-primary">Available</Badge>
+                            )}
+                          </div>
+                          {contact.name && (
+                            <p className="text-sm text-muted-foreground mt-0.5">{contact.name}</p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </ScrollArea>
               )}
-              <p className="text-xs text-muted-foreground mt-1">
-                Blocked on {format(new Date(contact.created_at), 'MMM d, yyyy HH:mm')}
-              </p>
-            </div>
-            <Button variant="outline" size="sm" onClick={() => onUnblock(contact.id)}>
-              Unblock
-            </Button>
-          </div>
-        ))}
+            </CardContent>
+          </Card>
+        )}
       </div>
-    </ScrollArea>
+    </DashboardLayout>
   );
 };
 
