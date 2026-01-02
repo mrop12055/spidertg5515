@@ -545,47 +545,77 @@ const SeatChat: React.FC = () => {
 
   return (
     <div className="h-screen flex bg-[#111b21] overflow-hidden">
-      {/* Left Sidebar Navigation */}
-      <div className="w-16 bg-[#202c33] border-r border-[#2a3942] flex flex-col items-center py-4 flex-shrink-0">
+      {/* Left Sidebar Navigation - Similar to Admin */}
+      <aside className="w-64 bg-[#111b21] border-r border-[#2a3942] flex flex-col flex-shrink-0">
         {/* Logo */}
-        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-[#00a884] to-[#25d366] flex items-center justify-center mb-6 shadow-lg">
-          <Send className="w-5 h-5 text-white" />
+        <div className="h-16 flex items-center px-4 border-b border-[#2a3942]">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00a884] to-[#25d366] flex items-center justify-center shadow-lg">
+              <Send className="w-5 h-5 text-white" />
+            </div>
+            <div>
+              <h1 className="font-bold text-lg text-white">{seat?.name || 'Seat'}</h1>
+              <p className="text-xs text-[#8696a0]">Seat Dashboard</p>
+            </div>
+          </div>
         </div>
-        
-        {/* Navigation Items */}
-        <div className="flex flex-col gap-2 flex-1">
+
+        {/* Navigation */}
+        <nav className="flex-1 py-4 px-3 space-y-1">
           <button
             onClick={() => setCurrentView('chats')}
             className={cn(
-              "w-12 h-12 rounded-xl flex items-center justify-center transition-all",
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
               currentView === 'chats'
-                ? "bg-[#00a884] text-white"
+                ? "bg-[#00a884] text-white shadow-lg shadow-[#00a884]/20"
                 : "text-[#8696a0] hover:bg-[#2a3942] hover:text-white"
             )}
-            title="Chats"
           >
-            <MessageSquare className="w-5 h-5" />
+            <MessageSquare className="w-5 h-5 flex-shrink-0" />
+            <span className="text-sm font-medium">Chats</span>
+            {conversations.filter(c => (c.unread_count || 0) > 0).length > 0 && (
+              <span className="ml-auto min-w-[20px] h-[20px] rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+                {conversations.filter(c => (c.unread_count || 0) > 0).length}
+              </span>
+            )}
+            {currentView === 'chats' && conversations.filter(c => (c.unread_count || 0) > 0).length === 0 && (
+              <div className="ml-auto w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            )}
           </button>
-          
+
           <button
             onClick={() => setCurrentView('reports')}
             className={cn(
-              "w-12 h-12 rounded-xl flex items-center justify-center transition-all",
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
               currentView === 'reports'
-                ? "bg-[#00a884] text-white"
+                ? "bg-[#00a884] text-white shadow-lg shadow-[#00a884]/20"
                 : "text-[#8696a0] hover:bg-[#2a3942] hover:text-white"
             )}
-            title="Reports"
           >
-            <BarChart3 className="w-5 h-5" />
+            <BarChart3 className="w-5 h-5 flex-shrink-0" />
+            <span className="text-sm font-medium">Reports</span>
+            {currentView === 'reports' && (
+              <div className="ml-auto w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+            )}
           </button>
+        </nav>
+
+        {/* Seat Info Section */}
+        <div className="p-3 border-t border-[#2a3942] space-y-2">
+          <div className="flex items-center gap-3 p-2 rounded-lg bg-[#2a3942]/50">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#00a884] to-[#25d366] flex items-center justify-center text-white font-semibold text-sm">
+              {seat?.name?.charAt(0) || 'S'}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-white truncate">{seat?.name}</p>
+              <div className="flex items-center gap-1">
+                <div className="w-2 h-2 rounded-full bg-[#00a884]" />
+                <p className="text-xs text-[#8696a0]">Online</p>
+              </div>
+            </div>
+          </div>
         </div>
-        
-        {/* Bottom - Status */}
-        <div className="mt-auto">
-          <div className="w-3 h-3 rounded-full bg-[#00a884] ring-2 ring-[#202c33]" title="Online" />
-        </div>
-      </div>
+      </aside>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col overflow-hidden">
