@@ -372,6 +372,38 @@ async def main_loop():
                     await report_result("logout_sessions", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error})
                     print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
             
+            elif task_type == "block_contact":
+                # Block/unblock a contact
+                account = task.get("account", {})
+                target = task.get("target", {})
+                action = task.get("action", "block")
+                client = await get_or_create_client(account)
+                if client:
+                    print(f"  🚫 {action.capitalize()} contact...")
+                    try:
+                        from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
+                        # Get entity by username or phone
+                        target_id = target.get("telegram_id") or target.get("username") or target.get("phone")
+                        if target_id:
+                            entity = await client.get_entity(target_id)
+                            if action == "block":
+                                await client(BlockRequest(id=entity))
+                            else:
+                                await client(UnblockRequest(id=entity))
+                            success, error = True, None
+                        else:
+                            success, error = False, "No target identifier"
+                    except Exception as e:
+                        success, error = False, str(e)
+                    await report_result("block_contact", {
+                        "task_id": task.get("task_id"),
+                        "account_id": account.get("id"),
+                        "success": success,
+                        "error": error,
+                        "action": action
+                    })
+                    print(f"    {'✓ Done' if success else '✗ Failed: ' + str(error)}")
+            
             elif task_type.startswith("warmup_"):
                 account = task.get("account", {})
                 warmup_type = task_type.replace("warmup_", "")
