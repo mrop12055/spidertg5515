@@ -15,7 +15,7 @@ import { Progress } from '@/components/ui/progress';
 import { 
   Plus, Upload, Trash2, Search, Database, Users, Phone, 
   CheckCircle, XCircle, Ban, Download, RefreshCw, Filter,
-  UserCheck, UserX
+  UserCheck, UserX, FileText
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
@@ -56,6 +56,8 @@ const Data: React.FC = () => {
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
   const [isSelectionMode, setIsSelectionMode] = useState(false);
   const [activeTab, setActiveTab] = useState('all');
+  const [isFileImportOpen, setIsFileImportOpen] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const [newContact, setNewContact] = useState({
     phone_number: '',
@@ -129,6 +131,30 @@ const Data: React.FC = () => {
     }
   };
 
+  // Normalize input - auto-add + for phones, @ for usernames
+  const normalizeContact = (input: string): { phone_number: string; isUsername: boolean } => {
+    const trimmed = input.trim();
+    
+    // Check if it looks like a username (letters only, no numbers at start, or has @)
+    if (trimmed.startsWith('@')) {
+      return { phone_number: trimmed.toLowerCase(), isUsername: true };
+    }
+    
+    // Check if it's purely letters/underscores (username pattern)
+    const isLikelyUsername = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(trimmed) && !/^\d+$/.test(trimmed);
+    if (isLikelyUsername) {
+      return { phone_number: '@' + trimmed.toLowerCase(), isUsername: true };
+    }
+    
+    // Treat as phone number - remove non-digits except +
+    let normalized = trimmed.replace(/[^\d+]/g, '');
+    if (normalized && !normalized.startsWith('+')) {
+      normalized = '+' + normalized;
+    }
+    
+    return { phone_number: normalized, isUsername: false };
+  };
+
   const handleBulkAdd = async () => {
     const lines = bulkText.split('\n').filter(l => l.trim());
     if (lines.length === 0) {
@@ -138,13 +164,14 @@ const Data: React.FC = () => {
 
     const contacts = lines.map(line => {
       const parts = line.split(/[,\t]/).map(p => p.trim());
+      const { phone_number, isUsername } = normalizeContact(parts[0]);
       return {
-        phone_number: parts[0],
+        phone_number,
         name: parts[1] || null,
-        username: parts[2] || null,
+        username: isUsername ? phone_number.replace('@', '') : (parts[2] || null),
         notes: null
       };
-    }).filter(c => c.phone_number);
+    }).filter(c => c.phone_number && c.phone_number.length >= 2);
 
     try {
       const { error } = await supabase
@@ -160,6 +187,55 @@ const Data: React.FC = () => {
     } catch (error) {
       console.error('Error bulk adding:', error);
       toast.error('Failed to add contacts');
+    }
+  };
+
+  // Handle file import
+  const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').filter(l => l.trim());
+      
+      if (lines.length === 0) {
+        toast.error('File is empty');
+        return;
+      }
+
+      const contacts = lines.map(line => {
+        const parts = line.split(/[,\t]/).map(p => p.trim());
+        const { phone_number, isUsername } = normalizeContact(parts[0]);
+        return {
+          phone_number,
+          name: parts[1] || null,
+          username: isUsername ? phone_number.replace('@', '') : (parts[2] || null),
+          notes: null
+        };
+      }).filter(c => c.phone_number && c.phone_number.length >= 2);
+
+      if (contacts.length === 0) {
+        toast.error('No valid contacts found in file');
+        return;
+      }
+
+      const { error } = await supabase
+        .from('contacts_data')
+        .upsert(contacts, { onConflict: 'phone_number', ignoreDuplicates: true });
+
+      if (error) throw error;
+
+      toast.success(`Imported ${contacts.length} contacts from file`);
+      fetchData();
+    } catch (error) {
+      console.error('Error importing file:', error);
+      toast.error('Failed to import file');
+    } finally {
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
@@ -347,6 +423,20 @@ const Data: React.FC = () => {
                   <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
                   Refresh
                 </Button>
+                
+                {/* File Import */}
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  accept=".txt,.csv"
+                  onChange={handleFileImport}
+                  className="hidden"
+                />
+                <Button variant="outline" size="sm" onClick={() => fileInputRef.current?.click()}>
+                  <FileText className="w-4 h-4 mr-2" />
+                  Import File
+                </Button>
+                
                 <Dialog open={isBulkAddOpen} onOpenChange={setIsBulkAddOpen}>
                   <DialogTrigger asChild>
                     <Button variant="outline" size="sm">
@@ -358,12 +448,22 @@ const Data: React.FC = () => {
                     <DialogHeader>
                       <DialogTitle>Bulk Add Contacts</DialogTitle>
                       <DialogDescription>
-                        Paste contacts (one per line). Format: phone,name,username
+                        Paste contacts (one per line). Phone numbers get + added, usernames get @ added automatically.
                       </DialogDescription>
                     </DialogHeader>
+                    <div className="p-3 rounded-lg bg-accent/30 border border-border text-xs text-muted-foreground mb-2">
+                      <p className="font-semibold mb-1">Format examples:</p>
+                      <pre className="font-mono">
+{`12303802803
+93282083028
+ahmadraza9392
+sahsl2302`}
+                      </pre>
+                      <p className="mt-2">• Numbers → +12303802803</p>
+                      <p>• Usernames → @ahmadraza9392</p>
+                    </div>
                     <Textarea
-                      placeholder="+1234567890,John Doe,@johndoe
-+0987654321,Jane Smith"
+                      placeholder={`12303802803\n93282083028\nahmadraza9392\nsahsl2302`}
                       value={bulkText}
                       onChange={(e) => setBulkText(e.target.value)}
                       className="min-h-[200px] font-mono text-sm"

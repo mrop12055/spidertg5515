@@ -829,10 +829,6 @@ const Chat: React.FC = () => {
                         </div>
                       )}
                     </div>
-                    {/* Show phone number in chat header */}
-                    {selectedConv.recipientPhone && selectedConv.recipientPhone !== selectedConv.recipientName && (
-                      <span className="text-xs text-muted-foreground">{selectedConv.recipientPhone}</span>
-                    )}
                     <p className="text-xs text-muted-foreground">
                       {isTyping ? (
                         <span className="text-primary">typing...</span>
