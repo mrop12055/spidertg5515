@@ -1112,181 +1112,100 @@ username123
               const campaignFailedDueToAccounts = campaign.status === 'failed' && hasPending;
               
               return (
-                <Card key={campaign.id} className={`hover:border-primary/30 transition-colors ${campaignStuck || campaignFailedDueToAccounts ? 'border-status-error/50' : ''}`}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between">
-                      <div>
-                        <CardTitle className="text-lg flex items-center gap-2">
-                          {campaign.name}
-                          <Badge className={getStatusColor(campaign.status)}>
-                            {campaign.status}
-                          </Badge>
-                          {campaignStuck && (
-                            <Badge variant="destructive" className="gap-1">
-                              <AlertCircle className="w-3 h-3" />
-                              No Usable Accounts
-                            </Badge>
-                          )}
-                        </CardTitle>
-                        <p className="text-sm text-muted-foreground mt-1">
-                          Created {format(campaign.createdAt, 'MMM d, yyyy')}
-                        </p>
+                <Card key={campaign.id} className={`hover:border-primary/30 transition-all duration-200 ${campaignStuck || campaignFailedDueToAccounts ? 'border-destructive/50' : ''}`}>
+                  <CardContent className="p-4">
+                    {/* Compact Header Row */}
+                    <div className="flex items-center justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <h3 className="font-semibold truncate">{campaign.name}</h3>
+                        <Badge variant={campaign.status === 'running' ? 'default' : campaign.status === 'completed' ? 'secondary' : campaign.status === 'failed' ? 'destructive' : 'outline'} className="shrink-0 text-xs">
+                          {campaign.status}
+                        </Badge>
                         {campaignStuck && (
-                          <p className="text-xs text-destructive mt-1">
-                            All assigned accounts are restricted or at daily limit. Campaign cannot progress.
-                          </p>
-                        )}
-                        {campaignFailedDueToAccounts && (
-                          <p className="text-xs text-destructive mt-1 flex items-center gap-1">
+                          <Badge variant="destructive" className="gap-1 text-xs shrink-0">
                             <AlertCircle className="w-3 h-3" />
-                            Campaign stopped: All accounts were restricted or at daily limit. {report?.pending} recipients still pending.
-                          </p>
+                            Stuck
+                          </Badge>
                         )}
                       </div>
-                      <div className="flex gap-2">
-                        {/* Upload Recipients Button */}
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => {
-                            setSelectedCampaignId(campaign.id);
-                            setIsUploadOpen(true);
-                          }}
-                          title="Upload Recipients"
-                        >
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setSelectedCampaignId(campaign.id); setIsUploadOpen(true); }} title="Upload Recipients">
                           <FileText className="w-4 h-4" />
                         </Button>
-                        
-                        {/* View Report Button */}
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => {
-                            setSelectedReportCampaign(campaign);
-                            setIsReportOpen(true);
-                          }}
-                          title="View Report"
-                        >
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setSelectedReportCampaign(campaign); setIsReportOpen(true); }} title="View Report">
                           <MessageSquare className="w-4 h-4" />
                         </Button>
-                        
-                        {/* Start/Pause Button */}
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => handleStatusToggle(campaign)}
-                          disabled={campaign.status === 'completed' || isStarting === campaign.id}
-                        >
-                          {isStarting === campaign.id ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : campaign.status === 'running' ? (
-                            <Pause className="w-4 h-4" />
-                          ) : (
-                            <Play className="w-4 h-4" />
-                          )}
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => handleStatusToggle(campaign)} disabled={campaign.status === 'completed' || isStarting === campaign.id}>
+                          {isStarting === campaign.id ? <Loader2 className="w-4 h-4 animate-spin" /> : campaign.status === 'running' ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                         </Button>
-                        <Button variant="outline" size="icon">
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button 
-                          variant="outline" 
-                          size="icon"
-                          onClick={() => deleteCampaign(campaign.id)}
-                        >
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => deleteCampaign(campaign.id)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
                     </div>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="bg-accent/50 p-3 rounded-lg mb-4">
-                      <p className="text-sm font-mono">{campaign.messageTemplate}</p>
+
+                    {/* Warning message if stuck */}
+                    {(campaignStuck || campaignFailedDueToAccounts) && (
+                      <p className="text-xs text-destructive mb-2 flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" />
+                        {campaignFailedDueToAccounts ? `Stopped: ${report?.pending} pending` : 'No usable accounts'}
+                      </p>
+                    )}
+
+                    {/* Message Preview - Compact */}
+                    <div className="bg-muted/50 px-3 py-2 rounded text-sm font-mono text-muted-foreground truncate mb-3">
+                      {campaign.messageTemplate.length > 80 ? campaign.messageTemplate.slice(0, 80) + '...' : campaign.messageTemplate}
                     </div>
-                    
+
                     {/* Progress Bar */}
                     {report && report.total > 0 && (
-                      <div className="mb-4">
+                      <div className="mb-3">
                         <div className="flex justify-between text-xs text-muted-foreground mb-1">
                           <span>Progress</span>
-                          <span>{report.successful + report.failed} / {report.total}</span>
+                          <span>{Math.round(((report.successful + report.failed) / report.total) * 100)}%</span>
                         </div>
-                        <Progress value={((report.successful + report.failed) / report.total) * 100} className="h-2" />
+                        <Progress value={((report.successful + report.failed) / report.total) * 100} className="h-1.5" />
                       </div>
                     )}
-                    
-                    <div className="grid grid-cols-4 gap-4">
-                      <div className="flex items-center gap-2">
-                        <Users className="w-4 h-4 text-muted-foreground" />
-                        <div>
-                          <p className="text-sm font-medium">{report?.total || campaign.recipientCount}</p>
-                          <p className="text-xs text-muted-foreground">Recipients</p>
-                        </div>
+
+                    {/* Compact Stats Row */}
+                    <div className="flex items-center gap-4 text-sm">
+                      <div className="flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-muted-foreground" />
+                        <span className="font-medium">{report?.total || campaign.recipientCount}</span>
+                        <span className="text-xs text-muted-foreground">total</span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Send className="w-4 h-4 text-primary" />
-                        <div>
-                          <p className="text-sm font-medium">{report?.successful || campaign.sentCount}</p>
-                          <p className="text-xs text-muted-foreground">Sent</p>
-                        </div>
+                      <div className="flex items-center gap-1.5">
+                        <Send className="w-3.5 h-3.5 text-primary" />
+                        <span className="font-medium text-primary">{report?.successful || campaign.sentCount}</span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <XCircle className="w-4 h-4 text-destructive" />
-                        <div>
-                          <p className="text-sm font-medium">{report?.failed || campaign.failedCount}</p>
-                          <p className="text-xs text-muted-foreground">Failed</p>
-                        </div>
+                      <div className="flex items-center gap-1.5">
+                        <XCircle className="w-3.5 h-3.5 text-destructive" />
+                        <span className="font-medium text-destructive">{report?.failed || campaign.failedCount}</span>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-yellow-600" />
-                        <div>
-                          <p className="text-sm font-medium">{report?.pending || 0}</p>
-                          <p className="text-xs text-muted-foreground">Pending</p>
-                        </div>
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-yellow-600" />
+                        <span className="font-medium text-yellow-600">{report?.pending || 0}</span>
                       </div>
+                      
+                      {/* Account count - compact */}
+                      {report?.accountStats && report.accountStats.length > 0 && (
+                        <div className="ml-auto flex items-center gap-1.5 text-muted-foreground">
+                          <span className="text-xs">{report.accountStats.length} account{report.accountStats.length > 1 ? 's' : ''}</span>
+                        </div>
+                      )}
                     </div>
-                    
-                    {/* Per-Account Stats - Show unique recipients per account */}
-                    {report && report.accountStats && report.accountStats.length > 0 && (
-                      <div className="mt-4 pt-4 border-t border-border">
-                        <p className="text-xs text-muted-foreground mb-2">
-                          Account Performance ({report.accountStats.length} accounts)
-                        </p>
-                        <div className="space-y-2 max-h-40 overflow-y-auto">
-                          {report.accountStats.map((stat) => (
-                            <div 
-                              key={stat.accountId} 
-                              className="flex items-center justify-between text-xs bg-muted/50 rounded px-2 py-1.5"
-                            >
-                              <span className="font-medium truncate max-w-[140px]">
-                                {stat.firstName || stat.phoneNumber}
-                              </span>
-                              <div className="flex gap-3 text-muted-foreground">
-                                <span className="text-primary" title="Unique recipients sent">
-                                  ✓ {stat.uniqueRecipientsSent}
-                                </span>
-                                {stat.uniqueRecipientsFailed > 0 && (
-                                  <span className="text-destructive" title="Unique recipients failed">
-                                    ✗ {stat.uniqueRecipientsFailed}
-                                  </span>
-                                )}
-                                {stat.uniqueRecipientsPending > 0 && (
-                                  <span className="text-yellow-600" title="Unique recipients pending">
-                                    ⏳ {stat.uniqueRecipientsPending}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    {/* Fallback: Show assigned accounts count if no stats yet */}
-                    {(!report || !report.accountStats || report.accountStats.length === 0) && campaign.accountIds.length > 0 && (
-                      <div className="mt-4 pt-4 border-t border-border">
-                        <p className="text-xs text-muted-foreground mb-2">
-                          Assigned Accounts: {campaign.accountIds.length}
-                        </p>
+
+                    {/* Compact Account Stats - only show on hover/expand if needed */}
+                    {report?.accountStats && report.accountStats.length > 0 && report.accountStats.length <= 3 && (
+                      <div className="mt-2 pt-2 border-t border-border/50 flex flex-wrap gap-2">
+                        {report.accountStats.map((stat) => (
+                          <div key={stat.accountId} className="flex items-center gap-1.5 text-xs bg-muted/30 rounded px-2 py-1">
+                            <span className="truncate max-w-[100px]">{stat.firstName || stat.phoneNumber}</span>
+                            <span className="text-primary">✓{stat.uniqueRecipientsSent}</span>
+                            {stat.uniqueRecipientsFailed > 0 && <span className="text-destructive">✗{stat.uniqueRecipientsFailed}</span>}
+                          </div>
+                        ))}
                       </div>
                     )}
                   </CardContent>

@@ -371,52 +371,34 @@ const Reports: React.FC = () => {
                         <p>No campaigns yet</p>
                       </div>
                     ) : (
-                      <div className="space-y-4">
+                      <div className="space-y-2">
                         {campaigns.slice(0, 10).map(campaign => {
                           const progress = campaign.recipient_count > 0 
                             ? ((campaign.sent_count + campaign.failed_count) / campaign.recipient_count) * 100 
                             : 0;
-                          const successRate = (campaign.sent_count + campaign.failed_count) > 0
-                            ? (campaign.sent_count / (campaign.sent_count + campaign.failed_count)) * 100
-                            : 0;
                           
                           return (
-                            <div key={campaign.id} className="p-4 rounded-lg border bg-card">
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="font-medium">{campaign.name}</span>
+                            <div key={campaign.id} className="p-3 rounded-lg border bg-card hover:bg-accent/30 transition-colors">
+                              <div className="flex items-center justify-between gap-2 mb-2">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="font-medium truncate">{campaign.name}</span>
                                   {getCampaignStatusBadge(campaign.status)}
                                 </div>
-                                <span className="text-sm text-muted-foreground">
-                                  {format(new Date(campaign.created_at), 'MMM d, yyyy')}
+                                <span className="text-xs text-muted-foreground shrink-0">
+                                  {format(new Date(campaign.created_at), 'MMM d')}
                                 </span>
                               </div>
                               
-                              <div className="grid grid-cols-4 gap-4 mb-3 text-sm">
-                                <div>
-                                  <span className="text-muted-foreground">Recipients</span>
-                                  <p className="font-medium">{campaign.recipient_count}</p>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Sent</span>
-                                  <p className="font-medium text-green-500">{campaign.sent_count}</p>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Failed</span>
-                                  <p className="font-medium text-red-500">{campaign.failed_count}</p>
-                                </div>
-                                <div>
-                                  <span className="text-muted-foreground">Replies</span>
-                                  <p className="font-medium text-blue-500">{campaign.reply_count}</p>
-                                </div>
+                              <div className="flex items-center gap-4 text-xs mb-2">
+                                <span className="text-muted-foreground">{campaign.recipient_count} recipients</span>
+                                <span className="text-green-500">✓ {campaign.sent_count}</span>
+                                <span className="text-red-500">✗ {campaign.failed_count}</span>
+                                {campaign.reply_count > 0 && <span className="text-blue-500">💬 {campaign.reply_count}</span>}
                               </div>
                               
-                              <div className="space-y-1">
-                                <div className="flex justify-between text-xs text-muted-foreground">
-                                  <span>Progress: {progress.toFixed(0)}%</span>
-                                  <span>Success: {successRate.toFixed(0)}%</span>
-                                </div>
-                                <Progress value={progress} className="h-2" />
+                              <div className="flex items-center gap-2">
+                                <Progress value={progress} className="h-1.5 flex-1" />
+                                <span className="text-xs text-muted-foreground w-10 text-right">{progress.toFixed(0)}%</span>
                               </div>
                             </div>
                           );
