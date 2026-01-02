@@ -114,8 +114,7 @@ const Chat: React.FC = () => {
   };
 
   // Helper to check if conversation should be shown:
-  // - We sent the first message (campaign initiated), OR
-  // - They replied / messaged us (has incoming messages)
+  // Only show conversations where WE sent the first message (campaign initiated)
   const shouldShowConversation = (conv: typeof conversations[0]) => {
     const convMessages = messages.filter(m => m.conversationId === conv.id);
     
@@ -127,11 +126,10 @@ const Chat: React.FC = () => {
       new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
     
-    // Show if: we sent first message (campaign) OR they have replied/messaged us
+    // Only show if WE sent the first message (campaign initiated)
     const weInitiated = sorted[0]?.direction === 'outgoing';
-    const hasIncoming = convMessages.some(m => m.direction === 'incoming');
     
-    return weInitiated || hasIncoming;
+    return weInitiated;
   };
 
   // Helper to check if conversation has any successful (non-failed) messages
