@@ -445,17 +445,13 @@ const SeatChat: React.FC = () => {
     }
   };
 
-  // Get display name with username
+  // Get display name - only phone number as requested
   const getDisplayName = (conv: Conversation) => {
-    if (conv.recipient_name) return conv.recipient_name;
-    if (conv.recipient_username) return `@${conv.recipient_username}`;
     return conv.recipient_phone || 'Unknown';
   };
 
-  // Get avatar initials
+  // Get avatar initials from phone number
   const getAvatarInitial = (conv: Conversation) => {
-    if (conv.recipient_name) return conv.recipient_name[0].toUpperCase();
-    if (conv.recipient_username) return conv.recipient_username[0].toUpperCase();
     if (conv.recipient_phone) return conv.recipient_phone.slice(-2);
     return '?';
   };
@@ -643,18 +639,6 @@ const SeatChat: React.FC = () => {
                           <p className="font-semibold text-sm text-slate-800 truncate">
                             {getDisplayName(conv)}
                           </p>
-                          {/* Show username if different from name */}
-                          {conv.recipient_username && conv.recipient_name && (
-                            <p className="text-xs text-blue-600 truncate">
-                              @{conv.recipient_username}
-                            </p>
-                          )}
-                          {/* Show phone if we have name */}
-                          {conv.recipient_name && conv.recipient_phone && (
-                            <p className="text-xs text-slate-500 truncate">
-                              {conv.recipient_phone}
-                            </p>
-                          )}
                         </div>
                         {conv.unread_count > 0 && (
                           <Badge className="bg-blue-600 text-white text-xs px-2 min-w-[22px] h-5 shadow-sm flex-shrink-0">
@@ -715,14 +699,6 @@ const SeatChat: React.FC = () => {
                     <p className="font-semibold text-slate-800">
                       {getDisplayName(selectedConversation)}
                     </p>
-                    <div className="flex items-center gap-2 text-xs text-slate-500">
-                      {selectedConversation.recipient_username && (
-                        <span className="text-blue-600">@{selectedConversation.recipient_username}</span>
-                      )}
-                      {selectedConversation.recipient_phone && (
-                        <span>{selectedConversation.recipient_phone}</span>
-                      )}
-                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
