@@ -591,9 +591,9 @@ const Chat: React.FC = () => {
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <h2 className="text-sm font-medium text-muted-foreground">Conversations</h2>
-                    {conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0) > 0 && (
+                    {filteredConversations.filter(c => (c.unreadCount || 0) > 0).length > 0 && (
                       <Badge className="h-5 min-w-5 flex items-center justify-center text-xs bg-primary rounded-full">
-                        {conversations.reduce((sum, c) => sum + (c.unreadCount || 0), 0)} unread
+                        {filteredConversations.filter(c => (c.unreadCount || 0) > 0).length} unread chats
                       </Badge>
                     )}
                   </div>

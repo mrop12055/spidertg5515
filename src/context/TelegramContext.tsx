@@ -194,6 +194,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           createdAt: new Date(c.created_at),
           updatedAt: new Date(c.updated_at),
           blockedByRecipient: (c as any).blocked_by_recipient || false,
+          firstMessageSent: (c as any).first_message_sent ?? false,
         })));
       }
 
@@ -367,6 +368,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
               createdAt: new Date(c.created_at),
               updatedAt: new Date(c.updated_at || c.created_at),
               blockedByRecipient: c.blocked_by_recipient || false,
+              firstMessageSent: c.first_message_sent ?? false,
             };
 
             setConversations(prev => {
@@ -388,6 +390,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                         recipientName: c.recipient_name || conv.recipientName,
                         isActive: c.is_active ?? conv.isActive,
                         blockedByRecipient: c.blocked_by_recipient ?? conv.blockedByRecipient,
+                        firstMessageSent: c.first_message_sent ?? conv.firstMessageSent,
                       }
                     : conv
                 )
