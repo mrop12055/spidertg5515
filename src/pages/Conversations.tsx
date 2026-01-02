@@ -370,19 +370,6 @@ const Chat: React.FC = () => {
 
   const handleUnblockContact = async (id: string) => {
     try {
-      // First get the blocked contact info so we can create an unblock task
-      const blockedContact = blockedContacts.find(c => c.id === id);
-      
-      if (blockedContact) {
-        // Create unblock task for Python runner to call Telegram API
-        await supabase.from('block_contact_tasks').insert({
-          account_id: blockedContact.blocked_by_account_id || accounts[0]?.id,
-          target_phone: blockedContact.phone_number,
-          target_username: blockedContact.name?.startsWith('@') ? blockedContact.name : null,
-          action: 'unblock',
-        });
-      }
-
       // Remove from blocked_contacts table
       const { error } = await supabase
         .from('blocked_contacts')
