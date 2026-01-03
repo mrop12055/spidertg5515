@@ -233,6 +233,8 @@ serve(async (req) => {
             'user not found',    // Recipient doesn't have Telegram
             'no user',           // Recipient doesn't exist
             'peer_id_invalid',   // Invalid recipient ID
+            'privacy',           // Recipient has privacy settings blocking strangers
+            'privacy restricted' // Recipient blocked messages from unknown users
           ];
           
           const errorLower = (error || '').toLowerCase();
