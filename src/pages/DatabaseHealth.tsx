@@ -18,7 +18,8 @@ import {
   Activity,
   Users,
   MessageSquare,
-  Shield
+  Shield,
+  Zap
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -43,6 +44,8 @@ interface Task {
   created_at: string;
   result?: string;
   phone_number?: string;
+  day_number?: number;
+  task_description?: string;
 }
 
 const DatabaseHealth = () => {
@@ -50,6 +53,7 @@ const DatabaseHealth = () => {
   const [accountTasks, setAccountTasks] = useState<Task[]>([]);
   const [blockTasks, setBlockTasks] = useState<Task[]>([]);
   const [importTasks, setImportTasks] = useState<Task[]>([]);
+  const [warmupTasks, setWarmupTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -59,44 +63,40 @@ const DatabaseHealth = () => {
       const { data: healthData } = await supabase
         .from('system_health')
         .select('*')
-        .single();
+        .maybeSingle();
 
       if (healthData) {
         setHealth(healthData as SystemHealth);
       }
 
-      // Fetch account check tasks
-      const { data: accountTasksData } = await supabase
-        .from('account_check_tasks')
-        .select('id, account_id, status, task_type, created_at, result')
-        .order('created_at', { ascending: false })
-        .limit(100);
+      // Fetch all task types in parallel
+      const [accountRes, blockRes, importRes, warmupRes] = await Promise.all([
+        supabase
+          .from('account_check_tasks')
+          .select('id, account_id, status, task_type, created_at, result')
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('block_contact_tasks')
+          .select('id, account_id, status, action, target_phone, created_at, result')
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('contact_import_tasks')
+          .select('id, account_id, status, created_at, result')
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('warmup_schedule')
+          .select('id, account_id, status, task_type, day_number, task_description, created_at')
+          .order('created_at', { ascending: false })
+          .limit(100)
+      ]);
 
-      if (accountTasksData) {
-        setAccountTasks(accountTasksData);
-      }
-
-      // Fetch block contact tasks
-      const { data: blockTasksData } = await supabase
-        .from('block_contact_tasks')
-        .select('id, account_id, status, action, target_phone, created_at, result')
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (blockTasksData) {
-        setBlockTasks(blockTasksData.map(t => ({ ...t, phone_number: t.target_phone })));
-      }
-
-      // Fetch contact import tasks
-      const { data: importTasksData } = await supabase
-        .from('contact_import_tasks')
-        .select('id, account_id, status, created_at, result')
-        .order('created_at', { ascending: false })
-        .limit(100);
-
-      if (importTasksData) {
-        setImportTasks(importTasksData);
-      }
+      if (accountRes.data) setAccountTasks(accountRes.data);
+      if (blockRes.data) setBlockTasks(blockRes.data.map(t => ({ ...t, phone_number: t.target_phone })));
+      if (importRes.data) setImportTasks(importRes.data);
+      if (warmupRes.data) setWarmupTasks(warmupRes.data);
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -107,6 +107,20 @@ const DatabaseHealth = () => {
 
   useEffect(() => {
     fetchData();
+
+    // Set up real-time subscriptions
+    const channel = supabase
+      .channel('database-health-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'account_check_tasks' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'block_contact_tasks' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_import_tasks' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warmup_schedule' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchData())
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const handleRefresh = async () => {
@@ -116,7 +130,7 @@ const DatabaseHealth = () => {
     toast({ title: 'Data refreshed' });
   };
 
-  const clearPendingTasks = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks') => {
+  const clearPendingTasks = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule') => {
     try {
       const { error } = await supabase.from(table).delete().eq('status', 'pending');
       
@@ -129,7 +143,7 @@ const DatabaseHealth = () => {
     }
   };
 
-  const deleteTask = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks', id: string) => {
+  const deleteTask = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule', id: string) => {
     try {
       const { error } = await supabase.from(table).delete().eq('id', id);
       
@@ -157,7 +171,11 @@ const DatabaseHealth = () => {
     }
   };
 
-  const TaskTable = ({ tasks, tableName }: { tasks: Task[], tableName: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' }) => {
+  const TaskTable = ({ tasks, tableName, showDayNumber = false }: { 
+    tasks: Task[], 
+    tableName: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule',
+    showDayNumber?: boolean 
+  }) => {
     const pendingCount = tasks.filter(t => t.status === 'pending').length;
     
     return (
@@ -184,16 +202,17 @@ const DatabaseHealth = () => {
             <TableHeader>
               <TableRow>
                 <TableHead>Type</TableHead>
+                {showDayNumber && <TableHead>Day</TableHead>}
                 <TableHead>Status</TableHead>
                 <TableHead>Created</TableHead>
-                <TableHead>Result</TableHead>
+                <TableHead>Result/Description</TableHead>
                 <TableHead className="w-[80px]">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {tasks.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  <TableCell colSpan={showDayNumber ? 6 : 5} className="text-center text-muted-foreground py-8">
                     No tasks found
                   </TableCell>
                 </TableRow>
@@ -203,12 +222,17 @@ const DatabaseHealth = () => {
                     <TableCell className="font-mono text-xs">
                       {task.task_type || task.action || 'import'}
                     </TableCell>
+                    {showDayNumber && (
+                      <TableCell className="text-xs">
+                        {task.day_number !== undefined ? `Day ${task.day_number}` : '-'}
+                      </TableCell>
+                    )}
                     <TableCell>{getStatusBadge(task.status)}</TableCell>
                     <TableCell className="text-xs text-muted-foreground">
                       {format(new Date(task.created_at), 'MMM d, HH:mm')}
                     </TableCell>
                     <TableCell className="text-xs max-w-[200px] truncate">
-                      {task.result || '-'}
+                      {task.result || task.task_description || '-'}
                     </TableCell>
                     <TableCell>
                       <Button
@@ -230,11 +254,13 @@ const DatabaseHealth = () => {
     );
   };
 
+  const pendingWarmupCount = warmupTasks.filter(t => t.status === 'pending').length;
+
   return (
     <DashboardLayout>
       <PageHeader
         title="Database Health"
-        description="Monitor system health and manage pending tasks"
+        description="Monitor system health and manage pending tasks (real-time updates)"
         action={
           <Button onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
@@ -303,7 +329,7 @@ const DatabaseHealth = () => {
       </div>
 
       {/* Pending Tasks Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <Card className="border-yellow-500/30">
           <CardContent className="pt-4 pb-4">
             <div className="text-center">
@@ -331,6 +357,15 @@ const DatabaseHealth = () => {
           </CardContent>
         </Card>
 
+        <Card className="border-orange-500/30">
+          <CardContent className="pt-4 pb-4">
+            <div className="text-center">
+              <p className="text-3xl font-bold text-orange-500">{pendingWarmupCount}</p>
+              <p className="text-xs text-muted-foreground">Warmup Tasks</p>
+            </div>
+          </CardContent>
+        </Card>
+
         <Card className="border-red-500/30">
           <CardContent className="pt-4 pb-4">
             <div className="text-center">
@@ -347,13 +382,17 @@ const DatabaseHealth = () => {
           <CardTitle className="flex items-center gap-2">
             <Database className="w-5 h-5" />
             Task Queue Management
+            <Badge variant="outline" className="ml-2 bg-green-500/10 text-green-500 border-green-500/30">
+              <Activity className="w-3 h-3 mr-1" />
+              Live
+            </Badge>
           </CardTitle>
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="account" className="w-full">
-            <TabsList className="grid w-full grid-cols-3">
+            <TabsList className="grid w-full grid-cols-4">
               <TabsTrigger value="account">
-                Account Tasks
+                Account
                 {accountTasks.filter(t => t.status === 'pending').length > 0 && (
                   <Badge variant="destructive" className="ml-2">
                     {accountTasks.filter(t => t.status === 'pending').length}
@@ -361,7 +400,7 @@ const DatabaseHealth = () => {
                 )}
               </TabsTrigger>
               <TabsTrigger value="block">
-                Block Tasks
+                Block
                 {blockTasks.filter(t => t.status === 'pending').length > 0 && (
                   <Badge variant="destructive" className="ml-2">
                     {blockTasks.filter(t => t.status === 'pending').length}
@@ -369,10 +408,19 @@ const DatabaseHealth = () => {
                 )}
               </TabsTrigger>
               <TabsTrigger value="import">
-                Import Tasks
+                Import
                 {importTasks.filter(t => t.status === 'pending').length > 0 && (
                   <Badge variant="destructive" className="ml-2">
                     {importTasks.filter(t => t.status === 'pending').length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="warmup">
+                <Zap className="w-3 h-3 mr-1" />
+                Warmup
+                {pendingWarmupCount > 0 && (
+                  <Badge variant="destructive" className="ml-2">
+                    {pendingWarmupCount}
                   </Badge>
                 )}
               </TabsTrigger>
@@ -388,6 +436,10 @@ const DatabaseHealth = () => {
             
             <TabsContent value="import" className="mt-4">
               <TaskTable tasks={importTasks} tableName="contact_import_tasks" />
+            </TabsContent>
+            
+            <TabsContent value="warmup" className="mt-4">
+              <TaskTable tasks={warmupTasks} tableName="warmup_schedule" showDayNumber />
             </TabsContent>
           </Tabs>
         </CardContent>
