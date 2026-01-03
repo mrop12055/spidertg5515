@@ -1248,23 +1248,15 @@ const Accounts: React.FC = () => {
               </span>
             )}
             
-            {/* Frozen Badge - Rate limited (FloodWait) */}
-            {account.status === 'frozen' && account.banReason?.toLowerCase().includes('too many requests') && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500 text-white text-[10px] font-semibold animate-pulse">
+            {/* Frozen Badge - Permanently frozen by Telegram */}
+            {account.status === 'frozen' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500 text-white text-[10px] font-semibold">
                 <Snowflake className="w-3 h-3" />
                 FROZEN
               </span>
             )}
             
-            {/* Deleted Badge - User deleted their account */}
-            {account.status === 'frozen' && account.banReason?.toLowerCase().includes('deleted') && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-500 text-white text-[10px] font-semibold">
-                <XCircle className="w-3 h-3" />
-                DELETED
-              </span>
-            )}
-            
-            {/* Restricted Badge - with timer */}
+            {/* Restricted Badge - Rate limited (24h cooldown) */}
             {account.status === 'restricted' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-restricted text-white text-[10px] font-semibold">
                 <AlertTriangle className="w-3 h-3" />
