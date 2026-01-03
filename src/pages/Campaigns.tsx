@@ -1259,7 +1259,7 @@ username123
                 
                 return (
                   <>
-                    <div className="grid grid-cols-5 gap-3">
+                      <div className="grid grid-cols-4 gap-3">
                       <div className="text-center p-3 rounded-lg bg-muted">
                         <p className="text-2xl font-bold">{report.total}</p>
                         <p className="text-xs text-muted-foreground">Total</p>
@@ -1275,10 +1275,6 @@ username123
                       <div className="text-center p-3 rounded-lg bg-yellow-500/10">
                         <p className="text-2xl font-bold text-yellow-600">{report.pending}</p>
                         <p className="text-xs text-muted-foreground">Pending</p>
-                      </div>
-                      <div className="text-center p-3 rounded-lg bg-gray-500/10">
-                        <p className="text-2xl font-bold text-gray-500">{report.unused}</p>
-                        <p className="text-xs text-muted-foreground">Unused</p>
                       </div>
                     </div>
                     
@@ -1800,9 +1796,6 @@ username123
                         
                         <div className="w-px h-6 bg-border mx-1" />
                         
-                        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setSelectedCampaignId(campaign.id); setIsUploadOpen(true); }} title="Upload Recipients">
-                          <FileText className="w-4 h-4" />
-                        </Button>
                         <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setSelectedReportCampaign(campaign); setIsReportOpen(true); }} title="View Report">
                           <MessageSquare className="w-4 h-4" />
                         </Button>
