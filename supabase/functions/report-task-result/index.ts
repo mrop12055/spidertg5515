@@ -216,11 +216,10 @@ serve(async (req) => {
             'account deleted'
           ];
           
+          // Errors that should FREEZE account (temporary cooldown)
           const temporaryRestrictionErrors = [
             'restricted',
             'flood',
-            'too many requests',
-            'wait',
             'spam',
             'user_is_blocked',
             'user not found',  // Contact import limit hit
@@ -229,9 +228,17 @@ serve(async (req) => {
             'frozen accounts'  // ImportContactsRequest errors on frozen accounts
           ];
           
+          // Errors that should just SKIP the recipient (don't affect account status)
+          // "Too many requests" is rate limiting per recipient, not account-wide
+          const skipRecipientErrors = [
+            'too many requests',
+            'wait',
+          ];
+          
           const errorLower = (error || '').toLowerCase();
           const isPermanentBan = permanentBanErrors.some(r => errorLower.includes(r));
           const isTemporaryRestriction = temporaryRestrictionErrors.some(r => errorLower.includes(r));
+          const isSkipOnly = skipRecipientErrors.some(r => errorLower.includes(r));
           
           if (isPermanentBan && account_id) {
             // PERMANENT BAN - mark account as banned, cannot be used anymore
@@ -244,8 +251,9 @@ serve(async (req) => {
                 ban_reason: error,
               })
               .eq("id", account_id);
-          } else if (isTemporaryRestriction && account_id) {
+          } else if (isTemporaryRestriction && !isSkipOnly && account_id) {
             // TEMPORARY - set to frozen status with 24h cooldown
+            // But NOT for "too many requests" - that just means skip this recipient
             console.log(`[report-task-result] Account ${account_id} FROZEN for 24h: ${error}`);
             
             await supabase
@@ -256,10 +264,13 @@ serve(async (req) => {
                 restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               })
               .eq("id", account_id);
+          } else if (isSkipOnly) {
+            // Just log - don't change account status, recipient is already marked failed
+            console.log(`[report-task-result] Rate limit on recipient (account stays active): ${error}`);
           }
           
-          // Reassign recipients if account was banned OR temporarily restricted
-          if ((isPermanentBan || isTemporaryRestriction) && account_id) {
+          // Reassign recipients if account was banned OR temporarily restricted (but NOT skip-only errors)
+          if ((isPermanentBan || (isTemporaryRestriction && !isSkipOnly)) && account_id) {
             
             // Get pending recipients from this account
             const { data: pendingRecipients } = await supabase
