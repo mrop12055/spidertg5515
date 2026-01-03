@@ -346,11 +346,15 @@ serve(async (req) => {
           }
 
           if (overDailyLimit || overCampaignLimit) {
-            // Find best fallback account (under daily limit AND under per-campaign limit)
+            // Get already-failed account IDs for this recipient (privacy errors, etc.)
+            const failedAccountIds: string[] = recipient.failed_account_ids || [];
+            
+            // Find best fallback account (under daily limit AND under per-campaign limit AND not already failed)
             const eligibleAccounts = accounts.filter((a: any) => {
               const limit = a.daily_limit ?? DAILY_MESSAGE_LIMIT;
               const sentToday = a.messages_sent_today ?? 0;
-              return sentToday < limit;
+              const notAlreadyFailed = !failedAccountIds.includes(a.id);
+              return sentToday < limit && notAlreadyFailed;
             });
 
             // IMPORTANT: prevent parallel sends from the SAME account within the SAME campaign
@@ -417,11 +421,15 @@ serve(async (req) => {
           if (unassignedRecipients && unassignedRecipients.length > 0) {
             recipient = unassignedRecipients[0];
             
-            // Find best account (under daily limit, and under per-campaign limit)
+            // Get already-failed account IDs for this recipient (privacy errors, etc.)
+            const failedAccountIds: string[] = recipient.failed_account_ids || [];
+            
+            // Find best account (under daily limit, under per-campaign limit, AND not already failed for this recipient)
             const eligibleAccounts = accounts.filter((a: any) => {
               const limit = a.daily_limit ?? DAILY_MESSAGE_LIMIT;
               const sentToday = a.messages_sent_today ?? 0;
-              return sentToday < limit;
+              const notAlreadyFailed = !failedAccountIds.includes(a.id);
+              return sentToday < limit && notAlreadyFailed;
             });
 
             // IMPORTANT: prevent parallel sends from the SAME account within the SAME campaign

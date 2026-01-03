@@ -275,14 +275,22 @@ serve(async (req) => {
             'user not found',    // Recipient doesn't have Telegram
             'no user',           // Recipient doesn't exist
             'peer_id_invalid',   // Invalid recipient ID
-            'privacy',           // Recipient has privacy settings blocking strangers
-            'privacy restricted' // Recipient blocked messages from unknown users
           ];
+          
+          // Errors that should RETRY with a different account (max 5 attempts)
+          // Privacy errors may be account-specific - recipient blocked THIS account but might accept others
+          const retryWithDifferentAccountErrors = [
+            'privacy',           // Recipient has privacy settings blocking THIS account
+            'privacy restricted' // Recipient blocked messages from THIS unknown user
+          ];
+          
+          const MAX_ACCOUNT_RETRIES = 5;  // Try up to 5 different accounts
           
           const errorLower = (error || '').toLowerCase();
           const isPermanentBan = permanentBanErrors.some(r => errorLower.includes(r));
           const isTemporaryRestriction = temporaryRestrictionErrors.some(r => errorLower.includes(r));
           const isSkipOnly = skipRecipientErrors.some(r => errorLower.includes(r));
+          const isRetryable = retryWithDifferentAccountErrors.some(r => errorLower.includes(r));
           
           if (isPermanentBan && account_id) {
             // PERMANENT BAN - mark account as banned, cannot be used anymore
@@ -295,7 +303,7 @@ serve(async (req) => {
                 ban_reason: error,
               })
               .eq("id", account_id);
-          } else if (isTemporaryRestriction && !isSkipOnly && account_id) {
+          } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
             // TEMPORARY - set to restricted status with 24h cooldown
             // Account can still be used for replying to existing chats, but not new campaign messages
             console.log(`[report-task-result] Account ${account_id} RESTRICTED for 24h: ${error}`);
@@ -308,6 +316,51 @@ serve(async (req) => {
                 restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               })
               .eq("id", account_id);
+          } else if (isRetryable && campaign_recipient_id && account_id) {
+            // PRIVACY ERROR - try with a different account (up to 5 attempts)
+            console.log(`[report-task-result] Privacy error for recipient ${campaign_recipient_id} - checking for retry with different account`);
+            
+            // Get recipient's current failed_account_ids
+            const { data: recipientData } = await supabase
+              .from("campaign_recipients")
+              .select("campaign_id, failed_account_ids")
+              .eq("id", campaign_recipient_id)
+              .single();
+            
+            if (recipientData) {
+              const failedAccountIds: string[] = recipientData.failed_account_ids || [];
+              const updatedFailedIds = [...failedAccountIds, account_id];
+              
+              if (updatedFailedIds.length < MAX_ACCOUNT_RETRIES) {
+                // Still have retries left - reset to pending for another account to try
+                await supabase
+                  .from("campaign_recipients")
+                  .update({
+                    status: "pending",
+                    sent_by_account_id: null,  // Clear so a different account gets assigned
+                    failed_account_ids: updatedFailedIds,
+                  })
+                  .eq("id", campaign_recipient_id);
+                
+                console.log(`[report-task-result] Privacy error - retry ${updatedFailedIds.length}/${MAX_ACCOUNT_RETRIES}. Recipient reset to pending for different account.`);
+              } else {
+                // Max retries reached - mark as permanently failed
+                await supabase
+                  .from("campaign_recipients")
+                  .update({
+                    status: "failed",
+                    failed_reason: `Privacy restricted by ${updatedFailedIds.length} accounts`,
+                    sent_at: new Date().toISOString(),
+                    failed_account_ids: updatedFailedIds,
+                  })
+                  .eq("id", campaign_recipient_id);
+                
+                // Increment campaign failed count
+                await supabase.rpc("increment_campaign_failed_count", { cid: recipientData.campaign_id });
+                
+                console.log(`[report-task-result] Privacy error - max retries (${MAX_ACCOUNT_RETRIES}) reached. Recipient marked as failed.`);
+              }
+            }
           } else if (isSkipOnly) {
             // Just log - don't change account status, recipient is already marked failed
             console.log(`[report-task-result] Recipient-side issue (account stays active): ${error}`);

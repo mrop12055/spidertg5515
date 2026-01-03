@@ -194,6 +194,7 @@ export type Database = {
       campaign_recipients: {
         Row: {
           campaign_id: string
+          failed_account_ids: string[] | null
           failed_reason: string | null
           id: string
           name: string | null
@@ -205,6 +206,7 @@ export type Database = {
         }
         Insert: {
           campaign_id: string
+          failed_account_ids?: string[] | null
           failed_reason?: string | null
           id?: string
           name?: string | null
@@ -216,6 +218,7 @@ export type Database = {
         }
         Update: {
           campaign_id?: string
+          failed_account_ids?: string[] | null
           failed_reason?: string | null
           id?: string
           name?: string | null
