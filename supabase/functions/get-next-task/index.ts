@@ -887,6 +887,7 @@ serve(async (req) => {
                   system_lang_code: accountData.system_lang_code,
                   api_id: apiCred?.api_id || accountData.api_id,
                   api_hash: apiCred?.api_hash || accountData.api_hash,
+                  api_credential_id: apiCred?.id || accountData.api_credential_id,
                   proxy_id: accountData.proxy_id,
                 },
                 proxy: proxyData
