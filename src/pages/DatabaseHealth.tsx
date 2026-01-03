@@ -91,26 +91,30 @@ const DatabaseHealth = () => {
         setHealth(healthData as SystemHealth);
       }
 
-      // Fetch all task types in parallel
+      // Fetch ONLY pending tasks to reduce system load
       const [accountRes, blockRes, importRes, warmupRes, recipientsRes, messagesRes] = await Promise.all([
         supabase
           .from('account_check_tasks')
           .select('id, account_id, status, task_type, created_at, result')
+          .eq('status', 'pending')
           .order('created_at', { ascending: false })
           .limit(100),
         supabase
           .from('block_contact_tasks')
           .select('id, account_id, status, action, target_phone, created_at, result')
+          .eq('status', 'pending')
           .order('created_at', { ascending: false })
           .limit(100),
         supabase
           .from('contact_import_tasks')
           .select('id, account_id, status, created_at, result')
+          .eq('status', 'pending')
           .order('created_at', { ascending: false })
           .limit(100),
         supabase
           .from('warmup_schedule')
           .select('id, account_id, status, task_type, day_number, task_description, created_at')
+          .eq('status', 'pending')
           .order('created_at', { ascending: false })
           .limit(100),
         supabase
@@ -177,16 +181,6 @@ const DatabaseHealth = () => {
     }
   };
 
-  const clearAllTasks = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule') => {
-    try {
-      const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
-      if (error) throw error;
-      toast({ title: `Cleared all tasks` });
-      fetchData();
-    } catch (error: any) {
-      toast({ title: 'Error', description: error.message, variant: 'destructive' });
-    }
-  };
 
   const deleteTask = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule', id: string) => {
     try {
@@ -266,29 +260,16 @@ const DatabaseHealth = () => {
     tableName: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule',
     showDayNumber?: boolean 
   }) => {
-    const pendingCount = tasks.filter(t => t.status === 'pending').length;
-    
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <Badge variant="secondary">{tasks.length} total</Badge>
-            <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500">{pendingCount} pending</Badge>
-          </div>
-          <div className="flex gap-2">
-            {pendingCount > 0 && (
-              <Button variant="outline" size="sm" onClick={() => clearPendingTasks(tableName)}>
-                <Trash2 className="w-4 h-4 mr-2" />
-                Clear Pending
-              </Button>
-            )}
-            {tasks.length > 0 && (
-              <Button variant="destructive" size="sm" onClick={() => clearAllTasks(tableName)}>
-                <Trash2 className="w-4 h-4 mr-2" />
-                Delete All
-              </Button>
-            )}
-          </div>
+          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500">{tasks.length} pending</Badge>
+          {tasks.length > 0 && (
+            <Button variant="destructive" size="sm" onClick={() => clearPendingTasks(tableName)}>
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete All Pending
+            </Button>
+          )}
         </div>
         
         <div className="rounded-md border max-h-[400px] overflow-auto">
@@ -348,7 +329,7 @@ const DatabaseHealth = () => {
     );
   };
 
-  const pendingWarmupCount = warmupTasks.filter(t => t.status === 'pending').length;
+  
 
   return (
     <DashboardLayout>
@@ -454,7 +435,7 @@ const DatabaseHealth = () => {
         <Card className="border-orange-500/30">
           <CardContent className="pt-4 pb-4">
             <div className="text-center">
-              <p className="text-3xl font-bold text-orange-500">{pendingWarmupCount}</p>
+              <p className="text-3xl font-bold text-orange-500">{warmupTasks.length}</p>
               <p className="text-xs text-muted-foreground">Warmup Tasks</p>
             </div>
           </CardContent>
@@ -487,34 +468,34 @@ const DatabaseHealth = () => {
             <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="account">
                 Account
-                {accountTasks.filter(t => t.status === 'pending').length > 0 && (
+                {accountTasks.length > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {accountTasks.filter(t => t.status === 'pending').length}
+                    {accountTasks.length}
                   </Badge>
                 )}
               </TabsTrigger>
               <TabsTrigger value="block">
                 Block
-                {blockTasks.filter(t => t.status === 'pending').length > 0 && (
+                {blockTasks.length > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {blockTasks.filter(t => t.status === 'pending').length}
+                    {blockTasks.length}
                   </Badge>
                 )}
               </TabsTrigger>
               <TabsTrigger value="import">
                 Import
-                {importTasks.filter(t => t.status === 'pending').length > 0 && (
+                {importTasks.length > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {importTasks.filter(t => t.status === 'pending').length}
+                    {importTasks.length}
                   </Badge>
                 )}
               </TabsTrigger>
               <TabsTrigger value="warmup">
                 <Zap className="w-3 h-3 mr-1" />
                 Warmup
-                {pendingWarmupCount > 0 && (
+                {warmupTasks.length > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {pendingWarmupCount}
+                    {warmupTasks.length}
                   </Badge>
                 )}
               </TabsTrigger>
