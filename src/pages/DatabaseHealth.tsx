@@ -97,6 +97,8 @@ const DatabaseHealth = () => {
   // Error breakdown and restricted accounts
   const [failedReasons, setFailedReasons] = useState<{reason: string; count: number}[]>([]);
   const [restrictedAccounts, setRestrictedAccounts] = useState<RestrictedAccount[]>([]);
+  // Recent individual errors with timestamps
+  const [recentErrors, setRecentErrors] = useState<{id: string; phone: string; reason: string; timestamp: string}[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -234,6 +236,24 @@ const DatabaseHealth = () => {
         .order('restricted_until', { ascending: true });
 
       setRestrictedAccounts(restrictedData || []);
+
+      // Fetch recent individual errors (last 50)
+      const { data: recentFailedRecipients } = await supabase
+        .from('campaign_recipients')
+        .select('id, phone_number, failed_reason, sent_at')
+        .eq('status', 'failed')
+        .not('failed_reason', 'is', null)
+        .order('sent_at', { ascending: false, nullsFirst: false })
+        .limit(50);
+
+      setRecentErrors(
+        (recentFailedRecipients || []).map(r => ({
+          id: r.id,
+          phone: r.phone_number,
+          reason: r.failed_reason || 'Unknown error',
+          timestamp: r.sent_at || new Date().toISOString()
+        }))
+      );
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -665,6 +685,47 @@ const DatabaseHealth = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Recent Errors Log */}
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-destructive" />
+            Recent Errors
+            <Badge variant="outline" className="ml-2 bg-destructive/10 text-destructive border-destructive/30">
+              Live Feed
+            </Badge>
+          </CardTitle>
+          <CardDescription>Latest 50 failed messages with timestamps</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ScrollArea className="h-[400px]">
+            {recentErrors.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
+                <p>No recent errors</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {recentErrors.map((error) => (
+                  <div key={error.id} className="p-3 rounded-lg border bg-destructive/5 border-destructive/20">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <Phone className="w-4 h-4 text-muted-foreground" />
+                        <span className="font-medium text-sm">{error.phone}</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {format(new Date(error.timestamp), 'MMM d, HH:mm:ss')}
+                      </span>
+                    </div>
+                    <p className="text-sm text-destructive">{error.reason}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
+        </CardContent>
+      </Card>
 
       {/* Task Tables */}
       <Card>
