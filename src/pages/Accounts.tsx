@@ -1264,10 +1264,6 @@ const Accounts: React.FC = () => {
     const msgSent24h = messagesSentLast24h.get(account.id) || 0;
     const accountGroup = groups.find(g => g.accountIds.includes(account.id));
     
-    // Determine if account was deleted by user (vs banned by Telegram)
-    const isUserDeleted = account.status === 'banned' && account.banReason && 
-      /deleted|deactivated|user_deactivated/i.test(account.banReason);
-    
     // Accounts without username AND no first/last name might be blocked/restricted
     const isPotentiallyBlocked = account.status === 'active' && 
       !account.username && 
@@ -1305,6 +1301,7 @@ const Accounts: React.FC = () => {
               account.status === 'restricted' && "bg-status-restricted/15 text-status-restricted",
               account.status === 'cooldown' && "bg-status-cooldown/15 text-status-cooldown",
               account.status === 'disconnected' && "bg-status-disconnected/15 text-status-disconnected",
+              account.status === 'frozen' && "bg-cyan-500/15 text-cyan-500",
             )}>
               {verifyResult?.status === 'checking' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -1324,10 +1321,12 @@ const Accounts: React.FC = () => {
             account.status === 'restricted' && "bg-status-restricted",
             account.status === 'cooldown' && "bg-status-cooldown",
             account.status === 'disconnected' && "bg-status-disconnected",
+            account.status === 'frozen' && "bg-cyan-500",
           )}>
             {account.status === 'active' && <Check className="w-2 h-2 text-white" />}
             {account.status === 'banned' && <XCircle className="w-2 h-2 text-white" />}
             {account.status === 'restricted' && <AlertTriangle className="w-2 h-2 text-white" />}
+            {account.status === 'frozen' && <Snowflake className="w-2 h-2 text-white" />}
           </div>
         </div>
         
@@ -1342,25 +1341,27 @@ const Accounts: React.FC = () => {
               <CheckCircle className="w-3.5 h-3.5 text-status-active" />
             )}
             
-            {/* Banned Badge - distinguish between user-deleted (BLOCKED) and Telegram-banned (BANNED) */}
-            {account.status === 'banned' && isUserDeleted && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-600 text-white text-[10px] font-semibold">
-                <Shield className="w-3 h-3" />
-                BLOCKED
-              </span>
-            )}
-            {account.status === 'banned' && !isUserDeleted && (
+            {/* Banned Badge - Telegram banned accounts only */}
+            {account.status === 'banned' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-banned text-white text-[10px] font-semibold animate-pulse">
                 <XCircle className="w-3 h-3" />
                 BANNED
               </span>
             )}
             
-            {/* Frozen/Restricted Badge - with timer */}
+            {/* Frozen Badge - User-deleted accounts */}
+            {account.status === 'frozen' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500 text-white text-[10px] font-semibold">
+                <Snowflake className="w-3 h-3" />
+                DELETED
+              </span>
+            )}
+            
+            {/* Restricted Badge - with timer */}
             {account.status === 'restricted' && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500 text-white text-[10px] font-semibold">
-                <Clock className="w-3 h-3" />
-                FROZEN
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-restricted text-white text-[10px] font-semibold">
+                <AlertTriangle className="w-3 h-3" />
+                RESTRICTED
               </span>
             )}
             

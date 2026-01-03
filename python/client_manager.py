@@ -197,11 +197,18 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         except Exception as me_error:
             error_str = str(me_error).lower()
             # Detect banned/deleted/deactivated accounts
-            if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated", "auth_key"]):
-                print(f"  [BANNED] Account deleted/banned: {account['phone_number']} - {me_error}")
+            # Distinguish between user-deleted (frozen) vs Telegram-banned
+            if any(x in error_str for x in ["user_deactivated", "deactivated"]):
+                # User deleted their own account = FROZEN
+                print(f"  [FROZEN] Account deleted by user: {account['phone_number']} - {me_error}")
+                await report_result("account_frozen", {"account_id": account_id, "reason": str(me_error)})
+                return None
+            elif any(x in error_str for x in ["banned", "deleted"]):
+                # Telegram banned the account = BANNED
+                print(f"  [BANNED] Account banned by Telegram: {account['phone_number']} - {me_error}")
                 await report_result("account_banned", {"account_id": account_id, "reason": str(me_error)})
                 return None
-            elif any(x in error_str for x in ["session", "revoked", "auth"]):
+            elif any(x in error_str for x in ["session", "revoked", "auth", "auth_key"]):
                 print(f"  [EXPIRED] Session revoked: {account['phone_number']} - {me_error}")
                 await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
                 return None
@@ -223,8 +230,11 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         return client
     except Exception as e:
         error_str = str(e).lower()
-        # Detect banned/deleted from connection errors
-        if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
+        # Detect user-deleted (frozen) vs Telegram-banned from connection errors
+        if any(x in error_str for x in ["user_deactivated", "deactivated"]):
+            print(f"  [FROZEN] {account['phone_number']}: {e}")
+            await report_result("account_frozen", {"account_id": account_id, "reason": str(e)})
+        elif any(x in error_str for x in ["deleted", "banned"]):
             print(f"  [BANNED] {account['phone_number']}: {e}")
             await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
         else:
@@ -233,7 +243,7 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
 
 
 async def _sync_profile(client: TelegramClient, account_id: str, skip_avatar: bool = True):
-    """Fetch and report account profile data"""
+    """Fetch and report account profile data. Detects deleted/frozen accounts."""
     try:
         me = await asyncio.wait_for(client.get_me(), timeout=10)
         if me:
@@ -248,17 +258,46 @@ async def _sync_profile(client: TelegramClient, account_id: str, skip_avatar: bo
                 except:
                     pass
             
-            await report_result("account_connected", {
+            # Check if account seems deleted by user (no profile info at all)
+            # Deleted accounts often return empty profile or just telegram_id
+            has_profile = bool(me.first_name or me.last_name or me.username)
+            
+            if not has_profile:
+                # Account exists but has NO profile info - likely deleted by user
+                print(f"  [FROZEN] Account has no profile info (possibly deleted by user)")
+                await report_result("account_frozen", {
+                    "account_id": account_id,
+                    "reason": "No profile info - account may be deleted by user",
+                    "telegram_id": me.id
+                })
+            else:
+                await report_result("account_connected", {
+                    "account_id": account_id,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                    "username": me.username,
+                    "telegram_id": me.id,
+                    "phone": me.phone,
+                    "avatar_base64": avatar_base64
+                })
+        else:
+            # get_me returned None - account may be deleted
+            print(f"  [FROZEN] get_me() returned None - account may be deleted")
+            await report_result("account_frozen", {
                 "account_id": account_id,
-                "first_name": me.first_name,
-                "last_name": me.last_name,
-                "username": me.username,
-                "telegram_id": me.id,
-                "phone": me.phone,
-                "avatar_base64": avatar_base64
+                "reason": "get_me() returned None - account deleted by user"
             })
     except Exception as e:
-        print(f"  [WARN] Profile sync error: {e}")
+        error_str = str(e).lower()
+        # Detect if this is a "deleted by user" error vs Telegram ban
+        if any(x in error_str for x in ["user_deactivated", "deactivated"]):
+            print(f"  [FROZEN] Account deactivated by user: {e}")
+            await report_result("account_frozen", {
+                "account_id": account_id,
+                "reason": f"User deactivated: {e}"
+            })
+        else:
+            print(f"  [WARN] Profile sync error: {e}")
 
 
 async def get_next_task(runner: str = None) -> dict:

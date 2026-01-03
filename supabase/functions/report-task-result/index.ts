@@ -887,11 +887,33 @@ serve(async (req) => {
           .from("telegram_accounts")
           .update({ 
             status: "banned",
-            ban_reason: reason || "Account deleted or banned"
+            ban_reason: reason || "Account banned by Telegram"
           })
           .eq("id", account_id);
 
-        console.log(`[report-task-result] Account ${account_id} BANNED: ${reason}`);
+        console.log(`[report-task-result] Account ${account_id} BANNED by Telegram: ${reason}`);
+        break;
+      }
+
+      case "account_frozen": {
+        // Account deleted/deactivated by user (not by Telegram)
+        const { account_id, reason, telegram_id } = result;
+
+        const updateData: Record<string, unknown> = { 
+          status: "frozen",
+          ban_reason: reason || "Account deleted by user"
+        };
+        
+        if (telegram_id) {
+          updateData.telegram_id = telegram_id;
+        }
+
+        await supabase
+          .from("telegram_accounts")
+          .update(updateData)
+          .eq("id", account_id);
+
+        console.log(`[report-task-result] Account ${account_id} FROZEN (user-deleted): ${reason}`);
         break;
       }
 
