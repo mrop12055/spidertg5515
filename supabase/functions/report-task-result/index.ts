@@ -543,7 +543,8 @@ serve(async (req) => {
           }
 
           // AUTOMATIC ACCOUNT ROTATION: Try to reassign to next available account (with retry limit)
-          if (campaign_recipient_id) {
+          // SKIP if the error was already handled by specific error handlers above (privacy, skip-only, etc.)
+          if (campaign_recipient_id && !isRetryable && !isSkipOnly) {
             const MAX_RETRIES = 3; // Stop retrying after 3 failed attempts
             
             // Get recipient details including campaign and retry count
