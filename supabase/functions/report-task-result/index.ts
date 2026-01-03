@@ -307,21 +307,9 @@ serve(async (req) => {
                 ban_reason: error,
               })
               .eq("id", account_id);
-          } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
-            // TEMPORARY - set to restricted status with 24h cooldown
-            // Account can still be used for replying to existing chats, but not new campaign messages
-            console.log(`[report-task-result] Account ${account_id} RESTRICTED for 24h: ${error}`);
-            
-            await supabase
-              .from("telegram_accounts")
-              .update({
-                status: "restricted",
-                ban_reason: error,
-                restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-              })
-              .eq("id", account_id);
           } else if (isRetryable && campaign_recipient_id && account_id) {
             // PRIVACY ERROR - try with a different account (up to 5 attempts)
+            // Takes priority over temporary restriction since "privacy restricted" contains "restricted"
             console.log(`[report-task-result] Privacy error for recipient ${campaign_recipient_id} - checking for retry with different account`);
             
             // Get recipient's current failed_account_ids
@@ -365,6 +353,19 @@ serve(async (req) => {
                 console.log(`[report-task-result] Privacy error - max retries (${MAX_ACCOUNT_RETRIES}) reached. Recipient marked as failed.`);
               }
             }
+          } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
+            // TEMPORARY - set to restricted status with 24h cooldown
+            // Account can still be used for replying to existing chats, but not new campaign messages
+            console.log(`[report-task-result] Account ${account_id} RESTRICTED for 24h: ${error}`);
+            
+            await supabase
+              .from("telegram_accounts")
+              .update({
+                status: "restricted",
+                ban_reason: error,
+                restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+              })
+              .eq("id", account_id);
           } else if (isSkipOnly && campaign_recipient_id) {
             // Recipient-side issue (e.g. "user was deleted") - mark recipient as failed, keep account active
             console.log(`[report-task-result] Recipient-side issue - marking as failed: ${error}`);
