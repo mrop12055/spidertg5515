@@ -247,6 +247,7 @@ serve(async (req) => {
           console.log(`[report-task-result] Message sent successfully for recipient ${campaign_recipient_id || message_id}`);
         } else {
           // Separate PERMANENT ban errors from TEMPORARY restrictions
+          // IMPORTANT: Be specific to avoid false positives (e.g. "user was deleted" = recipient, not sender)
           const permanentBanErrors = [
             'deactivated',
             'user_deactivated', 
@@ -254,8 +255,9 @@ serve(async (req) => {
             'auth_key_unregistered',
             'session_revoked',
             'phone_number_banned',
-            'deleted',  // Account deleted
-            'account deleted'
+            'your account',       // "Your account was deleted/banned"
+            'account deleted',    // Sender's account deleted (not "user was deleted")
+            'account was banned'
           ];
           
           // Errors that should RESTRICT account (24h cooldown for new messages, but can still chat)
@@ -272,9 +274,11 @@ serve(async (req) => {
           // Errors that should just SKIP the recipient (don't affect account status)
           // These are recipient-related issues, NOT account problems
           const skipRecipientErrors = [
-            'user not found',    // Recipient doesn't have Telegram
-            'no user',           // Recipient doesn't exist
-            'peer_id_invalid',   // Invalid recipient ID
+            'user not found',        // Recipient doesn't have Telegram
+            'no user',               // Recipient doesn't exist
+            'peer_id_invalid',       // Invalid recipient ID
+            'user was deleted',      // RECIPIENT deleted their account (not sender!)
+            'specified user',        // "The specified user was deleted"
           ];
           
           // Errors that should RETRY with a different account (max 5 attempts)
