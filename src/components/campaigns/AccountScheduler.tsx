@@ -38,6 +38,7 @@ interface AccountSchedulerProps {
   onAccountRotation: (accountId: string) => void;
   onSettingsChange: (settings: SchedulerSettings) => void;
   accountUniqueRecipients?: Map<string, number>; // Unique recipients contacted today per account
+  initialSettings?: Partial<SchedulerSettings>; // Settings from database
 }
 
 interface AccountScheduleInfo {
@@ -54,16 +55,17 @@ const AccountScheduler: React.FC<AccountSchedulerProps> = ({
   selectedAccountIds,
   onAccountRotation,
   onSettingsChange,
-  accountUniqueRecipients = new Map()
+  accountUniqueRecipients = new Map(),
+  initialSettings
 }) => {
-  const [settings, setSettings] = useState<SchedulerSettings>({
-    enabled: true,
-    maxMessagesBeforeRotation: 5,
-    cooldownDuration: 30,
-    prioritizeHighMaturity: true,
-    autoSkipRestricted: true,
-    balanceLoad: true
-  });
+  const [settings, setSettings] = useState<SchedulerSettings>(() => ({
+    enabled: initialSettings?.enabled ?? true,
+    maxMessagesBeforeRotation: initialSettings?.maxMessagesBeforeRotation ?? 10,
+    cooldownDuration: initialSettings?.cooldownDuration ?? 300,
+    prioritizeHighMaturity: initialSettings?.prioritizeHighMaturity ?? true,
+    autoSkipRestricted: initialSettings?.autoSkipRestricted ?? true,
+    balanceLoad: initialSettings?.balanceLoad ?? true
+  }));
 
   const [activeAccountId, setActiveAccountId] = useState<string | null>(null);
   const [accountCooldowns, setAccountCooldowns] = useState<Map<string, number>>(new Map());
@@ -167,28 +169,26 @@ const AccountScheduler: React.FC<AccountSchedulerProps> = ({
     setAccountCooldowns(prev => new Map(prev).set(accountId, cooldownEnd));
   };
 
-  // Update settings and notify parent
+  // Update settings and notify parent (parent saves to database)
   const updateSettings = (updates: Partial<SchedulerSettings>) => {
     const newSettings = { ...settings, ...updates };
     setSettings(newSettings);
     onSettingsChange(newSettings);
-    
-    // Save to localStorage
-    localStorage.setItem('account_scheduler_settings', JSON.stringify(newSettings));
   };
 
-  // Load settings from localStorage
+  // Sync with initialSettings when they change (from database)
   useEffect(() => {
-    const saved = localStorage.getItem('account_scheduler_settings');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setSettings(prev => ({ ...prev, ...parsed }));
-      } catch (e) {
-        console.error('Failed to load scheduler settings');
-      }
+    if (initialSettings) {
+      setSettings(prev => ({
+        enabled: initialSettings.enabled ?? prev.enabled,
+        maxMessagesBeforeRotation: initialSettings.maxMessagesBeforeRotation ?? prev.maxMessagesBeforeRotation,
+        cooldownDuration: initialSettings.cooldownDuration ?? prev.cooldownDuration,
+        prioritizeHighMaturity: initialSettings.prioritizeHighMaturity ?? prev.prioritizeHighMaturity,
+        autoSkipRestricted: initialSettings.autoSkipRestricted ?? prev.autoSkipRestricted,
+        balanceLoad: initialSettings.balanceLoad ?? prev.balanceLoad,
+      }));
     }
-  }, []);
+  }, [initialSettings]);
 
   // Update cooldowns every second
   useEffect(() => {
