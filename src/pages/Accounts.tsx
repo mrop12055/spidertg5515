@@ -89,6 +89,8 @@ const Accounts: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [sessionFiles, setSessionFiles] = useState<SessionFile[]>([]);
   const [uploadResults, setUploadResults] = useState<{ successful: number; failed: number } | null>(null);
+  const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
+  const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
   
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -452,8 +454,14 @@ const Accounts: React.FC = () => {
         session_data: sf.base64Data,
       }));
 
+      // Combine selected existing tags + new tag if entered
+      const tagsToAssign = [...uploadTags];
+      if (newUploadTag.trim() && !tagsToAssign.includes(newUploadTag.trim())) {
+        tagsToAssign.push(newUploadTag.trim());
+      }
+
       const { data, error } = await supabase.functions.invoke('process-account-upload', {
-        body: { accounts: accountsToUpload }
+        body: { accounts: accountsToUpload, tags: tagsToAssign }
       });
 
       if (error) throw error;
@@ -489,6 +497,8 @@ const Accounts: React.FC = () => {
 
       if (data.successful > 0 && data.failed === 0) {
         setSessionFiles([]);
+        setUploadTags([]);
+        setNewUploadTag('');
         setIsAddOpen(false);
       }
       
@@ -1454,6 +1464,8 @@ const Accounts: React.FC = () => {
               if (!open) {
                 setSessionFiles([]);
                 setUploadResults(null);
+                setUploadTags([]);
+                setNewUploadTag('');
               }
             }}>
               <DialogTrigger asChild>
@@ -1515,6 +1527,56 @@ const Accounts: React.FC = () => {
                         <span className="flex items-center gap-1 text-destructive">
                           <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
                         </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Tag assignment for uploaded accounts */}
+                  {sessionFiles.length > 0 && (
+                    <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                      <div className="flex items-center gap-2 text-sm font-medium">
+                        <Tag className="w-4 h-4" />
+                        Assign Tags (Optional)
+                      </div>
+                      
+                      {/* Select existing tags */}
+                      {availableTags.length > 0 && (
+                        <div className="flex flex-wrap gap-2">
+                          {availableTags.map(tag => (
+                            <Badge
+                              key={tag}
+                              variant={uploadTags.includes(tag) ? "default" : "outline"}
+                              className="cursor-pointer"
+                              onClick={() => {
+                                if (uploadTags.includes(tag)) {
+                                  setUploadTags(prev => prev.filter(t => t !== tag));
+                                } else {
+                                  setUploadTags(prev => [...prev, tag]);
+                                }
+                              }}
+                            >
+                              <Tag className="w-3 h-3 mr-1" />
+                              {tag}
+                              {uploadTags.includes(tag) && <Check className="w-3 h-3 ml-1" />}
+                            </Badge>
+                          ))}
+                        </div>
+                      )}
+                      
+                      {/* Create new tag */}
+                      <div className="flex gap-2">
+                        <Input
+                          placeholder="Or enter new tag name..."
+                          value={newUploadTag}
+                          onChange={(e) => setNewUploadTag(e.target.value)}
+                          className="h-8 text-sm"
+                        />
+                      </div>
+                      
+                      {(uploadTags.length > 0 || newUploadTag.trim()) && (
+                        <p className="text-xs text-muted-foreground">
+                          {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
+                        </p>
                       )}
                     </div>
                   )}

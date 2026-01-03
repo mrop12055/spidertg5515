@@ -314,6 +314,7 @@ serve(async (req) => {
     const body = await req.json();
     
     const accounts: AccountData[] = body.accounts || [];
+    const tags: string[] = body.tags || []; // Accept tags from request
     
     if (!accounts.length) {
       return new Response(
@@ -439,7 +440,7 @@ serve(async (req) => {
           results.accounts.push(data);
           results.account_ids.push(existing.id);
         } else {
-          // Insert new account with fingerprint
+          // Insert new account with fingerprint and tags
           const { data, error } = await supabase
             .from('telegram_accounts')
             .insert({
@@ -454,6 +455,7 @@ serve(async (req) => {
               maturity_days: 0,
               daily_limit: 25,
               messages_sent_today: 0,
+              tags: tags.length > 0 ? tags : [], // Assign tags to new accounts
             })
             .select()
             .single();
