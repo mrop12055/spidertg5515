@@ -41,9 +41,8 @@ interface MessageQueueStats {
 
 interface AccountStats {
   active: number;
-  bannedFrozen: number;
   restricted: number;
-  disconnected: number;
+  inactive: number;
 }
 
 const Dashboard: React.FC = () => {
@@ -57,9 +56,8 @@ const Dashboard: React.FC = () => {
 
   const accountStats = {
     active: accounts.filter(a => a.status === 'active').length,
-    bannedFrozen: accounts.filter(a => a.status === 'banned' || a.status === 'frozen').length,
     restricted: accounts.filter(a => a.status === 'restricted' || a.status === 'cooldown').length,
-    disconnected: accounts.filter(a => a.status === 'disconnected').length,
+    inactive: accounts.filter(a => a.status === 'banned' || a.status === 'frozen' || a.status === 'disconnected').length,
   };
 
   const fetchQueueStats = async () => {
@@ -179,7 +177,7 @@ const Dashboard: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div 
               className="p-4 rounded-lg bg-green-500/10 border border-green-500/30 cursor-pointer hover:bg-green-500/20 transition-colors"
               onClick={() => navigate('/accounts')}
@@ -189,16 +187,6 @@ const Dashboard: React.FC = () => {
                 <span className="text-sm text-muted-foreground">Active</span>
               </div>
               <p className="text-2xl font-bold text-green-600">{accountStats.active}</p>
-            </div>
-            <div 
-              className="p-4 rounded-lg bg-destructive/10 border border-destructive/30 cursor-pointer hover:bg-destructive/20 transition-colors"
-              onClick={() => navigate('/accounts')}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <XCircle className="w-5 h-5 text-destructive" />
-                <span className="text-sm text-muted-foreground">Banned & Frozen</span>
-              </div>
-              <p className="text-2xl font-bold text-destructive">{accountStats.bannedFrozen}</p>
             </div>
             <div 
               className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 cursor-pointer hover:bg-yellow-500/20 transition-colors"
@@ -216,9 +204,9 @@ const Dashboard: React.FC = () => {
             >
               <div className="flex items-center gap-2 mb-2">
                 <WifiOff className="w-5 h-5 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Offline</span>
+                <span className="text-sm text-muted-foreground">Inactive</span>
               </div>
-              <p className="text-2xl font-bold">{accountStats.disconnected}</p>
+              <p className="text-2xl font-bold">{accountStats.inactive}</p>
             </div>
           </div>
         </CardContent>

@@ -40,9 +40,8 @@ import { CountdownTimer } from '@/components/ui/countdown-timer';
 // Status options for stat cards (merged categories)
 const statCardOptions: { value: string; label: string; color: string; icon: React.ReactNode }[] = [
   { value: 'active', label: 'Active', color: 'bg-status-active/15 text-status-active border-status-active/30', icon: <Wifi className="w-3 h-3" /> },
-  { value: 'bannedFrozen', label: 'Banned & Frozen', color: 'bg-status-banned/15 text-status-banned border-status-banned/30', icon: <XCircle className="w-3 h-3" /> },
   { value: 'restricted', label: 'Restricted', color: 'bg-status-restricted/15 text-status-restricted border-status-restricted/30', icon: <AlertTriangle className="w-3 h-3" /> },
-  { value: 'disconnected', label: 'Offline', color: 'bg-status-disconnected/15 text-status-disconnected border-status-disconnected/30', icon: <WifiOff className="w-3 h-3" /> },
+  { value: 'inactive', label: 'Inactive', color: 'bg-status-disconnected/15 text-status-disconnected border-status-disconnected/30', icon: <WifiOff className="w-3 h-3" /> },
 ];
 
 // Full status options for badges and individual account rendering
@@ -129,7 +128,7 @@ const Accounts: React.FC = () => {
   const [isBulkProxyAssigning, setIsBulkProxyAssigning] = useState(false);
   
   // Active tab for account sections
-  const [activeTab, setActiveTab] = useState<'active' | 'bannedFrozen' | 'restricted' | 'disconnected'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'restricted' | 'inactive'>('active');
   
   // Tags state
   const [availableTags, setAvailableTags] = useState<string[]>([]);
@@ -1201,13 +1200,16 @@ const Accounts: React.FC = () => {
       a.status === 'active' || 
       (a.restrictedUntil && new Date(a.restrictedUntil) > now)
     ),
-    bannedFrozen: filteredAccounts.filter(a => a.status === 'banned' || a.status === 'frozen'),
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' ||
       (a.restrictedUntil && new Date(a.restrictedUntil) > now)
     ),
-    disconnected: filteredAccounts.filter(a => a.status === 'disconnected'),
+    inactive: filteredAccounts.filter(a => 
+      a.status === 'banned' || 
+      a.status === 'frozen' || 
+      a.status === 'disconnected'
+    ),
   };
 
   const removeSessionFile = (index: number) => {
@@ -1256,13 +1258,16 @@ const Accounts: React.FC = () => {
   const stats = {
     total: accounts.length,
     active: accounts.filter(a => a.status === 'active').length,
-    bannedFrozen: accounts.filter(a => a.status === 'banned' || a.status === 'frozen').length,
     restricted: accounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' ||
       (a.restrictedUntil && new Date(a.restrictedUntil) > currentTime)
     ).length,
-    disconnected: accounts.filter(a => a.status === 'disconnected').length,
+    inactive: accounts.filter(a => 
+      a.status === 'banned' || 
+      a.status === 'frozen' || 
+      a.status === 'disconnected'
+    ).length,
   };
 
   const renderAccountCard = (account: TelegramAccount) => {
@@ -1677,7 +1682,7 @@ const Accounts: React.FC = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Card className="cursor-pointer hover:border-primary/30 transition-colors" onClick={() => setStatusFilter('all')}>
             <CardContent className="p-3">
               <div className="text-2xl font-bold">{stats.total}</div>
@@ -2119,34 +2124,30 @@ const Accounts: React.FC = () => {
 
         {/* Account Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="active" className="gap-1.5">
               <Wifi className="w-3.5 h-3.5" />
               Active ({accountsByStatus.active.length})
-            </TabsTrigger>
-            <TabsTrigger value="bannedFrozen" className="gap-1.5">
-              <XCircle className="w-3.5 h-3.5" />
-              Banned & Frozen ({accountsByStatus.bannedFrozen.length})
             </TabsTrigger>
             <TabsTrigger value="restricted" className="gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" />
               Restricted ({accountsByStatus.restricted.length})
             </TabsTrigger>
-            <TabsTrigger value="disconnected" className="gap-1.5">
+            <TabsTrigger value="inactive" className="gap-1.5">
               <WifiOff className="w-3.5 h-3.5" />
-              Offline ({accountsByStatus.disconnected.length})
+              Inactive ({accountsByStatus.inactive.length})
             </TabsTrigger>
           </TabsList>
 
-          {(['active', 'bannedFrozen', 'restricted', 'disconnected'] as const).map(status => (
+          {(['active', 'restricted', 'inactive'] as const).map(status => (
             <TabsContent key={status} value={status} className="mt-4">
               {accountsByStatus[status].length === 0 ? (
                 <Card>
                   <CardContent className="py-12 text-center">
                     <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                      {status === 'bannedFrozen' ? <XCircle className="w-6 h-6" /> : statusOptions.find(o => o.value === status)?.icon}
+                      {status === 'inactive' ? <WifiOff className="w-6 h-6" /> : statusOptions.find(o => o.value === status)?.icon}
                     </div>
-                    <p className="text-muted-foreground">No {status === 'bannedFrozen' ? 'banned or frozen' : status} accounts</p>
+                    <p className="text-muted-foreground">No {status} accounts</p>
                   </CardContent>
                 </Card>
               ) : (
