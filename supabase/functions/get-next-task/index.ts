@@ -260,122 +260,175 @@ serve(async (req) => {
       }
 
       if (accounts.length > 0) {
-        // NEW FLOW: Query campaign_recipients directly, not messages
-        // Conversations are only created on successful delivery
-        // IMPORTANT: Only get recipients from RUNNING campaigns
-        const { data: pendingRecipients } = await supabase
+        // LAZY ASSIGNMENT FLOW: 
+        // 1. First check for already-assigned pending recipients (with sent_by_account_id)
+        // 2. If none, pick an UNASSIGNED pending recipient and assign an account NOW
+        // This distributes load: each runner request = 1 DB write max
+        
+        // Get all running campaign IDs first (lightweight query)
+        const { data: runningCampaignIds } = await supabase
+          .from("campaigns")
+          .select("id")
+          .eq("status", "running");
+        
+        const runningIds = (runningCampaignIds || []).map((c: { id: string }) => c.id);
+        
+        if (runningIds.length === 0) {
+          // No running campaigns - skip to wait
+          return new Response(JSON.stringify({ task: "wait", seconds: 5, reason: "No running campaigns" }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        
+        // Step 1: Check for ALREADY ASSIGNED pending recipients (one at a time for sequential processing)
+        const { data: assignedRecipients } = await supabase
           .from("campaign_recipients")
           .select("*, campaigns!inner(id, status, message_template)")
           .eq("status", "pending")
-          .eq("campaigns.status", "running")  // Only running campaigns!
+          .in("campaign_id", runningIds)
           .not("sent_by_account_id", "is", null)
-          .limit(50);
+          .limit(1);  // Only 1 at a time for sequential processing
 
-        if (pendingRecipients && pendingRecipients.length > 0) {
-          for (const recipient of pendingRecipients) {
-            const campaign = recipient.campaigns;
-
-            // Find the assigned account.
-            // IMPORTANT: if the assigned account is temporarily restricted (restricted_until in future)
-            // it is excluded from `accounts` (campaign-eligible). In that case we reassign to a safe account.
-            let account = accounts.find((a: { id: string }) => a.id === recipient.sent_by_account_id);
-
-            if (!account) {
-              const fallback = accounts.find((a: any) => {
-                const limit = a.daily_limit ?? 25;
-                const sentToday = a.messages_sent_today ?? 0;
-                return sentToday < limit;
-              });
-
-              if (!fallback) {
-                console.log(`[get-next-task] No campaign-eligible fallback account for recipient ${recipient.id.slice(0, 8)}`);
-                continue;
-              }
-
+        let recipient = assignedRecipients?.[0] || null;
+        let account = null;
+        
+        if (recipient) {
+          // Find the assigned account
+          account = accounts.find((a: { id: string }) => a.id === recipient.sent_by_account_id);
+          
+          // If assigned account is not usable (restricted/at limit), reassign
+          if (!account || (account.messages_sent_today || 0) >= (account.daily_limit || 50)) {
+            const fallback = accounts.find((a: any) => {
+              const limit = a.daily_limit ?? 25;
+              const sentToday = a.messages_sent_today ?? 0;
+              return sentToday < limit;
+            });
+            
+            if (fallback) {
               await supabase
                 .from("campaign_recipients")
                 .update({ sent_by_account_id: fallback.id })
                 .eq("id", recipient.id);
-
-              console.log(
-                `[get-next-task] Reassigned recipient ${recipient.id.slice(0, 8)} from ${String(recipient.sent_by_account_id).slice(0, 8)} to ${fallback.phone_number} (temp restriction)`
-              );
-
               account = fallback;
+              console.log(`[get-next-task] Reassigned recipient ${recipient.id.slice(0, 8)} to ${fallback.phone_number}`);
+            } else {
+              // No usable accounts, skip this recipient
+              recipient = null;
             }
-
-            // Check daily limit
-            if ((account.messages_sent_today || 0) >= (account.daily_limit || 50)) {
-              console.log(`[get-next-task] Account ${account.phone_number} at daily limit`);
-              continue;
-            }
-
-            // Mark recipient as "sending" to prevent duplicate picks
-            await supabase
-              .from("campaign_recipients")
-              .update({ status: "sending" })
-              .eq("id", recipient.id)
-              .eq("status", "pending");
-
-            console.log(`[get-next-task] Campaign task: recipient ${recipient.id.slice(0, 8)} -> ${recipient.phone_number}`);
-            
-            // Personalize message template
-            const personalizedMessage = (campaign.message_template || '')
-              .replace(/{name}/g, recipient.name || 'there')
-              .replace(/{phone}/g, recipient.phone_number);
-            
-            // Get API credentials from account
-            const apiCred = account.telegram_api_credentials;
-            
-            // Calculate random delay for next message (human-like behavior)
-            const delaySeconds = Math.floor(
-              Math.random() * (MESSAGE_DELAY_MAX_SECONDS - MESSAGE_DELAY_MIN_SECONDS + 1) + MESSAGE_DELAY_MIN_SECONDS
-            );
-            
-            console.log(`[get-next-task] Campaign message assigned, next check in ${delaySeconds}s`);
-            
-            return new Response(JSON.stringify({
-              task: "send",
-              message: {
-                content: personalizedMessage,
-                campaign_recipient_id: recipient.id,
-              },
-              recipient: recipient.phone_number,
-              recipient_name: recipient.name,
-              account: {
-                id: account.id,
-                phone_number: account.phone_number,
-                session_data: account.session_data,
-                device_model: account.device_model,
-                system_version: account.system_version,
-                app_version: account.app_version,
-                lang_code: account.lang_code,
-                system_lang_code: account.system_lang_code,
-                api_id: apiCred?.api_id || account.api_id,
-                api_hash: apiCred?.api_hash || account.api_hash,
-                proxy_id: account.proxy_id,
-              },
-              proxy: account.proxies ? {
-                host: account.proxies.host,
-                port: account.proxies.port,
-                username: account.proxies.username,
-                password: account.proxies.password,
-                type: account.proxies.proxy_type,
-              } : null,
-              mode: "campaign",
-              delay_after: delaySeconds,
-              settings: {
-                minDelaySeconds: MESSAGE_DELAY_MIN_SECONDS,
-                maxDelaySeconds: MESSAGE_DELAY_MAX_SECONDS,
-                accountSwitchDelaySeconds: ACCOUNT_SWITCH_DELAY_SECONDS,
-                maxMessagesBeforeRotation: MESSAGES_PER_ACCOUNT,
-                messagesPerAccount: MESSAGES_PER_ACCOUNT,
-                dailyMessageLimit: DAILY_MESSAGE_LIMIT,
-              },
-            }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
           }
+        }
+        
+        // Step 2: If no assigned recipient, pick an UNASSIGNED one and assign NOW (lazy assignment)
+        if (!recipient) {
+          const { data: unassignedRecipients } = await supabase
+            .from("campaign_recipients")
+            .select("*, campaigns!inner(id, status, message_template)")
+            .eq("status", "pending")
+            .in("campaign_id", runningIds)
+            .is("sent_by_account_id", null)
+            .limit(1);  // Only 1 at a time
+          
+          if (unassignedRecipients && unassignedRecipients.length > 0) {
+            recipient = unassignedRecipients[0];
+            
+            // Find best account (under daily limit, least messages sent today for load balancing)
+            const eligibleAccounts = accounts.filter((a: any) => {
+              const limit = a.daily_limit ?? 25;
+              const sentToday = a.messages_sent_today ?? 0;
+              return sentToday < limit;
+            });
+            
+            if (eligibleAccounts.length > 0) {
+              // Pick the account with fewest messages sent today (load balancing)
+              eligibleAccounts.sort((a: any, b: any) => 
+                (a.messages_sent_today || 0) - (b.messages_sent_today || 0)
+              );
+              account = eligibleAccounts[0];
+              
+              // Assign this account to the recipient (LAZY ASSIGNMENT)
+              await supabase
+                .from("campaign_recipients")
+                .update({ sent_by_account_id: account.id })
+                .eq("id", recipient.id)
+                .eq("status", "pending");
+              
+              console.log(`[get-next-task] LAZY ASSIGN: recipient ${recipient.id.slice(0, 8)} -> account ${account.phone_number}`);
+            } else {
+              // No eligible accounts available
+              recipient = null;
+            }
+          }
+        }
+        
+        // If we have a recipient and account, return the task
+        if (recipient && account) {
+          const campaign = recipient.campaigns;
+          
+          // Mark recipient as "sending" to prevent duplicate picks
+          await supabase
+            .from("campaign_recipients")
+            .update({ status: "sending" })
+            .eq("id", recipient.id)
+            .eq("status", "pending");
+
+          console.log(`[get-next-task] Campaign task: recipient ${recipient.id.slice(0, 8)} -> ${recipient.phone_number}`);
+          
+          // Personalize message template
+          const personalizedMessage = (campaign.message_template || '')
+            .replace(/{name}/g, recipient.name || 'there')
+            .replace(/{phone}/g, recipient.phone_number);
+          
+          // Get API credentials from account
+          const apiCred = account.telegram_api_credentials;
+          
+          // Calculate random delay for next message (human-like behavior)
+          const delaySeconds = Math.floor(
+            Math.random() * (MESSAGE_DELAY_MAX_SECONDS - MESSAGE_DELAY_MIN_SECONDS + 1) + MESSAGE_DELAY_MIN_SECONDS
+          );
+          
+          console.log(`[get-next-task] Campaign message assigned, next check in ${delaySeconds}s`);
+          
+          return new Response(JSON.stringify({
+            task: "send",
+            message: {
+              content: personalizedMessage,
+              campaign_recipient_id: recipient.id,
+            },
+            recipient: recipient.phone_number,
+            recipient_name: recipient.name,
+            account: {
+              id: account.id,
+              phone_number: account.phone_number,
+              session_data: account.session_data,
+              device_model: account.device_model,
+              system_version: account.system_version,
+              app_version: account.app_version,
+              lang_code: account.lang_code,
+              system_lang_code: account.system_lang_code,
+              api_id: apiCred?.api_id || account.api_id,
+              api_hash: apiCred?.api_hash || account.api_hash,
+              proxy_id: account.proxy_id,
+            },
+            proxy: account.proxies ? {
+              host: account.proxies.host,
+              port: account.proxies.port,
+              username: account.proxies.username,
+              password: account.proxies.password,
+              type: account.proxies.proxy_type,
+            } : null,
+            mode: "campaign",
+            delay_after: delaySeconds,
+            settings: {
+              minDelaySeconds: MESSAGE_DELAY_MIN_SECONDS,
+              maxDelaySeconds: MESSAGE_DELAY_MAX_SECONDS,
+              accountSwitchDelaySeconds: ACCOUNT_SWITCH_DELAY_SECONDS,
+              maxMessagesBeforeRotation: MESSAGES_PER_ACCOUNT,
+              messagesPerAccount: MESSAGES_PER_ACCOUNT,
+              dailyMessageLimit: DAILY_MESSAGE_LIMIT,
+            },
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
         }
 
         // Also handle validation for campaign runner
