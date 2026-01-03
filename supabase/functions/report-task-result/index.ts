@@ -495,9 +495,10 @@ serve(async (req) => {
                   .update({ 
                     status: "pending",  // Reset to pending for new account
                     sent_by_account_id: nextAccount.account_id,
-                    failed_reason: error  // Save the error for reference
+                    failed_reason: null  // Clear failed_reason so it can be retried
                   })
-                  .eq("id", campaign_recipient_id);
+                  .eq("id", campaign_recipient_id)
+                  .in("status", ["sending", "pending"]);  // Only update if still in progress
                 
                 console.log(`[report-task-result] AUTO-ROTATION: Reassigned recipient ${campaign_recipient_id.slice(0, 8)} from account ${failedAccountId?.slice(0, 8)} to ${nextAccount.account_id.slice(0, 8)}`);
               } else {
