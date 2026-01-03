@@ -365,9 +365,36 @@ serve(async (req) => {
                 console.log(`[report-task-result] Privacy error - max retries (${MAX_ACCOUNT_RETRIES}) reached. Recipient marked as failed.`);
               }
             }
+          } else if (isSkipOnly && campaign_recipient_id) {
+            // Recipient-side issue (e.g. "user was deleted") - mark recipient as failed, keep account active
+            console.log(`[report-task-result] Recipient-side issue - marking as failed: ${error}`);
+            
+            // Get campaign_id for updating failed count
+            const { data: recipientData } = await supabase
+              .from("campaign_recipients")
+              .select("campaign_id")
+              .eq("id", campaign_recipient_id)
+              .single();
+            
+            // Mark recipient as failed with the reason
+            await supabase
+              .from("campaign_recipients")
+              .update({
+                status: "failed",
+                failed_reason: error || "Recipient account deleted/invalid",
+                sent_at: new Date().toISOString(),
+              })
+              .eq("id", campaign_recipient_id);
+            
+            // Increment campaign failed count
+            if (recipientData?.campaign_id) {
+              await supabase.rpc("increment_campaign_failed_count", { cid: recipientData.campaign_id });
+            }
+            
+            console.log(`[report-task-result] Recipient ${campaign_recipient_id} marked as failed - moving to next`);
           } else if (isSkipOnly) {
-            // Just log - don't change account status, recipient is already marked failed
-            console.log(`[report-task-result] Recipient-side issue (account stays active): ${error}`);
+            // Skip-only error but no recipient ID - just log
+            console.log(`[report-task-result] Recipient-side issue (no recipient_id): ${error}`);
           }
           
           // Reassign recipients if account was banned OR temporarily restricted (but NOT skip-only errors)
