@@ -1309,7 +1309,11 @@ const Accounts: React.FC = () => {
             {account.username && !account.username.includes('update_state') && (
               <span className="text-primary/70">@{account.username}</span>
             )}
-            {account.restrictedUntil && new Date(account.restrictedUntil) > new Date() && (
+            {/* Only show countdown for temporary restrictions, NOT for frozen/banned accounts */}
+            {account.restrictedUntil && 
+             new Date(account.restrictedUntil) > new Date() && 
+             account.status !== 'frozen' && 
+             account.status !== 'banned' && (
               <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-500 text-[10px]">
                 <Clock className="w-3 h-3" />
                 <CountdownTimer 
