@@ -216,8 +216,8 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         
         active_clients[account_id] = client
         
-        # Always sync profile on first connection to ensure data is up to date
-        await _sync_profile(client, account_id, skip_avatar=skip_avatar)
+        # Always sync FULL profile on first connection (including avatar) to ensure data is up to date
+        await _sync_profile(client, account_id, skip_avatar=False)
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
