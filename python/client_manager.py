@@ -216,15 +216,8 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         
         active_clients[account_id] = client
         
-        # Fast mode: skip profile fetch if already cached
-        has_cached_profile = account.get("first_name") or account.get("username")
-        if has_cached_profile and not force_profile_sync:
-            await report_result("account_connected", {
-                "account_id": account_id,
-                "skip_profile_update": True
-            })
-        else:
-            await _sync_profile(client, account_id, skip_avatar=skip_avatar)
+        # Always sync profile on first connection to ensure data is up to date
+        await _sync_profile(client, account_id, skip_avatar=skip_avatar)
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
