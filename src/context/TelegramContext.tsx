@@ -43,6 +43,12 @@ export interface AccountTasksProgress {
   failed: number;
   taskType: string;
   logs: AccountTaskLog[];
+  /** Internal task key used by the runner (e.g. sync_profile) */
+  internalTaskType?: string;
+  /** ISO timestamp when the UI started tracking this run */
+  startedAt?: string;
+  /** ISO timestamp of the last task status update received */
+  lastUpdateAt?: string;
 }
 
 interface TelegramContextType {
@@ -148,6 +154,9 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     failed: 0,
     taskType: '',
     logs: [],
+    internalTaskType: undefined,
+    startedAt: undefined,
+    lastUpdateAt: undefined,
   });
   const [isAccountTaskRunning, setIsAccountTaskRunning] = useState(false);
   const [showAccountTaskLogs, setShowAccountTaskLogs] = useState(false);

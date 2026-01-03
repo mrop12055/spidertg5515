@@ -230,6 +230,7 @@ const Accounts: React.FC = () => {
               const newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
               const newFailed = task.status === 'failed' ? prev.failed + 1 : prev.failed;
               const newLogs = [logEntry, ...prev.logs].slice(0, 100);
+              const nowIso = new Date().toISOString();
               
               // Check if all done
               if (newCompleted + newFailed >= prev.total) {
@@ -243,6 +244,7 @@ const Accounts: React.FC = () => {
                 completed: newCompleted,
                 failed: newFailed,
                 logs: newLogs,
+                lastUpdateAt: nowIso,
               };
             });
             
@@ -257,7 +259,56 @@ const Accounts: React.FC = () => {
       supabase.removeChannel(channel);
     };
   }, [isAccountTaskRunning, accounts, refreshData]);
-  
+
+  // Watchdog: if the UI says "processing" but no tasks exist (or nothing is being picked up), stop and show a clear reason.
+  useEffect(() => {
+    if (!isAccountTaskRunning) return;
+
+    const internalTaskType = (accountTasksProgress as any)?.internalTaskType as string | undefined;
+    const startedAtIso = (accountTasksProgress as any)?.startedAt as string | undefined;
+    if (!internalTaskType || !startedAtIso) return;
+
+    const startMs = new Date(startedAtIso).getTime();
+    let warned = false;
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+
+      const { count, error } = await supabase
+        .from('account_check_tasks')
+        .select('id', { count: 'exact', head: true })
+        .eq('task_type', internalTaskType)
+        .in('status', ['pending', 'in_progress']);
+
+      if (cancelled || error) return;
+
+      const elapsedMs = Date.now() - startMs;
+      const processed = (accountTasksProgress.completed || 0) + (accountTasksProgress.failed || 0);
+
+      // If nothing exists shortly after starting, the queue insert likely failed (RLS/offline/etc.)
+      if ((count ?? 0) === 0 && processed === 0 && elapsedMs > 8000) {
+        setIsAccountTaskRunning(false);
+        toast.error('Sync is stuck because no tasks were created in the backend. Please try again (or Refresh).');
+        return;
+      }
+
+      // If tasks exist but nothing updates for a while, the runner isn’t picking them up.
+      if ((count ?? 0) > 0 && processed === 0 && elapsedMs > 90000 && !warned) {
+        warned = true;
+        toast.warning('Tasks are queued but not being processed yet. The runner may be busy; please wait.');
+      }
+    };
+
+    tick();
+    const interval = window.setInterval(tick, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [isAccountTaskRunning, accountTasksProgress]);
+   
   // Fetch messages sent in last 24 hours per account
   useEffect(() => {
     const fetchMessageCounts = async () => {
@@ -528,12 +579,34 @@ const Accounts: React.FC = () => {
 
   // Helper function to start account task tracking
   const startAccountTaskTracking = (taskType: string, count: number) => {
+    const internalTaskType = (() => {
+      switch (taskType) {
+        case 'Change Name':
+          return 'change_name';
+        case 'Privacy Settings':
+          return 'privacy_settings';
+        case 'Change Password':
+          return 'change_password';
+        case 'Logout Sessions':
+          return 'logout_sessions';
+        case 'Sync Profiles':
+          return 'sync_profile';
+        default:
+          return undefined;
+      }
+    })();
+
+    const nowIso = new Date().toISOString();
+
     setAccountTasksProgress({
       total: count,
       completed: 0,
       failed: 0,
       taskType: taskType,
       logs: [],
+      internalTaskType,
+      startedAt: nowIso,
+      lastUpdateAt: nowIso,
     });
     setIsAccountTaskRunning(true);
     setShowAccountTaskLogs(true);
