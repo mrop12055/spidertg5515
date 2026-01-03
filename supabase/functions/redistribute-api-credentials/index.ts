@@ -54,20 +54,19 @@ serve(async (req) => {
 
     console.log(`[redistribute-api-credentials] Found ${allAccounts.length} accounts to redistribute`);
 
-    // Group credentials by type for matching
-    const androidCreds = apiCredentials.filter(c => c.client_type === 'android' || c.client_type === 'desktop');
-    const iosCreds = apiCredentials.filter(c => c.client_type === 'ios' || c.client_type === 'macos');
-
     // Reset assignment counts for fresh redistribution
     const assignmentCounts = new Map<string, number>();
     apiCredentials.forEach(c => assignmentCounts.set(c.id, 0));
 
     const assignments: { id: string; api_credential_id: string }[] = [];
 
-    for (const account of allAccounts) {
-      // Simply use the newest credential (first in the list since ordered by created_at DESC)
-      // This prioritizes newer API credentials for all accounts
-      const selectedCred = apiCredentials[0];
+    // Distribute accounts evenly across all credentials using round-robin
+    for (let i = 0; i < allAccounts.length; i++) {
+      const account = allAccounts[i];
+      
+      // Round-robin: pick credential based on index modulo number of credentials
+      const credIndex = i % apiCredentials.length;
+      const selectedCred = apiCredentials[credIndex];
 
       // Increment count for selected credential
       assignmentCounts.set(selectedCred.id, (assignmentCounts.get(selectedCred.id) || 0) + 1);
