@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect } from 'react';
+import React, { createContext, useContext, useState, ReactNode, useCallback, useEffect, useRef } from 'react';
 import { 
   TelegramAccount, 
   Proxy, 
@@ -117,6 +117,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     status: 'idle',
     errors: []
   });
+
+  // Keep a ref for realtime handlers (avoid extra DB lookups per message)
+  const conversationsRef = useRef<Conversation[]>(conversations);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
   
   // Account tasks progress (persisted across navigation)
   const [accountTasksProgress, setAccountTasksProgress] = useState<AccountTasksProgress>({
@@ -333,22 +339,17 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           table: 'messages'
         },
         async (payload) => {
-          console.log('Message change:', payload);
-          
           if (payload.eventType === 'INSERT') {
             const m = payload.new as any;
-            // Fetch the conversation to get recipient_phone
-            const { data: convData } = await supabase
-              .from('conversations')
-              .select('recipient_phone')
-              .eq('id', m.conversation_id)
-              .single();
+
+            const recipientPhone =
+              conversationsRef.current.find(c => c.id === m.conversation_id)?.recipientPhone || '';
 
             const newMessage: Message = {
               id: m.id,
               conversationId: m.conversation_id,
               accountId: m.account_id,
-              recipientPhone: convData?.recipient_phone || '',
+              recipientPhone,
               content: m.content,
               direction: m.direction as Message['direction'],
               status: m.status as Message['status'],
@@ -361,10 +362,15 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             };
 
             setMessages(prev => {
+              const MAX_MESSAGES = 1000;
+
               if (prev.some(msg => msg.id === m.id)) {
-                return prev.map(msg => (msg.id === m.id ? newMessage : msg));
+                const next = prev.map(msg => (msg.id === m.id ? newMessage : msg));
+                return next.length > MAX_MESSAGES ? next.slice(0, MAX_MESSAGES) : next;
               }
-              return [newMessage, ...prev];
+
+              const next = [newMessage, ...prev];
+              return next.length > MAX_MESSAGES ? next.slice(0, MAX_MESSAGES) : next;
             });
 
             // Play notification sound for incoming messages
@@ -462,10 +468,10 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           schema: 'public',
           table: 'conversations'
         },
-        (payload) => {
-          console.log('Conversation change:', payload);
-          
-          if (payload.eventType === 'INSERT') {
+          (payload) => {
+            // (avoid verbose logging here; it can slow down long-running sessions)
+            
+            if (payload.eventType === 'INSERT') {
             const c = payload.new as any;
             const newConv: Conversation = {
               id: c.id,
@@ -483,10 +489,15 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             };
 
             setConversations(prev => {
+              const MAX_CONVERSATIONS = 300;
+
               if (prev.some(conv => conv.id === c.id)) {
-                return prev.map(conv => (conv.id === c.id ? newConv : conv));
+                const next = prev.map(conv => (conv.id === c.id ? newConv : conv));
+                return next.length > MAX_CONVERSATIONS ? next.slice(0, MAX_CONVERSATIONS) : next;
               }
-              return [newConv, ...prev];
+
+              const next = [newConv, ...prev];
+              return next.length > MAX_CONVERSATIONS ? next.slice(0, MAX_CONVERSATIONS) : next;
             });
           } else if (payload.eventType === 'UPDATE') {
             const c = payload.new as any;
@@ -979,7 +990,11 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         mediaUrl,
         mediaType,
       };
-      setMessages(prev => [...prev, newMessage]);
+      setMessages(prev => {
+        const MAX_MESSAGES = 1000;
+        const next = [...prev, newMessage];
+        return next.length > MAX_MESSAGES ? next.slice(next.length - MAX_MESSAGES) : next;
+      });
       
       toast.success('Message queued for sending');
       refreshData();
