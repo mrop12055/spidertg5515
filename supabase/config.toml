@@ -50,3 +50,6 @@ verify_jwt = false
 
 [functions.system-maintenance]
 verify_jwt = false
+
+[functions.test-api-credential]
+verify_jwt = false

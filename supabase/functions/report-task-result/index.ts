@@ -1696,6 +1696,40 @@ serve(async (req) => {
         break;
       }
 
+      case "api_test": {
+        // Handle API credential test result
+        const { task_id, account_id, api_credential_id, success, error } = result;
+        
+        console.log(`[report-task-result] API test result: credential=${api_credential_id}, success=${success}`);
+        
+        // Update the task status
+        if (task_id) {
+          await supabase
+            .from("account_check_tasks")
+            .update({
+              status: success ? "completed" : "failed",
+              completed_at: new Date().toISOString(),
+              result: success ? "API credential valid" : error,
+            })
+            .eq("id", task_id);
+        }
+        
+        // Update the API credential validation status
+        if (api_credential_id) {
+          await supabase
+            .from("telegram_api_credentials")
+            .update({
+              last_validated_at: new Date().toISOString(),
+              validation_error: success ? null : error,
+              is_active: success,
+            })
+            .eq("id", api_credential_id);
+          
+          console.log(`[report-task-result] Updated API credential ${api_credential_id}: valid=${success}`);
+        }
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }
