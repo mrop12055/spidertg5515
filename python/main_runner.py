@@ -17,6 +17,7 @@ Stop: Ctrl+C
 
 import asyncio
 import signal
+import random
 
 from telethon import events
 
@@ -31,6 +32,7 @@ import base64
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
+last_campaign_account_id = None  # Track campaign account switches to apply switch delay
 
 
 def signal_handler(sig, frame):
@@ -193,7 +195,7 @@ async def setup_message_handler(client, account_id: str):
 
 # ========== MAIN LOOP ==========
 async def main_loop():
-    global RUNNING
+    global RUNNING, last_campaign_account_id
     
     print("=" * 60)
     print("  TelegramCRM - Main Runner (All-in-One)")
@@ -224,7 +226,23 @@ async def main_loop():
                 recipient = task.get("recipient")
                 account = task.get("account", {})
                 mode = task.get("mode", "campaign")
-                
+                settings = task.get("settings", {}) if isinstance(task.get("settings"), dict) else {}
+                delay_after = task.get("delay_after")
+
+                account_id = account.get("id")
+
+                # Apply account switch delay for campaign sends (live chat should remain instant)
+                if mode == "campaign" and account_id and last_campaign_account_id and last_campaign_account_id != account_id:
+                    account_switch_delay = settings.get("accountSwitchDelaySeconds", 30)
+                    try:
+                        account_switch_delay = float(account_switch_delay)
+                    except Exception:
+                        account_switch_delay = 30
+
+                    if account_switch_delay > 0:
+                        print(f"  🔄 Switching campaign accounts... waiting {account_switch_delay:.1f}s")
+                        await asyncio.sleep(account_switch_delay)
+
                 client = await get_or_create_client(account, setup_handler=setup_message_handler)
                 if client and recipient:
                     icon = "⚡" if mode == "live" else "📨"
@@ -235,9 +253,34 @@ async def main_loop():
                         "success": success,
                         "error": error,
                         "campaign_recipient_id": msg.get("campaign_recipient_id"),
-                        "account_id": account.get("id")
+                        "account_id": account_id,
                     })
                     print(f"    {'✓ Sent!' if success else '✗ Failed: ' + str(error)}")
+
+                    # Apply campaign pacing (main_runner previously sent back-to-back)
+                    if RUNNING and mode == "campaign":
+                        last_campaign_account_id = account_id
+
+                        delay_seconds: float | None = None
+                        if delay_after is not None:
+                            try:
+                                delay_seconds = float(delay_after)
+                            except Exception:
+                                delay_seconds = None
+
+                        if delay_seconds is None:
+                            min_delay = settings.get("minDelaySeconds", 5)
+                            max_delay = settings.get("maxDelaySeconds", 15)
+                            try:
+                                min_delay = float(min_delay)
+                                max_delay = float(max_delay)
+                            except Exception:
+                                min_delay, max_delay = 5.0, 15.0
+                            delay_seconds = random.uniform(min_delay, max_delay)
+
+                        if delay_seconds and delay_seconds > 0:
+                            print(f"    ⏳ Waiting {delay_seconds:.1f}s before next campaign message...")
+                            await asyncio.sleep(delay_seconds)
             
             elif task_type == "validate":
                 recipients = task.get("recipients", [])
