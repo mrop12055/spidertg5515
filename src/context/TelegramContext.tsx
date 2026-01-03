@@ -399,31 +399,41 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             // Play notification sound for incoming messages
             if (m.direction === 'incoming') {
               try {
-                const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-                const oscillator = audioContext.createOscillator();
-                const gainNode = audioContext.createGain();
-                oscillator.connect(gainNode);
-                gainNode.connect(audioContext.destination);
-                oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
-                oscillator.type = 'sine';
-                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-                oscillator.start(audioContext.currentTime);
-                oscillator.stop(audioContext.currentTime + 0.3);
-                
-                // Second chime
-                setTimeout(() => {
-                  const osc2 = audioContext.createOscillator();
-                  const gain2 = audioContext.createGain();
-                  osc2.connect(gain2);
-                  gain2.connect(audioContext.destination);
-                  osc2.frequency.setValueAtTime(1320, audioContext.currentTime);
-                  osc2.type = 'sine';
-                  gain2.gain.setValueAtTime(0.2, audioContext.currentTime);
-                  gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
-                  osc2.start(audioContext.currentTime);
-                  osc2.stop(audioContext.currentTime + 0.2);
-                }, 100);
+                // Check if AudioContext is available
+                const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+                if (!AudioContextClass) {
+                  console.log('AudioContext not available');
+                } else {
+                  const audioContext = new AudioContextClass();
+                  const oscillator = audioContext.createOscillator();
+                  const gainNode = audioContext.createGain();
+                  oscillator.connect(gainNode);
+                  gainNode.connect(audioContext.destination);
+                  oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+                  oscillator.type = 'sine';
+                  gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                  gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
+                  oscillator.start(audioContext.currentTime);
+                  oscillator.stop(audioContext.currentTime + 0.3);
+                  
+                  // Second chime
+                  setTimeout(() => {
+                    try {
+                      const osc2 = audioContext.createOscillator();
+                      const gain2 = audioContext.createGain();
+                      osc2.connect(gain2);
+                      gain2.connect(audioContext.destination);
+                      osc2.frequency.setValueAtTime(1320, audioContext.currentTime);
+                      osc2.type = 'sine';
+                      gain2.gain.setValueAtTime(0.2, audioContext.currentTime);
+                      gain2.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.2);
+                      osc2.start(audioContext.currentTime);
+                      osc2.stop(audioContext.currentTime + 0.2);
+                    } catch (e) {
+                      // Ignore secondary chime errors
+                    }
+                  }, 100);
+                }
 
                 // Show toast notification
                 toast.info('New reply received!', {
@@ -431,6 +441,10 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                 });
               } catch (e) {
                 console.log('Could not play notification:', e);
+                // Still show toast even if audio fails
+                toast.info('New reply received!', {
+                  description: m.content?.substring(0, 50) || 'You have a new message',
+                });
               }
             }
           } else if (payload.eventType === 'UPDATE') {
