@@ -114,6 +114,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
+  const isInitialLoadRef = React.useRef(true);
 
   // Update a single message's status (used by watchdog)
   const updateMessageStatus = useCallback((messageId: string, newStatus: Message['status']) => {
@@ -151,8 +152,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   const refreshData = useCallback(async () => {
     try {
       // Use isSyncing for subsequent loads, isLoading for initial
-      if (isLoading) {
-        // Keep isLoading true
+      if (isInitialLoadRef.current) {
+        setIsLoading(true);
       } else {
         setIsSyncing(true);
       }
@@ -332,8 +333,9 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     } finally {
       setIsLoading(false);
       setIsSyncing(false);
+      isInitialLoadRef.current = false;
     }
-  }, [isLoading]);
+  }, []);
 
   // Initial data fetch
   useEffect(() => {
