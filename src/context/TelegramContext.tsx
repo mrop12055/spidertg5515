@@ -431,6 +431,17 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                   : msg
               )
             );
+            
+            // Also update the conversation's lastMessageAt if the message is now sent/delivered
+            if (m.status === 'sent' || m.status === 'delivered' || m.status === 'read') {
+              setConversations(prev =>
+                prev.map(conv =>
+                  conv.id === m.conversation_id
+                    ? { ...conv, lastMessageAt: new Date(m.created_at), updatedAt: new Date() }
+                    : conv
+                )
+              );
+            }
           } else if (payload.eventType === 'DELETE') {
             const oldRow = payload.old as any;
             const deletedId = oldRow?.id;
