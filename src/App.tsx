@@ -17,6 +17,7 @@ import Reports from "./pages/Reports";
 import Data from "./pages/Data";
 import Seats from "./pages/Seats";
 import SeatChat from "./pages/SeatChat";
+import DatabaseHealth from "./pages/DatabaseHealth";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -43,6 +44,7 @@ const App = () => (
                 <Route path="/data" element={<Data />} />
                 <Route path="/seats" element={<Seats />} />
                 <Route path="/seat/:token" element={<SeatChat />} />
+                <Route path="/database" element={<DatabaseHealth />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>
