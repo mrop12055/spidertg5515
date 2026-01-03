@@ -952,11 +952,11 @@ serve(async (req) => {
       }
 
       case "account_frozen": {
-        // Account deleted/deactivated by user (not by Telegram)
+        // Account deleted/deactivated by user (not by Telegram) - this is a PERMANENT state
         const { account_id, reason, telegram_id } = result;
 
         const updateData: Record<string, unknown> = { 
-          status: "frozen",
+          status: "banned",  // Permanent - user deleted their account, use banned not frozen
           ban_reason: reason || "Account deleted by user"
         };
         
@@ -969,7 +969,7 @@ serve(async (req) => {
           .update(updateData)
           .eq("id", account_id);
 
-        console.log(`[report-task-result] Account ${account_id} FROZEN (user-deleted): ${reason}`);
+        console.log(`[report-task-result] Account ${account_id} BANNED (user-deleted): ${reason}`);
         break;
       }
 
