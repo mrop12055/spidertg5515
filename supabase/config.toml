@@ -50,6 +50,3 @@ verify_jwt = false
 
 [functions.system-maintenance]
 verify_jwt = false
-
-[functions.auto-verify-accounts]
-verify_jwt = false
