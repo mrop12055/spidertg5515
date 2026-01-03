@@ -70,12 +70,25 @@ async def main_loop():
                 print("⏹ Campaign paused from dashboard. Stopping...")
                 break
             
+            # Only process "send" tasks
+            if task_type != "send":
+                print(f"  ⚠ Unknown task type: {task_type}, waiting...")
+                await asyncio.sleep(2)
+                continue
+            
             # Get task details
             msg = task_response.get("message", {})
             recipient = task_response.get("recipient")
             recipient_name = task_response.get("recipient_name")
             account = task_response.get("account", {})
             content = msg.get("content", "")
+            
+            # Validate required fields
+            account_id = account.get("id")
+            if not account_id or not recipient:
+                print(f"  ⚠ Invalid task: missing account or recipient, skipping...")
+                await asyncio.sleep(2)
+                continue
             
             # Get timing settings from task response
             settings = task_response.get("settings", {})
@@ -85,8 +98,7 @@ async def main_loop():
             max_messages_before_rotation = settings.get("maxMessagesBeforeRotation", 10)
             messages_per_account = settings.get("messagesPerAccount", 5)
             
-            account_id = account.get("id")
-            account_phone = account.get("phone_number", "?")[-4:]
+            account_phone = account.get("phone_number", "????")[-4:]
             
             # Check if we need to switch accounts
             if last_account_id and last_account_id != account_id:
