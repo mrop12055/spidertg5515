@@ -1346,48 +1346,9 @@ const Accounts: React.FC = () => {
         {/* Stats - desktop */}
         <div className="hidden lg:flex items-center gap-3 text-xs flex-wrap">
           <div className="text-center min-w-[40px]">
-            <div className="font-medium text-foreground">{msgSent24h}/{account.dailyLimit || 10}</div>
-            <div className="text-muted-foreground">24h</div>
-          </div>
-          <div className="text-center min-w-[40px]">
             <div className="font-medium text-foreground">{getAccountAge(account.createdAt)}d</div>
             <div className="text-muted-foreground">Age</div>
           </div>
-          
-          {/* Warmup Phase Indicator */}
-          {account.warmupPhase !== undefined && account.warmupPhase < 4 && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className={cn(
-                    "flex items-center gap-1 px-2 py-1 rounded text-xs",
-                    account.warmupPhase === 0 && "bg-status-banned/10 text-status-banned",
-                    account.warmupPhase === 1 && "bg-status-warning/10 text-status-warning",
-                    account.warmupPhase === 2 && "bg-status-warning/10 text-status-warning",
-                    account.warmupPhase === 3 && "bg-status-active/10 text-status-active",
-                  )}>
-                    <Flame className="w-3 h-3" />
-                    <span>P{account.warmupPhase}/4</span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Warmup Phase {account.warmupPhase}/4</p>
-                  <p className="text-xs text-muted-foreground">
-                    {account.warmupPhase === 0 && "New account - limited to profile setup"}
-                    {account.warmupPhase === 1 && "Early warmup - join channels only"}
-                    {account.warmupPhase === 2 && "Mid warmup - can react & view"}
-                    {account.warmupPhase === 3 && "Almost ready - limited messaging"}
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          {account.warmupPhase === 4 && (
-            <div className="flex items-center gap-1 px-2 py-1 rounded text-xs bg-status-active/10 text-status-active">
-              <Flame className="w-3 h-3" />
-              <span>Ready</span>
-            </div>
-          )}
 
           {/* SpamBot Status */}
           {account.spambotStatus && account.spambotStatus !== 'unknown' && (
