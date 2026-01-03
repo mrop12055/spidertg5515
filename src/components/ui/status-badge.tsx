@@ -7,7 +7,8 @@ import {
   AlertTriangle, 
   WifiOff, 
   Clock,
-  AlertOctagon
+  AlertOctagon,
+  Snowflake
 } from 'lucide-react';
 
 interface StatusBadgeProps {
@@ -52,6 +53,12 @@ const statusConfig: Record<AccountStatus, {
     icon: Clock,
     className: 'bg-status-cooldown/10 text-status-cooldown border-status-cooldown/30',
     dotColor: 'bg-status-cooldown animate-pulse'
+  },
+  frozen: {
+    label: 'Frozen',
+    icon: Snowflake,
+    className: 'bg-blue-500/10 text-blue-500 border-blue-500/30 animate-pulse',
+    dotColor: 'bg-blue-500'
   }
 };
 

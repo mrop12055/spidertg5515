@@ -244,12 +244,13 @@ serve(async (req) => {
               })
               .eq("id", account_id);
           } else if (isTemporaryRestriction && account_id) {
-            // TEMPORARY - 24h cooldown but stays active for chat
-            console.log(`[report-task-result] Account ${account_id} campaign-restricted for 24h (stays active for chat)`);
+            // TEMPORARY - set to frozen status with 24h cooldown
+            console.log(`[report-task-result] Account ${account_id} FROZEN for 24h: ${error}`);
             
             await supabase
               .from("telegram_accounts")
               .update({
+                status: "frozen",
                 ban_reason: error,
                 restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               })
