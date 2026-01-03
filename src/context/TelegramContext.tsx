@@ -230,6 +230,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           accountIds: c.campaign_accounts?.map((ca: any) => ca.account_id) || [],
           createdAt: new Date(c.created_at),
           updatedAt: new Date(c.updated_at),
+          seatId: c.seat_id || undefined,
         })));
       }
 

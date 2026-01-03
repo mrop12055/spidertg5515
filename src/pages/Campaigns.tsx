@@ -1540,6 +1540,10 @@ username123
               // Check if campaign failed due to no usable accounts (has pending but failed status)
               const campaignFailedDueToAccounts = campaign.status === 'failed' && hasPending;
               
+              // Get seat name for this campaign
+              const campaignSeat = seats.find(s => s.id === campaign.seatId);
+              const seatName = campaignSeat?.name;
+              
               return (
                 <Card
                   key={campaign.id}
@@ -1591,7 +1595,7 @@ username123
                         
                         <div className="min-w-0">
                           <h3 className="font-semibold text-base truncate group-hover:text-primary transition-colors">{campaign.name}</h3>
-                          <div className="flex items-center gap-2 mt-0.5">
+                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                             <span className={`text-xs font-medium uppercase tracking-wider ${
                               campaign.status === 'running' 
                                 ? 'text-primary' 
@@ -1605,6 +1609,12 @@ username123
                             }`}>
                               {campaign.status}
                             </span>
+                            {seatName && (
+                              <>
+                                <span className="text-muted-foreground">•</span>
+                                <span className="text-xs text-muted-foreground">{seatName}</span>
+                              </>
+                            )}
                             {campaignStuck && (
                               <span className="text-xs text-destructive flex items-center gap-1">
                                 <AlertCircle className="w-3 h-3" />
@@ -1759,6 +1769,34 @@ username123
                                 </h4>
                                 <div className="bg-muted/30 px-4 py-3 rounded-xl text-sm whitespace-pre-wrap break-words border border-border/50 max-h-40 overflow-y-auto">
                                   {campaign.messageTemplate}
+                                </div>
+                              </div>
+                              
+                              {/* Campaign Settings */}
+                              <div>
+                                <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                                  <Settings className="w-4 h-4 text-muted-foreground" />
+                                  Campaign Settings
+                                </h4>
+                                <div className="grid grid-cols-2 gap-3">
+                                  {seatName && (
+                                    <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
+                                      <p className="text-xs text-muted-foreground">Assigned Seat</p>
+                                      <p className="font-medium mt-1">{seatName}</p>
+                                    </div>
+                                  )}
+                                  <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
+                                    <p className="text-xs text-muted-foreground">Message Delay</p>
+                                    <p className="font-medium mt-1">{appSettings.message_timing.minDelaySeconds}s - {appSettings.message_timing.maxDelaySeconds}s</p>
+                                  </div>
+                                  <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
+                                    <p className="text-xs text-muted-foreground">Account Rotation</p>
+                                    <p className="font-medium mt-1">Every {appSettings.scheduler.maxMessagesBeforeRotation} msgs</p>
+                                  </div>
+                                  <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
+                                    <p className="text-xs text-muted-foreground">Switch Delay</p>
+                                    <p className="font-medium mt-1">{appSettings.message_timing.accountSwitchDelaySeconds}s</p>
+                                  </div>
                                 </div>
                               </div>
                               

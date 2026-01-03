@@ -100,6 +100,7 @@ export interface Campaign {
   accountIds: string[];
   createdAt: Date;
   updatedAt: Date;
+  seatId?: string;
 }
 
 export interface Admin {
