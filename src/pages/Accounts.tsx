@@ -1086,19 +1086,11 @@ const Accounts: React.FC = () => {
     return matchesSearch && matchesStatus && matchesTag;
   });
 
-  // Split accounts by status
-  // Accounts with active restrictedUntil are treated as restricted, NOT active
-  const now = new Date();
+  // Split accounts by status - frozen/banned always go to inactive
   const accountsByStatus = {
-    active: filteredAccounts.filter(a => {
-      // If has active restriction, belongs in restricted tab only
-      if (a.restrictedUntil && new Date(a.restrictedUntil) > now) return false;
-      return a.status === 'active';
-    }),
+    active: filteredAccounts.filter(a => a.status === 'active'),
     restricted: filteredAccounts.filter(a => 
-      a.status === 'restricted' || 
-      a.status === 'cooldown' ||
-      (a.restrictedUntil && new Date(a.restrictedUntil) > now)
+      a.status === 'restricted' || a.status === 'cooldown'
     ),
     inactive: filteredAccounts.filter(a => 
       a.status === 'banned' || 
@@ -1148,18 +1140,12 @@ const Accounts: React.FC = () => {
     return proxy?.status || null;
   };
 
-  // Calculate stats - accounts with active restrictedUntil count as restricted, not active
-  const currentTime = new Date();
+  // Calculate stats - frozen/banned are always inactive
   const stats = {
     total: accounts.length,
-    active: accounts.filter(a => {
-      if (a.restrictedUntil && new Date(a.restrictedUntil) > currentTime) return false;
-      return a.status === 'active';
-    }).length,
+    active: accounts.filter(a => a.status === 'active').length,
     restricted: accounts.filter(a => 
-      a.status === 'restricted' || 
-      a.status === 'cooldown' ||
-      (a.restrictedUntil && new Date(a.restrictedUntil) > currentTime)
+      a.status === 'restricted' || a.status === 'cooldown'
     ).length,
     inactive: accounts.filter(a => 
       a.status === 'banned' || 
