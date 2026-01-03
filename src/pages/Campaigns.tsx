@@ -26,6 +26,7 @@ import { format } from 'date-fns';
 import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
+import { useAppSettings } from '@/hooks/useAppSettings';
 import { cn } from '@/lib/utils';
 
 interface ContactData {
@@ -81,6 +82,8 @@ interface Seat {
 
 const Campaigns: React.FC = () => {
   const { campaigns, accounts, createCampaign, updateCampaign, deleteCampaign, uploadRecipients, startCampaign, isLoading, refreshData } = useTelegram();
+  const { settings: appSettings, updateSettings: updateAppSettings, saveSetting, isLoading: isLoadingSettings } = useAppSettings();
+  
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
@@ -105,22 +108,41 @@ const Campaigns: React.FC = () => {
   const [contactTags, setContactTags] = useState<ContactTag[]>([]);
   const [selectedTagFilter, setSelectedTagFilter] = useState<string>('all');
   
-  // Bulk messaging settings
+  // Bulk messaging settings - synced with database via useAppSettings
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
     { id: '1', message: '', accountCount: 10 }
   ]);
+  
+  // Local state for campaign settings (initialized from DB settings)
   const [messagesPerAccount, setMessagesPerAccount] = useState(10);
-  const [messageInterval, setMessageInterval] = useState(3); // seconds between messages (fast default)
-  const [accountSwitchDelay, setAccountSwitchDelay] = useState(5); // seconds before next account (fast default)
+  const [messageInterval, setMessageInterval] = useState(5);
+  const [accountSwitchDelay, setAccountSwitchDelay] = useState(30);
   const [showScheduler, setShowScheduler] = useState(false);
   const [schedulerSettings, setSchedulerSettings] = useState({
     enabled: true,
     maxMessagesBeforeRotation: 10,
-    cooldownDuration: 10, // minutes (faster default)
+    cooldownDuration: 300, // seconds
     prioritizeHighMaturity: true,
     autoSkipRestricted: true,
     balanceLoad: true
   });
+  
+  // Sync local settings with database settings when they load
+  useEffect(() => {
+    if (!isLoadingSettings) {
+      setMessagesPerAccount(appSettings.account_limits.messagesPerAccount);
+      setMessageInterval(appSettings.message_timing.minDelaySeconds);
+      setAccountSwitchDelay(appSettings.message_timing.accountSwitchDelaySeconds);
+      setSchedulerSettings({
+        enabled: appSettings.scheduler.enabled,
+        maxMessagesBeforeRotation: appSettings.scheduler.maxMessagesBeforeRotation,
+        cooldownDuration: appSettings.scheduler.cooldownDuration,
+        prioritizeHighMaturity: appSettings.scheduler.prioritizeHighMaturity,
+        autoSkipRestricted: appSettings.scheduler.autoSkipRestricted,
+        balanceLoad: appSettings.scheduler.balanceLoad,
+      });
+    }
+  }, [isLoadingSettings, appSettings]);
   
   const [newCampaign, setNewCampaign] = useState({
     name: '',
@@ -606,20 +628,15 @@ const Campaigns: React.FC = () => {
       }
     }
     
-    // Store campaign settings in localStorage for the sender script
-    const campaignSettings = {
-      messageTemplates: messageTemplates.filter(t => t.message.trim()),
-      messagesPerAccount,
-      messageInterval,
-      accountSwitchDelay,
-      schedulerSettings,
-    };
-    localStorage.setItem(`campaign_settings_${newCampaign.name}`, JSON.stringify(campaignSettings));
+    // Settings are now saved to the database when the campaign is started via handleStartCampaign
+    // No need to save to localStorage anymore
     
     setNewCampaign({ name: '', messageTemplate: '', recipientCount: 0, accountIds: [], recipientsText: '' });
     setMessageTemplates([{ id: '1', message: '', accountCount: 10 }]);
     setIsCreateOpen(false);
     refreshData();
+    
+    toast.success('Campaign created! Start it to begin sending.');
   };
 
   // Normalize recipient - handles phone numbers OR usernames
@@ -684,6 +701,32 @@ const Campaigns: React.FC = () => {
 
   const handleStartCampaign = async (campaignId: string) => {
     setIsStarting(campaignId);
+    
+    // Save current settings to database BEFORE starting the campaign
+    // This ensures the Python runner uses the exact settings shown in UI
+    try {
+      await saveSetting('message_timing', {
+        minDelaySeconds: messageInterval,
+        maxDelaySeconds: Math.max(messageInterval * 2, 15),
+        accountSwitchDelaySeconds: accountSwitchDelay,
+      });
+      await saveSetting('account_limits', {
+        ...appSettings.account_limits,
+        messagesPerAccount,
+      });
+      await saveSetting('scheduler', {
+        enabled: schedulerSettings.enabled,
+        maxMessagesBeforeRotation: schedulerSettings.maxMessagesBeforeRotation,
+        cooldownDuration: schedulerSettings.cooldownDuration,
+        prioritizeHighMaturity: schedulerSettings.prioritizeHighMaturity,
+        autoSkipRestricted: schedulerSettings.autoSkipRestricted,
+        balanceLoad: schedulerSettings.balanceLoad,
+      });
+      console.log('Campaign settings saved to database');
+    } catch (error) {
+      console.error('Failed to save campaign settings:', error);
+    }
+    
     await startCampaign(campaignId);
     // Refresh counts quickly after queueing
     await fetchReports();
@@ -1066,8 +1109,9 @@ username123
                     onAccountRotation={(accountId) => {
                       console.log('Rotated to account:', accountId);
                     }}
-                    onSettingsChange={(settings) => setSchedulerSettings(settings)}
+                    onSettingsChange={(newSettings) => setSchedulerSettings(newSettings)}
                     accountUniqueRecipients={accountUniqueRecipients}
+                    initialSettings={schedulerSettings}
                   />
                 </TabsContent>
                 
