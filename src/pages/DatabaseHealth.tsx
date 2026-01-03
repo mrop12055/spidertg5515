@@ -121,7 +121,7 @@ const DatabaseHealth = () => {
           .from('campaign_recipients')
           .select('id, phone_number, name, status, campaign_id, failed_reason')
           .eq('status', 'pending')
-          .limit(200),
+          .limit(1000),
         supabase
           .from('messages')
           .select('id, content, status, created_at, conversation_id, failed_reason')
@@ -468,25 +468,25 @@ const DatabaseHealth = () => {
             <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="account">
                 Account
-                {accountTasks.length > 0 && (
+                {(health?.pending_account_tasks || 0) > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {accountTasks.length}
+                    {health?.pending_account_tasks}
                   </Badge>
                 )}
               </TabsTrigger>
               <TabsTrigger value="block">
                 Block
-                {blockTasks.length > 0 && (
+                {(health?.pending_block_tasks || 0) > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {blockTasks.length}
+                    {health?.pending_block_tasks}
                   </Badge>
                 )}
               </TabsTrigger>
               <TabsTrigger value="import">
                 Import
-                {importTasks.length > 0 && (
+                {(health?.pending_import_tasks || 0) > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {importTasks.length}
+                    {health?.pending_import_tasks}
                   </Badge>
                 )}
               </TabsTrigger>
@@ -502,18 +502,18 @@ const DatabaseHealth = () => {
               <TabsTrigger value="recipients">
                 <UserCheck className="w-3 h-3 mr-1" />
                 Recipients
-                {pendingRecipients.length > 0 && (
+                {(health?.pending_recipients || 0) > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {pendingRecipients.length}
+                    {health?.pending_recipients}
                   </Badge>
                 )}
               </TabsTrigger>
               <TabsTrigger value="messages">
                 <Send className="w-3 h-3 mr-1" />
                 Messages
-                {pendingMessages.length > 0 && (
+                {(health?.pending_messages || 0) > 0 && (
                   <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {pendingMessages.length}
+                    {health?.pending_messages}
                   </Badge>
                 )}
               </TabsTrigger>
@@ -539,12 +539,19 @@ const DatabaseHealth = () => {
               <div className="space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2">
-                    <Badge variant="secondary">{pendingRecipients.length} pending</Badge>
+                    <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500">
+                      {health?.pending_recipients || pendingRecipients.length} pending
+                    </Badge>
+                    {pendingRecipients.length < (health?.pending_recipients || 0) && (
+                      <span className="text-xs text-muted-foreground">
+                        (showing {pendingRecipients.length})
+                      </span>
+                    )}
                   </div>
                   {pendingRecipients.length > 0 && (
                     <Button variant="destructive" size="sm" onClick={clearPendingRecipients}>
                       <Trash2 className="w-4 h-4 mr-2" />
-                      Delete All Pending
+                      Delete All Pending ({health?.pending_recipients || pendingRecipients.length})
                     </Button>
                   )}
                 </div>
