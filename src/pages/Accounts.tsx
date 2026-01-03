@@ -605,8 +605,6 @@ const Accounts: React.FC = () => {
           return 'change_password';
         case 'Logout Sessions':
           return 'logout_sessions';
-        case 'Sync Profiles':
-          return 'sync_profile';
         default:
           return undefined;
       }
