@@ -196,13 +196,17 @@ serve(async (req) => {
               api_hash: apiCred?.api_hash || account.api_hash,
               proxy_id: account.proxy_id,
             },
-            proxy: account.proxies ? {
-              host: account.proxies.host,
-              port: account.proxies.port,
-              username: account.proxies.username,
-              password: account.proxies.password,
-              type: account.proxies.proxy_type,
-            } : null,
+            proxy: account.proxies
+              ? {
+                  host: account.proxies.host,
+                  port: account.proxies.port,
+                  username: account.proxies.username,
+                  password: account.proxies.password,
+                  // Backwards compatible: python expects proxy_type, older code may use type
+                  proxy_type: account.proxies.proxy_type,
+                  type: account.proxies.proxy_type,
+                }
+              : null,
             mode: "campaign",
           });
 
@@ -272,13 +276,17 @@ serve(async (req) => {
               api_hash: apiCred?.api_hash || account.api_hash,
               proxy_id: account.proxy_id,
             },
-            proxy: account.proxies ? {
-              host: account.proxies.host,
-              port: account.proxies.port,
-              username: account.proxies.username,
-              password: account.proxies.password,
-              type: account.proxies.proxy_type,
-            } : null,
+            proxy: account.proxies
+              ? {
+                  host: account.proxies.host,
+                  port: account.proxies.port,
+                  username: account.proxies.username,
+                  password: account.proxies.password,
+                  // Backwards compatible: python expects proxy_type, older code may use type
+                  proxy_type: account.proxies.proxy_type,
+                  type: account.proxies.proxy_type,
+                }
+              : null,
             mode: "livechat",
           });
 

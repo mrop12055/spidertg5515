@@ -637,34 +637,49 @@ serve(async (req) => {
             }
           } else {
             const proxyData = accountData.proxies;
+
+            // Mark task as in_progress to avoid being served repeatedly while runner is working
+            await supabase
+              .from("account_check_tasks")
+              .update({ status: "in_progress" })
+              .eq("id", task.id)
+              .eq("status", "pending");
+
             console.log(`[get-next-task] ${taskType} for ${task.account_id}`);
-            return new Response(JSON.stringify({
-              task: taskType,
-              task_id: task.id,
-              task_data: task.result ? JSON.parse(task.result) : {},
-              account: {
-                id: accountData.id,
-                phone_number: accountData.phone_number,
-                session_data: accountData.session_data,
-                device_model: accountData.device_model,
-                system_version: accountData.system_version,
-                app_version: accountData.app_version,
-                lang_code: accountData.lang_code,
-                system_lang_code: accountData.system_lang_code,
-                api_id: apiCred?.api_id || accountData.api_id,
-                api_hash: apiCred?.api_hash || accountData.api_hash,
-                proxy_id: accountData.proxy_id,
-              },
-              proxy: proxyData ? {
-                host: proxyData.host,
-                port: proxyData.port,
-                username: proxyData.username,
-                password: proxyData.password,
-                type: proxyData.proxy_type,
-              } : null,
-            }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+            return new Response(
+              JSON.stringify({
+                task: taskType,
+                task_id: task.id,
+                task_data: task.result ? JSON.parse(task.result) : {},
+                account: {
+                  id: accountData.id,
+                  phone_number: accountData.phone_number,
+                  session_data: accountData.session_data,
+                  device_model: accountData.device_model,
+                  system_version: accountData.system_version,
+                  app_version: accountData.app_version,
+                  lang_code: accountData.lang_code,
+                  system_lang_code: accountData.system_lang_code,
+                  api_id: apiCred?.api_id || accountData.api_id,
+                  api_hash: apiCred?.api_hash || accountData.api_hash,
+                  proxy_id: accountData.proxy_id,
+                },
+                proxy: proxyData
+                  ? {
+                      host: proxyData.host,
+                      port: proxyData.port,
+                      username: proxyData.username,
+                      password: proxyData.password,
+                      // Backwards compatible: python expects proxy_type, older code may use type
+                      proxy_type: proxyData.proxy_type,
+                      type: proxyData.proxy_type,
+                    }
+                  : null,
+              }),
+              {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              }
+            );
           }
         }
       }
