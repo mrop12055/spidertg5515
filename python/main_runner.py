@@ -219,7 +219,12 @@ async def main_loop():
                 accounts = task.get("accounts", [])
                 for acc in accounts:
                     await get_or_create_client(acc, setup_handler=setup_message_handler)
-                await asyncio.sleep(task.get("seconds", 0.05))
+                # IMPORTANT: Respect backend wait time - don't poll faster than the server allows
+                wait_seconds = task.get("seconds", 5)
+                reason = task.get("reason", "")
+                if reason:
+                    print(f"  ⏳ {reason}")
+                await asyncio.sleep(wait_seconds)
             
             elif task_type == "send":
                 msg = task.get("message", {})

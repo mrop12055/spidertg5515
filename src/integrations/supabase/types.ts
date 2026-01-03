@@ -869,6 +869,7 @@ export type Database = {
           interaction_pair_id: string | null
           lang_code: string | null
           last_active: string | null
+          last_campaign_send_at: string | null
           last_name: string | null
           last_spambot_check: string | null
           maturity_days: number | null
@@ -905,6 +906,7 @@ export type Database = {
           interaction_pair_id?: string | null
           lang_code?: string | null
           last_active?: string | null
+          last_campaign_send_at?: string | null
           last_name?: string | null
           last_spambot_check?: string | null
           maturity_days?: number | null
@@ -941,6 +943,7 @@ export type Database = {
           interaction_pair_id?: string | null
           lang_code?: string | null
           last_active?: string | null
+          last_campaign_send_at?: string | null
           last_name?: string | null
           last_spambot_check?: string | null
           maturity_days?: number | null
