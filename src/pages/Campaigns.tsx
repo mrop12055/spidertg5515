@@ -1779,12 +1779,10 @@ username123
                                   Campaign Settings
                                 </h4>
                                 <div className="grid grid-cols-2 gap-3">
-                                  {seatName && (
-                                    <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
-                                      <p className="text-xs text-muted-foreground">Assigned Seat</p>
-                                      <p className="font-medium mt-1">{seatName}</p>
-                                    </div>
-                                  )}
+                                  <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
+                                    <p className="text-xs text-muted-foreground">Assigned Seat</p>
+                                    <p className="font-medium mt-1">{seatName || 'Not assigned'}</p>
+                                  </div>
                                   <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
                                     <p className="text-xs text-muted-foreground">Message Delay</p>
                                     <p className="font-medium mt-1">{appSettings.message_timing.minDelaySeconds}s - {appSettings.message_timing.maxDelaySeconds}s</p>
