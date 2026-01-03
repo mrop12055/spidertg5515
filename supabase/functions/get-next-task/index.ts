@@ -16,6 +16,11 @@ let ACCOUNT_SWITCH_DELAY_SECONDS = 30;
 let DAILY_MESSAGE_LIMIT = 25;
 let MESSAGES_PER_ACCOUNT = 10;
 
+// Scheduler (rotation + cooldown)
+let SCHEDULER_ENABLED = true;
+let MAX_MESSAGES_BEFORE_ROTATION = 10;
+let COOLDOWN_DURATION_SECONDS = 300;
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -28,7 +33,7 @@ serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({}));
-    const { account_id, runner } = body;
+    const { account_id, runner } = body as { account_id?: string; runner?: string };
 
     console.log(`[get-next-task] Request for runner: ${runner || 'all'}, account: ${account_id || 'any'}`);
 
@@ -59,9 +64,18 @@ serve(async (req) => {
           WARMUP_DAYS = (value.warmupDays as number) || WARMUP_DAYS;
           DAILY_MESSAGE_LIMIT = (value.dailyMessageLimit as number) || DAILY_MESSAGE_LIMIT;
           MESSAGES_PER_ACCOUNT = (value.messagesPerAccount as number) || MESSAGES_PER_ACCOUNT;
+        } else if (setting.key === "scheduler" && value) {
+          // If a value is missing, keep defaults
+          if (typeof value.enabled === 'boolean') {
+            SCHEDULER_ENABLED = value.enabled as boolean;
+          }
+          MAX_MESSAGES_BEFORE_ROTATION = (value.maxMessagesBeforeRotation as number) || MAX_MESSAGES_BEFORE_ROTATION;
+          COOLDOWN_DURATION_SECONDS = (value.cooldownDuration as number) || COOLDOWN_DURATION_SECONDS;
         }
       }
-      console.log(`[get-next-task] Loaded settings: delay=${MESSAGE_DELAY_MIN_SECONDS}-${MESSAGE_DELAY_MAX_SECONDS}s, warmup=${WARMUP_DAYS}d, limit=${DAILY_MESSAGE_LIMIT}`);
+      console.log(
+        `[get-next-task] Loaded settings: delay=${MESSAGE_DELAY_MIN_SECONDS}-${MESSAGE_DELAY_MAX_SECONDS}s, switch=${ACCOUNT_SWITCH_DELAY_SECONDS}s, warmup=${WARMUP_DAYS}d, dailyLimit=${DAILY_MESSAGE_LIMIT}, perCampaign=${MESSAGES_PER_ACCOUNT}, rotate=${MAX_MESSAGES_BEFORE_ROTATION}, cooldown=${COOLDOWN_DURATION_SECONDS}s, enabled=${SCHEDULER_ENABLED}`
+      );
     }
 
     // NOTE: Maintenance tasks run only 10% of requests to reduce load
@@ -97,6 +111,13 @@ serve(async (req) => {
       .eq("status", "restricted")
       .limit(40);
 
+    // Get cooldown accounts with limit (auto-rotation cooldown)
+    const { data: cooldownAccountsRaw } = await supabase
+      .from("telegram_accounts")
+      .select(ACCOUNT_WITH_JOINS_SELECT as any)
+      .eq("status", "cooldown")
+      .limit(40);
+
     // Get frozen accounts with limit (for live chat only)
     const { data: frozenAccountsRaw } = await supabase
       .from("telegram_accounts")
@@ -106,7 +127,16 @@ serve(async (req) => {
 
     const activeAccounts = (activeAccountsRaw as any[]) || [];
     const restrictedAccounts = (restrictedAccountsRaw as any[]) || [];
+    const cooldownAccounts = (cooldownAccountsRaw as any[]) || [];
     const frozenAccounts = (frozenAccountsRaw as any[]) || [];
+
+    // Auto-reactivate accounts after their cooldown/restriction window ends
+    const nowIso = now.toISOString();
+    await supabase
+      .from("telegram_accounts")
+      .update({ status: "active", restricted_until: null })
+      .in("status", ["restricted", "cooldown"])
+      .lte("restricted_until", nowIso);
 
     const isTimeRestricted = (a: any) => {
       if (!a?.restricted_until) return false;
@@ -129,11 +159,12 @@ serve(async (req) => {
     // Filter all accounts to only those with active proxies
     const activeAccountsWithProxy = (activeAccounts || []).filter(hasActiveProxy);
     const restrictedAccountsWithProxy = (restrictedAccounts || []).filter(hasActiveProxy);
+    const cooldownAccountsWithProxy = (cooldownAccounts || []).filter(hasActiveProxy);
     const frozenAccountsWithProxy = (frozenAccounts || []).filter(hasActiveProxy);
 
-    // For LIVE CHAT: allow active + restricted + frozen status accounts (with active proxy)
-    // Frozen accounts can still receive and reply to messages
-    const allUsableAccounts = [...activeAccountsWithProxy, ...restrictedAccountsWithProxy, ...frozenAccountsWithProxy];
+    // For LIVE CHAT: allow active + restricted + cooldown + frozen status accounts (with active proxy)
+    // Cooldown/frozen accounts can still receive and reply to messages
+    const allUsableAccounts = [...activeAccountsWithProxy, ...restrictedAccountsWithProxy, ...cooldownAccountsWithProxy, ...frozenAccountsWithProxy];
 
     // For CAMPAIGNS: only active accounts that are NOT temporarily restricted (with active proxy)
     const accounts = activeAccountsWithProxy.filter((a: any) => !isTimeRestricted(a));
@@ -207,7 +238,7 @@ serve(async (req) => {
           const hasUsableAccount = (campaignAccountLinks || []).some((ca: any) => {
             const acc = ca.telegram_accounts;
             if (!acc) return false;
-            const limit = acc.daily_limit ?? 25;
+            const limit = acc.daily_limit ?? DAILY_MESSAGE_LIMIT;
             const sentToday = acc.messages_sent_today ?? 0;
             // Must be active, under limit, and NOT temporarily restricted (restricted_until must be null or in past)
             const isRestricted = acc.restricted_until && acc.restricted_until > now;
@@ -295,15 +326,53 @@ serve(async (req) => {
         if (recipient) {
           // Find the assigned account
           account = accounts.find((a: { id: string }) => a.id === recipient.sent_by_account_id);
-          
-          // If assigned account is not usable (restricted/at limit), reassign
-          if (!account || (account.messages_sent_today || 0) >= (account.daily_limit || 50)) {
-            const fallback = accounts.find((a: any) => {
-              const limit = a.daily_limit ?? 25;
+
+          // If assigned account is not usable (missing / over daily limit / over per-campaign limit), reassign
+          const accountLimit = account?.daily_limit ?? DAILY_MESSAGE_LIMIT;
+          const accountSentToday = account?.messages_sent_today ?? 0;
+          const overDailyLimit = !account || accountSentToday >= accountLimit;
+
+          let overCampaignLimit = false;
+          if (recipient?.campaign_id && account?.id && MESSAGES_PER_ACCOUNT > 0) {
+            const { count } = await supabase
+              .from("campaign_recipients")
+              .select("id", { count: "exact", head: true })
+              .eq("campaign_id", recipient.campaign_id)
+              .eq("sent_by_account_id", account.id)
+              .in("status", ["pending", "sending", "sent"]);
+
+            overCampaignLimit = (count || 0) >= MESSAGES_PER_ACCOUNT;
+          }
+
+          if (overDailyLimit || overCampaignLimit) {
+            // Find best fallback account (under daily limit AND under per-campaign limit)
+            const eligibleAccounts = accounts.filter((a: any) => {
+              const limit = a.daily_limit ?? DAILY_MESSAGE_LIMIT;
               const sentToday = a.messages_sent_today ?? 0;
               return sentToday < limit;
             });
-            
+
+            let eligibleUnderCampaignLimit = eligibleAccounts;
+            if (recipient?.campaign_id && MESSAGES_PER_ACCOUNT > 0 && eligibleAccounts.length > 0) {
+              const ids = eligibleAccounts.map((a: any) => a.id);
+              const { data: countsData } = await supabase
+                .from("campaign_recipients")
+                .select("sent_by_account_id, count:id")
+                .eq("campaign_id", recipient.campaign_id)
+                .in("sent_by_account_id", ids)
+                .in("status", ["pending", "sending", "sent"]);
+
+              const countsByAccount = new Map<string, number>();
+              for (const row of (countsData || []) as any[]) {
+                if (row?.sent_by_account_id) countsByAccount.set(row.sent_by_account_id, Number(row.count) || 0);
+              }
+
+              eligibleUnderCampaignLimit = eligibleAccounts.filter((a: any) => (countsByAccount.get(a.id) || 0) < MESSAGES_PER_ACCOUNT);
+            }
+
+            eligibleUnderCampaignLimit.sort((a: any, b: any) => (a.messages_sent_today || 0) - (b.messages_sent_today || 0));
+            const fallback = eligibleUnderCampaignLimit[0] || null;
+
             if (fallback) {
               await supabase
                 .from("campaign_recipients")
@@ -331,27 +400,45 @@ serve(async (req) => {
           if (unassignedRecipients && unassignedRecipients.length > 0) {
             recipient = unassignedRecipients[0];
             
-            // Find best account (under daily limit, least messages sent today for load balancing)
+            // Find best account (under daily limit, and under per-campaign limit)
             const eligibleAccounts = accounts.filter((a: any) => {
-              const limit = a.daily_limit ?? 25;
+              const limit = a.daily_limit ?? DAILY_MESSAGE_LIMIT;
               const sentToday = a.messages_sent_today ?? 0;
               return sentToday < limit;
             });
-            
-            if (eligibleAccounts.length > 0) {
+
+            let eligibleUnderCampaignLimit = eligibleAccounts;
+            if (MESSAGES_PER_ACCOUNT > 0 && eligibleAccounts.length > 0) {
+              const ids = eligibleAccounts.map((a: any) => a.id);
+              const { data: countsData } = await supabase
+                .from("campaign_recipients")
+                .select("sent_by_account_id, count:id")
+                .eq("campaign_id", recipient.campaign_id)
+                .in("sent_by_account_id", ids)
+                .in("status", ["pending", "sending", "sent"]);
+
+              const countsByAccount = new Map<string, number>();
+              for (const row of (countsData || []) as any[]) {
+                if (row?.sent_by_account_id) countsByAccount.set(row.sent_by_account_id, Number(row.count) || 0);
+              }
+
+              eligibleUnderCampaignLimit = eligibleAccounts.filter((a: any) => (countsByAccount.get(a.id) || 0) < MESSAGES_PER_ACCOUNT);
+            }
+
+            if (eligibleUnderCampaignLimit.length > 0) {
               // Pick the account with fewest messages sent today (load balancing)
-              eligibleAccounts.sort((a: any, b: any) => 
+              eligibleUnderCampaignLimit.sort((a: any, b: any) =>
                 (a.messages_sent_today || 0) - (b.messages_sent_today || 0)
               );
-              account = eligibleAccounts[0];
-              
+              account = eligibleUnderCampaignLimit[0];
+
               // Assign this account to the recipient (LAZY ASSIGNMENT)
               await supabase
                 .from("campaign_recipients")
                 .update({ sent_by_account_id: account.id })
                 .eq("id", recipient.id)
                 .eq("status", "pending");
-              
+
               console.log(`[get-next-task] LAZY ASSIGN: recipient ${recipient.id.slice(0, 8)} -> account ${account.phone_number}`);
             } else {
               // No eligible accounts available
@@ -422,7 +509,9 @@ serve(async (req) => {
               minDelaySeconds: MESSAGE_DELAY_MIN_SECONDS,
               maxDelaySeconds: MESSAGE_DELAY_MAX_SECONDS,
               accountSwitchDelaySeconds: ACCOUNT_SWITCH_DELAY_SECONDS,
-              maxMessagesBeforeRotation: MESSAGES_PER_ACCOUNT,
+              maxMessagesBeforeRotation: MAX_MESSAGES_BEFORE_ROTATION,
+              cooldownDuration: COOLDOWN_DURATION_SECONDS,
+              schedulerEnabled: SCHEDULER_ENABLED,
               messagesPerAccount: MESSAGES_PER_ACCOUNT,
               dailyMessageLimit: DAILY_MESSAGE_LIMIT,
             },

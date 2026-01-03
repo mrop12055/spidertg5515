@@ -176,23 +176,56 @@ serve(async (req) => {
           // For campaign messages: only if we created a new conversation
           // For live chat replies: don't count (message_id without campaign_recipient_id means it's a reply)
           const shouldCountMessage = campaign_recipient_id ? isNewConversation : false;
-          
+
           if (shouldCountMessage && account_id) {
             const { data: account } = await supabase
               .from("telegram_accounts")
-              .select("messages_sent_today")
+              .select("messages_sent_today, status")
               .eq("id", account_id)
               .single();
 
             if (account) {
+              const newCount = (account.messages_sent_today || 0) + 1;
               await supabase
                 .from("telegram_accounts")
                 .update({
-                  messages_sent_today: (account.messages_sent_today || 0) + 1,
+                  messages_sent_today: newCount,
                   last_active: new Date().toISOString(),
                 })
                 .eq("id", account_id);
-              console.log(`[report-task-result] Incremented message count for account ${account_id} (new contact)`);
+
+              console.log(`[report-task-result] Incremented message count for account ${account_id} (new contact). New count=${newCount}`);
+
+              // Apply scheduler rotation/cooldown based on backend settings
+              const { data: schedulerRow } = await supabase
+                .from("app_settings")
+                .select("value")
+                .eq("key", "scheduler")
+                .maybeSingle();
+
+              const scheduler = (schedulerRow?.value as any) || {};
+              const enabled = scheduler.enabled !== false;
+              const maxBeforeRotation = Number(scheduler.maxMessagesBeforeRotation || 0);
+              const cooldownSeconds = Number(scheduler.cooldownDuration || 0);
+
+              if (
+                enabled &&
+                maxBeforeRotation > 0 &&
+                cooldownSeconds > 0 &&
+                newCount % maxBeforeRotation === 0
+              ) {
+                const until = new Date(Date.now() + cooldownSeconds * 1000).toISOString();
+                await supabase
+                  .from("telegram_accounts")
+                  .update({
+                    status: "cooldown",
+                    restricted_until: until,
+                  })
+                  .eq("id", account_id)
+                  .eq("status", "active");
+
+                console.log(`[report-task-result] Applied cooldown to account ${account_id} for ${cooldownSeconds}s (until ${until})`);
+              }
             }
           } else if (account_id) {
             // Just update last_active for replies, don't count
