@@ -557,6 +557,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                       failedCount: c.failed_count || camp.failedCount,
                       recipientCount: c.recipient_count || camp.recipientCount,
                       updatedAt: new Date(c.updated_at || camp.updatedAt),
+                      seatId: c.seat_id || camp.seatId,
                     }
                   : camp
               )
