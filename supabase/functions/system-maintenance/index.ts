@@ -148,6 +148,23 @@ Deno.serve(async (req) => {
       .eq('status', 'completed')
       .lt('completed_at', sevenDaysAgo);
 
+    // 10. Fix stuck accounts that are marked "active" but have a ban_reason set
+    // These are accounts that got frozen/restricted but somehow reverted to active status
+    const { data: stuckActiveAccounts, error: stuckAccountsError } = await supabase
+      .from('telegram_accounts')
+      .update({ status: 'frozen' })
+      .eq('status', 'active')
+      .not('ban_reason', 'is', null)
+      .neq('ban_reason', '')
+      .select('id, phone_number, ban_reason');
+    
+    if (stuckAccountsError) {
+      console.error('[system-maintenance] Error fixing stuck active accounts:', stuckAccountsError);
+    } else if (stuckActiveAccounts && stuckActiveAccounts.length > 0) {
+      console.log(`[system-maintenance] Fixed ${stuckActiveAccounts.length} stuck active accounts with ban_reason:`, 
+        stuckActiveAccounts.map(a => `${a.phone_number}: ${a.ban_reason}`));
+    }
+
     // Log summary
     const totalCleaned = 
       stats.stuck_messages_reset +
