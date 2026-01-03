@@ -4,7 +4,14 @@ import { Check, ChevronDown, ChevronUp } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
-const Select = SelectPrimitive.Root;
+type SelectRootProps = React.ComponentPropsWithoutRef<typeof SelectPrimitive.Root>;
+
+// Radix Select Root does not forward refs. Some wrappers (Slot/asChild) may attach a ref,
+// so we swallow it here to avoid runtime warnings.
+const Select = React.forwardRef<any, SelectRootProps>((props, _ref) => (
+  <SelectPrimitive.Root {...props} />
+));
+Select.displayName = "Select";
 
 const SelectGroup = SelectPrimitive.Group;
 
