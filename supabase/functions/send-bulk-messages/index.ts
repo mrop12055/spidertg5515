@@ -182,6 +182,7 @@ serve(async (req) => {
     }
 
     // Start sending campaign messages
+    // LAZY MODE: Only set status=running. Account assignment happens in get-next-task on demand.
     if (path === '/start-campaign' && req.method === 'POST') {
       const body = await req.json();
       const { campaign_id } = body as { campaign_id: string };
@@ -192,20 +193,6 @@ serve(async (req) => {
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
-
-      // Load MESSAGES_PER_ACCOUNT setting from database
-      let messagesPerAccount = 10; // Default
-      const { data: settingsData } = await supabase
-        .from("app_settings")
-        .select("key, value")
-        .eq("key", "account_limits")
-        .single();
-      
-      if (settingsData?.value) {
-        const value = settingsData.value as Record<string, unknown>;
-        messagesPerAccount = (value.messagesPerAccount as number) || messagesPerAccount;
-      }
-      console.log(`[send-bulk-messages] Using messagesPerAccount limit: ${messagesPerAccount}`);
 
       // Get campaign with accounts
       const { data: campaign, error: campaignError } = await supabase
@@ -221,21 +208,12 @@ serve(async (req) => {
         );
       }
 
-      // Get pending recipients (only those marked as 'pending' - validated by Python)
-      const { data: recipients, error: recipientError } = await supabase
-        .from('campaign_recipients')
-        .select('*')
-        .eq('campaign_id', campaign_id)
-        .eq('status', 'pending');
-
-      if (recipientError) throw recipientError;
-
       // Get active accounts assigned to this campaign
       const accountIds = campaign.campaign_accounts?.map((ca: any) => ca.account_id) || [];
       
       const { data: accounts, error: accountError } = await supabase
         .from('telegram_accounts')
-        .select('*')
+        .select('id, status')
         .in('id', accountIds)
         .eq('status', 'active');
 
@@ -248,82 +226,29 @@ serve(async (req) => {
         );
       }
 
-      const totalRecipients = recipients?.length || 0;
-      const maxCapacity = accounts.length * messagesPerAccount;
+      // Count pending recipients
+      const { count: pendingCount } = await supabase
+        .from('campaign_recipients')
+        .select('id', { count: 'exact', head: true })
+        .eq('campaign_id', campaign_id)
+        .eq('status', 'pending');
+
+      const totalRecipients = pendingCount || 0;
       
-      console.log(`[send-bulk-messages] Starting campaign ${campaign_id}: ${totalRecipients} recipients, ${accounts.length} accounts, limit ${messagesPerAccount}/account, capacity ${maxCapacity}`);
+      console.log(`[send-bulk-messages] Starting campaign ${campaign_id}: ${totalRecipients} pending recipients, ${accounts.length} active accounts (LAZY assignment mode)`);
 
-      if (totalRecipients > maxCapacity) {
-        console.log(`[send-bulk-messages] WARNING: ${totalRecipients} recipients exceed capacity of ${maxCapacity} (${accounts.length} accounts x ${messagesPerAccount} each)`);
-      }
-
-      // Update campaign status to running
+      // Update campaign status to running - NO recipient updates here!
       await supabase
         .from('campaigns')
         .update({ status: 'running' })
         .eq('id', campaign_id);
 
-      // Queue messages for each recipient (distribute across accounts respecting limit)
-      // Each account gets at most messagesPerAccount recipients before moving to next
-      const accountAssignments: Map<string, number> = new Map();
-      accounts.forEach(acc => accountAssignments.set(acc.id, 0));
-      
-      const queuedCount = { success: 0, failed: 0, unassigned: 0 };
-
-      for (const recipient of recipients || []) {
-        // Find an account that hasn't reached its limit yet
-        let assignedAccount = null;
-        for (const account of accounts) {
-          const currentCount = accountAssignments.get(account.id) || 0;
-          if (currentCount < messagesPerAccount) {
-            assignedAccount = account;
-            accountAssignments.set(account.id, currentCount + 1);
-            break;
-          }
-        }
-        
-        if (!assignedAccount) {
-          // All accounts have reached their limit
-          console.log(`[send-bulk-messages] All accounts at limit, cannot assign ${recipient.phone_number}`);
-          queuedCount.unassigned++;
-          continue;
-        }
-
-        // Update recipient with assigned account
-        const { error: updateError } = await supabase
-          .from('campaign_recipients')
-          .update({ 
-            sent_by_account_id: assignedAccount.id,
-          })
-          .eq('id', recipient.id);
-
-        if (updateError) {
-          console.error(`[send-bulk-messages] Error assigning account for ${recipient.phone_number}:`, updateError.message);
-          queuedCount.failed++;
-        } else {
-          queuedCount.success++;
-        }
-      }
-
-      // Log final distribution
-      for (const [accId, count] of accountAssignments) {
-        const acc = accounts.find(a => a.id === accId);
-        console.log(`[send-bulk-messages] Account ${acc?.phone_number}: assigned ${count}/${messagesPerAccount} recipients`);
-      }
-
-      const warningMsg = queuedCount.unassigned > 0 
-        ? ` ${queuedCount.unassigned} recipients could not be assigned (all accounts at limit).`
-        : '';
-
-      console.log(`[send-bulk-messages] Assigned ${queuedCount.success} recipients for campaign ${campaign_id}${warningMsg}`);
-
       return new Response(
         JSON.stringify({ 
           success: true, 
-          queued: queuedCount.success,
-          failed: queuedCount.failed,
-          unassigned: queuedCount.unassigned,
-          message: `Recipients assigned (${messagesPerAccount} per account limit).${warningMsg} Messages will be sent when VPS backend is connected.`
+          queued: totalRecipients,
+          accounts: accounts.length,
+          message: `Campaign started with ${totalRecipients} recipients. Accounts will be assigned on-demand by runners.`
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
