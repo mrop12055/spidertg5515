@@ -198,6 +198,7 @@ export type Database = {
           id: string
           name: string | null
           phone_number: string
+          retry_count: number | null
           sent_at: string | null
           sent_by_account_id: string | null
           status: string | null
@@ -208,6 +209,7 @@ export type Database = {
           id?: string
           name?: string | null
           phone_number: string
+          retry_count?: number | null
           sent_at?: string | null
           sent_by_account_id?: string | null
           status?: string | null
@@ -218,6 +220,7 @@ export type Database = {
           id?: string
           name?: string | null
           phone_number?: string
+          retry_count?: number | null
           sent_at?: string | null
           sent_by_account_id?: string | null
           status?: string | null
