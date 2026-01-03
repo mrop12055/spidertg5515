@@ -1274,6 +1274,16 @@ const Accounts: React.FC = () => {
     const msgSent24h = messagesSentLast24h.get(account.id) || 0;
     const accountGroup = groups.find(g => g.accountIds.includes(account.id));
     
+    // Determine if account was deleted by user (vs banned by Telegram)
+    const isUserDeleted = account.status === 'banned' && account.banReason && 
+      /deleted|deactivated|user_deactivated/i.test(account.banReason);
+    
+    // Accounts without username AND no first/last name might be blocked/restricted
+    const isPotentiallyBlocked = account.status === 'active' && 
+      !account.username && 
+      !account.firstName && 
+      !account.lastName;
+    
     return (
       <div 
         key={account.id} 
@@ -1342,8 +1352,14 @@ const Accounts: React.FC = () => {
               <CheckCircle className="w-3.5 h-3.5 text-status-active" />
             )}
             
-            {/* Banned Badge - prominent red */}
-            {account.status === 'banned' && (
+            {/* Banned Badge - distinguish between user-deleted (BLOCKED) and Telegram-banned (BANNED) */}
+            {account.status === 'banned' && isUserDeleted && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-600 text-white text-[10px] font-semibold">
+                <Shield className="w-3 h-3" />
+                BLOCKED
+              </span>
+            )}
+            {account.status === 'banned' && !isUserDeleted && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-banned text-white text-[10px] font-semibold animate-pulse">
                 <XCircle className="w-3 h-3" />
                 BANNED
@@ -1364,6 +1380,24 @@ const Accounts: React.FC = () => {
                 <WifiOff className="w-3 h-3" />
                 OFFLINE
               </span>
+            )}
+            
+            {/* Potentially Blocked Warning - active accounts with no profile info */}
+            {isPotentiallyBlocked && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-600 text-[10px] font-semibold border border-orange-500/30">
+                      <AlertTriangle className="w-3 h-3" />
+                      NO PROFILE
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>This account has no username or name.</p>
+                    <p className="text-xs text-muted-foreground">May be blocked or restricted. Try syncing profile.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
