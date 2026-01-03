@@ -352,9 +352,25 @@ serve(async (req) => {
               return sentToday < limit;
             });
 
-            let eligibleUnderCampaignLimit = eligibleAccounts;
-            if (recipient?.campaign_id && MESSAGES_PER_ACCOUNT > 0 && eligibleAccounts.length > 0) {
+            // IMPORTANT: prevent parallel sends from the SAME account within the SAME campaign
+            // (otherwise multiple runner processes can cause back-to-back sends and Telegram flood errors)
+            let eligibleNotSending = eligibleAccounts;
+            if (recipient?.campaign_id && eligibleAccounts.length > 0) {
               const ids = eligibleAccounts.map((a: any) => a.id);
+              const { data: inflight } = await supabase
+                .from("campaign_recipients")
+                .select("sent_by_account_id")
+                .eq("campaign_id", recipient.campaign_id)
+                .eq("status", "sending")
+                .in("sent_by_account_id", ids);
+
+              const inFlightSet = new Set<string>((inflight || []).map((r: any) => r.sent_by_account_id).filter(Boolean));
+              eligibleNotSending = eligibleAccounts.filter((a: any) => !inFlightSet.has(a.id));
+            }
+
+            let eligibleUnderCampaignLimit = eligibleNotSending;
+            if (recipient?.campaign_id && MESSAGES_PER_ACCOUNT > 0 && eligibleNotSending.length > 0) {
+              const ids = eligibleNotSending.map((a: any) => a.id);
               const { data: countsData } = await supabase
                 .from("campaign_recipients")
                 .select("sent_by_account_id, count:id")
@@ -367,7 +383,7 @@ serve(async (req) => {
                 if (row?.sent_by_account_id) countsByAccount.set(row.sent_by_account_id, Number(row.count) || 0);
               }
 
-              eligibleUnderCampaignLimit = eligibleAccounts.filter((a: any) => (countsByAccount.get(a.id) || 0) < MESSAGES_PER_ACCOUNT);
+              eligibleUnderCampaignLimit = eligibleNotSending.filter((a: any) => (countsByAccount.get(a.id) || 0) < MESSAGES_PER_ACCOUNT);
             }
 
             eligibleUnderCampaignLimit.sort((a: any, b: any) => (a.messages_sent_today || 0) - (b.messages_sent_today || 0));
@@ -407,9 +423,25 @@ serve(async (req) => {
               return sentToday < limit;
             });
 
-            let eligibleUnderCampaignLimit = eligibleAccounts;
-            if (MESSAGES_PER_ACCOUNT > 0 && eligibleAccounts.length > 0) {
+            // IMPORTANT: prevent parallel sends from the SAME account within the SAME campaign
+            // (otherwise multiple runner processes can cause back-to-back sends and Telegram flood errors)
+            let eligibleNotSending = eligibleAccounts;
+            if (recipient?.campaign_id && eligibleAccounts.length > 0) {
               const ids = eligibleAccounts.map((a: any) => a.id);
+              const { data: inflight } = await supabase
+                .from("campaign_recipients")
+                .select("sent_by_account_id")
+                .eq("campaign_id", recipient.campaign_id)
+                .eq("status", "sending")
+                .in("sent_by_account_id", ids);
+
+              const inFlightSet = new Set<string>((inflight || []).map((r: any) => r.sent_by_account_id).filter(Boolean));
+              eligibleNotSending = eligibleAccounts.filter((a: any) => !inFlightSet.has(a.id));
+            }
+
+            let eligibleUnderCampaignLimit = eligibleNotSending;
+            if (MESSAGES_PER_ACCOUNT > 0 && eligibleNotSending.length > 0) {
+              const ids = eligibleNotSending.map((a: any) => a.id);
               const { data: countsData } = await supabase
                 .from("campaign_recipients")
                 .select("sent_by_account_id, count:id")
@@ -422,7 +454,7 @@ serve(async (req) => {
                 if (row?.sent_by_account_id) countsByAccount.set(row.sent_by_account_id, Number(row.count) || 0);
               }
 
-              eligibleUnderCampaignLimit = eligibleAccounts.filter((a: any) => (countsByAccount.get(a.id) || 0) < MESSAGES_PER_ACCOUNT);
+              eligibleUnderCampaignLimit = eligibleNotSending.filter((a: any) => (countsByAccount.get(a.id) || 0) < MESSAGES_PER_ACCOUNT);
             }
 
             if (eligibleUnderCampaignLimit.length > 0) {
