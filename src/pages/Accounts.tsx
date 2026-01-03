@@ -1235,8 +1235,8 @@ const Accounts: React.FC = () => {
             )}>
               {verifyResult?.status === 'checking' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
-              ) : account.firstName ? (
-                account.firstName.charAt(0).toUpperCase()
+              ) : (account.firstName || account.lastName) ? (
+                (account.firstName || account.lastName || '').charAt(0).toUpperCase()
               ) : (
                 <Phone className="w-4 h-4" />
               )}
@@ -1294,8 +1294,8 @@ const Accounts: React.FC = () => {
             )}
           </div>
           <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
-            {account.firstName && (
-              <span>{account.firstName} {account.lastName || ''}</span>
+            {(account.firstName || account.lastName) && (
+              <span>{account.firstName || ''} {account.lastName || ''}</span>
             )}
             {account.username && !account.username.includes('update_state') && (
               <span className="text-primary/70">@{account.username}</span>
