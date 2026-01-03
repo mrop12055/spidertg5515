@@ -133,8 +133,6 @@ const Accounts: React.FC = () => {
   const [isSpamBotChecking, setIsSpamBotChecking] = useState(false);
   const [spamBotProgress, setSpamBotProgress] = useState<{ total: number; completed: number; results: Map<string, { status: string; result?: string }> }>({ total: 0, completed: 0, results: new Map() });
   
-  // Sync profiles state
-  const [isSyncingProfiles, setIsSyncingProfiles] = useState(false);
   
   // Messages sent today tracking
   const [messagesSentLast24h, setMessagesSentLast24h] = useState<Map<string, number>>(new Map());
@@ -1130,86 +1128,6 @@ const Accounts: React.FC = () => {
     }
   };
 
-  // Sync profiles - fetches full profile info (name, username, avatar) from Telegram
-  const handleSyncProfiles = async () => {
-    if (selectedIds.size === 0) return;
-    
-    try {
-      const accountIds = Array.from(selectedIds);
-      
-      // First, delete any existing pending/in_progress sync_profile tasks for these accounts
-      await supabase
-        .from('account_check_tasks')
-        .delete()
-        .in('account_id', accountIds)
-        .eq('task_type', 'sync_profile')
-        .in('status', ['pending', 'in_progress']);
-      
-      const tasks = accountIds.map(accountId => ({
-        account_id: accountId,
-        task_type: 'sync_profile',
-        status: 'pending',
-      }));
-      
-      const { error } = await supabase
-        .from('account_check_tasks')
-        .insert(tasks);
-      
-      if (error) throw error;
-      
-      startAccountTaskTracking('Sync Profiles', selectedIds.size);
-      toast.info(`Queued ${selectedIds.size} account(s) for profile sync. Check logs panel for progress.`);
-    } catch (error) {
-      console.error('Error queuing profile sync:', error);
-      toast.error('Failed to queue profile sync');
-    }
-  };
-
-  // Auto sync accounts with missing profile info (no username, no name)
-  const handleAutoSyncMissingProfiles = async () => {
-    // Find all active accounts that have no profile info
-    const missingProfileAccounts = accounts.filter(acc => 
-      acc.status === 'active' && 
-      !acc.username && 
-      !acc.firstName && 
-      !acc.lastName
-    );
-
-    if (missingProfileAccounts.length === 0) {
-      toast.info('No accounts with missing profiles found');
-      return;
-    }
-
-    try {
-      const accountIds = missingProfileAccounts.map(a => a.id);
-      
-      // Delete any existing pending sync_profile tasks for these accounts
-      await supabase
-        .from('account_check_tasks')
-        .delete()
-        .in('account_id', accountIds)
-        .eq('task_type', 'sync_profile')
-        .in('status', ['pending', 'in_progress']);
-      
-      const tasks = accountIds.map(accountId => ({
-        account_id: accountId,
-        task_type: 'sync_profile',
-        status: 'pending',
-      }));
-      
-      const { error } = await supabase
-        .from('account_check_tasks')
-        .insert(tasks);
-      
-      if (error) throw error;
-      
-      startAccountTaskTracking('Sync Profiles', accountIds.length);
-      toast.info(`Queued ${accountIds.length} account(s) with missing profiles for sync.`);
-    } catch (error) {
-      console.error('Error queuing auto profile sync:', error);
-      toast.error('Failed to queue profile sync');
-    }
-  };
 
   const getStatusBadge = (status: AccountStatus) => {
     const option = statusOptions.find(o => o.value === status);
@@ -1795,29 +1713,6 @@ const Accounts: React.FC = () => {
                   Export
                 </Button>
                 
-                <Button variant="outline" size="sm" onClick={handleSyncProfiles} disabled={isSyncingProfiles} className="gap-1.5">
-                  {isSyncingProfiles ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                  Sync Profiles
-                </Button>
-                
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={handleAutoSyncMissingProfiles} 
-                        className="gap-1.5 border-orange-500/30 text-orange-600 hover:bg-orange-500/10"
-                      >
-                        <AlertTriangle className="w-3.5 h-3.5" />
-                        Auto Sync Missing
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Sync all active accounts that have no username or name</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
