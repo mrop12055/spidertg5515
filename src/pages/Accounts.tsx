@@ -1601,7 +1601,7 @@ const Accounts: React.FC = () => {
                 
                 <Button variant="outline" size="sm" onClick={handleBulkCheck} disabled={isBulkChecking} className="gap-1.5">
                   {isBulkChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
-                  Verify File
+                  Session Check
                 </Button>
                 
                 <div className="flex items-center gap-1">
