@@ -19,7 +19,9 @@ import {
   Users,
   MessageSquare,
   Shield,
-  Zap
+  Zap,
+  Send,
+  UserCheck
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -48,12 +50,32 @@ interface Task {
   task_description?: string;
 }
 
+interface Recipient {
+  id: string;
+  phone_number: string;
+  name: string | null;
+  status: string | null;
+  campaign_id: string;
+  failed_reason: string | null;
+}
+
+interface PendingMessage {
+  id: string;
+  content: string;
+  status: string | null;
+  created_at: string | null;
+  conversation_id: string;
+  failed_reason: string | null;
+}
+
 const DatabaseHealth = () => {
   const [health, setHealth] = useState<SystemHealth | null>(null);
   const [accountTasks, setAccountTasks] = useState<Task[]>([]);
   const [blockTasks, setBlockTasks] = useState<Task[]>([]);
   const [importTasks, setImportTasks] = useState<Task[]>([]);
   const [warmupTasks, setWarmupTasks] = useState<Task[]>([]);
+  const [pendingRecipients, setPendingRecipients] = useState<Recipient[]>([]);
+  const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -70,7 +92,7 @@ const DatabaseHealth = () => {
       }
 
       // Fetch all task types in parallel
-      const [accountRes, blockRes, importRes, warmupRes] = await Promise.all([
+      const [accountRes, blockRes, importRes, warmupRes, recipientsRes, messagesRes] = await Promise.all([
         supabase
           .from('account_check_tasks')
           .select('id, account_id, status, task_type, created_at, result')
@@ -90,6 +112,17 @@ const DatabaseHealth = () => {
           .from('warmup_schedule')
           .select('id, account_id, status, task_type, day_number, task_description, created_at')
           .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('campaign_recipients')
+          .select('id, phone_number, name, status, campaign_id, failed_reason')
+          .eq('status', 'pending')
+          .limit(200),
+        supabase
+          .from('messages')
+          .select('id, content, status, created_at, conversation_id, failed_reason')
+          .in('status', ['pending', 'sending'])
+          .order('created_at', { ascending: false })
           .limit(100)
       ]);
 
@@ -97,6 +130,8 @@ const DatabaseHealth = () => {
       if (blockRes.data) setBlockTasks(blockRes.data.map(t => ({ ...t, phone_number: t.target_phone })));
       if (importRes.data) setImportTasks(importRes.data);
       if (warmupRes.data) setWarmupTasks(warmupRes.data);
+      if (recipientsRes.data) setPendingRecipients(recipientsRes.data);
+      if (messagesRes.data) setPendingMessages(messagesRes.data);
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -116,6 +151,7 @@ const DatabaseHealth = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_import_tasks' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'warmup_schedule' }, () => fetchData())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, () => fetchData())
       .subscribe();
 
     return () => {
@@ -133,10 +169,19 @@ const DatabaseHealth = () => {
   const clearPendingTasks = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule') => {
     try {
       const { error } = await supabase.from(table).delete().eq('status', 'pending');
-      
       if (error) throw error;
-      
       toast({ title: `Cleared pending tasks` });
+      fetchData();
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const clearAllTasks = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule') => {
+    try {
+      const { error } = await supabase.from(table).delete().neq('id', '00000000-0000-0000-0000-000000000000');
+      if (error) throw error;
+      toast({ title: `Cleared all tasks` });
       fetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -146,10 +191,52 @@ const DatabaseHealth = () => {
   const deleteTask = async (table: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule', id: string) => {
     try {
       const { error } = await supabase.from(table).delete().eq('id', id);
-      
       if (error) throw error;
-      
       toast({ title: 'Task deleted' });
+      fetchData();
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const clearPendingRecipients = async () => {
+    try {
+      const { error } = await supabase.from('campaign_recipients').delete().eq('status', 'pending');
+      if (error) throw error;
+      toast({ title: 'Cleared pending recipients' });
+      fetchData();
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const deleteRecipient = async (id: string) => {
+    try {
+      const { error } = await supabase.from('campaign_recipients').delete().eq('id', id);
+      if (error) throw error;
+      toast({ title: 'Recipient deleted' });
+      fetchData();
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const clearPendingMessages = async () => {
+    try {
+      const { error } = await supabase.from('messages').delete().in('status', ['pending', 'sending']);
+      if (error) throw error;
+      toast({ title: 'Cleared pending messages' });
+      fetchData();
+    } catch (error: any) {
+      toast({ title: 'Error', description: error.message, variant: 'destructive' });
+    }
+  };
+
+  const deleteMessage = async (id: string) => {
+    try {
+      const { error } = await supabase.from('messages').delete().eq('id', id);
+      if (error) throw error;
+      toast({ title: 'Message deleted' });
       fetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
@@ -165,7 +252,10 @@ const DatabaseHealth = () => {
       case 'failed':
         return <Badge variant="outline" className="bg-red-500/10 text-red-500 border-red-500/30"><AlertCircle className="w-3 h-3 mr-1" />Failed</Badge>;
       case 'in_progress':
+      case 'sending':
         return <Badge variant="outline" className="bg-blue-500/10 text-blue-500 border-blue-500/30"><Activity className="w-3 h-3 mr-1" />In Progress</Badge>;
+      case 'sent':
+        return <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/30"><CheckCircle className="w-3 h-3 mr-1" />Sent</Badge>;
       default:
         return <Badge variant="outline">{status}</Badge>;
     }
@@ -180,21 +270,25 @@ const DatabaseHealth = () => {
     
     return (
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <Badge variant="secondary">{tasks.length} total</Badge>
             <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500">{pendingCount} pending</Badge>
           </div>
-          {pendingCount > 0 && (
-            <Button 
-              variant="destructive" 
-              size="sm"
-              onClick={() => clearPendingTasks(tableName)}
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              Clear All Pending
-            </Button>
-          )}
+          <div className="flex gap-2">
+            {pendingCount > 0 && (
+              <Button variant="outline" size="sm" onClick={() => clearPendingTasks(tableName)}>
+                <Trash2 className="w-4 h-4 mr-2" />
+                Clear Pending
+              </Button>
+            )}
+            {tasks.length > 0 && (
+              <Button variant="destructive" size="sm" onClick={() => clearAllTasks(tableName)}>
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete All
+              </Button>
+            )}
+          </div>
         </div>
         
         <div className="rounded-md border max-h-[400px] overflow-auto">
@@ -390,11 +484,11 @@ const DatabaseHealth = () => {
         </CardHeader>
         <CardContent>
           <Tabs defaultValue="account" className="w-full">
-            <TabsList className="grid w-full grid-cols-4">
+            <TabsList className="grid w-full grid-cols-6">
               <TabsTrigger value="account">
                 Account
                 {accountTasks.filter(t => t.status === 'pending').length > 0 && (
-                  <Badge variant="destructive" className="ml-2">
+                  <Badge variant="destructive" className="ml-1 text-xs px-1">
                     {accountTasks.filter(t => t.status === 'pending').length}
                   </Badge>
                 )}
@@ -402,7 +496,7 @@ const DatabaseHealth = () => {
               <TabsTrigger value="block">
                 Block
                 {blockTasks.filter(t => t.status === 'pending').length > 0 && (
-                  <Badge variant="destructive" className="ml-2">
+                  <Badge variant="destructive" className="ml-1 text-xs px-1">
                     {blockTasks.filter(t => t.status === 'pending').length}
                   </Badge>
                 )}
@@ -410,7 +504,7 @@ const DatabaseHealth = () => {
               <TabsTrigger value="import">
                 Import
                 {importTasks.filter(t => t.status === 'pending').length > 0 && (
-                  <Badge variant="destructive" className="ml-2">
+                  <Badge variant="destructive" className="ml-1 text-xs px-1">
                     {importTasks.filter(t => t.status === 'pending').length}
                   </Badge>
                 )}
@@ -419,8 +513,26 @@ const DatabaseHealth = () => {
                 <Zap className="w-3 h-3 mr-1" />
                 Warmup
                 {pendingWarmupCount > 0 && (
-                  <Badge variant="destructive" className="ml-2">
+                  <Badge variant="destructive" className="ml-1 text-xs px-1">
                     {pendingWarmupCount}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="recipients">
+                <UserCheck className="w-3 h-3 mr-1" />
+                Recipients
+                {pendingRecipients.length > 0 && (
+                  <Badge variant="destructive" className="ml-1 text-xs px-1">
+                    {pendingRecipients.length}
+                  </Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="messages">
+                <Send className="w-3 h-3 mr-1" />
+                Messages
+                {pendingMessages.length > 0 && (
+                  <Badge variant="destructive" className="ml-1 text-xs px-1">
+                    {pendingMessages.length}
                   </Badge>
                 )}
               </TabsTrigger>
@@ -440,6 +552,128 @@ const DatabaseHealth = () => {
             
             <TabsContent value="warmup" className="mt-4">
               <TaskTable tasks={warmupTasks} tableName="warmup_schedule" showDayNumber />
+            </TabsContent>
+
+            <TabsContent value="recipients" className="mt-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">{pendingRecipients.length} pending</Badge>
+                  </div>
+                  {pendingRecipients.length > 0 && (
+                    <Button variant="destructive" size="sm" onClick={clearPendingRecipients}>
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete All Pending
+                    </Button>
+                  )}
+                </div>
+                
+                <div className="rounded-md border max-h-[400px] overflow-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Phone</TableHead>
+                        <TableHead>Name</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Error</TableHead>
+                        <TableHead className="w-[80px]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pendingRecipients.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                            No pending recipients
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        pendingRecipients.map((recipient) => (
+                          <TableRow key={recipient.id}>
+                            <TableCell className="font-mono text-xs">{recipient.phone_number}</TableCell>
+                            <TableCell className="text-xs">{recipient.name || '-'}</TableCell>
+                            <TableCell>{getStatusBadge(recipient.status || 'pending')}</TableCell>
+                            <TableCell className="text-xs max-w-[200px] truncate text-red-500">
+                              {recipient.failed_reason || '-'}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                                onClick={() => deleteRecipient(recipient.id)}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="messages" className="mt-4">
+              <div className="space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary">{pendingMessages.length} pending/sending</Badge>
+                  </div>
+                  {pendingMessages.length > 0 && (
+                    <Button variant="destructive" size="sm" onClick={clearPendingMessages}>
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete All Pending
+                    </Button>
+                  )}
+                </div>
+                
+                <div className="rounded-md border max-h-[400px] overflow-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Content</TableHead>
+                        <TableHead>Status</TableHead>
+                        <TableHead>Created</TableHead>
+                        <TableHead>Error</TableHead>
+                        <TableHead className="w-[80px]">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {pendingMessages.length === 0 ? (
+                        <TableRow>
+                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                            No pending messages
+                          </TableCell>
+                        </TableRow>
+                      ) : (
+                        pendingMessages.map((msg) => (
+                          <TableRow key={msg.id}>
+                            <TableCell className="text-xs max-w-[250px] truncate">{msg.content}</TableCell>
+                            <TableCell>{getStatusBadge(msg.status || 'pending')}</TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {msg.created_at ? format(new Date(msg.created_at), 'MMM d, HH:mm') : '-'}
+                            </TableCell>
+                            <TableCell className="text-xs max-w-[150px] truncate text-red-500">
+                              {msg.failed_reason || '-'}
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 text-destructive hover:text-destructive"
+                                onClick={() => deleteMessage(msg.id)}
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
             </TabsContent>
           </Tabs>
         </CardContent>
