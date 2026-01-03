@@ -333,11 +333,7 @@ async def get_batch_tasks(runner: str = None, batch_size: int = 5) -> dict:
 
 
 async def report_result(task_type: str, result: dict):
-    """Report task result to backend (fire and forget)"""
-    asyncio.create_task(_report(task_type, result))
-
-
-async def _report(task_type: str, result: dict):
+    """Report task result to backend - MUST await to prevent race condition with get_next_task"""
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             await client.post(
@@ -345,8 +341,8 @@ async def _report(task_type: str, result: dict):
                 headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
                 json={"task_type": task_type, "result": result}
             )
-    except:
-        pass
+    except Exception as e:
+        print(f"  [WARN] Failed to report result: {e}")
 
 
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
