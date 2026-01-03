@@ -1061,10 +1061,10 @@ username123
                         <AlertCircle className="w-4 h-4 text-yellow-600 mt-0.5" />
                         <div>
                           <p className="text-sm font-medium text-yellow-600">
-                            {tempRestrictedAccounts.length} Account(s) Temporarily Restricted
+                            {tempRestrictedAccounts.length} Account(s) on Cooldown
                           </p>
                           <p className="text-xs text-muted-foreground mt-1">
-                            These accounts have a 24h+ restriction and cannot be used for campaigns (new contacts = ban risk).
+                            These accounts have a 1-hour privacy cooldown and cannot be used for new campaigns.
                             They can still reply to existing conversations.
                           </p>
                           <div className="mt-2 space-y-2">
