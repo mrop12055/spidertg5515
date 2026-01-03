@@ -120,7 +120,7 @@ const Accounts: React.FC = () => {
   const [isBulkProxyAssigning, setIsBulkProxyAssigning] = useState(false);
   
   // Active tab for account sections
-  const [activeTab, setActiveTab] = useState<'active' | 'bannedFrozen' | 'restricted' | 'cooldown' | 'disconnected'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'bannedFrozen' | 'restricted' | 'disconnected'>('active');
   
   // Tags state
   const [availableTags, setAvailableTags] = useState<string[]>([]);
@@ -1195,9 +1195,9 @@ const Accounts: React.FC = () => {
     bannedFrozen: filteredAccounts.filter(a => a.status === 'banned' || a.status === 'frozen'),
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
+      a.status === 'cooldown' ||
       (a.restrictedUntil && new Date(a.restrictedUntil) > now)
     ),
-    cooldown: filteredAccounts.filter(a => a.status === 'cooldown'),
     disconnected: filteredAccounts.filter(a => a.status === 'disconnected'),
   };
 
@@ -1247,12 +1247,12 @@ const Accounts: React.FC = () => {
   const stats = {
     total: accounts.length,
     active: accounts.filter(a => a.status === 'active').length,
-    banned: accounts.filter(a => a.status === 'banned').length,
+    bannedFrozen: accounts.filter(a => a.status === 'banned' || a.status === 'frozen').length,
     restricted: accounts.filter(a => 
       a.status === 'restricted' || 
+      a.status === 'cooldown' ||
       (a.restrictedUntil && new Date(a.restrictedUntil) > currentTime)
     ).length,
-    cooldown: accounts.filter(a => a.status === 'cooldown').length,
     disconnected: accounts.filter(a => a.status === 'disconnected').length,
   };
 
@@ -2110,7 +2110,7 @@ const Accounts: React.FC = () => {
 
         {/* Account Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="active" className="gap-1.5">
               <Wifi className="w-3.5 h-3.5" />
               Active ({accountsByStatus.active.length})
@@ -2123,17 +2123,13 @@ const Accounts: React.FC = () => {
               <AlertTriangle className="w-3.5 h-3.5" />
               Restricted ({accountsByStatus.restricted.length})
             </TabsTrigger>
-            <TabsTrigger value="cooldown" className="gap-1.5">
-              <Clock className="w-3.5 h-3.5" />
-              Cooldown ({accountsByStatus.cooldown.length})
-            </TabsTrigger>
             <TabsTrigger value="disconnected" className="gap-1.5">
               <WifiOff className="w-3.5 h-3.5" />
               Offline ({accountsByStatus.disconnected.length})
             </TabsTrigger>
           </TabsList>
 
-          {(['active', 'bannedFrozen', 'restricted', 'cooldown', 'disconnected'] as const).map(status => (
+          {(['active', 'bannedFrozen', 'restricted', 'disconnected'] as const).map(status => (
             <TabsContent key={status} value={status} className="mt-4">
               {accountsByStatus[status].length === 0 ? (
                 <Card>
