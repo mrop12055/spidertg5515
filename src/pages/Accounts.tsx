@@ -37,13 +37,22 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { CountdownTimer } from '@/components/ui/countdown-timer';
 
+// Status options for stat cards (merged categories)
+const statCardOptions: { value: string; label: string; color: string; icon: React.ReactNode }[] = [
+  { value: 'active', label: 'Active', color: 'bg-status-active/15 text-status-active border-status-active/30', icon: <Wifi className="w-3 h-3" /> },
+  { value: 'bannedFrozen', label: 'Banned & Frozen', color: 'bg-status-banned/15 text-status-banned border-status-banned/30', icon: <XCircle className="w-3 h-3" /> },
+  { value: 'restricted', label: 'Restricted', color: 'bg-status-restricted/15 text-status-restricted border-status-restricted/30', icon: <AlertTriangle className="w-3 h-3" /> },
+  { value: 'disconnected', label: 'Offline', color: 'bg-status-disconnected/15 text-status-disconnected border-status-disconnected/30', icon: <WifiOff className="w-3 h-3" /> },
+];
+
+// Full status options for badges and individual account rendering
 const statusOptions: { value: AccountStatus; label: string; color: string; icon: React.ReactNode }[] = [
   { value: 'active', label: 'Active', color: 'bg-status-active/15 text-status-active border-status-active/30', icon: <Wifi className="w-3 h-3" /> },
   { value: 'banned', label: 'Banned', color: 'bg-status-banned/15 text-status-banned border-status-banned/30', icon: <XCircle className="w-3 h-3" /> },
   { value: 'restricted', label: 'Restricted', color: 'bg-status-restricted/15 text-status-restricted border-status-restricted/30', icon: <AlertTriangle className="w-3 h-3" /> },
   { value: 'disconnected', label: 'Disconnected', color: 'bg-status-disconnected/15 text-status-disconnected border-status-disconnected/30', icon: <WifiOff className="w-3 h-3" /> },
   { value: 'cooldown', label: 'Cooldown', color: 'bg-status-cooldown/15 text-status-cooldown border-status-cooldown/30', icon: <Clock className="w-3 h-3" /> },
-  { value: 'frozen', label: 'Frozen', color: 'bg-blue-500/15 text-blue-500 border-blue-500/30', icon: <Snowflake className="w-3 h-3" /> },
+  { value: 'frozen', label: 'Frozen', color: 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30', icon: <Snowflake className="w-3 h-3" /> },
 ];
 
 interface SessionFile {
@@ -1668,14 +1677,14 @@ const Accounts: React.FC = () => {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
           <Card className="cursor-pointer hover:border-primary/30 transition-colors" onClick={() => setStatusFilter('all')}>
             <CardContent className="p-3">
               <div className="text-2xl font-bold">{stats.total}</div>
               <div className="text-xs text-muted-foreground">Total</div>
             </CardContent>
           </Card>
-          {statusOptions.map(opt => (
+          {statCardOptions.map(opt => (
             <Card 
               key={opt.value} 
               className={cn(
