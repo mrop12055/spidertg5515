@@ -225,7 +225,8 @@ serve(async (req) => {
             'user_is_blocked',
             'user not found',  // Contact import limit hit
             'no user',
-            'peer_id_invalid'
+            'peer_id_invalid',
+            'frozen accounts'  // ImportContactsRequest errors on frozen accounts
           ];
           
           const errorLower = (error || '').toLowerCase();
