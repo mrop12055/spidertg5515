@@ -364,6 +364,14 @@ serve(async (req) => {
               } : null,
               mode: "campaign",
               delay_after: delaySeconds,
+              settings: {
+                minDelaySeconds: MESSAGE_DELAY_MIN_SECONDS,
+                maxDelaySeconds: MESSAGE_DELAY_MAX_SECONDS,
+                accountSwitchDelaySeconds: ACCOUNT_SWITCH_DELAY_SECONDS,
+                maxMessagesBeforeRotation: MESSAGES_PER_ACCOUNT,
+                messagesPerAccount: MESSAGES_PER_ACCOUNT,
+                dailyMessageLimit: DAILY_MESSAGE_LIMIT,
+              },
             }), {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             });
@@ -1039,6 +1047,14 @@ serve(async (req) => {
               session_data: account.session_data,
             },
             mode: "campaign",
+            settings: {
+              minDelaySeconds: MESSAGE_DELAY_MIN_SECONDS,
+              maxDelaySeconds: MESSAGE_DELAY_MAX_SECONDS,
+              accountSwitchDelaySeconds: ACCOUNT_SWITCH_DELAY_SECONDS,
+              maxMessagesBeforeRotation: MESSAGES_PER_ACCOUNT,
+              messagesPerAccount: MESSAGES_PER_ACCOUNT,
+              dailyMessageLimit: DAILY_MESSAGE_LIMIT,
+            },
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
