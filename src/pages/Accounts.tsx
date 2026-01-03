@@ -120,7 +120,7 @@ const Accounts: React.FC = () => {
   const [isBulkProxyAssigning, setIsBulkProxyAssigning] = useState(false);
   
   // Active tab for account sections
-  const [activeTab, setActiveTab] = useState<'active' | 'banned' | 'restricted' | 'cooldown' | 'disconnected' | 'frozen'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'bannedFrozen' | 'restricted' | 'cooldown' | 'disconnected'>('active');
   
   // Tags state
   const [availableTags, setAvailableTags] = useState<string[]>([]);
@@ -1192,14 +1192,13 @@ const Accounts: React.FC = () => {
       a.status === 'active' || 
       (a.restrictedUntil && new Date(a.restrictedUntil) > now)
     ),
-    banned: filteredAccounts.filter(a => a.status === 'banned'),
+    bannedFrozen: filteredAccounts.filter(a => a.status === 'banned' || a.status === 'frozen'),
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
       (a.restrictedUntil && new Date(a.restrictedUntil) > now)
     ),
     cooldown: filteredAccounts.filter(a => a.status === 'cooldown'),
     disconnected: filteredAccounts.filter(a => a.status === 'disconnected'),
-    frozen: filteredAccounts.filter(a => a.status === 'frozen'),
   };
 
   const removeSessionFile = (index: number) => {
@@ -2111,14 +2110,14 @@ const Accounts: React.FC = () => {
 
         {/* Account Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="active" className="gap-1.5">
               <Wifi className="w-3.5 h-3.5" />
               Active ({accountsByStatus.active.length})
             </TabsTrigger>
-            <TabsTrigger value="banned" className="gap-1.5">
+            <TabsTrigger value="bannedFrozen" className="gap-1.5">
               <XCircle className="w-3.5 h-3.5" />
-              Banned ({accountsByStatus.banned.length})
+              Banned & Frozen ({accountsByStatus.bannedFrozen.length})
             </TabsTrigger>
             <TabsTrigger value="restricted" className="gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" />
@@ -2128,25 +2127,21 @@ const Accounts: React.FC = () => {
               <Clock className="w-3.5 h-3.5" />
               Cooldown ({accountsByStatus.cooldown.length})
             </TabsTrigger>
-            <TabsTrigger value="frozen" className="gap-1.5">
-              <Snowflake className="w-3.5 h-3.5" />
-              Frozen ({accountsByStatus.frozen.length})
-            </TabsTrigger>
             <TabsTrigger value="disconnected" className="gap-1.5">
               <WifiOff className="w-3.5 h-3.5" />
               Offline ({accountsByStatus.disconnected.length})
             </TabsTrigger>
           </TabsList>
 
-          {(['active', 'banned', 'restricted', 'cooldown', 'frozen', 'disconnected'] as const).map(status => (
+          {(['active', 'bannedFrozen', 'restricted', 'cooldown', 'disconnected'] as const).map(status => (
             <TabsContent key={status} value={status} className="mt-4">
               {accountsByStatus[status].length === 0 ? (
                 <Card>
                   <CardContent className="py-12 text-center">
                     <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                      {statusOptions.find(o => o.value === status)?.icon}
+                      {status === 'bannedFrozen' ? <XCircle className="w-6 h-6" /> : statusOptions.find(o => o.value === status)?.icon}
                     </div>
-                    <p className="text-muted-foreground">No {status} accounts</p>
+                    <p className="text-muted-foreground">No {status === 'bannedFrozen' ? 'banned or frozen' : status} accounts</p>
                   </CardContent>
                 </Card>
               ) : (
