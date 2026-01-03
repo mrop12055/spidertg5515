@@ -1603,6 +1603,99 @@ serve(async (req) => {
         break;
       }
 
+      case "api_credential_invalid": {
+        // Handle invalid API credentials - mark as inactive and redistribute accounts
+        const { account_id, api_credential_id, error } = result;
+        
+        console.log(`[report-task-result] API credential invalid: ${api_credential_id} - ${error}`);
+        
+        if (!api_credential_id) {
+          console.log(`[report-task-result] No api_credential_id provided, skipping`);
+          break;
+        }
+        
+        // Mark the API credential as inactive
+        const { error: updateError } = await supabase
+          .from("telegram_api_credentials")
+          .update({
+            is_active: false,
+            validation_error: error,
+            last_validated_at: new Date().toISOString(),
+          })
+          .eq("id", api_credential_id);
+        
+        if (updateError) {
+          console.error(`[report-task-result] Failed to update API credential:`, updateError);
+          break;
+        }
+        
+        console.log(`[report-task-result] Marked API credential ${api_credential_id} as inactive`);
+        
+        // Get all accounts using this invalid credential
+        const { data: affectedAccounts } = await supabase
+          .from("telegram_accounts")
+          .select("id")
+          .eq("api_credential_id", api_credential_id);
+        
+        if (!affectedAccounts || affectedAccounts.length === 0) {
+          console.log(`[report-task-result] No accounts to redistribute`);
+          break;
+        }
+        
+        console.log(`[report-task-result] Found ${affectedAccounts.length} accounts to redistribute`);
+        
+        // Get other active and valid API credentials (sorted by account count ascending for load balancing)
+        const { data: validCredentials } = await supabase
+          .from("telegram_api_credentials")
+          .select("id, accounts_count")
+          .eq("is_active", true)
+          .is("validation_error", null)
+          .neq("id", api_credential_id)
+          .order("accounts_count", { ascending: true });
+        
+        if (!validCredentials || validCredentials.length === 0) {
+          console.log(`[report-task-result] No valid API credentials available for redistribution`);
+          // Set accounts to disconnected since they can't be used
+          await supabase
+            .from("telegram_accounts")
+            .update({ status: "disconnected" })
+            .eq("api_credential_id", api_credential_id);
+          break;
+        }
+        
+        // Redistribute accounts to valid credentials using round-robin
+        for (let i = 0; i < affectedAccounts.length; i++) {
+          const targetCredential = validCredentials[i % validCredentials.length];
+          
+          await supabase
+            .from("telegram_accounts")
+            .update({ api_credential_id: targetCredential.id })
+            .eq("id", affectedAccounts[i].id);
+        }
+        
+        // Update account counts for all affected credentials
+        for (const cred of validCredentials) {
+          const { count } = await supabase
+            .from("telegram_accounts")
+            .select("*", { count: "exact", head: true })
+            .eq("api_credential_id", cred.id);
+          
+          await supabase
+            .from("telegram_api_credentials")
+            .update({ accounts_count: count || 0 })
+            .eq("id", cred.id);
+        }
+        
+        // Set count to 0 for the invalid credential
+        await supabase
+          .from("telegram_api_credentials")
+          .update({ accounts_count: 0 })
+          .eq("id", api_credential_id);
+        
+        console.log(`[report-task-result] Redistributed ${affectedAccounts.length} accounts across ${validCredentials.length} valid API credentials`);
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }
