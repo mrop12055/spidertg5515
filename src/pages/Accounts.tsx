@@ -120,7 +120,7 @@ const Accounts: React.FC = () => {
   const [isBulkProxyAssigning, setIsBulkProxyAssigning] = useState(false);
   
   // Active tab for account sections
-  const [activeTab, setActiveTab] = useState<'active' | 'banned' | 'restricted' | 'cooldown' | 'disconnected'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'banned' | 'restricted' | 'cooldown' | 'disconnected' | 'frozen'>('active');
   
   // Tags state
   const [availableTags, setAvailableTags] = useState<string[]>([]);
@@ -1199,6 +1199,7 @@ const Accounts: React.FC = () => {
     ),
     cooldown: filteredAccounts.filter(a => a.status === 'cooldown'),
     disconnected: filteredAccounts.filter(a => a.status === 'disconnected'),
+    frozen: filteredAccounts.filter(a => a.status === 'frozen'),
   };
 
   const removeSessionFile = (index: number) => {
@@ -2109,7 +2110,7 @@ const Accounts: React.FC = () => {
 
         {/* Account Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="active" className="gap-1.5">
               <Wifi className="w-3.5 h-3.5" />
               Active ({accountsByStatus.active.length})
@@ -2126,13 +2127,17 @@ const Accounts: React.FC = () => {
               <Clock className="w-3.5 h-3.5" />
               Cooldown ({accountsByStatus.cooldown.length})
             </TabsTrigger>
+            <TabsTrigger value="frozen" className="gap-1.5">
+              <Snowflake className="w-3.5 h-3.5" />
+              Frozen ({accountsByStatus.frozen.length})
+            </TabsTrigger>
             <TabsTrigger value="disconnected" className="gap-1.5">
               <WifiOff className="w-3.5 h-3.5" />
               Offline ({accountsByStatus.disconnected.length})
             </TabsTrigger>
           </TabsList>
 
-          {(['active', 'banned', 'restricted', 'cooldown', 'disconnected'] as const).map(status => (
+          {(['active', 'banned', 'restricted', 'cooldown', 'frozen', 'disconnected'] as const).map(status => (
             <TabsContent key={status} value={status} className="mt-4">
               {accountsByStatus[status].length === 0 ? (
                 <Card>
