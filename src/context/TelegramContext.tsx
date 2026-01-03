@@ -19,15 +19,6 @@ const initialConversations: Conversation[] = [];
 const initialMessages: Message[] = [];
 const initialCampaigns: Campaign[] = [];
 
-export interface VerifyProgress {
-  total: number;
-  checked: number;
-  active: number;
-  disconnected: number;
-  banned: number;
-  errors: string[];
-}
-
 export interface AccountTaskLog {
   id: string;
   taskType: string;
@@ -61,14 +52,6 @@ interface TelegramContextType {
   uploadProgress: UploadProgress;
   typingUsers: Record<string, boolean>;
   isLoading: boolean;
-  
-  // Verify progress (persisted across navigation)
-  verifyProgress: VerifyProgress;
-  setVerifyProgress: React.Dispatch<React.SetStateAction<VerifyProgress>>;
-  isVerifyingLogin: boolean;
-  setIsVerifyingLogin: React.Dispatch<React.SetStateAction<boolean>>;
-  showVerifyLogs: boolean;
-  setShowVerifyLogs: React.Dispatch<React.SetStateAction<boolean>>;
   
   // Account tasks progress (persisted across navigation)
   accountTasksProgress: AccountTasksProgress;
@@ -134,18 +117,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     status: 'idle',
     errors: []
   });
-  
-  // Verify login progress (persisted across navigation)
-  const [verifyProgress, setVerifyProgress] = useState<VerifyProgress>({
-    total: 0,
-    checked: 0,
-    active: 0,
-    disconnected: 0,
-    banned: 0,
-    errors: [],
-  });
-  const [isVerifyingLogin, setIsVerifyingLogin] = useState(false);
-  const [showVerifyLogs, setShowVerifyLogs] = useState(false);
   
   // Account tasks progress (persisted across navigation)
   const [accountTasksProgress, setAccountTasksProgress] = useState<AccountTasksProgress>({
@@ -1394,12 +1365,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     uploadProgress,
     typingUsers,
     isLoading,
-    verifyProgress,
-    setVerifyProgress,
-    isVerifyingLogin,
-    setIsVerifyingLogin,
-    showVerifyLogs,
-    setShowVerifyLogs,
     accountTasksProgress,
     setAccountTasksProgress,
     isAccountTaskRunning,
