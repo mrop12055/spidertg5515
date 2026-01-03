@@ -159,37 +159,32 @@ async def logout_other_sessions(client):
 
 
 async def verify_session(client, account_id: str):
-    """Verify if session is active by checking get_me(), dialogs, AND SpamBot status"""
+    """Verify if session is active using SAFE methods only (no SpamBot to avoid triggering bans)"""
     try:
         me = await asyncio.wait_for(client.get_me(), timeout=10)
         if not me:
             return "disconnected", "Could not get user info", None
         
-        # Extra verification: try to get dialogs (this fails for deleted accounts)
+        # Try to get dialogs - this fails for deleted/frozen accounts
         try:
-            await asyncio.wait_for(client.get_dialogs(limit=1), timeout=10)
+            dialogs = await asyncio.wait_for(client.get_dialogs(limit=1), timeout=10)
         except Exception as dialog_err:
             error_str = str(dialog_err).lower()
             if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated", "auth_key"]):
                 return "banned", f"Account deleted: {dialog_err}", None
-            # Other errors might be temporary, continue
+            if "frozen" in error_str:
+                return "frozen", f"Account frozen: {dialog_err}", None
         
-        # CRITICAL: Also check SpamBot to detect frozen accounts
-        # Frozen accounts can still connect but SpamBot will report the frozen state
+        # Try to get contacts - frozen accounts often fail this
         try:
-            spambot_status, spambot_reason, spambot_response = await check_spambot(client)
-            if spambot_status == "restricted":
-                return "frozen", spambot_reason or "Account frozen by Telegram", {
-                    "telegram_id": me.id,
-                    "username": me.username,
-                    "first_name": me.first_name,
-                    "last_name": me.last_name
-                }
-            elif spambot_status == "banned":
-                return "banned", spambot_reason, None
-        except Exception as spambot_err:
-            # SpamBot check failed, but account connected - assume ok for now
-            print(f"    SpamBot check failed: {spambot_err}")
+            from telethon.tl.functions.contacts import GetContactsRequest
+            await asyncio.wait_for(client(GetContactsRequest(hash=0)), timeout=10)
+        except Exception as contacts_err:
+            error_str = str(contacts_err).lower()
+            if "frozen" in error_str:
+                return "frozen", f"Account frozen: {contacts_err}", None
+            if any(x in error_str for x in ["deleted", "deactivated", "banned"]):
+                return "banned", f"Account banned: {contacts_err}", None
         
         return "active", None, {
             "telegram_id": me.id,
