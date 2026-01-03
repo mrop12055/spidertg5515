@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useTelegram } from '@/context/TelegramContext';
 import { Input } from '@/components/ui/input';
@@ -34,7 +34,7 @@ import {
   Square
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { format, isToday, isYesterday, isSameDay, subDays, differenceInMinutes } from 'date-fns';
+import { format, isToday, isYesterday, isSameDay, subDays } from 'date-fns';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -96,10 +96,57 @@ const Chat: React.FC = () => {
   const [isLoadingBlocked, setIsLoadingBlocked] = useState(false);
 
   const selectedConv = conversations.find(c => c.id === selectedConversation);
-  // Filter out failed messages from chat view - use conversationId for accurate matching
-  const conversationMessages = messages
-    .filter(m => selectedConv && m.conversationId === selectedConv.id && m.status !== 'failed')
-    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+  // Precompute per-conversation message stats (single pass) to keep UI fast under realtime updates
+  const messageStats = useMemo(() => {
+    const stats = new Map<
+      string,
+      {
+        firstTime: number;
+        firstDir: 'incoming' | 'outgoing';
+        lastTime: number;
+        hasNonFailed: boolean;
+        hasRecentIncoming: boolean;
+      }
+    >();
+
+    const now = Date.now();
+    for (const m of messages) {
+      const convId = m.conversationId;
+      const t = new Date(m.timestamp).getTime();
+      const existing = stats.get(convId);
+
+      if (!existing) {
+        stats.set(convId, {
+          firstTime: t,
+          firstDir: m.direction,
+          lastTime: t,
+          hasNonFailed: m.status !== 'failed',
+          hasRecentIncoming: m.direction === 'incoming' && now - t < 5 * 60 * 1000,
+        });
+        continue;
+      }
+
+      if (t < existing.firstTime) {
+        existing.firstTime = t;
+        existing.firstDir = m.direction;
+      }
+      if (t > existing.lastTime) existing.lastTime = t;
+      if (m.status !== 'failed') existing.hasNonFailed = true;
+      if (m.direction === 'incoming' && now - t < 5 * 60 * 1000) existing.hasRecentIncoming = true;
+    }
+
+    return stats;
+  }, [messages]);
+
+  // Messages for selected conversation (memoized)
+  const conversationMessages = useMemo(() => {
+    if (!selectedConv) return [] as typeof messages;
+
+    return messages
+      .filter(m => m.conversationId === selectedConv.id && m.status !== 'failed')
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  }, [messages, selectedConv?.id]);
 
   // Filter conversations by time
   const getTimeFilterCutoff = () => {
@@ -117,48 +164,32 @@ const Chat: React.FC = () => {
   // Only show conversations where WE sent the first message (campaign initiated)
   const shouldShowConversation = (conv: typeof conversations[0]) => {
     // STRICT: Only show if first_message_sent is explicitly TRUE
-    if (conv.firstMessageSent === true) {
-      return true;
-    }
-    
-    // Check messages to verify we initiated the conversation
-    const convMessages = messages.filter(m => m.conversationId === conv.id);
-    
-    // No messages AND first_message_sent is not true = don't show
-    if (convMessages.length === 0) {
-      return false;
-    }
-    
-    // Sort by timestamp to find the first message
-    const sorted = [...convMessages].sort((a, b) => 
-      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-    
+    if (conv.firstMessageSent === true) return true;
+
+    const stats = messageStats.get(conv.id);
+    if (!stats) return false;
+
     // Only show if WE sent the first message (outgoing)
-    return sorted[0]?.direction === 'outgoing';
+    return stats.firstDir === 'outgoing';
   };
 
   // Helper to check if conversation has any successful (non-failed) messages
   const hasSuccessfulMessages = (conv: typeof conversations[0]) => {
     // If we don't have messages in context, still show the conversation
-    const convMessages = messages.filter(m => m.conversationId === conv.id);
-    if (convMessages.length === 0) return true; // Assume success if no messages loaded yet
-    // Must have at least one message that isn't failed
-    return convMessages.some(m => m.status !== 'failed');
+    const stats = messageStats.get(conv.id);
+    if (!stats) return true; // Assume success if no messages loaded yet
+    return stats.hasNonFailed;
   };
 
   // Helper to get latest message timestamp for a conversation
   const getLastMessageTime = (conv: typeof conversations[0]) => {
     // Use lastMessageAt from the conversation if available (more reliable)
-    if (conv.lastMessageAt) {
-      return new Date(conv.lastMessageAt).getTime();
-    }
-    const convMessages = messages.filter(m => m.conversationId === conv.id);
-    if (convMessages.length === 0) return new Date(conv.updatedAt).getTime();
-    const sorted = [...convMessages].sort((a, b) => 
-      new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
-    return new Date(sorted[0].timestamp).getTime();
+    if (conv.lastMessageAt) return new Date(conv.lastMessageAt).getTime();
+
+    const stats = messageStats.get(conv.id);
+    if (stats) return stats.lastTime;
+
+    return new Date(conv.updatedAt).getTime();
   };
 
   const filteredConversations = conversations
@@ -190,20 +221,18 @@ const Chat: React.FC = () => {
   // Check if conversation is "live" (has recent incoming messages within 5 minutes)
   const isLiveConversation = (conv: typeof selectedConv) => {
     if (!conv) return false;
-    // Check if there are any incoming messages in the last 5 minutes
-    const convMessages = messages.filter(m => m.conversationId === conv.id);
-    const recentIncoming = convMessages.some(m => 
-      m.direction === 'incoming' && 
-      differenceInMinutes(new Date(), new Date(m.timestamp)) < 5
-    );
-    return recentIncoming;
+    const stats = messageStats.get(conv.id);
+    return Boolean(stats?.hasRecentIncoming);
   };
 
   const selectedConvIsLive = isLiveConversation(selectedConv);
 
+  const lastMessageId = conversationMessages[conversationMessages.length - 1]?.id;
   useEffect(() => {
+    // Scroll only when a new message is appended (not on status-only updates)
+    if (!lastMessageId && !isTyping) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [conversationMessages, isTyping]);
+  }, [lastMessageId, isTyping]);
 
   // Mark conversation as read when selected
   useEffect(() => {
