@@ -76,6 +76,13 @@ const DatabaseHealth = () => {
   const [warmupTasks, setWarmupTasks] = useState<Task[]>([]);
   const [pendingRecipients, setPendingRecipients] = useState<Recipient[]>([]);
   const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
+  // Completed tasks state
+  const [completedAccountTasks, setCompletedAccountTasks] = useState<Task[]>([]);
+  const [completedBlockTasks, setCompletedBlockTasks] = useState<Task[]>([]);
+  const [completedImportTasks, setCompletedImportTasks] = useState<Task[]>([]);
+  const [completedWarmupTasks, setCompletedWarmupTasks] = useState<Task[]>([]);
+  const [completedRecipients, setCompletedRecipients] = useState<Recipient[]>([]);
+  const [completedMessages, setCompletedMessages] = useState<PendingMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -91,8 +98,13 @@ const DatabaseHealth = () => {
         setHealth(healthData as SystemHealth);
       }
 
-      // Fetch ONLY pending tasks to reduce system load
-      const [accountRes, blockRes, importRes, warmupRes, recipientsRes, messagesRes] = await Promise.all([
+      // Fetch pending and completed tasks
+      const [
+        accountRes, blockRes, importRes, warmupRes, recipientsRes, messagesRes,
+        completedAccountRes, completedBlockRes, completedImportRes, completedWarmupRes, 
+        completedRecipientsRes, completedMessagesRes
+      ] = await Promise.all([
+        // Pending tasks
         supabase
           .from('account_check_tasks')
           .select('id, account_id, status, task_type, created_at, result')
@@ -127,15 +139,61 @@ const DatabaseHealth = () => {
           .select('id, content, status, created_at, conversation_id, failed_reason')
           .in('status', ['pending', 'sending'])
           .order('created_at', { ascending: false })
+          .limit(100),
+        // Completed tasks
+        supabase
+          .from('account_check_tasks')
+          .select('id, account_id, status, task_type, created_at, result')
+          .in('status', ['completed', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('block_contact_tasks')
+          .select('id, account_id, status, action, target_phone, created_at, result')
+          .in('status', ['completed', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('contact_import_tasks')
+          .select('id, account_id, status, created_at, result')
+          .in('status', ['completed', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('warmup_schedule')
+          .select('id, account_id, status, task_type, day_number, task_description, created_at')
+          .in('status', ['completed', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('campaign_recipients')
+          .select('id, phone_number, name, status, campaign_id, failed_reason')
+          .in('status', ['sent', 'failed'])
+          .order('sent_at', { ascending: false })
+          .limit(200),
+        supabase
+          .from('messages')
+          .select('id, content, status, created_at, conversation_id, failed_reason')
+          .in('status', ['sent', 'delivered', 'read', 'failed'])
+          .order('created_at', { ascending: false })
           .limit(100)
       ]);
 
+      // Set pending tasks
       if (accountRes.data) setAccountTasks(accountRes.data);
       if (blockRes.data) setBlockTasks(blockRes.data.map(t => ({ ...t, phone_number: t.target_phone })));
       if (importRes.data) setImportTasks(importRes.data);
       if (warmupRes.data) setWarmupTasks(warmupRes.data);
       if (recipientsRes.data) setPendingRecipients(recipientsRes.data);
       if (messagesRes.data) setPendingMessages(messagesRes.data);
+
+      // Set completed tasks
+      if (completedAccountRes.data) setCompletedAccountTasks(completedAccountRes.data);
+      if (completedBlockRes.data) setCompletedBlockTasks(completedBlockRes.data.map(t => ({ ...t, phone_number: t.target_phone })));
+      if (completedImportRes.data) setCompletedImportTasks(completedImportRes.data);
+      if (completedWarmupRes.data) setCompletedWarmupTasks(completedWarmupRes.data);
+      if (completedRecipientsRes.data) setCompletedRecipients(completedRecipientsRes.data);
+      if (completedMessagesRes.data) setCompletedMessages(completedMessagesRes.data);
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -255,16 +313,24 @@ const DatabaseHealth = () => {
     }
   };
 
-  const TaskTable = ({ tasks, tableName, showDayNumber = false }: { 
+  const TaskTable = ({ 
+    tasks, 
+    tableName, 
+    showDayNumber = false,
+    isPending = true 
+  }: { 
     tasks: Task[], 
     tableName: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule',
-    showDayNumber?: boolean 
+    showDayNumber?: boolean,
+    isPending?: boolean
   }) => {
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500">{tasks.length} pending</Badge>
-          {tasks.length > 0 && (
+          <Badge variant="outline" className={isPending ? "bg-yellow-500/10 text-yellow-500" : "bg-green-500/10 text-green-500"}>
+            {tasks.length} {isPending ? 'pending' : 'completed/failed'}
+          </Badge>
+          {isPending && tasks.length > 0 && (
             <Button variant="destructive" size="sm" onClick={() => clearPendingTasks(tableName)}>
               <Trash2 className="w-4 h-4 mr-2" />
               Delete All Pending
@@ -288,7 +354,7 @@ const DatabaseHealth = () => {
               {tasks.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={showDayNumber ? 6 : 5} className="text-center text-muted-foreground py-8">
-                    No tasks found
+                    No {isPending ? 'pending' : 'completed'} tasks
                   </TableCell>
                 </TableRow>
               ) : (
@@ -306,7 +372,7 @@ const DatabaseHealth = () => {
                     <TableCell className="text-xs text-muted-foreground">
                       {format(new Date(task.created_at), 'MMM d, HH:mm')}
                     </TableCell>
-                    <TableCell className={`text-xs max-w-[200px] truncate ${task.result ? 'text-red-500' : ''}`}>
+                    <TableCell className={`text-xs max-w-[200px] truncate ${task.status === 'failed' || task.result ? 'text-red-500' : task.status === 'completed' ? 'text-green-500' : ''}`}>
                       {task.result || task.task_description || '-'}
                     </TableCell>
                     <TableCell>
@@ -328,6 +394,37 @@ const DatabaseHealth = () => {
       </div>
     );
   };
+
+  const TaskTabContent = ({ 
+    pendingTasks, 
+    completedTasks, 
+    tableName, 
+    showDayNumber = false 
+  }: { 
+    pendingTasks: Task[], 
+    completedTasks: Task[], 
+    tableName: 'account_check_tasks' | 'block_contact_tasks' | 'contact_import_tasks' | 'warmup_schedule',
+    showDayNumber?: boolean 
+  }) => (
+    <Tabs defaultValue="pending" className="w-full">
+      <TabsList className="grid w-full grid-cols-2 max-w-[300px]">
+        <TabsTrigger value="pending" className="text-xs">
+          <Clock className="w-3 h-3 mr-1" />
+          Pending ({pendingTasks.length})
+        </TabsTrigger>
+        <TabsTrigger value="completed" className="text-xs">
+          <CheckCircle className="w-3 h-3 mr-1" />
+          Completed ({completedTasks.length})
+        </TabsTrigger>
+      </TabsList>
+      <TabsContent value="pending" className="mt-3">
+        <TaskTable tasks={pendingTasks} tableName={tableName} showDayNumber={showDayNumber} isPending={true} />
+      </TabsContent>
+      <TabsContent value="completed" className="mt-3">
+        <TaskTable tasks={completedTasks} tableName={tableName} showDayNumber={showDayNumber} isPending={false} />
+      </TabsContent>
+    </Tabs>
+  );
 
   
 
@@ -520,148 +617,299 @@ const DatabaseHealth = () => {
             </TabsList>
             
             <TabsContent value="account" className="mt-4">
-              <TaskTable tasks={accountTasks} tableName="account_check_tasks" />
+              <TaskTabContent 
+                pendingTasks={accountTasks} 
+                completedTasks={completedAccountTasks} 
+                tableName="account_check_tasks" 
+              />
             </TabsContent>
             
             <TabsContent value="block" className="mt-4">
-              <TaskTable tasks={blockTasks} tableName="block_contact_tasks" />
+              <TaskTabContent 
+                pendingTasks={blockTasks} 
+                completedTasks={completedBlockTasks} 
+                tableName="block_contact_tasks" 
+              />
             </TabsContent>
             
             <TabsContent value="import" className="mt-4">
-              <TaskTable tasks={importTasks} tableName="contact_import_tasks" />
+              <TaskTabContent 
+                pendingTasks={importTasks} 
+                completedTasks={completedImportTasks} 
+                tableName="contact_import_tasks" 
+              />
             </TabsContent>
             
             <TabsContent value="warmup" className="mt-4">
-              <TaskTable tasks={warmupTasks} tableName="warmup_schedule" showDayNumber />
+              <TaskTabContent 
+                pendingTasks={warmupTasks} 
+                completedTasks={completedWarmupTasks} 
+                tableName="warmup_schedule" 
+                showDayNumber 
+              />
             </TabsContent>
 
             <TabsContent value="recipients" className="mt-4">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500">
-                      {health?.pending_recipients || pendingRecipients.length} pending
-                    </Badge>
-                    {pendingRecipients.length < (health?.pending_recipients || 0) && (
-                      <span className="text-xs text-muted-foreground">
-                        (showing {pendingRecipients.length})
-                      </span>
-                    )}
-                  </div>
-                  {pendingRecipients.length > 0 && (
-                    <Button variant="destructive" size="sm" onClick={clearPendingRecipients}>
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Delete All Pending ({health?.pending_recipients || pendingRecipients.length})
-                    </Button>
-                  )}
-                </div>
+              <Tabs defaultValue="pending" className="w-full">
+                <TabsList className="grid w-full grid-cols-2 max-w-[300px]">
+                  <TabsTrigger value="pending" className="text-xs">
+                    <Clock className="w-3 h-3 mr-1" />
+                    Pending ({health?.pending_recipients || pendingRecipients.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="completed" className="text-xs">
+                    <CheckCircle className="w-3 h-3 mr-1" />
+                    Sent/Failed ({completedRecipients.length})
+                  </TabsTrigger>
+                </TabsList>
                 
-                <div className="rounded-md border max-h-[400px] overflow-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Phone</TableHead>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Error</TableHead>
-                        <TableHead className="w-[80px]">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pendingRecipients.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                            No pending recipients
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        pendingRecipients.map((recipient) => (
-                          <TableRow key={recipient.id}>
-                            <TableCell className="font-mono text-xs">{recipient.phone_number}</TableCell>
-                            <TableCell className="text-xs">{recipient.name || '-'}</TableCell>
-                            <TableCell>{getStatusBadge(recipient.status || 'pending')}</TableCell>
-                            <TableCell className="text-xs max-w-[200px] truncate text-red-500">
-                              {recipient.failed_reason || '-'}
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-destructive hover:text-destructive"
-                                onClick={() => deleteRecipient(recipient.id)}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))
+                <TabsContent value="pending" className="mt-3">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="bg-yellow-500/10 text-yellow-500">
+                          {health?.pending_recipients || pendingRecipients.length} pending
+                        </Badge>
+                        {pendingRecipients.length < (health?.pending_recipients || 0) && (
+                          <span className="text-xs text-muted-foreground">
+                            (showing {pendingRecipients.length})
+                          </span>
+                        )}
+                      </div>
+                      {pendingRecipients.length > 0 && (
+                        <Button variant="destructive" size="sm" onClick={clearPendingRecipients}>
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Delete All Pending
+                        </Button>
                       )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
+                    </div>
+                    
+                    <div className="rounded-md border max-h-[400px] overflow-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Phone</TableHead>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Error</TableHead>
+                            <TableHead className="w-[80px]">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {pendingRecipients.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                                No pending recipients
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            pendingRecipients.map((recipient) => (
+                              <TableRow key={recipient.id}>
+                                <TableCell className="font-mono text-xs">{recipient.phone_number}</TableCell>
+                                <TableCell className="text-xs">{recipient.name || '-'}</TableCell>
+                                <TableCell>{getStatusBadge(recipient.status || 'pending')}</TableCell>
+                                <TableCell className="text-xs max-w-[200px] truncate text-red-500">
+                                  {recipient.failed_reason || '-'}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive hover:text-destructive"
+                                    onClick={() => deleteRecipient(recipient.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="completed" className="mt-3">
+                  <div className="space-y-4">
+                    <Badge variant="outline" className="bg-green-500/10 text-green-500">
+                      {completedRecipients.length} sent/failed
+                    </Badge>
+                    
+                    <div className="rounded-md border max-h-[400px] overflow-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Phone</TableHead>
+                            <TableHead>Name</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Result</TableHead>
+                            <TableHead className="w-[80px]">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {completedRecipients.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                                No completed recipients
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            completedRecipients.map((recipient) => (
+                              <TableRow key={recipient.id}>
+                                <TableCell className="font-mono text-xs">{recipient.phone_number}</TableCell>
+                                <TableCell className="text-xs">{recipient.name || '-'}</TableCell>
+                                <TableCell>{getStatusBadge(recipient.status || 'sent')}</TableCell>
+                                <TableCell className={`text-xs max-w-[200px] truncate ${recipient.status === 'failed' ? 'text-red-500' : 'text-green-500'}`}>
+                                  {recipient.failed_reason || 'Success'}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive hover:text-destructive"
+                                    onClick={() => deleteRecipient(recipient.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </TabsContent>
 
             <TabsContent value="messages" className="mt-4">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between flex-wrap gap-2">
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary">{pendingMessages.length} pending/sending</Badge>
-                  </div>
-                  {pendingMessages.length > 0 && (
-                    <Button variant="destructive" size="sm" onClick={clearPendingMessages}>
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Delete All Pending
-                    </Button>
-                  )}
-                </div>
+              <Tabs defaultValue="pending" className="w-full">
+                <TabsList className="grid w-full grid-cols-2 max-w-[300px]">
+                  <TabsTrigger value="pending" className="text-xs">
+                    <Clock className="w-3 h-3 mr-1" />
+                    Pending ({pendingMessages.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="completed" className="text-xs">
+                    <CheckCircle className="w-3 h-3 mr-1" />
+                    Sent/Failed ({completedMessages.length})
+                  </TabsTrigger>
+                </TabsList>
                 
-                <div className="rounded-md border max-h-[400px] overflow-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Content</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Created</TableHead>
-                        <TableHead>Error</TableHead>
-                        <TableHead className="w-[80px]">Actions</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {pendingMessages.length === 0 ? (
-                        <TableRow>
-                          <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                            No pending messages
-                          </TableCell>
-                        </TableRow>
-                      ) : (
-                        pendingMessages.map((msg) => (
-                          <TableRow key={msg.id}>
-                            <TableCell className="text-xs max-w-[250px] truncate">{msg.content}</TableCell>
-                            <TableCell>{getStatusBadge(msg.status || 'pending')}</TableCell>
-                            <TableCell className="text-xs text-muted-foreground">
-                              {msg.created_at ? format(new Date(msg.created_at), 'MMM d, HH:mm') : '-'}
-                            </TableCell>
-                            <TableCell className="text-xs max-w-[150px] truncate text-red-500">
-                              {msg.failed_reason || '-'}
-                            </TableCell>
-                            <TableCell>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8 text-destructive hover:text-destructive"
-                                onClick={() => deleteMessage(msg.id)}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </TableCell>
-                          </TableRow>
-                        ))
+                <TabsContent value="pending" className="mt-3">
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <Badge variant="secondary">{pendingMessages.length} pending/sending</Badge>
+                      {pendingMessages.length > 0 && (
+                        <Button variant="destructive" size="sm" onClick={clearPendingMessages}>
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Delete All Pending
+                        </Button>
                       )}
-                    </TableBody>
-                  </Table>
-                </div>
-              </div>
+                    </div>
+                    
+                    <div className="rounded-md border max-h-[400px] overflow-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Content</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Created</TableHead>
+                            <TableHead>Error</TableHead>
+                            <TableHead className="w-[80px]">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {pendingMessages.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                                No pending messages
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            pendingMessages.map((msg) => (
+                              <TableRow key={msg.id}>
+                                <TableCell className="text-xs max-w-[250px] truncate">{msg.content}</TableCell>
+                                <TableCell>{getStatusBadge(msg.status || 'pending')}</TableCell>
+                                <TableCell className="text-xs text-muted-foreground">
+                                  {msg.created_at ? format(new Date(msg.created_at), 'MMM d, HH:mm') : '-'}
+                                </TableCell>
+                                <TableCell className="text-xs max-w-[150px] truncate text-red-500">
+                                  {msg.failed_reason || '-'}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive hover:text-destructive"
+                                    onClick={() => deleteMessage(msg.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="completed" className="mt-3">
+                  <div className="space-y-4">
+                    <Badge variant="outline" className="bg-green-500/10 text-green-500">
+                      {completedMessages.length} sent/delivered/failed
+                    </Badge>
+                    
+                    <div className="rounded-md border max-h-[400px] overflow-auto">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Content</TableHead>
+                            <TableHead>Status</TableHead>
+                            <TableHead>Created</TableHead>
+                            <TableHead>Result</TableHead>
+                            <TableHead className="w-[80px]">Actions</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {completedMessages.length === 0 ? (
+                            <TableRow>
+                              <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                                No completed messages
+                              </TableCell>
+                            </TableRow>
+                          ) : (
+                            completedMessages.map((msg) => (
+                              <TableRow key={msg.id}>
+                                <TableCell className="text-xs max-w-[250px] truncate">{msg.content}</TableCell>
+                                <TableCell>{getStatusBadge(msg.status || 'sent')}</TableCell>
+                                <TableCell className="text-xs text-muted-foreground">
+                                  {msg.created_at ? format(new Date(msg.created_at), 'MMM d, HH:mm') : '-'}
+                                </TableCell>
+                                <TableCell className={`text-xs max-w-[150px] truncate ${msg.status === 'failed' ? 'text-red-500' : 'text-green-500'}`}>
+                                  {msg.failed_reason || 'Success'}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-8 w-8 text-destructive hover:text-destructive"
+                                    onClick={() => deleteMessage(msg.id)}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            ))
+                          )}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
             </TabsContent>
           </Tabs>
         </CardContent>
