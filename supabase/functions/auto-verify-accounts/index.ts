@@ -17,14 +17,11 @@ Deno.serve(async (req) => {
 
     console.log('[auto-verify-accounts] Starting automatic account verification...');
 
-    // Get all active accounts that haven't been verified in the last 24 hours
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    
+    // Get all active accounts to verify
     const { data: accounts, error: accountsError } = await supabase
       .from('telegram_accounts')
-      .select('id, phone_number, last_active, status')
+      .select('id, phone_number, status')
       .eq('status', 'active')
-      .or(`last_active.is.null,last_active.lt.${oneDayAgo}`)
       .limit(100); // Process in batches to avoid overload
 
     if (accountsError) {
