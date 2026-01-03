@@ -41,10 +41,9 @@ interface MessageQueueStats {
 
 interface AccountStats {
   active: number;
-  banned: number;
+  bannedFrozen: number;
   restricted: number;
   disconnected: number;
-  cooldown: number;
 }
 
 const Dashboard: React.FC = () => {
@@ -56,12 +55,11 @@ const Dashboard: React.FC = () => {
   const [replies24h, setReplies24h] = useState(0);
   const [uniqueRecipientsSent, setUniqueRecipientsSent] = useState(0);
 
-  const accountStats: AccountStats = {
+  const accountStats = {
     active: accounts.filter(a => a.status === 'active').length,
-    banned: accounts.filter(a => a.status === 'banned').length,
-    restricted: accounts.filter(a => a.status === 'restricted').length,
+    bannedFrozen: accounts.filter(a => a.status === 'banned' || a.status === 'frozen').length,
+    restricted: accounts.filter(a => a.status === 'restricted' || a.status === 'cooldown').length,
     disconnected: accounts.filter(a => a.status === 'disconnected').length,
-    cooldown: accounts.filter(a => a.status === 'cooldown').length,
   };
 
   const fetchQueueStats = async () => {
@@ -181,7 +179,7 @@ const Dashboard: React.FC = () => {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-5 gap-4">
+          <div className="grid grid-cols-4 gap-4">
             <div 
               className="p-4 rounded-lg bg-green-500/10 border border-green-500/30 cursor-pointer hover:bg-green-500/20 transition-colors"
               onClick={() => navigate('/accounts')}
@@ -198,9 +196,9 @@ const Dashboard: React.FC = () => {
             >
               <div className="flex items-center gap-2 mb-2">
                 <XCircle className="w-5 h-5 text-destructive" />
-                <span className="text-sm text-muted-foreground">Banned</span>
+                <span className="text-sm text-muted-foreground">Banned & Frozen</span>
               </div>
-              <p className="text-2xl font-bold text-destructive">{accountStats.banned}</p>
+              <p className="text-2xl font-bold text-destructive">{accountStats.bannedFrozen}</p>
             </div>
             <div 
               className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30 cursor-pointer hover:bg-yellow-500/20 transition-colors"
@@ -218,19 +216,9 @@ const Dashboard: React.FC = () => {
             >
               <div className="flex items-center gap-2 mb-2">
                 <WifiOff className="w-5 h-5 text-muted-foreground" />
-                <span className="text-sm text-muted-foreground">Disconnected</span>
+                <span className="text-sm text-muted-foreground">Offline</span>
               </div>
               <p className="text-2xl font-bold">{accountStats.disconnected}</p>
-            </div>
-            <div 
-              className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/30 cursor-pointer hover:bg-orange-500/20 transition-colors"
-              onClick={() => navigate('/accounts')}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <Clock className="w-5 h-5 text-orange-600" />
-                <span className="text-sm text-muted-foreground">Cooldown</span>
-              </div>
-              <p className="text-2xl font-bold text-orange-600">{accountStats.cooldown}</p>
             </div>
           </div>
         </CardContent>
