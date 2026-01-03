@@ -222,17 +222,17 @@ serve(async (req) => {
             'flood',
             'spam',
             'user_is_blocked',
-            'user not found',  // Contact import limit hit
-            'no user',
-            'peer_id_invalid',
             'frozen accounts'  // ImportContactsRequest errors on frozen accounts
           ];
           
           // Errors that should just SKIP the recipient (don't affect account status)
-          // "Too many requests" is rate limiting per recipient, not account-wide
+          // These are recipient-related issues, NOT account problems
           const skipRecipientErrors = [
             'too many requests',
             'wait',
+            'user not found',    // Recipient doesn't have Telegram
+            'no user',           // Recipient doesn't exist
+            'peer_id_invalid',   // Invalid recipient ID
           ];
           
           const errorLower = (error || '').toLowerCase();
