@@ -1061,6 +1061,7 @@ serve(async (req) => {
 
         if (status === "active") {
           updateData.status = "active";
+          updateData.ban_reason = null; // Clear any previous ban reason
           // Update user data if provided
           if (user_data) {
             if (user_data.telegram_id) updateData.telegram_id = user_data.telegram_id;
@@ -1071,6 +1072,18 @@ serve(async (req) => {
         } else if (status === "banned") {
           updateData.status = "banned";
           updateData.ban_reason = error || "Session revoked or account banned";
+        } else if (status === "frozen") {
+          // FROZEN: Account is temporarily restricted by Telegram
+          updateData.status = "frozen";
+          updateData.ban_reason = error || "Account frozen by Telegram";
+          updateData.restricted_until = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
+          // Keep user data if provided
+          if (user_data) {
+            if (user_data.telegram_id) updateData.telegram_id = user_data.telegram_id;
+            if (user_data.username) updateData.username = user_data.username;
+            if (user_data.first_name) updateData.first_name = user_data.first_name;
+            if (user_data.last_name) updateData.last_name = user_data.last_name;
+          }
         } else {
           updateData.status = "disconnected";
           updateData.ban_reason = error || "Session invalid or connection failed";

@@ -159,7 +159,7 @@ async def logout_other_sessions(client):
 
 
 async def verify_session(client, account_id: str):
-    """Verify if session is active by checking get_me() and trying an API call"""
+    """Verify if session is active by checking get_me(), dialogs, AND SpamBot status"""
     try:
         me = await asyncio.wait_for(client.get_me(), timeout=10)
         if not me:
@@ -173,6 +173,23 @@ async def verify_session(client, account_id: str):
             if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated", "auth_key"]):
                 return "banned", f"Account deleted: {dialog_err}", None
             # Other errors might be temporary, continue
+        
+        # CRITICAL: Also check SpamBot to detect frozen accounts
+        # Frozen accounts can still connect but SpamBot will report the frozen state
+        try:
+            spambot_status, spambot_reason, spambot_response = await check_spambot(client)
+            if spambot_status == "restricted":
+                return "frozen", spambot_reason or "Account frozen by Telegram", {
+                    "telegram_id": me.id,
+                    "username": me.username,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name
+                }
+            elif spambot_status == "banned":
+                return "banned", spambot_reason, None
+        except Exception as spambot_err:
+            # SpamBot check failed, but account connected - assume ok for now
+            print(f"    SpamBot check failed: {spambot_err}")
         
         return "active", None, {
             "telegram_id": me.id,
@@ -188,6 +205,8 @@ async def verify_session(client, account_id: str):
             return "disconnected", str(e), None
         elif "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
             return "banned", str(e), None
+        elif "frozen" in error_str:
+            return "frozen", str(e), None
         return "disconnected", str(e), None
 
 
