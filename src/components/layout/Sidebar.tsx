@@ -29,8 +29,6 @@ interface NavItem {
   superAdminOnly?: boolean;
 }
 
-import { HardDrive } from 'lucide-react';
-
 const navItems: NavItem[] = [
   { icon: LayoutDashboard, label: 'Dashboard', path: '/dashboard' },
   { icon: Phone, label: 'Accounts', path: '/accounts' },
@@ -39,7 +37,7 @@ const navItems: NavItem[] = [
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: Users, label: 'Seats', path: '/seats' },
   { icon: Database, label: 'Data', path: '/data' },
-  { icon: HardDrive, label: 'Database', path: '/database' },
+  { icon: Database, label: 'Database', path: '/database' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: BarChart3, label: 'Reports', path: '/reports' },
   { icon: Settings, label: 'Settings', path: '/settings' },
