@@ -306,7 +306,7 @@ const DatabaseHealth = () => {
                     <TableCell className="text-xs text-muted-foreground">
                       {format(new Date(task.created_at), 'MMM d, HH:mm')}
                     </TableCell>
-                    <TableCell className="text-xs max-w-[200px] truncate">
+                    <TableCell className={`text-xs max-w-[200px] truncate ${task.result ? 'text-red-500' : ''}`}>
                       {task.result || task.task_description || '-'}
                     </TableCell>
                     <TableCell>
