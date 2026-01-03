@@ -209,18 +209,16 @@ const DatabaseHealth = () => {
       if (completedRecipientsRes.data) setCompletedRecipients(completedRecipientsRes.data);
       if (completedMessagesRes.data) setCompletedMessages(completedMessagesRes.data);
 
-      // Fetch error breakdown - failed recipients with reasons (no limit)
+      // Fetch error breakdown - ALL records with failed_reason (any status)
       const { data: failedRecipients } = await supabase
         .from('campaign_recipients')
         .select('failed_reason')
-        .eq('status', 'failed')
         .not('failed_reason', 'is', null);
 
-      // Also fetch failed messages
+      // Also fetch messages with failed_reason (any status)
       const { data: failedMessages } = await supabase
         .from('messages')
         .select('failed_reason')
-        .eq('status', 'failed')
         .not('failed_reason', 'is', null);
 
       // Count failed reasons from both sources
