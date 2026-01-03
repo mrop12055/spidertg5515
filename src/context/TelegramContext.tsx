@@ -52,6 +52,10 @@ interface TelegramContextType {
   uploadProgress: UploadProgress;
   typingUsers: Record<string, boolean>;
   isLoading: boolean;
+  isSyncing: boolean;
+  
+  // Update a single message's status (for watchdog)
+  updateMessageStatus: (messageId: string, newStatus: Message['status']) => void;
   
   // Account tasks progress (persisted across navigation)
   accountTasksProgress: AccountTasksProgress;
@@ -109,6 +113,16 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [campaigns, setCampaigns] = useState<Campaign[]>(initialCampaigns);
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  // Update a single message's status (used by watchdog)
+  const updateMessageStatus = useCallback((messageId: string, newStatus: Message['status']) => {
+    setMessages(prev =>
+      prev.map(msg =>
+        msg.id === messageId ? { ...msg, status: newStatus } : msg
+      )
+    );
+  }, []);
   const [uploadProgress, setUploadProgress] = useState<UploadProgress>({
     total: 0,
     processed: 0,
@@ -136,7 +150,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   // Fetch data from Supabase
   const refreshData = useCallback(async () => {
     try {
-      setIsLoading(true);
+      // Use isSyncing for subsequent loads, isLoading for initial
+      if (isLoading) {
+        // Keep isLoading true
+      } else {
+        setIsSyncing(true);
+      }
       
       // Fetch accounts - exclude large session_data column for performance
       const { data: accountsData } = await supabase
@@ -312,8 +331,9 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.error('Error fetching data:', error);
     } finally {
       setIsLoading(false);
+      setIsSyncing(false);
     }
-  }, []);
+  }, [isLoading]);
 
   // Initial data fetch
   useEffect(() => {
@@ -1365,6 +1385,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     uploadProgress,
     typingUsers,
     isLoading,
+    isSyncing,
+    updateMessageStatus,
     accountTasksProgress,
     setAccountTasksProgress,
     isAccountTaskRunning,
