@@ -389,7 +389,7 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                     elif result.retry_contacts:
                         # retry_contacts means rate limited, not privacy restricted
                         if attempt < max_retries:
-                            logging.info(f"Contact lookup rate limited, retrying in 3s (attempt {attempt + 1}/{max_retries})")
+                            print(f"  [RATE] Contact lookup rate limited, retrying in 3s (attempt {attempt + 1}/{max_retries})")
                             await asyncio.sleep(3)
                         else:
                             # After retries, try ResolvePhoneRequest as fallback
@@ -400,7 +400,7 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                                     entity = resolve_result.users[0]
                                     break
                             except Exception as resolve_err:
-                                logging.warning(f"ResolvePhoneRequest failed: {resolve_err}")
+                                print(f"  [WARN] ResolvePhoneRequest failed: {resolve_err}")
                             return False, "Contact lookup rate limited - try again later"
                     else:
                         # No users and no retry_contacts means user not found
