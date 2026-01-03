@@ -202,7 +202,7 @@ const Accounts: React.FC = () => {
   }, [isSpamBotChecking, refreshData]);
   
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
-  const ACCOUNT_TASK_TYPES = ['change_name', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
+  const ACCOUNT_TASK_TYPES = ['change_name', 'privacy_settings', 'change_password', 'logout_sessions'];
   
   useEffect(() => {
     if (!isAccountTaskRunning) return;
@@ -271,33 +271,50 @@ const Accounts: React.FC = () => {
     let warned = false;
     let cancelled = false;
 
-    const tick = async () => {
-      if (cancelled) return;
-
-      const { count, error } = await supabase
-        .from('account_check_tasks')
-        .select('id', { count: 'exact', head: true })
-        .eq('task_type', internalTaskType)
-        .in('status', ['pending', 'in_progress']);
-
-      if (cancelled || error) return;
-
-      const elapsedMs = Date.now() - startMs;
-      const processed = (accountTasksProgress.completed || 0) + (accountTasksProgress.failed || 0);
-
-      // If nothing exists shortly after starting, the queue insert likely failed (RLS/offline/etc.)
-      if ((count ?? 0) === 0 && processed === 0 && elapsedMs > 8000) {
-        setIsAccountTaskRunning(false);
-        toast.error('Sync is stuck because no tasks were created in the backend. Please try again (or Refresh).');
-        return;
-      }
-
-      // If tasks exist but nothing updates for a while, the runner isn’t picking them up.
-      if ((count ?? 0) > 0 && processed === 0 && elapsedMs > 90000 && !warned) {
-        warned = true;
-        toast.warning('Tasks are queued but not being processed yet. The runner may be busy; please wait.');
-      }
-    };
+     const tick = async () => {
+       if (cancelled) return;
+ 
+       const { count, error } = await supabase
+         .from('account_check_tasks')
+         .select('id', { count: 'exact', head: true })
+         .eq('task_type', internalTaskType)
+         .in('status', ['pending', 'in_progress']);
+ 
+       if (cancelled || error) return;
+ 
+       const elapsedMs = Date.now() - startMs;
+       const processed = (accountTasksProgress.completed || 0) + (accountTasksProgress.failed || 0);
+ 
+       // If nothing exists shortly after starting, the queue insert likely failed (offline / permissions / backend issue)
+       if ((count ?? 0) === 0 && processed === 0 && elapsedMs > 8000) {
+         setIsAccountTaskRunning(false);
+         toast.error('Task is stuck because no tasks were created. Please try again (or Refresh).');
+         return;
+       }
+ 
+       // If tasks exist but nothing updates for a while, the runner isn’t picking them up.
+       if ((count ?? 0) > 0 && processed === 0 && elapsedMs > 90000 && !warned) {
+         warned = true;
+ 
+         // Check runner heartbeat to avoid false alarms when the runner is online but busy
+         const { data: hb } = await supabase
+           .from('runner_heartbeats')
+           .select('runner_name,last_seen')
+           .ilike('runner_name', '%account%')
+           .order('last_seen', { ascending: false })
+           .limit(1);
+ 
+         const lastSeenIso = hb?.[0]?.last_seen as string | undefined;
+         const lastSeenMs = lastSeenIso ? new Date(lastSeenIso).getTime() : 0;
+         const runnerAlive = lastSeenMs > 0 && Date.now() - lastSeenMs < 20000;
+ 
+         if (runnerAlive) {
+           toast.warning('Tasks are queued and the runner is online, but processing is slow. Please wait a bit longer.');
+         } else {
+           toast.error('Tasks are queued but the Account runner looks offline. Start RUN_ACCOUNT (or your VPS runner) and try again.');
+         }
+       }
+     };
 
     tick();
     const interval = window.setInterval(tick, 5000);
