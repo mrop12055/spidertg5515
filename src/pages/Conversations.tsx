@@ -31,14 +31,12 @@ import {
   Trash2,
   Ban,
   CheckSquare,
-  Square,
-  RefreshCw
+  Square
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { format, isToday, isYesterday, isSameDay, subDays, differenceInMinutes } from 'date-fns';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { usePendingMessageWatchdog } from '@/hooks/usePendingMessageWatchdog';
 
 type TimeFilter = '24h' | '3d' | '5d' | '7d';
 
@@ -64,17 +62,8 @@ const Chat: React.FC = () => {
     deleteConversation,
     deleteConversations,
     blockContact,
-    blockContacts,
-    refreshData,
-    isSyncing,
-    updateMessageStatus
+    blockContacts
   } = useTelegram();
-
-  // Integrate pending message watchdog
-  usePendingMessageWatchdog({
-    messages,
-    onMessageStatusUpdate: updateMessageStatus,
-  });
   
   const [selectedConversation, setSelectedConversation] = useState<string | null>(
     conversations[0]?.id || null
@@ -651,16 +640,6 @@ const Chat: React.FC = () => {
                     )}
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-7 w-7" 
-                      onClick={() => refreshData()}
-                      disabled={isSyncing}
-                      title="Sync messages"
-                    >
-                      <RefreshCw className={cn("w-4 h-4", isSyncing && "animate-spin")} />
-                    </Button>
                     <Button 
                       variant="ghost" 
                       size="icon" 
