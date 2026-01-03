@@ -1193,13 +1193,14 @@ const Accounts: React.FC = () => {
   });
 
   // Split accounts by status
-  // Temporarily restricted accounts (with future restrictedUntil) appear in BOTH Active and Restricted tabs
+  // Accounts with active restrictedUntil are treated as restricted, NOT active
   const now = new Date();
   const accountsByStatus = {
-    active: filteredAccounts.filter(a => 
-      a.status === 'active' || 
-      (a.restrictedUntil && new Date(a.restrictedUntil) > now)
-    ),
+    active: filteredAccounts.filter(a => {
+      // If has active restriction, belongs in restricted tab only
+      if (a.restrictedUntil && new Date(a.restrictedUntil) > now) return false;
+      return a.status === 'active';
+    }),
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' ||
@@ -1253,11 +1254,14 @@ const Accounts: React.FC = () => {
     return proxy?.status || null;
   };
 
-  // Calculate stats - include temporarily restricted accounts in the restricted count
+  // Calculate stats - accounts with active restrictedUntil count as restricted, not active
   const currentTime = new Date();
   const stats = {
     total: accounts.length,
-    active: accounts.filter(a => a.status === 'active').length,
+    active: accounts.filter(a => {
+      if (a.restrictedUntil && new Date(a.restrictedUntil) > currentTime) return false;
+      return a.status === 'active';
+    }).length,
     restricted: accounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' ||

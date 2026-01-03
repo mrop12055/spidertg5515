@@ -8,7 +8,7 @@ export interface DbTelegramAccount {
   username: string | null;
   first_name: string | null;
   last_name: string | null;
-  status: 'active' | 'banned' | 'restricted' | 'disconnected' | 'cooldown';
+  status: 'active' | 'banned' | 'restricted' | 'disconnected' | 'cooldown' | 'frozen';
   proxy_id: string | null;
   session_data: string | null;
   api_id: string | null;
@@ -223,12 +223,19 @@ export const useDatabase = () => {
     const lines = proxyText.split('\n').filter(l => l.trim());
     const proxiesToAdd = lines.map((line) => {
       const parts = line.split(':');
+      // Detect proxy type from 5th part or default to http
+      const typeStr = parts[4]?.toLowerCase().trim() || 'http';
+      let proxyType: 'http' | 'https' | 'socks4' | 'socks5' = 'http';
+      if (typeStr === 'socks5' || typeStr === 's5') proxyType = 'socks5';
+      else if (typeStr === 'socks4' || typeStr === 's4') proxyType = 'socks4';
+      else if (typeStr === 'https') proxyType = 'https';
+      
       return {
         host: parts[0] || '',
         port: parseInt(parts[1]) || 8080,
         username: parts[2] || null,
         password: parts[3] || null,
-        proxy_type: 'http' as const,
+        proxy_type: proxyType,
         status: 'active' as const,
       };
     });
