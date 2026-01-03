@@ -45,7 +45,7 @@ const SetupGuide: React.FC = () => {
       name: 'Account Runner',
       icon: <UserCog className="h-5 w-5" />,
       color: 'text-yellow-500',
-      functions: ['SpamBot', 'Name/Photo', 'Privacy', 'Import', 'Verify Login'],
+      functions: ['SpamBot', 'Name/Photo', 'Privacy', 'Import', 'Check Ban'],
       runnerKey: 'account',
       lastSeen: null,
       isOnline: false
