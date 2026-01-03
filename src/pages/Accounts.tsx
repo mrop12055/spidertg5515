@@ -1607,7 +1607,7 @@ const Accounts: React.FC = () => {
                 <div className="flex items-center gap-1">
                   <Button variant="outline" size="sm" onClick={handleVerifyLogin} disabled={isVerifyingLogin} className="gap-1.5">
                     {isVerifyingLogin ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-                    Verify Login
+                    Check Ban
                   </Button>
                   {(isVerifyingLogin || verifyProgress.checked > 0) && (
                     <Button 
@@ -1726,7 +1726,7 @@ const Accounts: React.FC = () => {
                 <CardTitle className="text-sm font-medium flex items-center gap-2">
                   {isVerifyingLogin && <Loader2 className="w-4 h-4 animate-spin" />}
                   <Wifi className="w-4 h-4" />
-                  Verify Login Progress
+                  Check Ban Progress
                 </CardTitle>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">
