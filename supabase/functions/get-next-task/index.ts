@@ -97,8 +97,16 @@ serve(async (req) => {
       .eq("status", "restricted")
       .limit(40);
 
+    // Get frozen accounts with limit (for live chat only)
+    const { data: frozenAccountsRaw } = await supabase
+      .from("telegram_accounts")
+      .select(ACCOUNT_WITH_JOINS_SELECT as any)
+      .eq("status", "frozen")
+      .limit(40);
+
     const activeAccounts = (activeAccountsRaw as any[]) || [];
     const restrictedAccounts = (restrictedAccountsRaw as any[]) || [];
+    const frozenAccounts = (frozenAccountsRaw as any[]) || [];
 
     const isTimeRestricted = (a: any) => {
       if (!a?.restricted_until) return false;
@@ -121,9 +129,11 @@ serve(async (req) => {
     // Filter all accounts to only those with active proxies
     const activeAccountsWithProxy = (activeAccounts || []).filter(hasActiveProxy);
     const restrictedAccountsWithProxy = (restrictedAccounts || []).filter(hasActiveProxy);
+    const frozenAccountsWithProxy = (frozenAccounts || []).filter(hasActiveProxy);
 
-    // For LIVE CHAT: allow active + restricted status accounts (with active proxy)
-    const allUsableAccounts = [...activeAccountsWithProxy, ...restrictedAccountsWithProxy];
+    // For LIVE CHAT: allow active + restricted + frozen status accounts (with active proxy)
+    // Frozen accounts can still receive and reply to messages
+    const allUsableAccounts = [...activeAccountsWithProxy, ...restrictedAccountsWithProxy, ...frozenAccountsWithProxy];
 
     // For CAMPAIGNS: only active accounts that are NOT temporarily restricted (with active proxy)
     const accounts = activeAccountsWithProxy.filter((a: any) => !isTimeRestricted(a));
