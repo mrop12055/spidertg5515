@@ -54,12 +54,14 @@ async def main_loop():
             
             task_type = task_response.get("task", "wait")
             
-            # Handle wait command
+            # Handle wait command - RESPECT THE BACKEND'S WAIT TIME
             if task_type == "wait":
                 seconds = task_response.get("seconds", 5)
                 reason = task_response.get("reason", "")
                 if reason:
-                    print(f"  ⏳ {reason}. Waiting {seconds}s...")
+                    print(f"  ⏳ {reason}")
+                else:
+                    print(f"  ⏳ Waiting {seconds}s...")
                 await asyncio.sleep(seconds)
                 continue
             

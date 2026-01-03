@@ -234,6 +234,15 @@ serve(async (req) => {
               .update({ last_active: new Date().toISOString() })
               .eq("id", account_id);
           }
+          
+          // Update last_campaign_send_at for campaign messages (rate limiting support)
+          if (campaign_recipient_id && account_id) {
+            await supabase
+              .from("telegram_accounts")
+              .update({ last_campaign_send_at: new Date().toISOString() })
+              .eq("id", account_id);
+            console.log(`[report-task-result] Updated last_campaign_send_at for account ${account_id}`);
+          }
 
           console.log(`[report-task-result] Message sent successfully for recipient ${campaign_recipient_id || message_id}`);
         } else {

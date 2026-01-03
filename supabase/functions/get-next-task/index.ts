@@ -95,8 +95,9 @@ serve(async (req) => {
 
     // Get all active accounts with joins but LIMIT to prevent timeout
     // NOTE: select only the columns runners actually need (session_data is large but required for connection)
+    // IMPORTANT: last_campaign_send_at is required for server-side rate limiting
     const ACCOUNT_WITH_JOINS_SELECT =
-      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,telegram_api_credentials(id,api_id,api_hash,client_type,is_active),proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
+      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,last_campaign_send_at,telegram_api_credentials(id,api_id,api_hash,client_type,is_active),proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
 
     const { data: activeAccountsRaw, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
@@ -483,12 +484,36 @@ serve(async (req) => {
         if (recipient && account) {
           const campaign = recipient.campaigns;
           
+          // SERVER-SIDE RATE LIMITING: Check if enough time has passed since last send
+          // This prevents runners from sending too fast even if they poll aggressively
+          const lastSendAt = account.last_campaign_send_at ? new Date(account.last_campaign_send_at).getTime() : 0;
+          const nowMs = Date.now();
+          const elapsedSeconds = (nowMs - lastSendAt) / 1000;
+          
+          if (lastSendAt > 0 && elapsedSeconds < MESSAGE_DELAY_MIN_SECONDS) {
+            const waitTime = Math.ceil(MESSAGE_DELAY_MIN_SECONDS - elapsedSeconds);
+            console.log(`[get-next-task] Account ${account.phone_number} rate limited - sent ${elapsedSeconds.toFixed(1)}s ago, need ${MESSAGE_DELAY_MIN_SECONDS}s minimum. Wait ${waitTime}s`);
+            return new Response(JSON.stringify({
+              task: "wait",
+              seconds: waitTime,
+              reason: `Rate limit: wait ${waitTime}s before next send`,
+            }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          
           // Mark recipient as "sending" to prevent duplicate picks
           await supabase
             .from("campaign_recipients")
             .update({ status: "sending" })
             .eq("id", recipient.id)
             .eq("status", "pending");
+          
+          // Update last_campaign_send_at for rate limiting
+          await supabase
+            .from("telegram_accounts")
+            .update({ last_campaign_send_at: new Date().toISOString() })
+            .eq("id", account.id);
 
           console.log(`[get-next-task] Campaign task: recipient ${recipient.id.slice(0, 8)} -> ${recipient.phone_number}`);
           
