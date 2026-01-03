@@ -1138,6 +1138,7 @@ export type Database = {
         | "restricted"
         | "disconnected"
         | "cooldown"
+        | "frozen"
       campaign_status:
         | "draft"
         | "scheduled"
@@ -1289,6 +1290,7 @@ export const Constants = {
         "restricted",
         "disconnected",
         "cooldown",
+        "frozen",
       ],
       campaign_status: [
         "draft",
