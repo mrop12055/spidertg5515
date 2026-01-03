@@ -123,74 +123,62 @@ const DatabaseHealth = () => {
           .from('account_check_tasks')
           .select('id, account_id, status, task_type, created_at, result')
           .eq('status', 'pending')
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('block_contact_tasks')
           .select('id, account_id, status, action, target_phone, created_at, result')
           .eq('status', 'pending')
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('contact_import_tasks')
           .select('id, account_id, status, created_at, result')
           .eq('status', 'pending')
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('warmup_schedule')
           .select('id, account_id, status, task_type, day_number, task_description, created_at')
           .eq('status', 'pending')
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('campaign_recipients')
           .select('id, phone_number, name, status, campaign_id, failed_reason')
-          .eq('status', 'pending')
-          .limit(1000),
+          .eq('status', 'pending'),
         supabase
           .from('messages')
           .select('id, content, status, created_at, conversation_id, failed_reason')
           .in('status', ['pending', 'sending'])
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         // Completed tasks
         supabase
           .from('account_check_tasks')
           .select('id, account_id, status, task_type, created_at, result')
           .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('block_contact_tasks')
           .select('id, account_id, status, action, target_phone, created_at, result')
           .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('contact_import_tasks')
           .select('id, account_id, status, created_at, result')
           .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('warmup_schedule')
           .select('id, account_id, status, task_type, day_number, task_description, created_at')
           .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false })
-          .limit(100),
+          .order('created_at', { ascending: false }),
         supabase
           .from('campaign_recipients')
           .select('id, phone_number, name, status, campaign_id, failed_reason')
           .in('status', ['sent', 'failed'])
-          .order('sent_at', { ascending: false })
-          .limit(200),
+          .order('sent_at', { ascending: false }),
         supabase
           .from('messages')
           .select('id, content, status, created_at, conversation_id, failed_reason')
           .in('status', ['sent', 'delivered', 'read', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(100)
       ]);
 
       // Set pending tasks
