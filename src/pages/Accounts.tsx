@@ -1086,15 +1086,14 @@ const Accounts: React.FC = () => {
     return matchesSearch && matchesStatus && matchesTag;
   });
 
-  // Split accounts by status - frozen/banned always go to inactive
+  // Split accounts by status - frozen goes to restricted (temporary rate limit), banned/disconnected to inactive
   const accountsByStatus = {
     active: filteredAccounts.filter(a => a.status === 'active'),
     restricted: filteredAccounts.filter(a => 
-      a.status === 'restricted' || a.status === 'cooldown'
+      a.status === 'restricted' || a.status === 'cooldown' || a.status === 'frozen'
     ),
     inactive: filteredAccounts.filter(a => 
       a.status === 'banned' || 
-      a.status === 'frozen' || 
       a.status === 'disconnected'
     ),
   };
