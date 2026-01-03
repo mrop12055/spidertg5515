@@ -216,20 +216,20 @@ serve(async (req) => {
             'account deleted'
           ];
           
-          // Errors that should FREEZE account (temporary cooldown)
+          // Errors that should RESTRICT account (24h cooldown for new messages, but can still chat)
           const temporaryRestrictionErrors = [
             'restricted',
             'flood',
             'spam',
             'user_is_blocked',
-            'frozen accounts'  // ImportContactsRequest errors on frozen accounts
+            'frozen accounts',   // ImportContactsRequest errors on frozen accounts
+            'too many requests', // Rate limit - account needs 24h cooldown
+            'floodwaiterror'     // Telegram flood wait error
           ];
           
           // Errors that should just SKIP the recipient (don't affect account status)
           // These are recipient-related issues, NOT account problems
           const skipRecipientErrors = [
-            'too many requests',
-            'wait',
             'user not found',    // Recipient doesn't have Telegram
             'no user',           // Recipient doesn't exist
             'peer_id_invalid',   // Invalid recipient ID
@@ -254,21 +254,21 @@ serve(async (req) => {
               })
               .eq("id", account_id);
           } else if (isTemporaryRestriction && !isSkipOnly && account_id) {
-            // TEMPORARY - set to frozen status with 24h cooldown
-            // But NOT for "too many requests" - that just means skip this recipient
-            console.log(`[report-task-result] Account ${account_id} FROZEN for 24h: ${error}`);
+            // TEMPORARY - set to restricted status with 24h cooldown
+            // Account can still be used for replying to existing chats, but not new campaign messages
+            console.log(`[report-task-result] Account ${account_id} RESTRICTED for 24h: ${error}`);
             
             await supabase
               .from("telegram_accounts")
               .update({
-                status: "frozen",
+                status: "restricted",
                 ban_reason: error,
                 restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               })
               .eq("id", account_id);
           } else if (isSkipOnly) {
             // Just log - don't change account status, recipient is already marked failed
-            console.log(`[report-task-result] Rate limit on recipient (account stays active): ${error}`);
+            console.log(`[report-task-result] Recipient-side issue (account stays active): ${error}`);
           }
           
           // Reassign recipients if account was banned OR temporarily restricted (but NOT skip-only errors)
