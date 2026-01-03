@@ -39,7 +39,6 @@ const navItems: NavItem[] = [
   { icon: Database, label: 'Data', path: '/data' },
   { icon: Database, label: 'Database', path: '/database' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
-  { icon: BarChart3, label: 'Reports', path: '/reports' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
