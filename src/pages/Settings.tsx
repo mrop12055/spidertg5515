@@ -78,6 +78,7 @@ const Settings: React.FC = () => {
   const [newApiType, setNewApiType] = useState<string>('android');
   const [isAddingApi, setIsAddingApi] = useState(false);
   const [reactivatingId, setReactivatingId] = useState<string | null>(null);
+  const [testingId, setTestingId] = useState<string | null>(null);
 
   // Fetch API credentials
   const fetchApiCredentials = async () => {
@@ -208,6 +209,29 @@ const Settings: React.FC = () => {
       toast.error('Failed to reactivate API credential');
     } finally {
       setReactivatingId(null);
+    }
+  };
+
+  // Test an API credential
+  const handleTestCredential = async (id: string) => {
+    setTestingId(id);
+    try {
+      const { data, error } = await supabase.functions.invoke('test-api-credential', {
+        body: { api_credential_id: id }
+      });
+      
+      if (error) throw error;
+      
+      if (data.success) {
+        toast.success(`Test started: ${data.message}. Run Python runner to complete the test.`);
+      } else {
+        toast.error(data.error || 'Failed to start test');
+      }
+    } catch (error) {
+      console.error('Failed to test API credential:', error);
+      toast.error('Failed to test API credential');
+    } finally {
+      setTestingId(null);
     }
   };
 
@@ -450,28 +474,54 @@ const Settings: React.FC = () => {
                           )}
                         </div>
                         
-                        {/* Reactivate button for invalid credentials */}
-                        {isInvalid && (
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            className="w-full mt-2"
-                            onClick={() => handleReactivateCredential(cred.id)}
-                            disabled={reactivatingId === cred.id}
-                          >
-                            {reactivatingId === cred.id ? (
-                              <>
-                                <Loader2 className="w-3 h-3 mr-2 animate-spin" />
-                                Reactivating...
-                              </>
-                            ) : (
-                              <>
-                                <RotateCcw className="w-3 h-3 mr-2" />
-                                Reactivate & Redistribute
-                              </>
-                            )}
-                          </Button>
-                        )}
+                        {/* Action buttons */}
+                        <div className="flex gap-2 mt-2">
+                          {/* Test button for valid credentials */}
+                          {!isInvalid && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => handleTestCredential(cred.id)}
+                              disabled={testingId === cred.id}
+                            >
+                              {testingId === cred.id ? (
+                                <>
+                                  <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                                  Testing...
+                                </>
+                              ) : (
+                                <>
+                                  <RefreshCw className="w-3 h-3 mr-2" />
+                                  Test API
+                                </>
+                              )}
+                            </Button>
+                          )}
+                          
+                          {/* Reactivate button for invalid credentials */}
+                          {isInvalid && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="flex-1"
+                              onClick={() => handleReactivateCredential(cred.id)}
+                              disabled={reactivatingId === cred.id}
+                            >
+                              {reactivatingId === cred.id ? (
+                                <>
+                                  <Loader2 className="w-3 h-3 mr-2 animate-spin" />
+                                  Reactivating...
+                                </>
+                              ) : (
+                                <>
+                                  <RotateCcw className="w-3 h-3 mr-2" />
+                                  Reactivate & Redistribute
+                                </>
+                              )}
+                            </Button>
+                          )}
+                        </div>
                       </div>
                     );
                   })}
