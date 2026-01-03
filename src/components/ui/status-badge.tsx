@@ -57,8 +57,8 @@ const statusConfig: Record<AccountStatus, {
   frozen: {
     label: 'Frozen',
     icon: Snowflake,
-    className: 'bg-blue-500/10 text-blue-500 border-blue-500/30 animate-pulse',
-    dotColor: 'bg-blue-500'
+    className: 'bg-cyan-500/10 text-cyan-500 border-cyan-500/30 animate-pulse',
+    dotColor: 'bg-cyan-500'
   }
 };
 

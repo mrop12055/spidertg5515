@@ -1086,15 +1086,18 @@ const Accounts: React.FC = () => {
     return matchesSearch && matchesStatus && matchesTag;
   });
 
-  // Split accounts by status - frozen goes to restricted (temporary rate limit), banned/disconnected to inactive
+  // Split accounts by status - frozen WITH timer goes to restricted, frozen WITHOUT timer goes to inactive
   const accountsByStatus = {
     active: filteredAccounts.filter(a => a.status === 'active'),
     restricted: filteredAccounts.filter(a => 
-      a.status === 'restricted' || a.status === 'cooldown' || a.status === 'frozen'
+      a.status === 'restricted' || 
+      a.status === 'cooldown' || 
+      (a.status === 'frozen' && a.restrictedUntil) // Only frozen WITH countdown timer
     ),
     inactive: filteredAccounts.filter(a => 
       a.status === 'banned' || 
-      a.status === 'disconnected'
+      a.status === 'disconnected' ||
+      (a.status === 'frozen' && !a.restrictedUntil) // Frozen WITHOUT countdown = permanent
     ),
   };
 
