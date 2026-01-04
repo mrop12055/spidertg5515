@@ -990,20 +990,35 @@ async def main_loop():
                 task_id = task.get("task_id")
                 account = task.get("account", {})
                 api_credential_id = account.get("api_credential_id")
-                api_id = account.get("api_id")
-                api_hash = account.get("api_hash")
+                api_id = str(account.get("api_id", ""))
+                api_hash = str(account.get("api_hash", ""))
                 
                 print(f"  [API] Testing API for {account.get('phone_number')}...")
+                print(f"        api_id={api_id}, api_hash={api_hash} (len={len(api_hash)})")
                 
-                # First validate format (catches obviously wrong credentials)
-                is_valid_format, format_error = validate_api_format(api_id, api_hash)
-                if not is_valid_format:
+                # Inline validation - no function import needed
+                format_error = None
+                try:
+                    int(api_id)
+                except:
+                    format_error = f"API ID must be a number, got: {api_id}"
+                
+                if not format_error:
+                    if len(api_hash) != 32:
+                        format_error = f"API Hash must be 32 chars, got {len(api_hash)}: {api_hash}"
+                    else:
+                        try:
+                            int(api_hash, 16)
+                        except:
+                            format_error = f"API Hash must be hex, got: {api_hash}"
+                
+                if format_error:
                     await report_result("api_test", {
                         "task_id": task_id,
                         "account_id": account.get("id"),
                         "api_credential_id": api_credential_id,
                         "success": False,
-                        "error": f"Invalid format: {format_error}"
+                        "error": format_error
                     })
                     print(f"    [INVALID] {format_error}")
                     continue
