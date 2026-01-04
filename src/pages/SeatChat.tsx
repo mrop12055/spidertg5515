@@ -7,10 +7,12 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { ThemeToggle } from '@/components/ThemeToggle';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Send, MessageSquare, Users, Eye, CheckCheck, Check, 
   RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
-  Image, X, Loader2, Phone, Smile, Paperclip, Mic, BarChart3, Settings
+  Image, X, Loader2, Phone, Smile, Paperclip, Mic, BarChart3, Settings,
+  Pin, PinOff, EyeIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -20,6 +22,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -31,6 +34,7 @@ import {
 
 type TimeFilter = '24h' | '3d' | '5d' | '7d';
 type SeatView = 'chats' | 'reports';
+type ChatTab = 'all' | 'pinned' | 'hidden';
 
 interface Seat {
   id: string;
@@ -54,6 +58,8 @@ interface Conversation {
   last_message_content?: string;
   last_message_direction?: 'incoming' | 'outgoing';
   has_reply?: boolean;
+  is_pinned?: boolean;
+  is_hidden?: boolean;
 }
 
 interface Message {
@@ -108,12 +114,12 @@ const SeatChat: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
-  const [hiddenConversations, setHiddenConversations] = useState<Set<string>>(new Set());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('7d');
   const [showRepliedOnly, setShowRepliedOnly] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
+  const [chatTab, setChatTab] = useState<ChatTab>('all');
   const [stats, setStats] = useState<SeatStats>({
     total_conversations: 0,
     messages_sent_today: 0,
@@ -125,31 +131,44 @@ const SeatChat: React.FC = () => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load hidden conversations from localStorage
-  useEffect(() => {
-    const savedHidden = localStorage.getItem(`hidden-conversations-${token}`);
-    if (savedHidden) {
-      setHiddenConversations(new Set(JSON.parse(savedHidden)));
+  // Toggle pin conversation in database
+  const togglePinConversation = async (convId: string, currentlyPinned: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('conversations')
+        .update({ is_pinned: !currentlyPinned })
+        .eq('id', convId);
+      
+      if (error) throw error;
+      
+      toast.success(currentlyPinned ? 'Conversation unpinned' : 'Conversation pinned');
+      fetchConversations();
+    } catch (err) {
+      console.error('Error toggling pin:', err);
+      toast.error('Failed to update conversation');
     }
-  }, [token]);
+  };
 
-  // Save hidden conversations to localStorage
-  const toggleHideConversation = (convId: string) => {
-    setHiddenConversations(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(convId)) {
-        newSet.delete(convId);
-        toast.success('Conversation unhidden');
-      } else {
-        newSet.add(convId);
-        toast.success('Conversation hidden');
-        if (selectedConversation?.id === convId) {
-          setSelectedConversation(null);
-        }
+  // Toggle hide conversation in database
+  const toggleHideConversation = async (convId: string, currentlyHidden: boolean) => {
+    try {
+      const { error } = await supabase
+        .from('conversations')
+        .update({ is_hidden: !currentlyHidden })
+        .eq('id', convId);
+      
+      if (error) throw error;
+      
+      if (!currentlyHidden && selectedConversation?.id === convId) {
+        setSelectedConversation(null);
       }
-      localStorage.setItem(`hidden-conversations-${token}`, JSON.stringify([...newSet]));
-      return newSet;
-    });
+      
+      toast.success(currentlyHidden ? 'Conversation unhidden' : 'Conversation hidden');
+      fetchConversations();
+    } catch (err) {
+      console.error('Error toggling hide:', err);
+      toast.error('Failed to update conversation');
+    }
   };
 
   // Time filter cutoff
@@ -184,32 +203,59 @@ const SeatChat: React.FC = () => {
     return Array.from(phoneMap.values());
   };
 
-  // Filter conversations
-  const filteredConversations = deduplicateConversations(
-    conversations.filter(conv => {
-      if (hiddenConversations.has(conv.id)) return false;
-      
-      // Apply "replied only" filter
-      if (showRepliedOnly && !conv.has_reply) return false;
-      
-      // When searching, ignore time filter to search ALL conversations
-      if (!searchQuery) {
-        const cutoff = getTimeFilterCutoff();
+  // Filter conversations based on current tab and filters
+  const getFilteredConversations = () => {
+    let filtered = conversations;
+    
+    // Filter by tab
+    if (chatTab === 'pinned') {
+      filtered = filtered.filter(conv => conv.is_pinned);
+    } else if (chatTab === 'hidden') {
+      filtered = filtered.filter(conv => conv.is_hidden);
+    } else {
+      // "all" tab shows non-hidden conversations
+      filtered = filtered.filter(conv => !conv.is_hidden);
+    }
+    
+    // Apply "replied only" filter
+    if (showRepliedOnly) {
+      filtered = filtered.filter(conv => conv.has_reply);
+    }
+    
+    // When searching, ignore time filter to search ALL conversations
+    if (!searchQuery) {
+      const cutoff = getTimeFilterCutoff();
+      filtered = filtered.filter(conv => {
         const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
-        if (lastMsgTime < cutoff.getTime()) return false;
-        return true;
-      }
-      
+        return lastMsgTime >= cutoff.getTime();
+      });
+    } else {
       // Search in name, phone, username, and message content
       const searchLower = searchQuery.toLowerCase();
-      return (
+      filtered = filtered.filter(conv => (
         conv.recipient_name?.toLowerCase().includes(searchLower) ||
         conv.recipient_phone?.toLowerCase().includes(searchLower) ||
         conv.recipient_username?.toLowerCase().includes(searchLower) ||
         conv.last_message_content?.toLowerCase().includes(searchLower)
-      );
-    })
-  );
+      ));
+    }
+    
+    // Sort: pinned first, then by last message time
+    return deduplicateConversations(filtered).sort((a, b) => {
+      if (a.is_pinned && !b.is_pinned) return -1;
+      if (!a.is_pinned && b.is_pinned) return 1;
+      const timeA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+      const timeB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+      return timeB - timeA;
+    });
+  };
+
+  const filteredConversations = getFilteredConversations();
+
+  // Count for each tab
+  const allCount = conversations.filter(c => !c.is_hidden).length;
+  const pinnedCount = conversations.filter(c => c.is_pinned).length;
+  const hiddenCount = conversations.filter(c => c.is_hidden).length;
 
   // Filter messages by search
   const filteredMessages = messageSearchQuery
@@ -552,6 +598,17 @@ const SeatChat: React.FC = () => {
     return '??';
   };
 
+  // Format last seen time
+  const formatLastSeen = (conv: Conversation) => {
+    if (!conv.last_message_at) return '';
+    const lastMsg = new Date(conv.last_message_at);
+    const mins = differenceInMinutes(new Date(), lastMsg);
+    if (mins < 5) return 'Just now';
+    if (mins < 60) return `${mins}m ago`;
+    if (mins < 1440) return `${Math.floor(mins / 60)}h ago`;
+    return format(lastMsg, 'MMM d');
+  };
+
   // Group messages by date
   const groupMessagesByDate = (msgs: Message[]) => {
     const groups: { date: string; messages: Message[] }[] = [];
@@ -568,12 +625,6 @@ const SeatChat: React.FC = () => {
     });
     
     return groups;
-  };
-
-  // Get last message preview
-  const getLastMessagePreview = (conv: Conversation) => {
-    const msg = messages.find(m => m.id); // Just a placeholder, we'd need to store last message
-    return 'Tap to view messages';
   };
 
   if (isLoading) {
@@ -609,61 +660,75 @@ const SeatChat: React.FC = () => {
 
   return (
     <div className="h-screen flex bg-gradient-to-br from-background via-background to-muted/20 overflow-hidden">
-      {/* Left Sidebar Navigation - Premium Design */}
-      <aside className="w-64 bg-card/80 backdrop-blur-xl border-r border-border/50 flex flex-col flex-shrink-0 shadow-xl">
+      {/* Left Sidebar Navigation - Professional Design */}
+      <aside className="w-60 bg-card/80 backdrop-blur-xl border-r border-border/50 flex flex-col flex-shrink-0 shadow-xl">
         {/* Header with Logo */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-border/50">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/30 ring-2 ring-primary/20">
-              <Send className="w-4 h-4 text-primary-foreground rotate-[-45deg]" />
+        <div className="h-14 flex items-center justify-between px-4 border-b border-border/50">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/30">
+              <Send className="w-3.5 h-3.5 text-primary-foreground rotate-[-45deg]" />
             </div>
             <div>
-              <h1 className="font-bold text-sm text-foreground tracking-tight">{seat?.name || 'Workspace'}</h1>
-              <p className="text-[10px] text-muted-foreground/80 font-medium uppercase tracking-widest">Console</p>
+              <h1 className="font-bold text-sm text-foreground tracking-tight leading-none">{seat?.name || 'Workspace'}</h1>
+              <p className="text-[9px] text-muted-foreground/80 font-medium uppercase tracking-widest">Console</p>
             </div>
           </div>
-          <ThemeToggle className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg" />
+          <ThemeToggle className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg" />
         </div>
 
-        {/* Quick Stats - Modern Cards */}
-        <div className="p-3">
+        {/* Stats Cards */}
+        <div className="p-3 space-y-2">
           <div className="grid grid-cols-2 gap-2">
-            <div className="relative overflow-hidden bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-xl p-3 border border-primary/10">
-              <div className="absolute -top-4 -right-4 w-12 h-12 bg-primary/10 rounded-full blur-xl" />
-              <p className="text-2xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
-              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mt-0.5">Chats</p>
+            <div className="relative overflow-hidden bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-lg p-2.5 border border-primary/10">
+              <p className="text-xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
+              <p className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider">Chats</p>
             </div>
-            <div className="relative overflow-hidden bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-xl p-3 border border-emerald-500/10">
-              <div className="absolute -top-4 -right-4 w-12 h-12 bg-emerald-500/10 rounded-full blur-xl" />
-              <p className="text-2xl font-bold text-foreground tracking-tight">{stats.messages_sent_today}</p>
-              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mt-0.5">Sent</p>
+            <div className="relative overflow-hidden bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-lg p-2.5 border border-emerald-500/10">
+              <p className="text-xl font-bold text-foreground tracking-tight">{stats.responses_received}</p>
+              <p className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider">Replies</p>
+            </div>
+          </div>
+          
+          {/* Messages Sent in Last 24h - Prominent Display */}
+          <div className="bg-gradient-to-r from-blue-500/10 via-blue-500/5 to-transparent rounded-lg p-3 border border-blue-500/10">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-md bg-blue-500/20 flex items-center justify-center">
+                  <Send className="w-3.5 h-3.5 text-blue-500" />
+                </div>
+                <div>
+                  <p className="text-[9px] text-muted-foreground font-semibold uppercase tracking-wider">Sent Today</p>
+                  <p className="text-lg font-bold text-foreground tracking-tight leading-none mt-0.5">{stats.messages_sent_today}</p>
+                </div>
+              </div>
+              <span className="text-[9px] text-muted-foreground/70 font-medium">24h</span>
             </div>
           </div>
         </div>
 
-        {/* Navigation - Clean Pills */}
+        {/* Navigation */}
         <nav className="flex-1 py-2 px-3">
-          <p className="px-2 py-2 text-[9px] font-bold text-muted-foreground/60 uppercase tracking-[0.2em]">Navigation</p>
+          <p className="px-2 py-1.5 text-[8px] font-bold text-muted-foreground/60 uppercase tracking-[0.2em]">Navigation</p>
           
           <div className="space-y-1">
             <button
               onClick={() => setCurrentView('chats')}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 group",
+                "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all duration-200 group",
                 currentView === 'chats'
-                  ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-lg shadow-primary/25 scale-[1.02]"
+                  ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-md shadow-primary/25"
                   : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"
               )}
             >
               <div className={cn(
-                "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
+                "w-7 h-7 rounded-md flex items-center justify-center transition-all",
                 currentView === 'chats' ? "bg-white/20" : "bg-muted/80"
               )}>
-                <MessageSquare className="w-4 h-4" />
+                <MessageSquare className="w-3.5 h-3.5" />
               </div>
-              <span className="text-sm font-semibold">Conversations</span>
+              <span className="text-sm font-medium">Conversations</span>
               {conversations.filter(c => (c.unread_count || 0) > 0).length > 0 && (
-                <span className="ml-auto min-w-[20px] h-5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center px-1.5 shadow-sm animate-pulse">
+                <span className="ml-auto min-w-[18px] h-[18px] rounded-full bg-destructive text-destructive-foreground text-[9px] font-bold flex items-center justify-center px-1 shadow-sm">
                   {conversations.filter(c => (c.unread_count || 0) > 0).length}
                 </span>
               )}
@@ -672,35 +737,35 @@ const SeatChat: React.FC = () => {
             <button
               onClick={() => setCurrentView('reports')}
               className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 group",
+                "w-full flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all duration-200 group",
                 currentView === 'reports'
-                  ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-lg shadow-primary/25 scale-[1.02]"
+                  ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-md shadow-primary/25"
                   : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"
               )}
             >
               <div className={cn(
-                "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
+                "w-7 h-7 rounded-md flex items-center justify-center transition-all",
                 currentView === 'reports' ? "bg-white/20" : "bg-muted/80"
               )}>
-                <BarChart3 className="w-4 h-4" />
+                <BarChart3 className="w-3.5 h-3.5" />
               </div>
-              <span className="text-sm font-semibold">Analytics</span>
+              <span className="text-sm font-medium">Analytics</span>
             </button>
           </div>
         </nav>
 
-        {/* Seat Profile - Elegant Footer */}
+        {/* Seat Profile */}
         <div className="p-3 border-t border-border/50">
-          <div className="flex items-center gap-3 p-2.5 rounded-xl bg-gradient-to-r from-muted/60 to-muted/30 hover:from-muted/80 hover:to-muted/50 transition-colors cursor-pointer">
+          <div className="flex items-center gap-2.5 p-2 rounded-lg bg-gradient-to-r from-muted/60 to-muted/30 hover:from-muted/80 hover:to-muted/50 transition-colors">
             <div className="relative">
-              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary via-primary/90 to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-sm shadow-md ring-2 ring-background">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-primary via-primary/90 to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-xs shadow-md">
                 {seat?.name?.charAt(0).toUpperCase() || 'S'}
               </div>
-              <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-card" />
+              <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-card" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-foreground truncate">{seat?.name}</p>
-              <p className="text-[10px] text-green-500 font-medium">● Active Now</p>
+              <p className="text-xs font-semibold text-foreground truncate">{seat?.name}</p>
+              <p className="text-[9px] text-green-500 font-medium">Active</p>
             </div>
           </div>
         </div>
@@ -734,44 +799,24 @@ const SeatChat: React.FC = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Header - Refined & Minimal */}
-        <header className="bg-card/60 backdrop-blur-md border-b border-border/30 flex-shrink-0 px-5 py-3">
+        {/* Header */}
+        <header className="bg-card/60 backdrop-blur-md border-b border-border/30 flex-shrink-0 px-4 py-2.5">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="font-bold text-foreground text-lg tracking-tight">
+              <h1 className="font-bold text-foreground text-base tracking-tight">
                 {currentView === 'chats' ? 'Conversations' : 'Analytics'}
               </h1>
-              <p className="text-xs text-muted-foreground/80 mt-0.5">
+              <p className="text-[11px] text-muted-foreground/80">
                 {currentView === 'chats' 
-                  ? `${filteredConversations.length} active threads` 
-                  : 'Performance overview'}
+                  ? `${filteredConversations.length} chats` 
+                  : 'Performance metrics'}
               </p>
             </div>
             
-            {/* Quick Actions */}
-            <div className="flex items-center gap-2">
-              {currentView === 'chats' && (
-                <div className="hidden lg:flex items-center gap-1 bg-muted/40 backdrop-blur-sm rounded-full px-1 py-1 border border-border/30">
-                  <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-card shadow-sm border border-border/50">
-                    <MessageSquare className="w-3.5 h-3.5 text-primary" />
-                    <span className="font-bold text-foreground">{stats.total_conversations}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 text-muted-foreground">
-                    <Send className="w-3.5 h-3.5" />
-                    <span className="font-medium">{stats.messages_sent_today}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 text-muted-foreground">
-                    <Users className="w-3.5 h-3.5" />
-                    <span className="font-medium">{stats.responses_received}</span>
-                  </div>
-                </div>
-              )}
-              
-              <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-xs px-3 py-1.5 font-semibold rounded-full">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-2 animate-pulse" />
-                Live
-              </Badge>
-            </div>
+            <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] px-2.5 py-1 font-semibold rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
+              Live
+            </Badge>
           </div>
         </header>
 
@@ -779,533 +824,610 @@ const SeatChat: React.FC = () => {
         {currentView === 'chats' ? (
           /* Chats View */
           <div className="flex-1 flex overflow-hidden">
-        {/* Conversation Sidebar */}
-        <div className="w-[300px] lg:w-[340px] bg-card/40 backdrop-blur-sm border-r border-border/30 flex flex-col flex-shrink-0">
-          {/* Search & Filter */}
-          <div className="p-3 space-y-2">
-            {/* Time Filters - Pill Style */}
-            <div className="flex gap-0.5 p-0.5 bg-muted/40 rounded-full border border-border/30">
-              {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
+            {/* Conversation Sidebar */}
+            <div className="w-[280px] lg:w-[320px] bg-card/40 backdrop-blur-sm border-r border-border/30 flex flex-col flex-shrink-0">
+              {/* Chat Tabs */}
+              <div className="p-2.5 border-b border-border/30">
+                <Tabs value={chatTab} onValueChange={(v) => setChatTab(v as ChatTab)} className="w-full">
+                  <TabsList className="w-full h-9 bg-muted/50 p-0.5 rounded-lg grid grid-cols-3">
+                    <TabsTrigger 
+                      value="all" 
+                      className="text-xs font-medium rounded-md data-[state=active]:bg-card data-[state=active]:shadow-sm"
+                    >
+                      All {allCount > 0 && <span className="ml-1 text-muted-foreground">({allCount})</span>}
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="pinned" 
+                      className="text-xs font-medium rounded-md data-[state=active]:bg-card data-[state=active]:shadow-sm"
+                    >
+                      <Pin className="w-3 h-3 mr-1" />
+                      {pinnedCount > 0 && <span className="text-muted-foreground">{pinnedCount}</span>}
+                    </TabsTrigger>
+                    <TabsTrigger 
+                      value="hidden" 
+                      className="text-xs font-medium rounded-md data-[state=active]:bg-card data-[state=active]:shadow-sm"
+                    >
+                      <EyeOff className="w-3 h-3 mr-1" />
+                      {hiddenCount > 0 && <span className="text-muted-foreground">{hiddenCount}</span>}
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+
+              {/* Search & Filter */}
+              <div className="p-2.5 space-y-2">
+                {/* Time Filters */}
+                <div className="flex gap-0.5 p-0.5 bg-muted/40 rounded-lg border border-border/30">
+                  {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
+                    <button
+                      key={filter}
+                      onClick={() => setTimeFilter(filter)}
+                      className={cn(
+                        "flex-1 px-2 py-1 text-[10px] font-semibold rounded-md transition-all duration-200",
+                        timeFilter === filter 
+                          ? "bg-card text-foreground shadow-sm border border-border/50" 
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {filter}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Replied Filter Toggle */}
                 <button
-                  key={filter}
-                  onClick={() => setTimeFilter(filter)}
+                  onClick={() => setShowRepliedOnly(!showRepliedOnly)}
                   className={cn(
-                    "flex-1 px-3 py-1.5 text-xs font-semibold rounded-full transition-all duration-200",
-                    timeFilter === filter 
-                      ? "bg-card text-foreground shadow-sm border border-border/50" 
-                      : "text-muted-foreground hover:text-foreground"
+                    "w-full flex items-center justify-center gap-1.5 px-2.5 py-1.5 text-[10px] font-semibold rounded-lg transition-all duration-200 border",
+                    showRepliedOnly 
+                      ? "bg-primary/10 text-primary border-primary/30" 
+                      : "bg-muted/40 text-muted-foreground border-border/30 hover:text-foreground hover:bg-muted/60"
                   )}
                 >
-                  {filter}
+                  <MessageSquare className="w-3 h-3" />
+                  {showRepliedOnly ? 'Replied Only' : 'Show Replied Only'}
                 </button>
-              ))}
-            </div>
 
-            {/* Replied Filter Toggle */}
-            <button
-              onClick={() => setShowRepliedOnly(!showRepliedOnly)}
-              className={cn(
-                "w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-xl transition-all duration-200 border",
-                showRepliedOnly 
-                  ? "bg-primary/10 text-primary border-primary/30" 
-                  : "bg-muted/40 text-muted-foreground border-border/30 hover:text-foreground hover:bg-muted/60"
-              )}
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              {showRepliedOnly ? 'Showing Replied Only' : 'Show Replied Only'}
-              {showRepliedOnly && (
-                <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-primary/20 rounded-full">
-                  {conversations.filter(c => c.has_reply && !hiddenConversations.has(c.id)).length}
-                </span>
-              )}
-            </button>
-
-            {/* Search - Modern Style */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
-              <Input
-                placeholder="Search conversations..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 bg-muted/40 border-border/30 text-foreground placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 h-10 rounded-xl"
-              />
-            </div>
-          </div>
-
-
-
-          {/* Conversation List */}
-          <div className="flex-1 overflow-y-auto px-2">
-            {filteredConversations.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-full py-12">
-                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-muted/80 to-muted/40 flex items-center justify-center mb-4 border border-border/50">
-                  <MessageSquare className="w-6 h-6 text-muted-foreground/50" />
+                {/* Search */}
+                <div className="relative">
+                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground/60" />
+                  <Input
+                    placeholder="Search..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-8 h-8 bg-muted/40 border-border/30 text-foreground placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 rounded-lg text-xs"
+                  />
                 </div>
-                <p className="text-foreground font-semibold text-sm">No conversations yet</p>
-                <p className="text-xs text-muted-foreground/80 mt-1 text-center max-w-[180px]">
-                  {searchQuery ? 'No results match your search' : 'New conversations will appear here'}
-                </p>
               </div>
-            ) : (
-              <div className="space-y-1 py-2">
-                {filteredConversations.map((conv) => (
-                  <div
-                    key={conv.id}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-all duration-200 group rounded-xl",
-                      selectedConversation?.id === conv.id
-                        ? "bg-primary/10 border border-primary/30 shadow-sm shadow-primary/10"
-                        : "hover:bg-muted/60 border border-transparent"
-                    )}
-                    onClick={() => setSelectedConversation(conv)}
-                  >
-                    {/* Avatar */}
-                    <div className="relative">
-                      <Avatar className="w-10 h-10 flex-shrink-0 ring-2 ring-background/80 shadow-md">
-                        <AvatarImage src={conv.recipient_avatar || ''} />
-                        <AvatarFallback className={cn(
-                          "bg-gradient-to-br text-white text-xs font-bold",
-                          getAvatarColor(conv.recipient_phone)
-                        )}>
-                          {getAvatarInitial(conv)}
-                        </AvatarFallback>
-                      </Avatar>
-                      {conv.unread_count > 0 && (
-                        <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-card animate-pulse" />
+
+              {/* Conversation List */}
+              <div className="flex-1 overflow-y-auto px-1.5">
+                {filteredConversations.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full py-12">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-muted/80 to-muted/40 flex items-center justify-center mb-3 border border-border/50">
+                      {chatTab === 'hidden' ? (
+                        <EyeOff className="w-5 h-5 text-muted-foreground/50" />
+                      ) : chatTab === 'pinned' ? (
+                        <Pin className="w-5 h-5 text-muted-foreground/50" />
+                      ) : (
+                        <MessageSquare className="w-5 h-5 text-muted-foreground/50" />
                       )}
                     </div>
-                    
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <p className="font-semibold text-sm text-foreground truncate">
-                            {getDisplayName(conv)}
-                          </p>
-                          {/* Campaign Badge */}
-                          {conv.first_message_sent && (
-                            <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
-                              Campaign
+                    <p className="text-foreground font-semibold text-xs">
+                      {chatTab === 'hidden' ? 'No hidden chats' : 
+                       chatTab === 'pinned' ? 'No pinned chats' : 
+                       'No conversations'}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/80 mt-1 text-center max-w-[160px]">
+                      {searchQuery ? 'No results match your search' : 
+                       chatTab === 'hidden' ? 'Hidden conversations appear here' :
+                       chatTab === 'pinned' ? 'Pin important conversations' :
+                       'New conversations will appear here'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-0.5 py-1.5">
+                    {filteredConversations.map((conv) => (
+                      <div
+                        key={conv.id}
+                        className={cn(
+                          "flex items-center gap-2.5 px-2.5 py-2 cursor-pointer transition-all duration-200 group rounded-lg",
+                          selectedConversation?.id === conv.id
+                            ? "bg-primary/10 border border-primary/30 shadow-sm shadow-primary/10"
+                            : "hover:bg-muted/60 border border-transparent"
+                        )}
+                        onClick={() => setSelectedConversation(conv)}
+                      >
+                        {/* Avatar */}
+                        <div className="relative flex-shrink-0">
+                          <Avatar className="w-9 h-9 ring-2 ring-background/80 shadow-sm">
+                            <AvatarImage src={conv.recipient_avatar || ''} />
+                            <AvatarFallback className={cn(
+                              "bg-gradient-to-br text-white text-[10px] font-bold",
+                              getAvatarColor(conv.recipient_phone)
+                            )}>
+                              {getAvatarInitial(conv)}
+                            </AvatarFallback>
+                          </Avatar>
+                          {conv.is_pinned && (
+                            <span className="absolute -top-0.5 -left-0.5 w-3.5 h-3.5 rounded-full bg-amber-500 border-2 border-card flex items-center justify-center">
+                              <Pin className="w-2 h-2 text-white" />
                             </span>
                           )}
-                        </div>
-                        <span className={cn(
-                          "text-[10px] flex-shrink-0 font-medium tabular-nums",
-                          conv.unread_count > 0 ? "text-primary font-semibold" : "text-muted-foreground/70"
-                        )}>
-                          {formatConversationTime(conv.last_message_at)}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 mt-0.5">
-                        <p className={cn(
-                          "text-[11px] truncate",
-                          conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
-                        )}>
-                          {conv.last_message_content ? (
-                            <>
-                              {conv.last_message_direction === 'outgoing' && (
-                                <span className="text-muted-foreground/50">You: </span>
-                              )}
-                              {conv.last_message_content.slice(0, 40)}{conv.last_message_content.length > 40 ? '...' : ''}
-                            </>
-                          ) : (
-                            <span className="italic text-muted-foreground/50">No messages yet</span>
+                          {conv.unread_count > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-primary border-2 border-card animate-pulse" />
                           )}
+                        </div>
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-1.5">
+                            <div className="flex items-center gap-1 min-w-0">
+                              <p className="font-semibold text-xs text-foreground truncate">
+                                {getDisplayName(conv)}
+                              </p>
+                              {conv.first_message_sent && (
+                                <span className="flex-shrink-0 px-1 py-0.5 rounded text-[7px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                                  Campaign
+                                </span>
+                              )}
+                            </div>
+                            <span className={cn(
+                              "text-[9px] flex-shrink-0 font-medium tabular-nums",
+                              conv.unread_count > 0 ? "text-primary font-semibold" : "text-muted-foreground/70"
+                            )}>
+                              {formatConversationTime(conv.last_message_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-1.5 mt-0.5">
+                            <p className={cn(
+                              "text-[10px] truncate",
+                              conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
+                            )}>
+                              {conv.last_message_content ? (
+                                <>
+                                  {conv.last_message_direction === 'outgoing' && (
+                                    <span className="text-muted-foreground/50">You: </span>
+                                  )}
+                                  {conv.last_message_content.slice(0, 30)}{conv.last_message_content.length > 30 ? '...' : ''}
+                                </>
+                              ) : (
+                                <span className="italic text-muted-foreground/50">No messages</span>
+                              )}
+                            </p>
+                            {conv.unread_count > 0 && (
+                              <span className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-[8px] font-bold min-w-[16px] h-4 rounded-full flex items-center justify-center px-1 flex-shrink-0 shadow-sm">
+                                {conv.unread_count}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions Menu */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreVertical className="w-3 h-3" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground w-36">
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePinConversation(conv.id, !!conv.is_pinned);
+                              }}
+                              className="text-muted-foreground hover:bg-muted focus:bg-muted text-xs"
+                            >
+                              {conv.is_pinned ? (
+                                <>
+                                  <PinOff className="w-3 h-3 mr-2" />
+                                  Unpin
+                                </>
+                              ) : (
+                                <>
+                                  <Pin className="w-3 h-3 mr-2" />
+                                  Pin
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleHideConversation(conv.id, !!conv.is_hidden);
+                              }}
+                              className="text-muted-foreground hover:bg-muted focus:bg-muted text-xs"
+                            >
+                              {conv.is_hidden ? (
+                                <>
+                                  <EyeIcon className="w-3 h-3 mr-2" />
+                                  Unhide
+                                </>
+                              ) : (
+                                <>
+                                  <EyeOff className="w-3 h-3 mr-2" />
+                                  Hide
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Message Area */}
+            <div className="flex-1 flex flex-col overflow-hidden bg-background">
+              {selectedConversation ? (
+                <>
+                  {/* Chat Header */}
+                  <div className="bg-card border-b border-border px-4 py-2 flex items-center justify-between flex-shrink-0">
+                    <div className="flex items-center gap-3">
+                      <Avatar className="w-9 h-9">
+                        <AvatarImage src={selectedConversation.recipient_avatar || ''} />
+                        <AvatarFallback className={cn(
+                          "bg-gradient-to-br text-white text-xs font-medium",
+                          getAvatarColor(selectedConversation.recipient_phone)
+                        )}>
+                          {getAvatarInitial(selectedConversation)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div>
+                        <p className="font-medium text-foreground text-sm">
+                          {getDisplayName(selectedConversation)}
                         </p>
-                        {conv.unread_count > 0 && (
-                          <span className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-[9px] font-bold min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1.5 flex-shrink-0 shadow-sm">
-                            {conv.unread_count}
-                          </span>
-                        )}
+                        <p className="text-[10px] text-muted-foreground">
+                          {formatLastSeen(selectedConversation)}
+                        </p>
                       </div>
                     </div>
-
-                    {/* Actions Menu */}
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <MoreVertical className="w-3.5 h-3.5" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground w-40">
-                        <DropdownMenuItem 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            toggleHideConversation(conv.id);
-                          }}
-                          className="text-muted-foreground hover:bg-muted focus:bg-muted text-xs"
-                        >
-                          <EyeOff className="w-3.5 h-3.5 mr-2" />
-                          Hide
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Message Area */}
-        <div className="flex-1 flex flex-col overflow-hidden bg-background">
-          {selectedConversation ? (
-            <>
-              {/* Chat Header */}
-              <div className="bg-card border-b border-border px-4 py-2 flex items-center justify-between flex-shrink-0">
-                <div className="flex items-center gap-3">
-                  <Avatar className="w-10 h-10">
-                    <AvatarImage src={selectedConversation.recipient_avatar || ''} />
-                    <AvatarFallback className={cn(
-                      "bg-gradient-to-br text-white text-sm font-medium",
-                      getAvatarColor(selectedConversation.recipient_phone)
-                    )}>
-                      {getAvatarInitial(selectedConversation)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div>
-                    <p className="font-medium text-foreground text-[15px]">
-                      {getDisplayName(selectedConversation)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {selectedConversation.is_active ? 'online' : 'last seen recently'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1">
-                  <Button 
-                    variant="ghost" 
-                    size="icon"
-                    onClick={() => setIsMessageSearchOpen(true)}
-                    className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10"
-                  >
-                    <Search className="w-5 h-5" />
-                  </Button>
-                  <Button 
-                    variant="ghost" 
-                    size="icon"
-                    className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10"
-                  >
-                    <Phone className="w-5 h-5" />
-                  </Button>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
+                    <div className="flex items-center gap-1">
                       <Button 
                         variant="ghost" 
                         size="icon"
-                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10"
+                        onClick={() => setIsMessageSearchOpen(true)}
+                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-8 w-8"
                       >
-                        <MoreVertical className="w-5 h-5" />
+                        <Search className="w-4 h-4" />
                       </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground">
-                      <DropdownMenuItem 
-                        onClick={() => toggleHideConversation(selectedConversation.id)}
-                        className="text-muted-foreground hover:bg-muted focus:bg-muted"
-                      >
-                        <EyeOff className="w-4 h-4 mr-2" />
-                        Hide conversation
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </div>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button 
+                            variant="ghost" 
+                            size="icon"
+                            className="text-muted-foreground hover:text-foreground hover:bg-muted h-8 w-8"
+                          >
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground">
+                          <DropdownMenuItem 
+                            onClick={() => togglePinConversation(selectedConversation.id, !!selectedConversation.is_pinned)}
+                            className="text-muted-foreground hover:bg-muted focus:bg-muted"
+                          >
+                            {selectedConversation.is_pinned ? (
+                              <>
+                                <PinOff className="w-4 h-4 mr-2" />
+                                Unpin conversation
+                              </>
+                            ) : (
+                              <>
+                                <Pin className="w-4 h-4 mr-2" />
+                                Pin conversation
+                              </>
+                            )}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem 
+                            onClick={() => toggleHideConversation(selectedConversation.id, !!selectedConversation.is_hidden)}
+                            className="text-muted-foreground hover:bg-muted focus:bg-muted"
+                          >
+                            <EyeOff className="w-4 h-4 mr-2" />
+                            Hide conversation
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
 
-              {/* Messages Container */}
-              <div 
-                ref={messagesContainerRef}
-                className="flex-1 overflow-y-auto px-[5%] lg:px-[10%] py-4"
-              >
-                <div className="max-w-4xl mx-auto space-y-1">
-                  {messageGroups.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full py-20">
-                      <div className="bg-muted rounded-lg px-3 py-1.5 mb-4">
-                        <p className="text-muted-foreground text-xs">
-                          {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
-                        </p>
+                  {/* Messages Container - Narrower */}
+                  <div 
+                    ref={messagesContainerRef}
+                    className="flex-1 overflow-y-auto px-4 lg:px-8 py-4"
+                  >
+                    <div className="max-w-2xl mx-auto space-y-1">
+                      {messageGroups.length === 0 ? (
+                        <div className="flex flex-col items-center justify-center h-full py-20">
+                          <div className="bg-muted rounded-lg px-3 py-1.5 mb-4">
+                            <p className="text-muted-foreground text-xs">
+                              {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        messageGroups.map((group, groupIndex) => (
+                          <div key={groupIndex}>
+                            {/* Date Separator */}
+                            <div className="flex justify-center my-3">
+                              <span className="bg-muted text-muted-foreground text-[10px] px-2.5 py-1 rounded-md shadow-sm">
+                                {formatDateSeparator(group.date)}
+                              </span>
+                            </div>
+                            
+                            {/* Messages */}
+                            {group.messages.map((msg) => (
+                              <div
+                                key={msg.id}
+                                className={cn(
+                                  "flex mb-0.5",
+                                  msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
+                                )}
+                              >
+                                <div
+                                  className={cn(
+                                    "relative max-w-[70%] rounded-lg px-2.5 py-1.5 shadow-sm",
+                                    msg.direction === 'outgoing'
+                                      ? 'bg-primary text-primary-foreground rounded-tr-none'
+                                      : 'bg-card text-card-foreground rounded-tl-none'
+                                  )}
+                                >
+                                  {/* Message tail */}
+                                  <div className={cn(
+                                    "absolute top-0 w-2 h-3",
+                                    msg.direction === 'outgoing'
+                                      ? '-right-2 border-l-8 border-l-primary border-t-8 border-t-transparent'
+                                      : '-left-2 border-r-8 border-r-card border-t-8 border-t-transparent'
+                                  )} />
+                                  
+                                  {msg.media_url && (
+                                    <img
+                                      src={msg.media_url}
+                                      alt="Media"
+                                      className="max-w-full rounded-lg mb-1.5"
+                                    />
+                                  )}
+                                  <p className="text-[13px] leading-[18px] whitespace-pre-wrap break-words pr-10">
+                                    {msg.content}
+                                  </p>
+                                  <div className={cn(
+                                    "absolute bottom-1 right-2 flex items-center gap-1"
+                                  )}>
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {formatMessageTime(msg.created_at)}
+                                    </span>
+                                    {msg.direction === 'outgoing' && getMessageStatusIcon(msg.status)}
+                                  </div>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        ))
+                      )}
+                      <div ref={messagesEndRef} />
+                    </div>
+                  </div>
+
+                  {/* Image Preview */}
+                  {imagePreview && (
+                    <div className="bg-card border-t border-border p-2.5 flex-shrink-0">
+                      <div className="max-w-2xl mx-auto relative inline-block">
+                        <img 
+                          src={imagePreview} 
+                          alt="Selected" 
+                          className="max-h-20 rounded-lg"
+                        />
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-destructive hover:bg-destructive/90"
+                          onClick={clearSelectedImage}
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </Button>
                       </div>
                     </div>
-                  ) : (
-                    messageGroups.map((group, groupIndex) => (
-                      <div key={groupIndex}>
-                        {/* Date Separator */}
-                        <div className="flex justify-center my-3">
-                          <span className="bg-muted text-muted-foreground text-[11px] px-3 py-1 rounded-lg shadow">
-                            {formatDateSeparator(group.date)}
-                          </span>
-                        </div>
-                        
-                        {/* Messages */}
-                        {group.messages.map((msg, msgIndex) => (
-                          <div
-                            key={msg.id}
-                            className={cn(
-                              "flex mb-0.5",
-                              msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
-                            )}
-                          >
-                            <div
-                              className={cn(
-                                "relative max-w-[65%] rounded-lg px-2.5 py-1.5 shadow-sm",
-                                msg.direction === 'outgoing'
-                                  ? 'bg-primary text-primary-foreground rounded-tr-none'
-                                  : 'bg-card text-card-foreground rounded-tl-none'
-                              )}
-                            >
-                              {/* Message tail */}
-                              <div className={cn(
-                                "absolute top-0 w-2 h-3",
-                                msg.direction === 'outgoing'
-                                  ? '-right-2 border-l-8 border-l-primary border-t-8 border-t-transparent'
-                                  : '-left-2 border-r-8 border-r-card border-t-8 border-t-transparent'
-                              )} />
-                              
-                              {msg.media_url && (
-                                <img
-                                  src={msg.media_url}
-                                  alt="Media"
-                                  className="max-w-full rounded-lg mb-1.5"
-                                />
-                              )}
-                              <p className="text-[14.5px] leading-[19px] whitespace-pre-wrap break-words pr-12">
-                                {msg.content}
-                              </p>
-                              <div className={cn(
-                                "absolute bottom-1.5 right-2 flex items-center gap-1"
-                              )}>
-                                <span className="text-[11px] text-muted-foreground">
-                                  {formatMessageTime(msg.created_at)}
-                                </span>
-                                {msg.direction === 'outgoing' && getMessageStatusIcon(msg.status)}
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ))
                   )}
-                  <div ref={messagesEndRef} />
-                </div>
-              </div>
 
-              {/* Image Preview */}
-              {imagePreview && (
-                <div className="bg-card border-t border-border p-3 flex-shrink-0">
-                  <div className="max-w-3xl mx-auto relative inline-block">
-                    <img 
-                      src={imagePreview} 
-                      alt="Selected" 
-                      className="max-h-24 rounded-lg"
-                    />
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-destructive hover:bg-destructive/90"
-                      onClick={clearSelectedImage}
-                    >
-                      <X className="w-3 h-3" />
-                    </Button>
+                  {/* Message Input */}
+                  <div className="bg-card px-4 py-2 flex-shrink-0">
+                    <div className="max-w-2xl mx-auto flex items-center gap-2">
+                      {/* Emoji */}
+                      <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
+                      
+                      {/* Attachment */}
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleImageSelect}
+                        accept="image/*"
+                        className="hidden"
+                      />
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-8 w-8 flex-shrink-0"
+                      >
+                        <Paperclip className="w-4 h-4" />
+                      </Button>
+
+                      {/* Input */}
+                      <Input
+                        placeholder="Type a message"
+                        value={messageInput}
+                        onChange={(e) => setMessageInput(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                        disabled={isSending}
+                        className="flex-1 bg-muted border-0 text-foreground placeholder:text-muted-foreground focus:ring-0 h-9 rounded-lg text-sm"
+                      />
+
+                      {/* Send / Mic Button */}
+                      {messageInput.trim() || selectedImage ? (
+                        <Button 
+                          onClick={handleSendMessage} 
+                          disabled={isSending}
+                          className="bg-primary hover:bg-primary/90 text-primary-foreground h-9 w-9 rounded-full flex-shrink-0"
+                          size="icon"
+                        >
+                          {isSending ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Send className="w-4 h-4" />
+                          )}
+                        </Button>
+                      ) : (
+                        <Button 
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-foreground hover:bg-muted h-9 w-9 rounded-full flex-shrink-0"
+                          size="icon"
+                        >
+                          <Mic className="w-4 h-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-muted/20 to-muted/5">
+                  <div className="text-center">
+                    <div className="w-32 h-32 mx-auto mb-5 relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5 rounded-full animate-pulse" />
+                      <div className="absolute inset-4 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
+                      <div className="absolute inset-8 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
+                        <Send className="w-6 h-6 text-primary-foreground rotate-[-45deg]" />
+                      </div>
+                    </div>
+                    <h2 className="text-lg font-bold text-foreground">{seat?.name}</h2>
+                    <p className="text-xs text-muted-foreground mt-1">Select a conversation to start messaging</p>
                   </div>
                 </div>
               )}
-
-              {/* Message Input */}
-              <div className="bg-card px-4 py-2 flex-shrink-0">
-                <div className="flex items-center gap-2">
-                  {/* Emoji */}
-                  <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
-                  
-                  {/* Attachment */}
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleImageSelect}
-                    accept="image/*"
-                    className="hidden"
-                  />
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 flex-shrink-0"
-                  >
-                    <Paperclip className="w-5 h-5" />
-                  </Button>
-
-                  {/* Input */}
-                  <Input
-                    placeholder="Type a message"
-                    value={messageInput}
-                    onChange={(e) => setMessageInput(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-                    disabled={isSending}
-                    className="flex-1 bg-muted border-0 text-foreground placeholder:text-muted-foreground focus:ring-0 h-10 rounded-lg"
-                  />
-
-                  {/* Send / Mic Button */}
-                  {messageInput.trim() || selectedImage ? (
-                    <Button 
-                      onClick={handleSendMessage} 
-                      disabled={isSending}
-                      className="bg-primary hover:bg-primary/90 text-primary-foreground h-10 w-10 rounded-full flex-shrink-0"
-                      size="icon"
-                    >
-                      {isSending ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <Send className="w-5 h-5" />
-                      )}
-                    </Button>
-                  ) : (
-                    <Button 
-                      variant="ghost"
-                      className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 rounded-full flex-shrink-0"
-                      size="icon"
-                    >
-                      <Mic className="w-5 h-5" />
-                    </Button>
-                  )}
+            </div>
+          </div>
+        ) : (
+          /* Reports View */
+          <div className="flex-1 overflow-y-auto p-5 bg-muted/30">
+            <div className="max-w-5xl mx-auto space-y-5">
+              {/* Page Header */}
+              <div className="mb-6">
+                <h2 className="text-xl font-bold text-foreground tracking-tight">Analytics Dashboard</h2>
+                <p className="text-muted-foreground text-sm mt-0.5">Track your conversation performance and engagement metrics</p>
+              </div>
+              
+              {/* Stats Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-card rounded-xl p-4 border border-border shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
+                      <MessageSquare className="w-5 h-5 text-primary" />
+                    </div>
+                    <span className="text-[9px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full uppercase">Total</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Conversations</p>
+                </div>
+                
+                <div className="bg-card rounded-xl p-4 border border-border shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-blue-500/20 to-blue-500/5 flex items-center justify-center">
+                      <Send className="w-5 h-5 text-blue-500" />
+                    </div>
+                    <span className="text-[9px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full uppercase">24h</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground tracking-tight">{stats.messages_sent_today}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Messages Sent</p>
+                </div>
+                
+                <div className="bg-card rounded-xl p-4 border border-border shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500/20 to-purple-500/5 flex items-center justify-center">
+                      <Eye className="w-5 h-5 text-purple-500" />
+                    </div>
+                    <span className="text-[9px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full uppercase">Read</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground tracking-tight">{stats.messages_read}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Messages Read</p>
+                </div>
+                
+                <div className="bg-card rounded-xl p-4 border border-border shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-3">
+                    <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-green-500/20 to-green-500/5 flex items-center justify-center">
+                      <Users className="w-5 h-5 text-green-500" />
+                    </div>
+                    <span className="text-[9px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full uppercase">Replies</span>
+                  </div>
+                  <p className="text-2xl font-bold text-foreground tracking-tight">{stats.responses_received}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">Responses</p>
                 </div>
               </div>
-            </>
-          ) : (
-            <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-muted/20 to-muted/5">
-              <div className="text-center">
-                <div className="w-40 h-40 mx-auto mb-6 relative">
-                  <div className="absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5 rounded-full animate-pulse" />
-                  <div className="absolute inset-5 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
-                  <div className="absolute inset-10 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
-                    <Send className="w-8 h-8 text-primary-foreground rotate-[-45deg]" />
+              
+              {/* Response Rate Card */}
+              <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h3 className="text-base font-semibold text-foreground">Response Rate</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">Percentage of conversations with replies</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-3xl font-bold text-primary">
+                      {stats.total_conversations > 0 
+                        ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
+                        : 0}%
+                    </p>
                   </div>
                 </div>
-                <h2 className="text-xl font-bold text-foreground">{seat?.name}</h2>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    ) : (
-      /* Reports View */
-      <div className="flex-1 overflow-y-auto p-6 bg-muted/30">
-        <div className="max-w-6xl mx-auto space-y-6">
-          {/* Page Header */}
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-foreground tracking-tight">Analytics Dashboard</h2>
-            <p className="text-muted-foreground mt-1">Track your conversation performance and engagement metrics</p>
-          </div>
-          
-          {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-card rounded-2xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
-                  <MessageSquare className="w-6 h-6 text-primary" />
+                <div className="relative h-2.5 bg-muted rounded-full overflow-hidden">
+                  <div 
+                    className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary to-primary/70 rounded-full transition-all duration-700 ease-out"
+                    style={{ 
+                      width: `${stats.total_conversations > 0 
+                        ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
+                        : 0}%` 
+                    }}
+                  />
                 </div>
-                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Total</span>
-              </div>
-              <p className="text-3xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
-              <p className="text-sm text-muted-foreground mt-1">Conversations</p>
-            </div>
-            
-            <div className="bg-card rounded-2xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500/20 to-blue-500/5 flex items-center justify-center">
-                  <Send className="w-6 h-6 text-blue-500" />
-                </div>
-                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Today</span>
-              </div>
-              <p className="text-3xl font-bold text-foreground tracking-tight">{stats.messages_sent_today}</p>
-              <p className="text-sm text-muted-foreground mt-1">Messages Sent</p>
-            </div>
-            
-            <div className="bg-card rounded-2xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500/20 to-purple-500/5 flex items-center justify-center">
-                  <Eye className="w-6 h-6 text-purple-500" />
-                </div>
-                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Read</span>
-              </div>
-              <p className="text-3xl font-bold text-foreground tracking-tight">{stats.messages_read}</p>
-              <p className="text-sm text-muted-foreground mt-1">Messages Read</p>
-            </div>
-            
-            <div className="bg-card rounded-2xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
-              <div className="flex items-center justify-between mb-4">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500/20 to-green-500/5 flex items-center justify-center">
-                  <Users className="w-6 h-6 text-green-500" />
-                </div>
-                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Replies</span>
-              </div>
-              <p className="text-3xl font-bold text-foreground tracking-tight">{stats.responses_received}</p>
-              <p className="text-sm text-muted-foreground mt-1">Responses</p>
-            </div>
-          </div>
-          
-          {/* Response Rate Card */}
-          <div className="bg-card rounded-2xl p-6 border border-border shadow-sm">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h3 className="text-lg font-semibold text-foreground">Response Rate</h3>
-                <p className="text-sm text-muted-foreground mt-0.5">Percentage of conversations with replies</p>
-              </div>
-              <div className="text-right">
-                <p className="text-4xl font-bold text-primary">
-                  {stats.total_conversations > 0 
-                    ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
-                    : 0}%
-                </p>
-              </div>
-            </div>
-            <div className="relative h-3 bg-muted rounded-full overflow-hidden">
-              <div 
-                className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary to-primary/70 rounded-full transition-all duration-700 ease-out"
-                style={{ 
-                  width: `${stats.total_conversations > 0 
-                    ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
-                    : 0}%` 
-                }}
-              />
-            </div>
-            <div className="flex justify-between mt-3 text-xs text-muted-foreground">
-              <span>{stats.responses_received} responses</span>
-              <span>{stats.total_conversations} total conversations</span>
-            </div>
-          </div>
-          
-          {/* Seat Info Card */}
-          <div className="bg-card rounded-2xl p-6 border border-border shadow-sm">
-            <h3 className="text-lg font-semibold text-foreground mb-4">Workspace Details</h3>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Workspace</p>
-                <p className="text-foreground font-semibold mt-1">{seat?.name}</p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                  <span className="text-foreground font-semibold">Active</span>
+                <div className="flex justify-between mt-2.5 text-[10px] text-muted-foreground">
+                  <span>{stats.responses_received} responses</span>
+                  <span>{stats.total_conversations} total</span>
                 </div>
               </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Efficiency</p>
-                <p className="text-foreground font-semibold mt-1">
-                  {stats.messages_sent_today > 0 ? 'High' : 'Normal'}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Session</p>
-                <p className="text-foreground font-semibold mt-1">Live</p>
+              
+              {/* Seat Info Card */}
+              <div className="bg-card rounded-xl p-5 border border-border shadow-sm">
+                <h3 className="text-base font-semibold text-foreground mb-3">Workspace Details</h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-5">
+                  <div>
+                    <p className="text-[9px] font-medium text-muted-foreground uppercase tracking-wider">Workspace</p>
+                    <p className="text-foreground font-semibold text-sm mt-0.5">{seat?.name}</p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-medium text-muted-foreground uppercase tracking-wider">Status</p>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+                      <span className="text-foreground font-semibold text-sm">Active</span>
+                    </div>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-medium text-muted-foreground uppercase tracking-wider">Efficiency</p>
+                    <p className="text-foreground font-semibold text-sm mt-0.5">
+                      {stats.messages_sent_today > 0 ? 'High' : 'Normal'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-medium text-muted-foreground uppercase tracking-wider">Session</p>
+                    <p className="text-foreground font-semibold text-sm mt-0.5">Live</p>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </div>
-    )}
+        )}
       </div>
     </div>
   );
