@@ -59,11 +59,30 @@ export const useNotifications = () => {
           table: 'messages',
           filter: 'direction=eq.incoming'
         },
-        (payload) => {
+        async (payload) => {
           const message = payload.new as any;
           
           // Avoid duplicate notifications
           if (lastNotifiedRef.current === message.id) return;
+          
+          // Check if this message is from a campaign-initiated conversation (where we messaged first)
+          try {
+            const { data: conversation } = await supabase
+              .from('conversations')
+              .select('first_message_sent')
+              .eq('id', message.conversation_id)
+              .maybeSingle();
+            
+            // Only notify for campaign conversations (where we messaged first)
+            if (!conversation?.first_message_sent) {
+              console.log('Skipping notification - not a campaign conversation');
+              return;
+            }
+          } catch (err) {
+            console.log('Error checking conversation:', err);
+            return; // Skip notification if we can't verify
+          }
+          
           lastNotifiedRef.current = message.id;
           
           // Play sound
