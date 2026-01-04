@@ -567,72 +567,96 @@ const SeatChat: React.FC = () => {
 
   return (
     <div className="h-screen flex bg-background overflow-hidden">
-      {/* Left Sidebar Navigation - Similar to Admin */}
-      <aside className="w-64 bg-sidebar border-r border-border flex flex-col flex-shrink-0">
-        {/* Logo */}
-        <div className="h-16 flex items-center px-4 border-b border-border">
+      {/* Left Sidebar Navigation - Professional Design */}
+      <aside className="w-72 bg-card border-r border-border flex flex-col flex-shrink-0 shadow-sm">
+        {/* Header with Logo */}
+        <div className="h-16 flex items-center justify-between px-5 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg">
-              <Send className="w-5 h-5 text-primary-foreground" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/25">
+              <Send className="w-5 h-5 text-primary-foreground rotate-[-45deg]" />
             </div>
             <div>
-              <h1 className="font-bold text-lg text-foreground">{seat?.name || 'Seat'}</h1>
-              <p className="text-xs text-muted-foreground">Seat Dashboard</p>
+              <h1 className="font-semibold text-base text-foreground tracking-tight">{seat?.name || 'Workspace'}</h1>
+              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Chat Console</p>
+            </div>
+          </div>
+          <ThemeToggle className="text-muted-foreground hover:text-foreground hover:bg-muted" />
+        </div>
+
+        {/* Quick Stats */}
+        <div className="px-4 py-3 border-b border-border/50">
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-muted/50 rounded-lg p-2.5 text-center">
+              <p className="text-lg font-bold text-foreground">{stats.total_conversations}</p>
+              <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Chats</p>
+            </div>
+            <div className="bg-muted/50 rounded-lg p-2.5 text-center">
+              <p className="text-lg font-bold text-foreground">{stats.messages_sent_today}</p>
+              <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Sent Today</p>
             </div>
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 py-4 px-3 space-y-1">
+        <nav className="flex-1 py-3 px-3 space-y-1">
+          <p className="px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Navigation</p>
+          
           <button
             onClick={() => setCurrentView('chats')}
             className={cn(
-              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
               currentView === 'chats'
-                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+                ? "bg-primary text-primary-foreground shadow-md shadow-primary/30"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
-            <MessageSquare className="w-5 h-5 flex-shrink-0" />
-            <span className="text-sm font-medium">Chats</span>
+            <div className={cn(
+              "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+              currentView === 'chats' ? "bg-primary-foreground/20" : "bg-muted"
+            )}>
+              <MessageSquare className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-medium">Conversations</span>
             {conversations.filter(c => (c.unread_count || 0) > 0).length > 0 && (
-              <span className="ml-auto min-w-[20px] h-[20px] rounded-full bg-destructive text-destructive-foreground text-xs font-bold flex items-center justify-center">
+              <span className="ml-auto min-w-[22px] h-[22px] rounded-full bg-destructive text-destructive-foreground text-[11px] font-bold flex items-center justify-center shadow-sm">
                 {conversations.filter(c => (c.unread_count || 0) > 0).length}
               </span>
-            )}
-            {currentView === 'chats' && conversations.filter(c => (c.unread_count || 0) > 0).length === 0 && (
-              <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-foreground animate-pulse" />
             )}
           </button>
 
           <button
             onClick={() => setCurrentView('reports')}
             className={cn(
-              "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
+              "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
               currentView === 'reports'
-                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+                ? "bg-primary text-primary-foreground shadow-md shadow-primary/30"
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
-            <BarChart3 className="w-5 h-5 flex-shrink-0" />
-            <span className="text-sm font-medium">Reports</span>
-            {currentView === 'reports' && (
-              <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-foreground animate-pulse" />
-            )}
+            <div className={cn(
+              "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
+              currentView === 'reports' ? "bg-primary-foreground/20" : "bg-muted"
+            )}>
+              <BarChart3 className="w-4 h-4" />
+            </div>
+            <span className="text-sm font-medium">Analytics</span>
           </button>
         </nav>
 
-        {/* Seat Info Section */}
-        <div className="p-3 border-t border-border space-y-2">
-          <div className="flex items-center gap-3 p-2 rounded-lg bg-muted/50">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center text-primary-foreground font-semibold text-sm">
-              {seat?.name?.charAt(0) || 'S'}
+        {/* Seat Profile Card */}
+        <div className="p-3 border-t border-border">
+          <div className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-muted/80 to-muted/40 border border-border/50">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-sm shadow-md">
+              {seat?.name?.charAt(0).toUpperCase() || 'S'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-foreground truncate">{seat?.name}</p>
-              <div className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-primary" />
-                <p className="text-xs text-muted-foreground">Online</p>
+              <p className="text-sm font-semibold text-foreground truncate">{seat?.name}</p>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
+                </span>
+                <p className="text-[11px] text-muted-foreground font-medium">Active Now</p>
               </div>
             </div>
           </div>
@@ -667,44 +691,44 @@ const SeatChat: React.FC = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Header */}
-        <header className="bg-card border-b border-border flex-shrink-0 px-4 py-2">
+        {/* Header - Minimal & Clean */}
+        <header className="bg-card/50 backdrop-blur-sm border-b border-border/50 flex-shrink-0 px-5 py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-4">
               <div>
-                <h1 className="font-semibold text-foreground text-base">{seat?.name}</h1>
-                <p className="text-xs text-muted-foreground">
-                  {currentView === 'chats' ? 'Telegram Chats' : 'Reports & Statistics'}
+                <h1 className="font-semibold text-foreground text-lg tracking-tight">
+                  {currentView === 'chats' ? 'Conversations' : 'Analytics'}
+                </h1>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {currentView === 'chats' 
+                    ? `${filteredConversations.length} active threads` 
+                    : 'Performance overview'}
                 </p>
               </div>
             </div>
             
-            {/* Stats - shown only in chats view */}
-            {currentView === 'chats' && (
-              <div className="hidden md:flex items-center gap-4">
-                <div className="flex items-center gap-1.5 text-xs bg-muted rounded-full px-3 py-1.5">
-                  <MessageSquare className="w-3.5 h-3.5 text-primary" />
-                  <span className="font-medium text-foreground">{stats.total_conversations}</span>
+            {/* Quick Actions */}
+            <div className="flex items-center gap-3">
+              {currentView === 'chats' && (
+                <div className="hidden lg:flex items-center gap-2 bg-muted/50 rounded-full px-1 py-1">
+                  <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-background shadow-sm">
+                    <MessageSquare className="w-3.5 h-3.5 text-primary" />
+                    <span className="font-semibold text-foreground">{stats.total_conversations}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs px-2.5 py-1">
+                    <Send className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="font-medium text-muted-foreground">{stats.messages_sent_today}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-xs px-2.5 py-1">
+                    <Users className="w-3.5 h-3.5 text-muted-foreground" />
+                    <span className="font-medium text-muted-foreground">{stats.responses_received}</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs bg-muted rounded-full px-3 py-1.5">
-                  <Send className="w-3.5 h-3.5 text-primary" />
-                  <span className="font-medium text-foreground">{stats.messages_sent_today}</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-xs bg-muted rounded-full px-3 py-1.5">
-                  <Eye className="w-3.5 h-3.5 text-primary" />
-                  <span className="font-medium text-foreground">{stats.messages_read}</span>
-                </div>
-                <div className="flex items-center gap-1.5 text-xs bg-muted rounded-full px-3 py-1.5">
-                  <Users className="w-3.5 h-3.5 text-primary" />
-                  <span className="font-medium text-foreground">{stats.responses_received}</span>
-                </div>
-              </div>
-            )}
-
-            <div className="flex items-center gap-2">
-              <ThemeToggle className="text-muted-foreground hover:text-foreground hover:bg-muted" />
-              <Badge className="bg-primary text-primary-foreground border-0 text-xs px-2 py-0.5">
-                ● Online
+              )}
+              
+              <Badge className="bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20 text-xs px-2.5 py-1 font-medium">
+                <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5 animate-pulse" />
+                Live
               </Badge>
             </div>
           </div>
@@ -715,11 +739,11 @@ const SeatChat: React.FC = () => {
           /* Chats View */
           <div className="flex-1 flex overflow-hidden">
         {/* Conversation Sidebar */}
-        <div className="w-[340px] lg:w-[420px] bg-sidebar border-r border-border flex flex-col flex-shrink-0">
+        <div className="w-[320px] lg:w-[380px] bg-card/30 border-r border-border/50 flex flex-col flex-shrink-0">
           {/* Search & Filter */}
-          <div className="p-2 bg-sidebar">
+          <div className="p-3 space-y-2">
             {/* Time Filters */}
-            <div className="flex gap-1 mb-2">
+            <div className="flex gap-1 p-1 bg-muted/50 rounded-xl">
               {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
                 <button
                   key={filter}
@@ -727,8 +751,8 @@ const SeatChat: React.FC = () => {
                   className={cn(
                     "flex-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all",
                     timeFilter === filter 
-                      ? "bg-primary text-primary-foreground" 
-                      : "text-muted-foreground hover:bg-muted"
+                      ? "bg-background text-foreground shadow-sm" 
+                      : "text-muted-foreground hover:text-foreground"
                   )}
                 >
                   {filter}
@@ -740,67 +764,75 @@ const SeatChat: React.FC = () => {
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
-                placeholder="Search or start new chat"
+                placeholder="Search conversations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 bg-card border-0 text-foreground placeholder:text-muted-foreground focus:ring-0 h-9 rounded-lg"
+                className="pl-10 bg-muted/50 border-0 text-foreground placeholder:text-muted-foreground focus:ring-1 focus:ring-primary/50 h-10 rounded-xl"
               />
             </div>
           </div>
 
 
+
           {/* Conversation List */}
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto px-2">
             {filteredConversations.length === 0 ? (
-              <div className="p-8 text-center">
-                <MessageSquare className="w-12 h-12 text-muted mx-auto mb-3" />
-                <p className="text-muted-foreground font-medium text-sm">No conversations</p>
-                <p className="text-xs text-muted-foreground/70 mt-1">
-                  {searchQuery ? 'Try a different search' : 'Conversations will appear here'}
+              <div className="flex flex-col items-center justify-center h-full py-12">
+                <div className="w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-4">
+                  <MessageSquare className="w-8 h-8 text-muted-foreground/50" />
+                </div>
+                <p className="text-foreground font-medium text-sm">No conversations yet</p>
+                <p className="text-xs text-muted-foreground mt-1 text-center max-w-[200px]">
+                  {searchQuery ? 'No results match your search' : 'New conversations will appear here'}
                 </p>
               </div>
             ) : (
-              <div>
+              <div className="space-y-1 py-2">
                 {filteredConversations.map((conv) => (
                   <div
                     key={conv.id}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-3 cursor-pointer transition-all group",
+                      "flex items-center gap-3 px-3 py-3 cursor-pointer transition-all group rounded-xl",
                       selectedConversation?.id === conv.id
-                        ? "bg-muted"
-                        : "hover:bg-muted/50"
+                        ? "bg-primary/10 border border-primary/20"
+                        : "hover:bg-muted/50 border border-transparent"
                     )}
                     onClick={() => setSelectedConversation(conv)}
                   >
                     {/* Avatar */}
-                    <Avatar className="w-12 h-12 flex-shrink-0">
-                      <AvatarImage src={conv.recipient_avatar || ''} />
-                      <AvatarFallback className={cn(
-                        "bg-gradient-to-br text-white text-sm font-medium",
-                        getAvatarColor(conv.recipient_phone)
-                      )}>
-                        {getAvatarInitial(conv)}
-                      </AvatarFallback>
-                    </Avatar>
+                    <div className="relative">
+                      <Avatar className="w-11 h-11 flex-shrink-0 ring-2 ring-background shadow-sm">
+                        <AvatarImage src={conv.recipient_avatar || ''} />
+                        <AvatarFallback className={cn(
+                          "bg-gradient-to-br text-white text-sm font-semibold",
+                          getAvatarColor(conv.recipient_phone)
+                        )}>
+                          {getAvatarInitial(conv)}
+                        </AvatarFallback>
+                      </Avatar>
+                      {conv.unread_count > 0 && (
+                        <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-background" />
+                      )}
+                    </div>
                     
-                    <div className="flex-1 min-w-0 border-b border-border py-1">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="font-medium text-[15px] text-foreground truncate">
+                        <p className="font-medium text-sm text-foreground truncate">
                           {getDisplayName(conv)}
                         </p>
                         <span className={cn(
-                          "text-xs flex-shrink-0",
-                          conv.unread_count > 0 ? "text-primary" : "text-muted-foreground/70"
+                          "text-[11px] flex-shrink-0 font-medium",
+                          conv.unread_count > 0 ? "text-primary" : "text-muted-foreground"
                         )}>
                           {formatConversationTime(conv.last_message_at)}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-2 mt-0.5">
-                        <p className="text-sm text-muted-foreground truncate">
-                          Tap to view messages
+                      <div className="flex items-center justify-between gap-2 mt-1">
+                        <p className="text-xs text-muted-foreground truncate">
+                          Click to view messages
                         </p>
                         {conv.unread_count > 0 && (
-                          <span className="bg-primary text-primary-foreground text-[11px] font-medium min-w-[20px] h-5 rounded-full flex items-center justify-center px-1.5 flex-shrink-0">
+                          <span className="bg-primary text-primary-foreground text-[10px] font-bold min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1.5 flex-shrink-0 shadow-sm">
                             {conv.unread_count}
                           </span>
                         )}
@@ -813,13 +845,13 @@ const SeatChat: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-transparent"
+                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <MoreVertical className="w-4 h-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground">
+                      <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground w-44">
                         <DropdownMenuItem 
                           onClick={(e) => {
                             e.stopPropagation();
@@ -1083,90 +1115,116 @@ const SeatChat: React.FC = () => {
       </div>
     ) : (
       /* Reports View */
-      <div className="flex-1 overflow-y-auto p-6">
-        <div className="max-w-5xl mx-auto space-y-6">
+      <div className="flex-1 overflow-y-auto p-6 bg-muted/30">
+        <div className="max-w-6xl mx-auto space-y-6">
+          {/* Page Header */}
+          <div className="mb-8">
+            <h2 className="text-2xl font-bold text-foreground tracking-tight">Analytics Dashboard</h2>
+            <p className="text-muted-foreground mt-1">Track your conversation performance and engagement metrics</p>
+          </div>
+          
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-card rounded-xl p-4 border border-border">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
-                  <MessageSquare className="w-5 h-5 text-primary" />
+            <div className="bg-card rounded-2xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between mb-4">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
+                  <MessageSquare className="w-6 h-6 text-primary" />
                 </div>
-                <span className="text-muted-foreground text-sm">Total Chats</span>
+                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Total</span>
               </div>
-              <p className="text-3xl font-bold text-foreground">{stats.total_conversations}</p>
+              <p className="text-3xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
+              <p className="text-sm text-muted-foreground mt-1">Conversations</p>
             </div>
             
-            <div className="bg-card rounded-xl p-4 border border-border">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                  <Send className="w-5 h-5 text-blue-400" />
+            <div className="bg-card rounded-2xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between mb-4">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500/20 to-blue-500/5 flex items-center justify-center">
+                  <Send className="w-6 h-6 text-blue-500" />
                 </div>
-                <span className="text-muted-foreground text-sm">Sent Today</span>
+                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Today</span>
               </div>
-              <p className="text-3xl font-bold text-foreground">{stats.messages_sent_today}</p>
+              <p className="text-3xl font-bold text-foreground tracking-tight">{stats.messages_sent_today}</p>
+              <p className="text-sm text-muted-foreground mt-1">Messages Sent</p>
             </div>
             
-            <div className="bg-card rounded-xl p-4 border border-border">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
-                  <Eye className="w-5 h-5 text-purple-400" />
+            <div className="bg-card rounded-2xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between mb-4">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-purple-500/20 to-purple-500/5 flex items-center justify-center">
+                  <Eye className="w-6 h-6 text-purple-500" />
                 </div>
-                <span className="text-muted-foreground text-sm">Messages Read</span>
+                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Read</span>
               </div>
-              <p className="text-3xl font-bold text-foreground">{stats.messages_read}</p>
+              <p className="text-3xl font-bold text-foreground tracking-tight">{stats.messages_read}</p>
+              <p className="text-sm text-muted-foreground mt-1">Messages Read</p>
             </div>
             
-            <div className="bg-card rounded-xl p-4 border border-border">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
-                  <Users className="w-5 h-5 text-amber-400" />
+            <div className="bg-card rounded-2xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center justify-between mb-4">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-green-500/20 to-green-500/5 flex items-center justify-center">
+                  <Users className="w-6 h-6 text-green-500" />
                 </div>
-                <span className="text-muted-foreground text-sm">Responses</span>
+                <span className="text-xs font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full">Replies</span>
               </div>
-              <p className="text-3xl font-bold text-foreground">{stats.responses_received}</p>
+              <p className="text-3xl font-bold text-foreground tracking-tight">{stats.responses_received}</p>
+              <p className="text-sm text-muted-foreground mt-1">Responses</p>
             </div>
           </div>
           
-          {/* Response Rate */}
-          <div className="bg-card rounded-xl p-6 border border-border">
-            <h3 className="text-foreground font-medium mb-4 flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-primary" />
-              Response Rate
-            </h3>
-            <div className="flex items-center gap-4">
-              <div className="flex-1 bg-muted rounded-full h-4 overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-primary to-primary/80 transition-all duration-500"
-                  style={{ 
-                    width: `${stats.total_conversations > 0 
-                      ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
-                      : 0}%` 
-                  }}
-                />
+          {/* Response Rate Card */}
+          <div className="bg-card rounded-2xl p-6 border border-border shadow-sm">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-semibold text-foreground">Response Rate</h3>
+                <p className="text-sm text-muted-foreground mt-0.5">Percentage of conversations with replies</p>
               </div>
-              <span className="text-foreground font-bold text-lg min-w-[60px]">
-                {stats.total_conversations > 0 
-                  ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
-                  : 0}%
-              </span>
+              <div className="text-right">
+                <p className="text-4xl font-bold text-primary">
+                  {stats.total_conversations > 0 
+                    ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
+                    : 0}%
+                </p>
+              </div>
             </div>
-            <p className="text-muted-foreground text-sm mt-2">
-              {stats.responses_received} responses from {stats.total_conversations} conversations
-            </p>
+            <div className="relative h-3 bg-muted rounded-full overflow-hidden">
+              <div 
+                className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary to-primary/70 rounded-full transition-all duration-700 ease-out"
+                style={{ 
+                  width: `${stats.total_conversations > 0 
+                    ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
+                    : 0}%` 
+                }}
+              />
+            </div>
+            <div className="flex justify-between mt-3 text-xs text-muted-foreground">
+              <span>{stats.responses_received} responses</span>
+              <span>{stats.total_conversations} total conversations</span>
+            </div>
           </div>
           
-          {/* Quick Info */}
-          <div className="bg-card rounded-xl p-6 border border-border">
-            <h3 className="text-foreground font-medium mb-4">Seat Information</h3>
-            <div className="grid grid-cols-2 gap-4 text-sm">
+          {/* Seat Info Card */}
+          <div className="bg-card rounded-2xl p-6 border border-border shadow-sm">
+            <h3 className="text-lg font-semibold text-foreground mb-4">Workspace Details</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               <div>
-                <p className="text-muted-foreground">Seat Name</p>
-                <p className="text-foreground font-medium">{seat?.name}</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Workspace</p>
+                <p className="text-foreground font-semibold mt-1">{seat?.name}</p>
               </div>
               <div>
-                <p className="text-muted-foreground">Status</p>
-                <p className="text-primary font-medium">● Active</p>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</p>
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                  <span className="text-foreground font-semibold">Active</span>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Efficiency</p>
+                <p className="text-foreground font-semibold mt-1">
+                  {stats.messages_sent_today > 0 ? 'High' : 'Normal'}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Session</p>
+                <p className="text-foreground font-semibold mt-1">Live</p>
               </div>
             </div>
           </div>
