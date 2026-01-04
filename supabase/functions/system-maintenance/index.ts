@@ -185,13 +185,6 @@ Deno.serve(async (req) => {
         }
       }
     }
-    
-    if (stuckAccountsError) {
-      console.error('[system-maintenance] Error fixing stuck active accounts:', stuckAccountsError);
-    } else if (stuckActiveAccounts && stuckActiveAccounts.length > 0) {
-      console.log(`[system-maintenance] Fixed ${stuckActiveAccounts.length} stuck active accounts with ban_reason:`, 
-        stuckActiveAccounts.map(a => `${a.phone_number}: ${a.ban_reason}`));
-    }
 
     // Log summary
     const totalCleaned = 
