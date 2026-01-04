@@ -21,7 +21,6 @@ import {
   Loader2,
   Smartphone,
   Monitor,
-  RefreshCw,
   Key,
   Plus,
   X,
@@ -63,11 +62,9 @@ const Settings: React.FC = () => {
     notifyOnBan: true,
   });
 
-  // API credentials distribution
+  // API credentials
   const [apiCredentials, setApiCredentials] = useState<ApiCredential[]>([]);
   const [isLoadingCredentials, setIsLoadingCredentials] = useState(true);
-  const [isRedistributing, setIsRedistributing] = useState(false);
-  const [totalAccounts, setTotalAccounts] = useState(0);
   
   // Add API credential dialog
   const [isAddApiOpen, setIsAddApiOpen] = useState(false);
@@ -87,12 +84,6 @@ const Settings: React.FC = () => {
         .order('client_type');
       
       if (error) throw error;
-      
-      // Get total accounts
-      const { count } = await supabase
-        .from('telegram_accounts')
-        .select('*', { count: 'exact', head: true });
-      setTotalAccounts(count || 0);
 
       // Get 24h message counts per API credential
       const yesterday = new Date();
@@ -142,23 +133,6 @@ const Settings: React.FC = () => {
     }
   };
 
-  // Redistribute accounts across API credentials
-  const handleRedistribute = async () => {
-    setIsRedistributing(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('redistribute-api-credentials');
-      
-      if (error) throw error;
-      
-      toast.success(`Redistributed ${data.assigned} accounts across API credentials`);
-      fetchApiCredentials();
-    } catch (error) {
-      console.error('Redistribution failed:', error);
-      toast.error('Failed to redistribute accounts');
-    } finally {
-      setIsRedistributing(false);
-    }
-  };
 
   // Add new API credential
   const handleAddApiCredential = async () => {
@@ -182,15 +156,12 @@ const Settings: React.FC = () => {
       
       if (error) throw error;
       
-      toast.success('API credential added! Now redistributing accounts...');
+      toast.success('API credential added successfully!');
       setNewApiName('');
       setNewApiId('');
       setNewApiHash('');
       setNewApiType('android');
       setIsAddApiOpen(false);
-      
-      // Auto-redistribute accounts when new API is added
-      await handleRedistribute();
       fetchApiCredentials();
     } catch (error) {
       console.error('Failed to add API credential:', error);
@@ -394,9 +365,6 @@ const Settings: React.FC = () => {
               <>
                 <div className="grid grid-cols-2 gap-4">
                   {apiCredentials.map((cred) => {
-                    const percentage = totalAccounts > 0 
-                      ? Math.round((cred.accounts_count / totalAccounts) * 100) 
-                      : 0;
                     const iconMap: Record<string, React.ReactNode> = {
                       android: <Smartphone className="w-4 h-4 text-green-500" />,
                       ios: <Smartphone className="w-4 h-4 text-blue-500" />,
@@ -451,14 +419,10 @@ const Settings: React.FC = () => {
                             />
                           </div>
                           
-                          {/* Account distribution */}
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">
-                              {cred.accounts_count} accounts
-                            </span>
-                            <span className="font-medium">{percentage}%</span>
+                          {/* Account count - simplified */}
+                          <div className="text-xs text-muted-foreground">
+                            {cred.accounts_count} accounts assigned
                           </div>
-                          <Progress value={percentage} className="h-1.5 opacity-50" />
                         </div>
                       </div>
                     );
@@ -466,38 +430,14 @@ const Settings: React.FC = () => {
                 </div>
 
                 {apiCredentials.length > 0 && (
-                  <div className="pt-2 space-y-3">
+                  <div className="pt-2 space-y-2">
                     <Separator />
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Total Accounts</span>
-                      <span className="font-medium">{totalAccounts}</span>
+                      <span className="text-muted-foreground">Daily Limit per API</span>
+                      <span className="font-medium">{API_DAILY_LIMIT} messages</span>
                     </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Unassigned</span>
-                      <span className="font-medium">
-                        {totalAccounts - apiCredentials.reduce((sum, c) => sum + c.accounts_count, 0)}
-                      </span>
-                    </div>
-                    <Button 
-                      variant="outline" 
-                      onClick={handleRedistribute}
-                      disabled={isRedistributing}
-                      className="w-full"
-                    >
-                      {isRedistributing ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Redistributing...
-                        </>
-                      ) : (
-                        <>
-                          <RefreshCw className="w-4 h-4 mr-2" />
-                          Redistribute Accounts Evenly
-                        </>
-                      )}
-                    </Button>
-                    <p className="text-xs text-muted-foreground text-center">
-                      Assigns unassigned accounts and balances distribution across all API IDs
+                    <p className="text-xs text-muted-foreground">
+                      System automatically selects accounts from least-used APIs
                     </p>
                   </div>
                 )}
