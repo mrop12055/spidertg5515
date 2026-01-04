@@ -722,12 +722,39 @@ serve(async (req) => {
 
               console.log(`[get-next-task] LAZY ASSIGN: recipient ${recipient.id.slice(0, 8)} -> account ${account.phone_number}`);
             } else {
-              // No eligible accounts available
+              // No eligible accounts available - mark campaign as failed
+              console.log(`[get-next-task] NO ACCOUNTS AVAILABLE for campaign ${recipient.campaign_id} - marking as failed`);
+              
+              // Mark the pending recipient as failed with reason
+              await supabase
+                .from("campaign_recipients")
+                .update({ 
+                  status: "failed", 
+                  failed_reason: "No accounts available to send message",
+                  sent_at: new Date().toISOString()
+                })
+                .eq("id", recipient.id);
+              
+              // Check if all recipients are now processed (sent/failed)
+              const { count: pendingCount } = await supabase
+                .from("campaign_recipients")
+                .select("id", { count: "exact", head: true })
+                .eq("campaign_id", recipient.campaign_id)
+                .eq("status", "pending");
+              
+              if (pendingCount === 0) {
+                // All recipients processed - mark campaign as failed (some couldn't be sent)
+                await supabase
+                  .from("campaigns")
+                  .update({ status: "failed" })
+                  .eq("id", recipient.campaign_id);
+                console.log(`[get-next-task] Campaign ${recipient.campaign_id} marked as FAILED - no accounts available`);
+              }
+              
               recipient = null;
             }
           }
         }
-        
         // If we have a recipient and account, return the task
         if (recipient && account) {
           const campaign = recipient.campaigns;
