@@ -319,49 +319,27 @@ const SeatChat: React.FC = () => {
     validateSeat();
   }, [token]);
 
-  // Fetch conversations for this seat
+  // Fetch conversations for this seat - ONLY campaign conversations (where we messaged first)
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
 
     try {
+      // Only fetch campaign conversations (first_message_sent = true) to reduce load
       const { data, error } = await supabase
         .from('conversations')
-        .select('*')
+        .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
         .eq('seat_id', seat.id)
+        .eq('first_message_sent', true)
         .order('last_message_at', { ascending: false, nullsFirst: false });
 
       if (error) throw error;
       
-      // Fetch last message and check for replies for each conversation
-      const conversationsWithMessages = await Promise.all(
-        (data || []).map(async (conv) => {
-          // Fetch last message and check if there are any incoming messages (replies)
-          const [lastMsgResult, replyCheckResult] = await Promise.all([
-            supabase
-              .from('messages')
-              .select('content, direction')
-              .eq('conversation_id', conv.id)
-              .order('created_at', { ascending: false })
-              .limit(1)
-              .maybeSingle(),
-            supabase
-              .from('messages')
-              .select('id')
-              .eq('conversation_id', conv.id)
-              .eq('direction', 'incoming')
-              .limit(1)
-          ]);
-          
-          return {
-            ...conv,
-            last_message_content: lastMsgResult.data?.content || null,
-            last_message_direction: lastMsgResult.data?.direction || null,
-            has_reply: (replyCheckResult.data?.length || 0) > 0,
-          };
-        })
-      );
-      
-      setConversations(conversationsWithMessages);
+      // Use the conversation's stored values directly (updated by trigger)
+      setConversations((data || []).map(conv => ({
+        ...conv,
+        has_reply: conv.has_reply ?? false,
+        last_message_direction: conv.last_message_direction as 'incoming' | 'outgoing' | undefined,
+      })));
     } catch (err) {
       console.error('Error fetching conversations:', err);
     }
