@@ -65,9 +65,7 @@ const Chat: React.FC = () => {
     blockContacts
   } = useTelegram();
   
-  const [selectedConversation, setSelectedConversation] = useState<string | null>(
-    conversations[0]?.id || null
-  );
+  const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
@@ -246,6 +244,18 @@ const Chat: React.FC = () => {
     if (!lastMessageId && !isTyping) return;
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [lastMessageId, isTyping]);
+
+  // Auto-select first filtered conversation or reset if selected is invalid
+  useEffect(() => {
+    // If nothing is selected and we have conversations, select the first one
+    if (selectedConversation === null && filteredConversations.length > 0) {
+      setSelectedConversation(filteredConversations[0].id);
+    }
+    // If current selection is not in filtered list, reset to first valid or null
+    if (selectedConversation && !filteredConversations.some(c => c.id === selectedConversation)) {
+      setSelectedConversation(filteredConversations[0]?.id || null);
+    }
+  }, [filteredConversations, selectedConversation]);
 
   // Mark conversation as read when selected
   useEffect(() => {
