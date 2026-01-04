@@ -523,29 +523,67 @@ serve(async (req) => {
         .from("campaigns")
         .select("id, name")
         .eq("status", "running");
-      
+
+      const runningIds = (runningCampaigns || []).map((c: { id: string }) => c.id);
+
+      // If the global eligible account pool is empty, campaigns can never progress.
+      // Mark all remaining pending recipients as failed and fail the campaigns.
+      if (runningIds.length > 0 && accounts.length === 0) {
+        console.log(`[get-next-task] Campaign runner: 0 eligible accounts - failing ${runningIds.length} running campaign(s)`);
+
+        await supabase
+          .from("campaign_recipients")
+          .update({
+            status: "failed",
+            failed_reason: "No accounts available to send message",
+            sent_at: new Date().toISOString(),
+          })
+          .in("campaign_id", runningIds)
+          .eq("status", "pending");
+
+        await supabase
+          .from("campaigns")
+          .update({ status: "failed" })
+          .in("id", runningIds);
+
+        return new Response(
+          JSON.stringify({
+            task: "wait",
+            seconds: 30,
+            stop_signal: true,
+            reason: "No eligible accounts available (API/proxy limits) - campaigns failed",
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+
       if (runningCampaigns && runningCampaigns.length > 0) {
         let allCampaignsStopped = true;
-        
+
         for (const campaign of runningCampaigns) {
           // Get accounts assigned to this specific campaign (include restricted_until for temp restriction check)
           const { data: campaignAccountLinks } = await supabase
             .from("campaign_accounts")
             .select("account_id, telegram_accounts!inner(id, status, messages_sent_today, daily_limit, restricted_until)")
             .eq("campaign_id", campaign.id);
-          
+
           // Check if any assigned account is usable (active AND under daily limit AND not temporarily restricted)
-          const now = new Date().toISOString();
+          // AND present in the global eligible pool (accounts[]) so we don't keep campaigns running with unreachable accounts.
+          const eligibleAccountIds = new Set(accounts.map((a: any) => a.id));
+          const nowIso = new Date().toISOString();
+
           const hasUsableAccount = (campaignAccountLinks || []).some((ca: any) => {
             const acc = ca.telegram_accounts;
             if (!acc) return false;
+            if (!eligibleAccountIds.has(acc.id)) return false;
             const limit = acc.daily_limit ?? DAILY_MESSAGE_LIMIT;
             const sentToday = acc.messages_sent_today ?? 0;
-            // Must be active, under limit, and NOT temporarily restricted (restricted_until must be null or in past)
-            const isRestricted = acc.restricted_until && acc.restricted_until > now;
-            return acc.status === 'active' && sentToday < limit && !isRestricted;
+            const isRestricted = acc.restricted_until && acc.restricted_until > nowIso;
+            return acc.status === "active" && sentToday < limit && !isRestricted;
           });
-          
+
           if (!hasUsableAccount) {
             // Check if there are still pending recipients
             const { count: pendingCount } = await supabase
@@ -553,40 +591,37 @@ serve(async (req) => {
               .select("id", { count: "exact", head: true })
               .eq("campaign_id", campaign.id)
               .eq("status", "pending");
-            
+
             // If pending recipients exist, mark campaign as FAILED and mark ALL pending recipients as failed
             if (pendingCount && pendingCount > 0) {
               console.log(`[get-next-task] No usable accounts for campaign "${campaign.name}" - marking ${pendingCount} pending recipients as failed`);
-              
-              // Mark all pending recipients as failed
+
               await supabase
                 .from("campaign_recipients")
-                .update({ 
-                  status: "failed", 
+                .update({
+                  status: "failed",
                   failed_reason: "No accounts available to send message",
-                  sent_at: new Date().toISOString()
+                  sent_at: new Date().toISOString(),
                 })
                 .eq("campaign_id", campaign.id)
                 .eq("status", "pending");
-              
-              // Get current failed count and update campaign
+
               const { count: existingFailedCount } = await supabase
                 .from("campaign_recipients")
                 .select("id", { count: "exact", head: true })
                 .eq("campaign_id", campaign.id)
                 .eq("status", "failed");
-              
+
               await supabase
                 .from("campaigns")
-                .update({ 
+                .update({
                   status: "failed",
-                  failed_count: (existingFailedCount || 0)
+                  failed_count: existingFailedCount || 0,
                 })
                 .eq("id", campaign.id);
-                
+
               console.log(`[get-next-task] Campaign "${campaign.name}" marked as FAILED - no accounts available`);
             } else {
-              // No pending recipients - mark as completed
               console.log(`[get-next-task] Campaign "${campaign.name}" completed - all recipients processed`);
               await supabase
                 .from("campaigns")
@@ -597,33 +632,39 @@ serve(async (req) => {
             allCampaignsStopped = false;
           }
         }
-        
+
         // Only send stop signal if ALL campaigns have been completed
         if (allCampaignsStopped) {
-          return new Response(JSON.stringify({
-            task: "wait",
-            seconds: 30,
-            stop_signal: true,
-            reason: "All campaigns completed - no active accounts"
-          }), {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({
+              task: "wait",
+              seconds: 30,
+              stop_signal: true,
+              reason: "All campaigns completed - no active accounts",
+            }),
+            {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
         }
       }
-      
-      // If no accounts at all, wait
+
+      // If no accounts at all, wait (kept for backwards compatibility)
       if (accounts.length === 0) {
-        return new Response(JSON.stringify({
-          task: "wait",
-          seconds: 30,
-          reason: "No active accounts available"
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({
+            task: "wait",
+            seconds: 30,
+            reason: "No active accounts available",
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
 
       if (accounts.length > 0) {
-        // LAZY ASSIGNMENT FLOW: 
+        // LAZY ASSIGNMENT FLOW:
         // 1. First check for already-assigned pending recipients (with sent_by_account_id)
         // 2. If none, pick an UNASSIGNED pending recipient and assign an account NOW
         // This distributes load: each runner request = 1 DB write max
@@ -762,7 +803,33 @@ serve(async (req) => {
               account = fallback;
               console.log(`[get-next-task] Reassigned recipient ${recipient.id.slice(0, 8)} to ${fallback.phone_number}`);
             } else {
-              // No usable accounts, skip this recipient
+              // No usable accounts for this assigned recipient -> fail it (otherwise it stays pending forever)
+              console.log(`[get-next-task] NO ELIGIBLE ACCOUNTS for recipient ${recipient.id.slice(0, 8)} - marking as failed`);
+
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "failed",
+                  failed_reason: "No accounts available to send message",
+                  sent_at: new Date().toISOString(),
+                })
+                .eq("id", recipient.id)
+                .eq("status", "pending");
+
+              // If that was the last pending recipient, fail the campaign too
+              const { count: pendingLeft } = await supabase
+                .from("campaign_recipients")
+                .select("id", { count: "exact", head: true })
+                .eq("campaign_id", recipient.campaign_id)
+                .eq("status", "pending");
+
+              if ((pendingLeft || 0) === 0) {
+                await supabase
+                  .from("campaigns")
+                  .update({ status: "failed" })
+                  .eq("id", recipient.campaign_id);
+              }
+
               recipient = null;
             }
           }
