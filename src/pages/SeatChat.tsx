@@ -315,71 +315,47 @@ const SeatChat: React.FC = () => {
     validateSeat();
   }, [token]);
 
-  // Fetch conversations for this seat - optimized to avoid N+1 queries
+  // Fetch conversations for this seat
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
 
     try {
-      // Single query to get conversations with last message info
-      const { data: convData, error } = await supabase
+      const { data, error } = await supabase
         .from('conversations')
         .select('*')
         .eq('seat_id', seat.id)
-        .order('last_message_at', { ascending: false, nullsFirst: false })
-        .limit(100); // Limit to prevent timeout
+        .order('last_message_at', { ascending: false, nullsFirst: false });
 
       if (error) throw error;
       
-      if (!convData || convData.length === 0) {
-        setConversations([]);
-        return;
-      }
-      
-      // Get conversation IDs
-      const convIds = convData.map(c => c.id);
-      
-      // Batch fetch: get the latest message for each conversation in ONE query
-      const { data: lastMessages } = await supabase
-        .from('messages')
-        .select('conversation_id, content, direction, created_at')
-        .in('conversation_id', convIds)
-        .order('created_at', { ascending: false });
-      
-      // Batch fetch: check for replies (incoming messages) in ONE query
-      const { data: incomingMessages } = await supabase
-        .from('messages')
-        .select('conversation_id')
-        .in('conversation_id', convIds)
-        .eq('direction', 'incoming')
-        .limit(500);
-      
-      // Create lookup maps for O(1) access
-      const lastMessageMap = new Map<string, { content: string; direction: string }>();
-      if (lastMessages) {
-        for (const msg of lastMessages) {
-          if (!lastMessageMap.has(msg.conversation_id)) {
-            lastMessageMap.set(msg.conversation_id, {
-              content: msg.content,
-              direction: msg.direction
-            });
-          }
-        }
-      }
-      
-      const hasReplySet = new Set<string>();
-      if (incomingMessages) {
-        for (const msg of incomingMessages) {
-          hasReplySet.add(msg.conversation_id);
-        }
-      }
-      
-      // Map conversations with message info
-      const conversationsWithMessages = convData.map(conv => ({
-        ...conv,
-        last_message_content: lastMessageMap.get(conv.id)?.content || null,
-        last_message_direction: (lastMessageMap.get(conv.id)?.direction as 'incoming' | 'outgoing') || null,
-        has_reply: hasReplySet.has(conv.id),
-      }));
+      // Fetch last message and check for replies for each conversation
+      const conversationsWithMessages = await Promise.all(
+        (data || []).map(async (conv) => {
+          // Fetch last message and check if there are any incoming messages (replies)
+          const [lastMsgResult, replyCheckResult] = await Promise.all([
+            supabase
+              .from('messages')
+              .select('content, direction')
+              .eq('conversation_id', conv.id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+            supabase
+              .from('messages')
+              .select('id')
+              .eq('conversation_id', conv.id)
+              .eq('direction', 'incoming')
+              .limit(1)
+          ]);
+          
+          return {
+            ...conv,
+            last_message_content: lastMsgResult.data?.content || null,
+            last_message_direction: lastMsgResult.data?.direction || null,
+            has_reply: (replyCheckResult.data?.length || 0) > 0,
+          };
+        })
+      );
       
       setConversations(conversationsWithMessages);
     } catch (err) {
