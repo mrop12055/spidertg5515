@@ -131,11 +131,11 @@ async def main_loop():
                         "account_id": account_id,
                     }
                 else:
-                    success, error = await send_message(
+                    success, error, meta = await send_message(
                         client, recipient, content,
                         msg.get("media_url")
                     )
-                    
+
                     result = {
                         "success": success,
                         "error": error,
@@ -146,6 +146,8 @@ async def main_loop():
                         "recipient_phone": recipient,
                         "recipient_name": recipient_name,
                     }
+                    if meta:
+                        result.update(meta)
                     
                     if success:
                         messages_sent_by_account[account_id] = messages_sent_by_account.get(account_id, 0) + 1

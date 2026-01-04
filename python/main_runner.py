@@ -410,14 +410,17 @@ async def main_loop():
                 if client and recipient:
                     icon = "⚡" if mode == "live" else "📨"
                     print(f"  {icon} Sending to {recipient}...")
-                    success, error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
-                    await report_result("send", {
+                    success, error, meta = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+                    payload = {
                         "message_id": msg.get("id"),
                         "success": success,
                         "error": error,
                         "campaign_recipient_id": msg.get("campaign_recipient_id"),
                         "account_id": account_id,
-                    })
+                    }
+                    if meta:
+                        payload.update(meta)
+                    await report_result("send", payload)
                     print(f"    {'✓ Sent!' if success else '✗ Failed: ' + str(error)}")
 
                     # Apply campaign pacing (but keep livechat responsive during the wait)
