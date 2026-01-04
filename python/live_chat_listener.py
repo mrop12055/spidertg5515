@@ -277,7 +277,7 @@ async def main_loop():
                         if acc.get("id"):
                             connected_ids.add(acc["id"])
                 # No artificial delay - server returns seconds=0 for instant polling
-            
+                await asyncio.sleep(0.05)  # Tiny sleep to prevent CPU spin
             elif task_type == "send":
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
