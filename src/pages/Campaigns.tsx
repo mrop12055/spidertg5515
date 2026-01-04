@@ -416,7 +416,7 @@ const Campaigns: React.FC = () => {
     if (campaignsLength > 0) fetchReports();
   }, [campaignsLength, fetchReports]);
 
-  // Real-time subscriptions for campaign_recipients and campaigns for instant updates
+  // Real-time subscriptions for campaign_recipients, campaigns, and messages for instant updates
   useEffect(() => {
     if (campaignsLength === 0) return;
     
@@ -437,7 +437,7 @@ const Campaigns: React.FC = () => {
       )
       .subscribe();
 
-    // Also subscribe to campaigns table for status changes
+    // Subscribe to campaigns table for status changes
     const campaignsChannel = supabase
       .channel('campaigns-page-realtime')
       .on(
@@ -454,14 +454,35 @@ const Campaigns: React.FC = () => {
       )
       .subscribe();
 
-    // Fallback polling every 10 seconds (reduced from 5s since we have realtime now)
+    // Subscribe to messages table for real-time delivery status
+    const messagesChannel = supabase
+      .channel('campaign-messages-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'messages'
+        },
+        (payload) => {
+          // Only refresh on status changes (sent, failed, delivered)
+          const newMsg = payload.new as any;
+          if (newMsg && ['sent', 'failed', 'delivered'].includes(newMsg.status)) {
+            fetchReports();
+          }
+        }
+      )
+      .subscribe();
+
+    // Fallback polling every 15 seconds (reduced since we have comprehensive realtime now)
     const interval = window.setInterval(() => {
       fetchReports();
-    }, 10000);
+    }, 15000);
 
     return () => {
       supabase.removeChannel(recipientsChannel);
       supabase.removeChannel(campaignsChannel);
+      supabase.removeChannel(messagesChannel);
       window.clearInterval(interval);
     };
   }, [campaignsLength, fetchReports, refreshData]);
@@ -1849,7 +1870,10 @@ username123
                                   <div className="space-y-2">
                                     {report.accountStats.map((stat) => (
                                       <div key={stat.accountId} className="flex items-center justify-between bg-muted/30 rounded-xl px-4 py-3 border border-border/50">
-                                        <span className="font-medium">{stat.firstName || 'Unknown Account'}</span>
+                                        <div>
+                                          <span className="font-medium">{stat.firstName || 'Unknown'}</span>
+                                          <span className="text-xs text-muted-foreground ml-2">{stat.phoneNumber}</span>
+                                        </div>
                                         <div className="flex items-center gap-4">
                                           <div className="flex items-center gap-2 text-primary">
                                             <Send className="w-4 h-4" />
@@ -1861,10 +1885,45 @@ username123
                                               <span className="font-semibold">{stat.uniqueRecipientsFailed}</span>
                                             </div>
                                           )}
+                                          {stat.uniqueRecipientsPending > 0 && (
+                                            <div className="flex items-center gap-2 text-muted-foreground">
+                                              <Clock className="w-4 h-4" />
+                                              <span className="font-semibold">{stat.uniqueRecipientsPending}</span>
+                                            </div>
+                                          )}
                                         </div>
                                       </div>
                                     ))}
                                   </div>
+                                </div>
+                              )}
+                              
+                              {/* Failed Recipients with Reasons */}
+                              {report?.failedRecipients && report.failedRecipients.length > 0 && (
+                                <div>
+                                  <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                                    <XCircle className="w-4 h-4 text-destructive" />
+                                    Failed Recipients ({report.failedRecipients.length})
+                                  </h4>
+                                  <ScrollArea className="h-[200px] border rounded-xl">
+                                    <div className="divide-y">
+                                      {report.failedRecipients.map((recipient, idx) => (
+                                        <div key={idx} className="p-3">
+                                          <div className="flex justify-between items-start">
+                                            <div>
+                                              <span className="font-medium text-sm">{recipient.name || recipient.phone_number}</span>
+                                              {recipient.name && (
+                                                <span className="text-xs text-muted-foreground ml-2">{recipient.phone_number}</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                          <p className="text-xs text-destructive mt-1 truncate" title={recipient.failed_reason || 'Unknown error'}>
+                                            {recipient.failed_reason || 'Unknown error'}
+                                          </p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </ScrollArea>
                                 </div>
                               )}
                             </div>
