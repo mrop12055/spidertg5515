@@ -463,12 +463,12 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                             timeout=30
                         )
                     else:
-                        await asyncio.wait_for(client.send_message(entity, content), timeout=15)
+                        await asyncio.wait_for(client.send_message(entity, content, link_preview=True), timeout=15)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
-                await asyncio.wait_for(client.send_message(entity, content), timeout=15)
+                await asyncio.wait_for(client.send_message(entity, content, link_preview=True), timeout=15)
         else:
-            await asyncio.wait_for(client.send_message(entity, content), timeout=15)
+            await asyncio.wait_for(client.send_message(entity, content, link_preview=True), timeout=15)
 
         return True, None, meta
     except asyncio.TimeoutError:
