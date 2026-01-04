@@ -376,6 +376,21 @@ serve(async (req) => {
                 restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
               })
               .eq("id", account_id);
+            
+            // Reset the current recipient to pending so it can be retried
+            // by another account or when this account becomes available again
+            if (campaign_recipient_id) {
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  sent_by_account_id: null,  // Clear so a different account can pick it up
+                  failed_reason: null,
+                })
+                .eq("id", campaign_recipient_id);
+              
+              console.log(`[report-task-result] Recipient ${campaign_recipient_id} reset to pending for retry (account restricted)`);
+            }
           } else if (isSkipOnly && campaign_recipient_id) {
             // Recipient-side issue (e.g. "user was deleted") - mark recipient as failed, keep account active
             console.log(`[report-task-result] Recipient-side issue - marking as failed: ${error}`);
