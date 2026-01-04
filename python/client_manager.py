@@ -439,7 +439,7 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
         parse_mode = None
         try:
             import re
-            url_re = re.compile(r"(https?://[^\s<>"]+)")
+            url_re = re.compile(r'(https?://[^\s<>"\']+)')
             if content and url_re.search(content):
                 parse_mode = 'md'
 
