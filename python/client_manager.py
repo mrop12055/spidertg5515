@@ -153,9 +153,16 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
     
     try:
-        # Get API credentials
-        api_id = account.get("api_id") or TELEGRAM_API_ID
-        api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+        # Get API credentials from joined telegram_api_credentials (priority) or fallback to account/config
+        api_creds = account.get("telegram_api_credentials")
+        if api_creds and api_creds.get("api_id") and api_creds.get("api_hash"):
+            api_id = api_creds["api_id"]
+            api_hash = api_creds["api_hash"]
+            print(f"  [API] Using credential: {api_creds.get('client_type', 'unknown')} ({api_id})")
+        else:
+            api_id = account.get("api_id") or TELEGRAM_API_ID
+            api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+            print(f"  [API] Using account/default API: {api_id}")
         
         # Create client with optimized settings
         client = TelegramClient(
