@@ -80,7 +80,8 @@ serve(async (req) => {
 
     // Maintenance: requeue "sending" messages that got stuck (e.g. runner crash / timeout).
     // We run this on every request because the update is a no-op unless something is actually stuck.
-    const sendingCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    // Using 30 seconds timeout for faster recovery of stuck messages
+    const sendingCutoff = new Date(Date.now() - 30 * 1000).toISOString();
     const { data: resetRows, error: resetErr } = await supabase
       .from("messages")
       .update({

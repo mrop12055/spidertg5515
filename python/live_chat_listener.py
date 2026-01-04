@@ -283,7 +283,8 @@ async def main_loop():
                 recipient = task.get("recipient")
                 account = task.get("account", {})
                 
-                client = await get_or_create_client(account, setup_handler=setup_message_handler)
+                # Skip profile sync for speed - just get/reuse client connection
+                client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True)
                 if client and recipient:
                     print(f"  ⚡ Live reply to {recipient}...")
                     
