@@ -427,11 +427,12 @@ const Campaigns: React.FC = () => {
     }, 500); // Wait 500ms before fetching to batch multiple updates
   }, [fetchReports]);
 
-  // Real-time subscriptions for campaign_recipients, campaigns, and messages for instant updates
+  // Real-time subscriptions for campaign_recipients and campaigns for live updates
   useEffect(() => {
     if (campaignsLength === 0) return;
     
     // Subscribe to campaign_recipients changes for instant progress updates
+    // This is the primary source of truth for campaign progress
     const recipientsChannel = supabase
       .channel('campaign-recipients-realtime')
       .on(
@@ -447,7 +448,7 @@ const Campaigns: React.FC = () => {
       )
       .subscribe();
 
-    // Subscribe to campaigns table for status changes
+    // Subscribe to campaigns table for status changes only
     const campaignsChannel = supabase
       .channel('campaigns-page-realtime')
       .on(
@@ -458,36 +459,15 @@ const Campaigns: React.FC = () => {
           table: 'campaigns'
         },
         () => {
-          // Only fetch reports, don't call refreshData() as it causes page flash
           debouncedFetchReports();
         }
       )
       .subscribe();
 
-    // Subscribe to messages table for real-time delivery status
-    const messagesChannel = supabase
-      .channel('campaign-messages-realtime')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'messages'
-        },
-        (payload) => {
-          // Only refresh on status changes (sent, failed, delivered)
-          const newMsg = payload.new as any;
-          if (newMsg && ['sent', 'failed', 'delivered'].includes(newMsg.status)) {
-            debouncedFetchReports();
-          }
-        }
-      )
-      .subscribe();
-
-    // Fallback polling every 20 seconds
+    // Fallback polling every 30 seconds (reduced since realtime handles most updates)
     const interval = window.setInterval(() => {
       fetchReports();
-    }, 20000);
+    }, 30000);
 
     return () => {
       if (debounceTimerRef.current) {
@@ -495,7 +475,6 @@ const Campaigns: React.FC = () => {
       }
       supabase.removeChannel(recipientsChannel);
       supabase.removeChannel(campaignsChannel);
-      supabase.removeChannel(messagesChannel);
       window.clearInterval(interval);
     };
   }, [campaignsLength, debouncedFetchReports, fetchReports]);
