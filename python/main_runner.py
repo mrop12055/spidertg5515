@@ -157,6 +157,51 @@ async def warmup_view_content(client):
         return False, str(e)
 
 
+async def verify_session(client, account_id: str):
+    """Verify if session is active using SAFE methods only"""
+    try:
+        me = await asyncio.wait_for(client.get_me(), timeout=10)
+        if not me:
+            return "disconnected", "Could not get user info", None
+        
+        # Try to get dialogs - this fails for deleted/frozen accounts
+        try:
+            dialogs = await asyncio.wait_for(client.get_dialogs(limit=1), timeout=10)
+        except Exception as dialog_err:
+            error_str = str(dialog_err).lower()
+            if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated", "auth_key"]):
+                return "banned", f"Account deleted: {dialog_err}", None
+            if "frozen" in error_str:
+                return "frozen", f"Account frozen: {dialog_err}", None
+        
+        # Try to get contacts - frozen accounts often fail this
+        try:
+            from telethon.tl.functions.contacts import GetContactsRequest
+            await asyncio.wait_for(client(GetContactsRequest(hash=0)), timeout=10)
+        except Exception as contacts_err:
+            error_str = str(contacts_err).lower()
+            if "frozen" in error_str:
+                return "frozen", f"Account frozen: {contacts_err}", None
+            if any(x in error_str for x in ["deleted", "deactivated", "banned"]):
+                return "banned", f"Account banned: {contacts_err}", None
+        
+        return "active", None, {
+            "telegram_id": me.id,
+            "username": me.username,
+            "first_name": me.first_name,
+            "last_name": me.last_name
+        }
+    except asyncio.TimeoutError:
+        return "disconnected", "Connection timeout", None
+    except Exception as e:
+        error_str = str(e).lower()
+        if "auth" in error_str or "session" in error_str or "revoked" in error_str:
+            return "disconnected", str(e), None
+        if any(x in error_str for x in ["deleted", "deactivated", "banned"]):
+            return "banned", str(e), None
+        return "disconnected", str(e), None
+
+
 # ========== MESSAGE HANDLER ==========
 async def setup_message_handler(client, account_id: str):
     @client.on(events.NewMessage(incoming=True))
@@ -465,6 +510,68 @@ async def main_loop():
                         "account_id": account.get("id"),
                         "api_credential_id": api_credential_id,
                         "success": False,
+                        "error": str(e)
+                    })
+                    print(f"    ✗ Error: {e}")
+            
+            elif task_type == "sync_profile":
+                task_id = task.get("task_id")
+                account = task.get("account", {})
+                
+                print(f"  🔄 Syncing profile for {account.get('phone_number')}...")
+                # Force full profile sync including avatar
+                client = await get_or_create_client(account, skip_avatar=False, force_profile_sync=True)
+                if client:
+                    await report_result("sync_profile", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": True
+                    })
+                    print(f"    ✓ Profile synced")
+                else:
+                    await report_result("sync_profile", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "success": False,
+                        "error": "Could not connect"
+                    })
+                    print(f"    ✗ Failed to connect")
+            
+            elif task_type == "verify_session":
+                task_id = task.get("task_id")
+                account = task.get("account", {})
+                
+                print(f"  🔍 Verifying session for {account.get('phone_number')}...")
+                try:
+                    client = await get_or_create_client(account)
+                    if client:
+                        status, error, user_data = await verify_session(client, account.get("id"))
+                        await report_result("verify_session", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "status": status,
+                            "error": error,
+                            "user_data": user_data
+                        })
+                        print(f"    Status: {status}" + (f" ({error})" if error else ""))
+                    else:
+                        await report_result("verify_session", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "status": "skip",
+                            "error": "Connection handled by get_or_create_client"
+                        })
+                        print(f"    ✗ Could not connect")
+                except Exception as e:
+                    error_str = str(e).lower()
+                    if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
+                        status = "banned"
+                    else:
+                        status = "disconnected"
+                    await report_result("verify_session", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "status": status,
                         "error": str(e)
                     })
                     print(f"    ✗ Error: {e}")
