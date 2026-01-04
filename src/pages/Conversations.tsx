@@ -34,6 +34,7 @@ import {
   Square
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { LinkifiedText } from '@/components/chat/LinkifiedText';
 import { format, isToday, isYesterday, isSameDay, subDays } from 'date-fns';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -1066,7 +1067,9 @@ const Chat: React.FC = () => {
                                     </div>
                                   )}
                                   {msg.content && (
-                                    <p className="text-sm leading-relaxed break-words">{msg.content}</p>
+                                    <p className="text-sm leading-relaxed break-words">
+                                      <LinkifiedText text={msg.content} />
+                                    </p>
                                   )}
                                   {/* Show failed reason if message failed */}
                                   {msg.status === 'failed' && msg.failedReason && (
