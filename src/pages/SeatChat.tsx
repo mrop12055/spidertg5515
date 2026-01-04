@@ -942,7 +942,7 @@ const SeatChat: React.FC = () => {
                       <div
                         key={conv.id}
                         className={cn(
-                          "flex items-center gap-2.5 px-2.5 py-2 cursor-pointer transition-all duration-200 group rounded-lg",
+                          "flex items-center gap-3 px-3 py-3 cursor-pointer transition-all duration-200 group rounded-xl",
                           selectedConversation?.id === conv.id
                             ? "bg-primary/10 border border-primary/30 shadow-sm shadow-primary/10"
                             : "hover:bg-muted/60 border border-transparent"
@@ -951,47 +951,47 @@ const SeatChat: React.FC = () => {
                       >
                         {/* Avatar */}
                         <div className="relative flex-shrink-0">
-                          <Avatar className="w-9 h-9 ring-2 ring-background/80 shadow-sm">
+                          <Avatar className="w-12 h-12 ring-2 ring-background/80 shadow-md">
                             <AvatarImage src={conv.recipient_avatar || ''} />
                             <AvatarFallback className={cn(
-                              "bg-gradient-to-br text-white text-[10px] font-bold",
+                              "bg-gradient-to-br text-white text-sm font-bold",
                               getAvatarColor(conv.recipient_phone)
                             )}>
                               {getAvatarInitial(conv)}
                             </AvatarFallback>
                           </Avatar>
                           {conv.is_pinned && (
-                            <span className="absolute -top-0.5 -left-0.5 w-3.5 h-3.5 rounded-full bg-amber-500 border-2 border-card flex items-center justify-center">
-                              <Pin className="w-2 h-2 text-white" />
+                            <span className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-amber-500 border-2 border-card flex items-center justify-center">
+                              <Pin className="w-2.5 h-2.5 text-white" />
                             </span>
                           )}
                           {conv.unread_count > 0 && (
-                            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-primary border-2 border-card animate-pulse" />
+                            <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-card animate-pulse" />
                           )}
                         </div>
                         
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between gap-1.5">
-                            <div className="flex items-center gap-1 min-w-0">
-                              <p className="font-semibold text-xs text-foreground truncate">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <p className="font-semibold text-sm text-foreground truncate">
                                 {getDisplayName(conv)}
                               </p>
                               {conv.first_message_sent && (
-                                <span className="flex-shrink-0 px-1 py-0.5 rounded text-[7px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                                <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
                                   Campaign
                                 </span>
                               )}
                             </div>
                             <span className={cn(
-                              "text-[9px] flex-shrink-0 font-medium tabular-nums",
+                              "text-xs flex-shrink-0 font-medium tabular-nums",
                               conv.unread_count > 0 ? "text-primary font-semibold" : "text-muted-foreground/70"
                             )}>
                               {formatConversationTime(conv.last_message_at)}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between gap-1.5 mt-0.5">
+                          <div className="flex items-center justify-between gap-2 mt-1">
                             <p className={cn(
-                              "text-[10px] truncate",
+                              "text-xs truncate",
                               conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
                             )}>
                               {conv.last_message_content ? (
@@ -999,14 +999,14 @@ const SeatChat: React.FC = () => {
                                   {conv.last_message_direction === 'outgoing' && (
                                     <span className="text-muted-foreground/50">You: </span>
                                   )}
-                                  {conv.last_message_content.slice(0, 30)}{conv.last_message_content.length > 30 ? '...' : ''}
+                                  {conv.last_message_content.slice(0, 40)}{conv.last_message_content.length > 40 ? '...' : ''}
                                 </>
                               ) : (
                                 <span className="italic text-muted-foreground/50">No messages</span>
                               )}
                             </p>
                             {conv.unread_count > 0 && (
-                              <span className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-[8px] font-bold min-w-[16px] h-4 rounded-full flex items-center justify-center px-1 flex-shrink-0 shadow-sm">
+                              <span className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-[9px] font-bold min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1.5 flex-shrink-0 shadow-sm">
                                 {conv.unread_count}
                               </span>
                             )}
