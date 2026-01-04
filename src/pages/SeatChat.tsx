@@ -665,26 +665,38 @@ const SeatChat: React.FC = () => {
         case 'revoked':
           return {
             title: 'Link Revoked',
-            message: 'This link has been revoked and you can no longer access this chat. Please ask your administrator for a new link.',
-            icon: <AlertCircle className="w-8 h-8 text-destructive" />
+            subtitle: 'Access Denied',
+            message: 'This link has been revoked and you can no longer access this chat.',
+            action: 'Please ask your administrator for a new link.',
+            iconBg: 'from-red-500/20 to-rose-500/20',
+            iconColor: 'text-red-500'
           };
         case 'deactivated':
           return {
-            title: 'Seat Deactivated',
-            message: 'This workspace has been deactivated. Please contact your administrator to reactivate it.',
-            icon: <AlertCircle className="w-8 h-8 text-orange-500" />
+            title: 'Workspace Inactive',
+            subtitle: 'Temporarily Unavailable',
+            message: 'This workspace has been deactivated by the administrator.',
+            action: 'Contact your administrator to reactivate access.',
+            iconBg: 'from-orange-500/20 to-amber-500/20',
+            iconColor: 'text-orange-500'
           };
         case 'invalid_link':
           return {
             title: 'Invalid Link',
-            message: 'The link you are trying to access is invalid. Please check the URL or request a new link.',
-            icon: <AlertCircle className="w-8 h-8 text-destructive" />
+            subtitle: 'Page Not Found',
+            message: 'The link you are trying to access is invalid or expired.',
+            action: 'Please check the URL or request a new link.',
+            iconBg: 'from-red-500/20 to-rose-500/20',
+            iconColor: 'text-red-500'
           };
         default:
           return {
-            title: 'Access Error',
-            message: 'Failed to load this workspace. Please try again later.',
-            icon: <AlertCircle className="w-8 h-8 text-destructive" />
+            title: 'Something Went Wrong',
+            subtitle: 'Connection Error',
+            message: 'We couldn\'t load this workspace at the moment.',
+            action: 'Please try again later or contact support.',
+            iconBg: 'from-red-500/20 to-rose-500/20',
+            iconColor: 'text-red-500'
           };
       }
     };
@@ -692,23 +704,76 @@ const SeatChat: React.FC = () => {
     const errorContent = getErrorContent();
 
     return (
-      <div className="h-screen bg-gradient-to-br from-muted/30 via-background to-muted/20 flex items-center justify-center p-4">
-        <Card className="max-w-md w-full bg-card border-border shadow-2xl">
-          <CardContent className="pt-10 pb-10 text-center space-y-4">
-            <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
-              {errorContent.icon}
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-6">
+        {/* Animated background elements */}
+        <div className="absolute inset-0 overflow-hidden pointer-events-none">
+          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl animate-pulse" />
+          <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-destructive/5 rounded-full blur-3xl animate-pulse delay-1000" />
+        </div>
+        
+        <div className="relative max-w-lg w-full">
+          {/* Main Card */}
+          <div className="relative bg-gradient-to-b from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-700/50 shadow-2xl overflow-hidden">
+            {/* Top decorative bar */}
+            <div className="h-1.5 bg-gradient-to-r from-red-500 via-rose-500 to-orange-500" />
+            
+            <div className="p-10 text-center space-y-8">
+              {/* Icon with animated rings */}
+              <div className="relative mx-auto w-28 h-28">
+                <div className={`absolute inset-0 bg-gradient-to-br ${errorContent.iconBg} rounded-full animate-ping opacity-20`} />
+                <div className={`absolute inset-2 bg-gradient-to-br ${errorContent.iconBg} rounded-full animate-pulse`} />
+                <div className="relative w-full h-full rounded-full bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-600/50 flex items-center justify-center shadow-xl">
+                  <AlertCircle className={`w-12 h-12 ${errorContent.iconColor}`} />
+                </div>
+              </div>
+              
+              {/* Content */}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <p className="text-sm font-semibold uppercase tracking-widest text-slate-400">
+                    {errorContent.subtitle}
+                  </p>
+                  <h1 className="text-3xl font-bold text-white tracking-tight">
+                    {errorContent.title}
+                  </h1>
+                </div>
+                
+                <div className="max-w-sm mx-auto space-y-2">
+                  <p className="text-slate-300 text-base leading-relaxed">
+                    {errorContent.message}
+                  </p>
+                  <p className="text-slate-400 text-sm">
+                    {errorContent.action}
+                  </p>
+                </div>
+              </div>
+              
+              {/* Divider */}
+              <div className="flex items-center gap-4">
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+                <span className="text-slate-500 text-xs font-medium">NEED HELP?</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+              </div>
+              
+              {/* Footer */}
+              <div className="space-y-4">
+                <p className="text-slate-500 text-sm">
+                  Contact your workspace administrator for assistance
+                </p>
+                
+                {/* Decorative elements */}
+                <div className="flex justify-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-slate-600" />
+                  <div className="w-2 h-2 rounded-full bg-slate-700" />
+                  <div className="w-2 h-2 rounded-full bg-slate-600" />
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold text-foreground">{errorContent.title}</h2>
-              <p className="text-muted-foreground leading-relaxed">{errorContent.message}</p>
-            </div>
-            <div className="pt-4">
-              <p className="text-xs text-muted-foreground/70">
-                Need help? Contact your workspace administrator.
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+          </div>
+          
+          {/* Bottom shadow accent */}
+          <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-3/4 h-8 bg-primary/20 blur-2xl rounded-full" />
+        </div>
       </div>
     );
   }
