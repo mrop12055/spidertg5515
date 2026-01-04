@@ -275,6 +275,19 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
     try:
         api_id = account.get("api_id") or TELEGRAM_API_ID
         api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+        api_credential_id = account.get("api_credential_id")
+        
+        # Validate API format BEFORE trying to connect
+        is_valid, format_error = validate_api_format(api_id, api_hash)
+        if not is_valid:
+            print(f"  [API_INVALID] {account['phone_number']}: {format_error}")
+            if api_credential_id:
+                await report_result("api_credential_invalid", {
+                    "account_id": account_id,
+                    "api_credential_id": api_credential_id,
+                    "error": format_error
+                })
+            return None
         
         client = TelegramClient(
             session_path, int(api_id), api_hash,
