@@ -122,10 +122,27 @@ async def change_password(client, existing_pwd, new_pwd):
 
 
 async def logout_other_sessions(client):
+    """Logout all other sessions EXCEPT the current one"""
     try:
-        from telethon.tl.functions.auth import ResetAuthorizationsRequest
-        await client(ResetAuthorizationsRequest())
-        return True, None
+        from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
+        
+        # Get all active sessions
+        result = await client(GetAuthorizationsRequest())
+        
+        terminated_count = 0
+        for auth in result.authorizations:
+            # Skip the current session (the one we're using)
+            if auth.current:
+                continue
+            
+            # Terminate this other session
+            try:
+                await client(ResetAuthorizationRequest(hash=auth.hash))
+                terminated_count += 1
+            except Exception as e:
+                print(f"    Could not terminate session {auth.hash}: {e}")
+        
+        return True, f"Terminated {terminated_count} other session(s)"
     except Exception as e:
         return False, str(e)
 
