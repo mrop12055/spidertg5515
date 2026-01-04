@@ -158,7 +158,38 @@ async def warmup_view_content(client):
 
 
 # ========== MESSAGE HANDLER ==========
+async def check_conversation_exists(account_id: str, sender_id: int) -> bool:
+    """Check if we have an existing conversation (meaning we messaged them first)"""
+    import httpx
+    from config import SUPABASE_URL, SUPABASE_KEY
+    
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            response = await http.get(
+                f"{SUPABASE_URL}/rest/v1/conversations",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}"
+                },
+                params={
+                    "account_id": f"eq.{account_id}",
+                    "recipient_telegram_id": f"eq.{sender_id}",
+                    "select": "id,first_message_sent"
+                }
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    return data[0].get("first_message_sent", False)
+            return False
+    except Exception as e:
+        print(f"    ⚠ Check conversation error: {e}")
+        return False
+
+
 async def setup_message_handler(client, account_id: str):
+    """Set up handler for incoming messages - ONLY for campaign-initiated conversations"""
     @client.on(events.NewMessage(incoming=True))
     async def handler(event):
         try:
@@ -171,15 +202,23 @@ async def setup_message_handler(client, account_id: str):
             if not isinstance(sender, User):
                 return
             
+            # Get sender name safely for logging
+            first_name = getattr(sender, 'first_name', None) or ''
+            last_name = getattr(sender, 'last_name', None) or ''
+            sender_name = f"{first_name} {last_name}".strip() or str(sender.id)
+            
+            # FILTER: Only process messages from conversations WE initiated
+            conversation_exists = await check_conversation_exists(account_id, sender.id)
+            if not conversation_exists:
+                print(f"  🚫 Skipping message from {sender_name} (not a campaign contact)")
+                return
+            
             content = event.message.text or "[Media message]"
             media_type = "image" if event.message.photo else None
             if event.message.photo:
                 content = "[Photo] " + (event.message.text or "")
             
-            # Get sender name safely
-            first_name = getattr(sender, 'first_name', None) or ''
-            last_name = getattr(sender, 'last_name', None) or ''
-            sender_name = f"{first_name} {last_name}".strip() or str(sender.id)
+            print(f"  📥 [IN] From {sender_name}: {content[:50]}...")
             
             await report_result("incoming_message", {
                 "account_id": account_id,
