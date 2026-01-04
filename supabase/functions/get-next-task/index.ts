@@ -78,19 +78,26 @@ serve(async (req) => {
       );
     }
 
-    // NOTE: Maintenance tasks run only 10% of requests to reduce load
-    const shouldRunMaintenance = Math.random() < 0.1;
-    
-    if (shouldRunMaintenance) {
-      // Reset stuck messages and cancel paused campaign messages
-      const sendingCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-      await supabase
-        .from("messages")
-        .update({ status: "pending" })
-        .eq("status", "sending")
-        .lt("created_at", sendingCutoff);
+    // Maintenance: requeue "sending" messages that got stuck (e.g. runner crash / timeout).
+    // We run this on every request because the update is a no-op unless something is actually stuck.
+    const sendingCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const { data: resetRows, error: resetErr } = await supabase
+      .from("messages")
+      .update({
+        status: "pending",
+        failed_reason: "Requeued: stuck in sending",
+      })
+      .eq("status", "sending")
+      .lt("created_at", sendingCutoff)
+      .select("id");
+
+    if (resetErr) {
+      console.log(`[get-next-task] Maintenance: could not requeue stuck messages: ${resetErr.message}`);
+    } else if (resetRows && resetRows.length > 0) {
+      console.log(`[get-next-task] Maintenance: requeued ${resetRows.length} stuck message(s)`);
     }
-    
+
+
     const now = new Date();
 
     // Get all active accounts with joins but LIMIT to prevent timeout
