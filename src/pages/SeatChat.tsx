@@ -53,6 +53,7 @@ interface Conversation {
   first_message_sent: boolean | null;
   last_message_content?: string;
   last_message_direction?: 'incoming' | 'outgoing';
+  has_reply?: boolean;
 }
 
 interface Message {
@@ -109,6 +110,7 @@ const SeatChat: React.FC = () => {
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [hiddenConversations, setHiddenConversations] = useState<Set<string>>(new Set());
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('7d');
+  const [showRepliedOnly, setShowRepliedOnly] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
@@ -186,6 +188,9 @@ const SeatChat: React.FC = () => {
   const filteredConversations = deduplicateConversations(
     conversations.filter(conv => {
       if (hiddenConversations.has(conv.id)) return false;
+      
+      // Apply "replied only" filter
+      if (showRepliedOnly && !conv.has_reply) return false;
       
       // When searching, ignore time filter to search ALL conversations
       if (!searchQuery) {
@@ -266,21 +271,31 @@ const SeatChat: React.FC = () => {
 
       if (error) throw error;
       
-      // Fetch last message for each conversation
+      // Fetch last message and check for replies for each conversation
       const conversationsWithMessages = await Promise.all(
         (data || []).map(async (conv) => {
-          const { data: lastMsg } = await supabase
-            .from('messages')
-            .select('content, direction')
-            .eq('conversation_id', conv.id)
-            .order('created_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
+          // Fetch last message and check if there are any incoming messages (replies)
+          const [lastMsgResult, replyCheckResult] = await Promise.all([
+            supabase
+              .from('messages')
+              .select('content, direction')
+              .eq('conversation_id', conv.id)
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+            supabase
+              .from('messages')
+              .select('id')
+              .eq('conversation_id', conv.id)
+              .eq('direction', 'incoming')
+              .limit(1)
+          ]);
           
           return {
             ...conv,
-            last_message_content: lastMsg?.content || null,
-            last_message_direction: lastMsg?.direction || null,
+            last_message_content: lastMsgResult.data?.content || null,
+            last_message_direction: lastMsgResult.data?.direction || null,
+            has_reply: (replyCheckResult.data?.length || 0) > 0,
           };
         })
       );
@@ -785,6 +800,25 @@ const SeatChat: React.FC = () => {
                 </button>
               ))}
             </div>
+
+            {/* Replied Filter Toggle */}
+            <button
+              onClick={() => setShowRepliedOnly(!showRepliedOnly)}
+              className={cn(
+                "w-full flex items-center justify-center gap-2 px-3 py-2 text-xs font-semibold rounded-xl transition-all duration-200 border",
+                showRepliedOnly 
+                  ? "bg-primary/10 text-primary border-primary/30" 
+                  : "bg-muted/40 text-muted-foreground border-border/30 hover:text-foreground hover:bg-muted/60"
+              )}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              {showRepliedOnly ? 'Showing Replied Only' : 'Show Replied Only'}
+              {showRepliedOnly && (
+                <span className="ml-1 px-1.5 py-0.5 text-[10px] bg-primary/20 rounded-full">
+                  {conversations.filter(c => c.has_reply && !hiddenConversations.has(c.id)).length}
+                </span>
+              )}
+            </button>
 
             {/* Search - Modern Style */}
             <div className="relative">
