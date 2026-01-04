@@ -23,7 +23,6 @@ import {
   Zap,
   Send,
   UserCheck,
-  AlertTriangle,
   Phone
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -71,13 +70,6 @@ interface PendingMessage {
   failed_reason: string | null;
 }
 
-interface RestrictedAccount {
-  id: string;
-  phone_number: string;
-  status: string;
-  ban_reason: string | null;
-  restricted_until: string | null;
-}
 
 const DatabaseHealth = () => {
   const [health, setHealth] = useState<SystemHealth | null>(null);
@@ -94,9 +86,6 @@ const DatabaseHealth = () => {
   const [completedWarmupTasks, setCompletedWarmupTasks] = useState<Task[]>([]);
   const [completedRecipients, setCompletedRecipients] = useState<Recipient[]>([]);
   const [completedMessages, setCompletedMessages] = useState<PendingMessage[]>([]);
-  // Error breakdown and restricted accounts
-  const [failedReasons, setFailedReasons] = useState<{reason: string; count: number}[]>([]);
-  const [restrictedAccounts, setRestrictedAccounts] = useState<RestrictedAccount[]>([]);
   // Recent individual errors with timestamps
   const [recentErrors, setRecentErrors] = useState<{id: string; phone: string; reason: string; timestamp: string}[]>([]);
   const [loading, setLoading] = useState(true);
@@ -199,43 +188,6 @@ const DatabaseHealth = () => {
       if (completedRecipientsRes.data) setCompletedRecipients(completedRecipientsRes.data);
       if (completedMessagesRes.data) setCompletedMessages(completedMessagesRes.data);
 
-      // Fetch error breakdown - ALL records with failed_reason (any status)
-      const { data: failedRecipients } = await supabase
-        .from('campaign_recipients')
-        .select('failed_reason')
-        .not('failed_reason', 'is', null);
-
-      // Also fetch messages with failed_reason (any status)
-      const { data: failedMessages } = await supabase
-        .from('messages')
-        .select('failed_reason')
-        .not('failed_reason', 'is', null);
-
-      // Count failed reasons from both sources
-      const reasonCounts: Record<string, number> = {};
-      (failedRecipients || []).forEach(r => {
-        const reason = r.failed_reason || 'Unknown error';
-        reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
-      });
-      (failedMessages || []).forEach(m => {
-        const reason = m.failed_reason || 'Unknown error';
-        reasonCounts[reason] = (reasonCounts[reason] || 0) + 1;
-      });
-      
-      setFailedReasons(
-        Object.entries(reasonCounts)
-          .map(([reason, count]) => ({ reason, count }))
-          .sort((a, b) => b.count - a.count)
-      );
-
-      // Fetch restricted accounts
-      const { data: restrictedData } = await supabase
-        .from('telegram_accounts')
-        .select('id, phone_number, status, ban_reason, restricted_until')
-        .or('status.eq.restricted,status.eq.cooldown,status.eq.frozen')
-        .order('restricted_until', { ascending: true });
-
-      setRestrictedAccounts(restrictedData || []);
 
       // Fetch recent individual errors (last 50)
       const { data: recentFailedRecipients } = await supabase
@@ -608,83 +560,6 @@ const DatabaseHealth = () => {
         </Card>
       </div>
 
-      {/* Error Breakdown & Restricted Accounts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        {/* Error Breakdown */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-destructive" />
-              Error Breakdown
-            </CardTitle>
-            <CardDescription>Most common failure reasons</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[300px]">
-              {failedReasons.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
-                  <p>No errors recorded</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {failedReasons.map((item, index) => (
-                    <div key={index} className="p-3 rounded-lg border bg-muted/30 border-border/50">
-                      <div className="flex items-center justify-between mb-2">
-                        <Badge variant="secondary" className="bg-destructive/10 text-destructive border-destructive/20">
-                          {item.count} occurrences
-                        </Badge>
-                      </div>
-                      <p className="text-sm">{item.reason}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </CardContent>
-        </Card>
-
-        {/* Restricted Accounts */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="w-5 h-5 text-muted-foreground" />
-              Restricted Accounts
-            </CardTitle>
-            <CardDescription>Accounts with sending limitations</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <ScrollArea className="h-[300px]">
-              {restrictedAccounts.length === 0 ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
-                  <p>No restricted accounts</p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {restrictedAccounts.map(account => (
-                    <div key={account.id} className="p-3 rounded-lg border bg-muted/30 border-border/50">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Phone className="w-4 h-4" />
-                        <span className="font-medium">{account.phone_number}</span>
-                      </div>
-                      {account.ban_reason && (
-                        <p className="text-sm text-muted-foreground">{account.ban_reason}</p>
-                      )}
-                      {account.restricted_until && (
-                        <p className="text-xs text-muted-foreground mt-1">
-                          <Clock className="w-3 h-3 inline mr-1" />
-                          Until: {format(new Date(account.restricted_until), 'MMM d, HH:mm')}
-                        </p>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
-          </CardContent>
-        </Card>
-      </div>
 
       {/* Recent Errors Log */}
       <Card className="mb-6">
