@@ -92,6 +92,7 @@ const Campaigns: React.FC = () => {
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [selectedReportCampaign, setSelectedReportCampaign] = useState<Campaign | null>(null);
   const [campaignReports, setCampaignReports] = useState<Map<string, CampaignReport>>(new Map());
+  const [isLoadingReport, setIsLoadingReport] = useState(false);
   const [accountUniqueRecipients, setAccountUniqueRecipients] = useState<Map<string, number>>(new Map());
   
   // Seats for campaign assignment
@@ -160,129 +161,125 @@ const Campaigns: React.FC = () => {
   const accountsRef = React.useRef(accounts);
   accountsRef.current = accounts;
 
+  // FAST: Fetch only basic counts for all campaigns in parallel
   const fetchReports = useCallback(async () => {
     const currentCampaigns = campaignsRef.current;
+    if (currentCampaigns.length === 0) return;
+    
+    const newReports = new Map<string, CampaignReport>();
+    
+    // Fetch all campaign recipients in PARALLEL (not sequentially!)
+    const results = await Promise.all(
+      currentCampaigns.map(async (campaign) => {
+        const { data: recipients, error } = await supabase
+          .from('campaign_recipients')
+          .select('id, status, sent_by_account_id')
+          .eq('campaign_id', campaign.id);
+
+        if (!recipients || error) return { campaignId: campaign.id, report: null, campaign };
+
+        const sentCount = recipients.filter((r) => r.status === 'sent').length;
+        const failedCount = recipients.filter((r) => r.status === 'failed').length;
+        const pendingCount = recipients.filter((r) => r.status === 'pending' || r.status === 'sending').length;
+
+        // Basic report without detailed failure info (loaded on-demand)
+        const report: CampaignReport = {
+          successful: sentCount,
+          failed: failedCount,
+          pending: pendingCount,
+          unused: pendingCount,
+          total: recipients.length,
+          failedRecipients: [],
+          accountStats: []
+        };
+
+        return { campaignId: campaign.id, report, recipients, sentCount, failedCount, pendingCount, campaign };
+      })
+    );
+
+    // Process results and update state
+    let needsRefresh = false;
+    const updatePromises: Promise<any>[] = [];
+    
+    for (const result of results) {
+      if (!result.report) continue;
+      newReports.set(result.campaignId, result.report);
+      
+      const campaign = result.campaign;
+      if (campaign && result.recipients) {
+        const countsMatch = 
+          campaign.sentCount === result.sentCount && 
+          campaign.failedCount === result.failedCount &&
+          campaign.recipientCount === result.recipients.length;
+        
+        if (!countsMatch) {
+          updatePromises.push(
+            (async () => {
+              await supabase
+                .from('campaigns')
+                .update({ 
+                  sent_count: result.sentCount, 
+                  failed_count: result.failedCount,
+                  recipient_count: result.recipients.length,
+                  updated_at: new Date().toISOString() 
+                })
+                .eq('id', result.campaignId);
+            })()
+          );
+          needsRefresh = true;
+        }
+        
+        // Auto-complete running campaigns with no pending
+        if (campaign.status === 'running' && result.pendingCount === 0 && result.recipients.length > 0) {
+          updatePromises.push(
+            (async () => {
+              await supabase
+                .from('campaigns')
+                .update({ status: 'completed', updated_at: new Date().toISOString() })
+                .eq('id', result.campaignId);
+            })()
+          );
+          needsRefresh = true;
+        }
+      }
+    }
+    
+    // Execute all updates in parallel
+    if (updatePromises.length > 0) {
+      await Promise.all(updatePromises);
+    }
+    
+    setCampaignReports(newReports);
+    if (needsRefresh) refreshData();
+  }, [refreshData]);
+
+  // DETAILED: Fetch full report for a single campaign (on-demand when dialog opens)
+  const fetchSingleCampaignReport = useCallback(async (campaignId: string) => {
+    setIsLoadingReport(true);
     const currentAccounts = accountsRef.current;
     
-    // Batch all reports together to do a single state update
-    const newReports = new Map<string, CampaignReport>();
-    let needsRefresh = false;
-    
-    for (const campaign of currentCampaigns) {
+    try {
       const { data: recipients, error } = await supabase
         .from('campaign_recipients')
         .select('id, status, phone_number, name, sent_by_account_id, failed_reason')
-        .eq('campaign_id', campaign.id);
+        .eq('campaign_id', campaignId);
 
-      if (!recipients || error) continue;
-
-      // Auto-sync: if a recipient is still "pending" but we already have a sent/failed outgoing message,
-      // update the recipient status so UI progress matches reality.
-      const pending = recipients.filter(
-        (r) => r.status === 'pending' && r.sent_by_account_id && r.phone_number,
-      );
-
-      if (pending.length > 0) {
-        // 1) Best-effort: direct link (new campaigns) via messages.campaign_recipient_id
-        const pendingIds = pending.map((r) => r.id);
-        const { data: linkedMsgs } = await supabase
-          .from('messages')
-          .select('status, delivered_at, created_at, campaign_recipient_id, failed_reason')
-          .eq('direction', 'outgoing')
-          .in('status', ['sent', 'failed'])
-          .in('campaign_recipient_id', pendingIds)
-          .order('created_at', { ascending: false })
-          .limit(200);
-
-        const byRecipientId = new Map<string, { status: string; delivered_at: string | null; failed_reason: string | null }>();
-        (linkedMsgs || []).forEach((m: any) => {
-          const rid = m.campaign_recipient_id as string | null;
-          if (!rid) return;
-          if (!byRecipientId.has(rid)) {
-            byRecipientId.set(rid, { status: m.status, delivered_at: m.delivered_at ?? null, failed_reason: m.failed_reason ?? null });
-          }
-        });
-
-        // Apply direct updates first
-        const remaining: typeof pending = [];
-        await Promise.all(
-          pending.map(async (r) => {
-            const match = byRecipientId.get(r.id);
-            if (!match) {
-              remaining.push(r);
-              return;
-            }
-
-            const nextStatus = match.status === 'sent' ? 'sent' : 'failed';
-            await supabase
-              .from('campaign_recipients')
-              .update({
-                status: nextStatus,
-                sent_at: nextStatus === 'sent' ? match.delivered_at : null,
-              })
-              .eq('id', r.id);
-
-            r.status = nextStatus as any;
-          }),
-        );
-
-        // 2) Fallback (older campaigns): match by account + phone
-        if (remaining.length > 0) {
-          const phonesSet = new Set(remaining.map((r) => r.phone_number));
-          const accountIds = Array.from(new Set(remaining.map((r) => r.sent_by_account_id!)));
-
-          const { data: sentMsgs } = await supabase
-            .from('messages')
-            .select('status, delivered_at, account_id, created_at, failed_reason, conversations!inner(recipient_phone)')
-            .eq('direction', 'outgoing')
-            .in('status', ['sent', 'failed'])
-            .in('account_id', accountIds)
-            .order('created_at', { ascending: false })
-            .limit(500);
-
-          const msgIndex = new Map<string, { status: string; delivered_at: string | null; failed_reason: string | null }>();
-          (sentMsgs || []).forEach((m: any) => {
-            const phone = m?.conversations?.recipient_phone;
-            if (!phone || !phonesSet.has(phone)) return;
-            const key = `${m.account_id}|${phone}`;
-            if (!msgIndex.has(key)) {
-              msgIndex.set(key, { status: m.status, delivered_at: m.delivered_at ?? null, failed_reason: m.failed_reason ?? null });
-            }
-          });
-
-          await Promise.all(
-            remaining.map(async (r) => {
-              const key = `${r.sent_by_account_id}|${r.phone_number}`;
-              const match = msgIndex.get(key);
-              if (!match) return;
-
-              const nextStatus = match.status === 'sent' ? 'sent' : 'failed';
-              await supabase
-                .from('campaign_recipients')
-                .update({
-                  status: nextStatus,
-                  sent_at: nextStatus === 'sent' ? match.delivered_at : null,
-                })
-                .eq('id', r.id);
-
-              r.status = nextStatus as any;
-            }),
-          );
-        }
+      if (!recipients || error) {
+        setIsLoadingReport(false);
+        return;
       }
 
       // Fetch failed reasons from messages for failed recipients
-      const failedRecipientPhones = recipients.filter((r) => r.status === 'failed').map((r) => r.phone_number);
       let failedRecipients: FailedRecipient[] = [];
+      const failedRecipientsData = recipients.filter((r) => r.status === 'failed');
       
-      if (failedRecipientPhones.length > 0) {
-        // Get failed/cancelled messages with reasons
+      if (failedRecipientsData.length > 0) {
         const { data: failedMessages } = await supabase
           .from('messages')
           .select('failed_reason, campaign_recipient_id')
           .eq('direction', 'outgoing')
           .in('status', ['failed', 'cancelled'])
-          .in('campaign_recipient_id', recipients.filter(r => r.status === 'failed').map(r => r.id))
+          .in('campaign_recipient_id', failedRecipientsData.map(r => r.id))
           .limit(100);
 
         const reasonsByRecipientId = new Map<string, string>();
@@ -292,41 +289,30 @@ const Campaigns: React.FC = () => {
           }
         });
 
-        failedRecipients = recipients
-          .filter((r) => r.status === 'failed')
-          .map((r) => ({
-            phone_number: r.phone_number,
-            name: r.name,
-            // Priority: message failed_reason > recipient failed_reason > Unknown error
-            failed_reason: reasonsByRecipientId.get(r.id) || (r as any).failed_reason || 'Unknown error'
-          }));
+        failedRecipients = failedRecipientsData.map((r) => ({
+          phone_number: r.phone_number,
+          name: r.name,
+          failed_reason: reasonsByRecipientId.get(r.id) || (r as any).failed_reason || 'Unknown error'
+        }));
       }
 
       const sentCount = recipients.filter((r) => r.status === 'sent').length;
       const failedCount = recipients.filter((r) => r.status === 'failed').length;
       const pendingCount = recipients.filter((r) => r.status === 'pending' || r.status === 'sending').length;
       
-      // Calculate per-account unique recipient stats
+      // Calculate per-account stats
       const accountStatsMap = new Map<string, { sent: Set<string>; failed: Set<string>; pending: Set<string> }>();
-      
       recipients.forEach((r) => {
         if (!r.sent_by_account_id) return;
-        
         if (!accountStatsMap.has(r.sent_by_account_id)) {
           accountStatsMap.set(r.sent_by_account_id, { sent: new Set(), failed: new Set(), pending: new Set() });
         }
-        
         const stats = accountStatsMap.get(r.sent_by_account_id)!;
-        if (r.status === 'sent') {
-          stats.sent.add(r.phone_number);
-        } else if (r.status === 'failed') {
-          stats.failed.add(r.phone_number);
-        } else if (r.status === 'pending' || r.status === 'sending') {
-          stats.pending.add(r.phone_number);
-        }
+        if (r.status === 'sent') stats.sent.add(r.phone_number);
+        else if (r.status === 'failed') stats.failed.add(r.phone_number);
+        else if (r.status === 'pending' || r.status === 'sending') stats.pending.add(r.phone_number);
       });
       
-      // Build account stats array with account info
       const accountStats: AccountRecipientStats[] = Array.from(accountStatsMap.entries()).map(([accountId, stats]) => {
         const account = currentAccounts.find(a => a.id === accountId);
         return {
@@ -338,77 +324,22 @@ const Campaigns: React.FC = () => {
           uniqueRecipientsPending: stats.pending.size,
         };
       });
-      
-      // Check if campaign should be auto-completed
-      // Complete when: no pending AND (has sent/failed OR campaign was running but no active accounts left)
-      const shouldComplete = campaign.status === 'running' && pendingCount === 0 && recipients.length > 0;
-      
-      // Check if there are any USABLE accounts for this campaign (active + under daily limit)
-      const { data: campaignAccountLinks } = await supabase
-        .from('campaign_accounts')
-        .select('account_id, telegram_accounts!inner(status, messages_sent_today, daily_limit)')
-        .eq('campaign_id', campaign.id);
-
-      const hasUsableAccount = (campaignAccountLinks || []).some((ca: any) => {
-        const acc = ca.telegram_accounts;
-        if (!acc) return false;
-        const limit = acc.daily_limit ?? 25;
-        const sentToday = acc.messages_sent_today ?? 0;
-        return acc.status === 'active' && sentToday < limit;
-      });
-
-      const noUsableAccounts = !hasUsableAccount;
-      const shouldForceComplete = campaign.status === 'running' && noUsableAccounts && recipients.length > 0;
 
       const report: CampaignReport = {
         successful: sentCount,
         failed: failedCount,
         pending: pendingCount,
-        unused: pendingCount,  // If campaign completed, pending = unused
+        unused: pendingCount,
         total: recipients.length,
         failedRecipients,
         accountStats
       };
 
-      // Sync campaign counts if they're out of sync with actual data
-      const countsMatch = 
-        campaign.sentCount === sentCount && 
-        campaign.failedCount === failedCount &&
-        campaign.recipientCount === recipients.length;
-      
-      if (!countsMatch) {
-        await supabase
-          .from('campaigns')
-          .update({ 
-            sent_count: sentCount, 
-            failed_count: failedCount,
-            recipient_count: recipients.length,
-            updated_at: new Date().toISOString() 
-          })
-          .eq('id', campaign.id);
-        needsRefresh = true;
-      }
-
-      // Auto-update campaign status to 'completed' when appropriate
-      if (shouldComplete || shouldForceComplete) {
-        await supabase
-          .from('campaigns')
-          .update({ status: 'completed', updated_at: new Date().toISOString() })
-          .eq('id', campaign.id);
-        needsRefresh = true;
-      }
-
-      newReports.set(campaign.id, report);
+      setCampaignReports(prev => new Map(prev).set(campaignId, report));
+    } finally {
+      setIsLoadingReport(false);
     }
-    
-    // Single state update with all reports
-    setCampaignReports(newReports);
-    
-    // Only refresh if we actually changed campaign status
-    if (needsRefresh) {
-      refreshData();
-    }
-  }, [refreshData]);
+  }, []);
 
   // Fetch reports on mount and when campaigns change
   const campaignsLength = campaigns.length;
@@ -1328,7 +1259,14 @@ username123
             <div className="space-y-4 pt-4">
               {(() => {
                 const report = campaignReports.get(selectedReportCampaign.id);
-                if (!report) return <p className="text-muted-foreground">Loading report...</p>;
+                if (isLoadingReport || !report || report.failedRecipients.length === 0 && report.failed > 0) {
+                  return (
+                    <div className="flex items-center justify-center py-8 gap-3">
+                      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                      <p className="text-muted-foreground">Loading report details...</p>
+                    </div>
+                  );
+                }
                 
                 return (
                   <>
@@ -1943,7 +1881,7 @@ username123
                         
                         <div className="w-px h-6 bg-border mx-1" />
                         
-                        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setSelectedReportCampaign(campaign); setIsReportOpen(true); }} title="View Report">
+                        <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => { setSelectedReportCampaign(campaign); setIsReportOpen(true); fetchSingleCampaignReport(campaign.id); }} title="View Report">
                           <MessageSquare className="w-4 h-4" />
                         </Button>
                         
