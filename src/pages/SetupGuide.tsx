@@ -949,6 +949,41 @@ async def main_loop():
                 except Exception as e:
                     await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": "disconnected", "error": str(e)})
                     print(f"    Error: {e}")
+            
+            elif task_type == "api_test":
+                # Test API credential validity by attempting to connect
+                task_id = task.get("task_id")
+                account = task.get("account", {})
+                api_credential_id = account.get("api_credential_id")
+                print(f"  [API] Testing API for {account.get('phone_number')}...")
+                try:
+                    client = await get_or_create_client(account)
+                    if client:
+                        await report_result("api_test", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "api_credential_id": api_credential_id,
+                            "success": True
+                        })
+                        print(f"    [OK] API credential valid")
+                    else:
+                        await report_result("api_test", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "api_credential_id": api_credential_id,
+                            "success": False,
+                            "error": "Connection failed"
+                        })
+                        print(f"    [FAIL] Connection failed")
+                except Exception as e:
+                    await report_result("api_test", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "api_credential_id": api_credential_id,
+                        "success": False,
+                        "error": str(e)
+                    })
+                    print(f"    [FAIL] {e}")
         
         except Exception as e:
             print(f"  [ERROR] {e}")
