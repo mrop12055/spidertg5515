@@ -1575,22 +1575,13 @@ const Accounts: React.FC = () => {
           )}
           
           {proxyLabel && (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className={cn(
-                    "flex items-center justify-center w-7 h-7 rounded text-base",
-                    proxyStatus === 'active' ? "bg-status-active/10" : "bg-muted"
-                  )}>
-                    <span>{proxyFlag}</span>
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Proxy: {proxyLabel}</p>
-                  {proxyCountry && <p className="text-xs text-muted-foreground">Country: {proxyCountry.toUpperCase()}</p>}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            <div className={cn(
+              "flex items-center gap-1 px-2 py-1 rounded text-xs",
+              proxyStatus === 'active' ? "bg-status-active/10 text-status-active" : "bg-muted text-muted-foreground"
+            )}>
+              <Globe className="w-3 h-3" />
+              <span className="max-w-[80px] truncate">{proxyLabel}</span>
+            </div>
           )}
         </div>
 
