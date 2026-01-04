@@ -11,7 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Send, MessageSquare, Users, Eye, CheckCheck, Check, 
   RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
-  Image, X, Loader2, Phone, Smile, Paperclip, Mic, BarChart3, Settings,
+  Image, X, Loader2, Phone, Smile, Paperclip, BarChart3, Settings,
   Pin, PinOff, EyeIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -1061,12 +1061,12 @@ const SeatChat: React.FC = () => {
               {/* Chat Container */}
               <div className="flex-1 flex flex-col overflow-hidden p-4 lg:p-6">
                 {selectedConversation ? (
-                  <div className="flex-1 flex flex-col bg-card rounded-2xl shadow-xl border border-border/50 overflow-hidden animate-scale-in">
+                  <div className="flex-1 flex flex-col bg-gradient-to-b from-card to-card/95 rounded-2xl shadow-2xl border border-border/30 overflow-hidden animate-scale-in">
                     {/* Chat Header */}
-                    <div className="bg-gradient-to-r from-card via-card to-muted/20 border-b border-border/50 px-5 py-4 flex items-center justify-between flex-shrink-0">
+                    <div className="bg-card/80 backdrop-blur-sm border-b border-border/30 px-5 py-4 flex items-center justify-between flex-shrink-0">
                       <div className="flex items-center gap-4">
-                        <div className="relative">
-                          <Avatar className="w-12 h-12 ring-2 ring-primary/20 ring-offset-2 ring-offset-card">
+                        <div className="relative group">
+                          <Avatar className="w-12 h-12 ring-2 ring-primary/20 ring-offset-2 ring-offset-card shadow-lg transition-transform group-hover:scale-105">
                             <AvatarImage src={selectedConversation.recipient_avatar || ''} />
                             <AvatarFallback className={cn(
                               "bg-gradient-to-br text-white text-base font-semibold",
@@ -1075,24 +1075,24 @@ const SeatChat: React.FC = () => {
                               {getAvatarInitial(selectedConversation)}
                             </AvatarFallback>
                           </Avatar>
-                          <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-card" />
+                          <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-card shadow-sm" />
                         </div>
                         <div>
-                          <p className="font-semibold text-foreground text-lg">
+                          <p className="font-bold text-foreground text-lg tracking-tight">
                             {getDisplayName(selectedConversation)}
                           </p>
                           <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-                            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
                             {formatLastSeen(selectedConversation)}
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1">
                         <Button 
                           variant="ghost" 
                           size="icon"
                           onClick={() => setIsMessageSearchOpen(true)}
-                          className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-10 w-10 rounded-xl"
+                          className="text-muted-foreground hover:text-foreground hover:bg-muted/60 h-10 w-10 rounded-xl transition-colors"
                         >
                           <Search className="w-5 h-5" />
                         </Button>
@@ -1101,15 +1101,15 @@ const SeatChat: React.FC = () => {
                             <Button 
                               variant="ghost" 
                               size="icon"
-                              className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-10 w-10 rounded-xl"
+                              className="text-muted-foreground hover:text-foreground hover:bg-muted/60 h-10 w-10 rounded-xl transition-colors"
                             >
                               <MoreVertical className="w-5 h-5" />
                             </Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground">
+                          <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground w-48">
                             <DropdownMenuItem 
                               onClick={() => togglePinConversation(selectedConversation.id, !!selectedConversation.is_pinned)}
-                              className="text-muted-foreground hover:bg-muted focus:bg-muted"
+                              className="text-muted-foreground hover:bg-muted focus:bg-muted cursor-pointer"
                             >
                               {selectedConversation.is_pinned ? (
                                 <>
@@ -1125,7 +1125,7 @@ const SeatChat: React.FC = () => {
                             </DropdownMenuItem>
                             <DropdownMenuItem 
                               onClick={() => toggleHideConversation(selectedConversation.id, !!selectedConversation.is_hidden)}
-                              className="text-muted-foreground hover:bg-muted focus:bg-muted"
+                              className="text-muted-foreground hover:bg-muted focus:bg-muted cursor-pointer"
                             >
                               <EyeOff className="w-4 h-4 mr-2" />
                               Hide conversation
@@ -1138,74 +1138,112 @@ const SeatChat: React.FC = () => {
                     {/* Messages Container */}
                     <div 
                       ref={messagesContainerRef}
-                      className="flex-1 overflow-y-auto px-5 py-4 scrollbar-thin bg-gradient-to-b from-muted/20 to-muted/5"
+                      className="flex-1 overflow-y-auto px-4 md:px-6 py-6 scrollbar-thin"
+                      style={{
+                        backgroundImage: `radial-gradient(circle at 50% 0%, hsl(var(--primary) / 0.03) 0%, transparent 50%), 
+                                          radial-gradient(circle at 100% 100%, hsl(var(--primary) / 0.02) 0%, transparent 40%)`
+                      }}
                     >
-                      <div className="space-y-2">
+                      <div className="max-w-4xl mx-auto space-y-1">
                         {messageGroups.length === 0 ? (
-                          <div className="flex flex-col items-center justify-center h-full py-16 animate-fade-in">
-                            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center mb-4 border border-border/30">
-                              <MessageSquare className="w-8 h-8 text-muted-foreground/50" />
+                          <div className="flex flex-col items-center justify-center h-full py-20 animate-fade-in">
+                            <div className="relative mb-6">
+                              <div className="w-24 h-24 rounded-full bg-gradient-to-br from-primary/10 to-primary/5 flex items-center justify-center">
+                                <MessageSquare className="w-10 h-10 text-primary/40" />
+                              </div>
+                              <div className="absolute inset-0 rounded-full bg-primary/5 animate-ping" style={{ animationDuration: '2s' }} />
                             </div>
-                            <p className="text-muted-foreground text-base font-medium">
-                              {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
+                            <p className="text-foreground font-semibold text-lg">
+                              {messageSearchQuery ? 'No messages match your search' : 'Start the conversation'}
                             </p>
-                            <p className="text-muted-foreground/60 text-sm mt-1">
-                              Start the conversation by sending a message
+                            <p className="text-muted-foreground text-sm mt-2 max-w-xs text-center">
+                              Send a message to begin chatting with {getDisplayName(selectedConversation)}
                             </p>
                           </div>
                         ) : (
                           messageGroups.map((group, groupIndex) => (
-                            <div key={groupIndex} className="animate-fade-in" style={{ animationDelay: `${groupIndex * 50}ms` }}>
+                            <div key={groupIndex} className="animate-fade-in" style={{ animationDelay: `${groupIndex * 40}ms` }}>
                               {/* Date Separator */}
-                              <div className="flex justify-center my-4">
-                                <span className="bg-card text-muted-foreground text-xs font-medium px-4 py-1.5 rounded-full shadow-sm border border-border/50">
+                              <div className="flex items-center justify-center my-6">
+                                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+                                <span className="bg-background text-muted-foreground text-xs font-medium px-4 py-1.5 rounded-full border border-border/50 shadow-sm mx-4">
                                   {formatDateSeparator(group.date)}
                                 </span>
+                                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
                               </div>
                               
                               {/* Messages */}
-                              {group.messages.map((msg, msgIndex) => (
-                                <div
-                                  key={msg.id}
-                                  className={cn(
-                                    "flex mb-2 animate-fade-in",
-                                    msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
-                                  )}
-                                  style={{ animationDelay: `${msgIndex * 30}ms` }}
-                                >
-                                  <div
-                                    className={cn(
-                                      "relative max-w-[80%] rounded-2xl px-4 py-3 transition-all duration-200 hover:shadow-lg",
-                                      msg.direction === 'outgoing'
-                                        ? 'bg-gradient-to-br from-primary via-primary to-primary/90 text-primary-foreground rounded-br-md shadow-lg shadow-primary/25'
-                                        : 'bg-card text-card-foreground rounded-bl-md shadow-md border border-border/50'
-                                    )}
-                                  >
-                                    {msg.media_url && (
-                                      <img
-                                        src={msg.media_url}
-                                        alt="Media"
-                                        className="max-w-full rounded-xl mb-2"
-                                      />
-                                    )}
-                                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-                                      {msg.content}
-                                    </p>
-                                    <div className={cn(
-                                      "flex items-center gap-1.5 mt-2",
-                                      msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
-                                    )}>
-                                      <span className={cn(
-                                        "text-xs",
-                                        msg.direction === 'outgoing' ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                                      )}>
-                                        {formatMessageTime(msg.created_at)}
-                                      </span>
-                                      {msg.direction === 'outgoing' && getMessageStatusIcon(msg.status)}
+                              <div className="space-y-3">
+                                {group.messages.map((msg, msgIndex) => {
+                                  const isOutgoing = msg.direction === 'outgoing';
+                                  return (
+                                    <div
+                                      key={msg.id}
+                                      className={cn(
+                                        "flex animate-fade-in group",
+                                        isOutgoing ? 'justify-end' : 'justify-start'
+                                      )}
+                                      style={{ animationDelay: `${msgIndex * 20}ms` }}
+                                    >
+                                      {/* Incoming message avatar */}
+                                      {!isOutgoing && (
+                                        <Avatar className="w-8 h-8 mr-2 mt-1 flex-shrink-0 ring-2 ring-background shadow-sm">
+                                          <AvatarImage src={selectedConversation?.recipient_avatar || ''} />
+                                          <AvatarFallback className={cn(
+                                            "bg-gradient-to-br text-white text-xs font-semibold",
+                                            getAvatarColor(selectedConversation?.recipient_phone || null)
+                                          )}>
+                                            {getAvatarInitial(selectedConversation!)}
+                                          </AvatarFallback>
+                                        </Avatar>
+                                      )}
+                                      
+                                      <div
+                                        className={cn(
+                                          "relative max-w-[75%] md:max-w-[65%] transition-all duration-200",
+                                          "group-hover:scale-[1.01]"
+                                        )}
+                                      >
+                                        <div className={cn(
+                                          "rounded-2xl px-4 py-3 shadow-sm",
+                                          isOutgoing
+                                            ? 'bg-gradient-to-br from-primary to-primary/90 text-primary-foreground rounded-tr-sm ml-auto shadow-lg shadow-primary/20'
+                                            : 'bg-card text-card-foreground rounded-tl-sm border border-border/50'
+                                        )}>
+                                          {msg.media_url && (
+                                            <img
+                                              src={msg.media_url}
+                                              alt="Media"
+                                              className="max-w-full rounded-xl mb-3 shadow-md"
+                                            />
+                                          )}
+                                          <p className={cn(
+                                            "text-[15px] leading-relaxed whitespace-pre-wrap break-words",
+                                            isOutgoing ? "text-primary-foreground" : "text-foreground"
+                                          )}>
+                                            {msg.content}
+                                          </p>
+                                        </div>
+                                        
+                                        {/* Message footer */}
+                                        <div className={cn(
+                                          "flex items-center gap-1.5 mt-1.5 px-1",
+                                          isOutgoing ? 'justify-end' : 'justify-start'
+                                        )}>
+                                          <span className="text-[11px] text-muted-foreground/70">
+                                            {formatMessageTime(msg.created_at)}
+                                          </span>
+                                          {isOutgoing && (
+                                            <span className="flex items-center">
+                                              {getMessageStatusIcon(msg.status)}
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
                                     </div>
-                                  </div>
-                                </div>
-                              ))}
+                                  );
+                                })}
+                              </div>
                             </div>
                           ))
                         )}
@@ -1235,76 +1273,83 @@ const SeatChat: React.FC = () => {
                     )}
 
                     {/* Message Input */}
-                    <div className="bg-gradient-to-r from-card via-card to-muted/10 border-t border-border/50 px-5 py-4 flex-shrink-0">
-                      <div className="flex items-center gap-3">
-                        {/* Emoji */}
-                        <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
-                        
-                        {/* Attachment */}
-                        <input
-                          type="file"
-                          ref={fileInputRef}
-                          onChange={handleImageSelect}
-                          accept="image/*"
-                          className="hidden"
-                        />
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => fileInputRef.current?.click()}
-                          className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-10 w-10 flex-shrink-0 rounded-xl"
-                        >
-                          <Paperclip className="w-5 h-5" />
-                        </Button>
-
-                        {/* Input */}
-                        <Input
-                          placeholder="Type a message..."
-                          value={messageInput}
-                          onChange={(e) => setMessageInput(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-                          disabled={isSending}
-                          className="flex-1 bg-muted/50 border border-border/50 text-foreground placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 h-12 rounded-xl text-base px-4 transition-all shadow-sm"
-                        />
-
-                        {/* Send / Mic Button */}
-                        {messageInput.trim() || selectedImage ? (
-                          <Button 
-                            onClick={handleSendMessage} 
-                            disabled={isSending}
-                            className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary/80 text-primary-foreground h-12 w-12 rounded-xl flex-shrink-0 shadow-lg shadow-primary/30 transition-all hover:shadow-xl hover:shadow-primary/40 hover:scale-105"
-                            size="icon"
-                          >
-                            {isSending ? (
-                              <Loader2 className="w-5 h-5 animate-spin" />
-                            ) : (
-                              <Send className="w-5 h-5" />
-                            )}
-                          </Button>
-                        ) : (
-                          <Button 
+                    <div className="bg-card/80 backdrop-blur-sm border-t border-border/30 px-4 md:px-6 py-4 flex-shrink-0">
+                      <div className="max-w-4xl mx-auto flex items-end gap-3">
+                        {/* Left Actions */}
+                        <div className="flex items-center gap-1 pb-1">
+                          <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
+                          <input
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleImageSelect}
+                            accept="image/*"
+                            className="hidden"
+                          />
+                          <Button
                             variant="ghost"
-                            className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-12 w-12 rounded-xl flex-shrink-0"
                             size="icon"
+                            onClick={() => fileInputRef.current?.click()}
+                            className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-10 w-10 flex-shrink-0 rounded-xl transition-colors"
                           >
-                            <Mic className="w-5 h-5" />
+                            <Paperclip className="w-5 h-5" />
                           </Button>
-                        )}
+                        </div>
+
+                        {/* Input Container */}
+                        <div className="flex-1 relative">
+                          <Input
+                            placeholder="Type your message..."
+                            value={messageInput}
+                            onChange={(e) => setMessageInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                            disabled={isSending}
+                            className="w-full bg-muted/40 border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 h-12 rounded-2xl text-[15px] pl-5 pr-5 transition-all shadow-inner"
+                          />
+                        </div>
+
+                        {/* Send Button */}
+                        <Button 
+                          onClick={handleSendMessage} 
+                          disabled={isSending || (!messageInput.trim() && !selectedImage)}
+                          className={cn(
+                            "h-12 w-12 rounded-2xl flex-shrink-0 transition-all duration-300",
+                            messageInput.trim() || selectedImage
+                              ? "bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 text-primary-foreground shadow-lg shadow-primary/30 hover:shadow-xl hover:shadow-primary/40 hover:scale-105"
+                              : "bg-muted text-muted-foreground hover:bg-muted/80"
+                          )}
+                          size="icon"
+                        >
+                          {isSending ? (
+                            <Loader2 className="w-5 h-5 animate-spin" />
+                          ) : (
+                            <Send className={cn(
+                              "w-5 h-5 transition-transform",
+                              messageInput.trim() || selectedImage ? "translate-x-0.5 -translate-y-0.5" : ""
+                            )} />
+                          )}
+                        </Button>
                       </div>
                     </div>
                   </div>
                 ) : (
-                  <div className="flex-1 flex items-center justify-center bg-card rounded-2xl shadow-xl border border-border/50 animate-fade-in">
-                    <div className="text-center">
-                      <div className="w-32 h-32 mx-auto mb-6 relative">
-                        <div className="absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5 rounded-full animate-pulse" />
-                        <div className="absolute inset-4 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
+                  <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-card via-card to-muted/20 rounded-2xl shadow-xl border border-border/30 animate-fade-in">
+                    <div className="text-center px-8">
+                      <div className="w-32 h-32 mx-auto mb-8 relative">
+                        <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-primary/5 rounded-full animate-pulse" style={{ animationDuration: '3s' }} />
+                        <div className="absolute inset-4 bg-gradient-to-br from-primary/30 to-primary/10 rounded-full" />
                         <div className="absolute inset-8 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
-                          <Send className="w-8 h-8 text-primary-foreground rotate-[-45deg]" />
+                          <MessageSquare className="w-8 h-8 text-primary-foreground" />
                         </div>
                       </div>
-                      <h2 className="text-2xl font-bold text-foreground">{seat?.name}</h2>
-                      <p className="text-base text-muted-foreground mt-2">Select a conversation to start messaging</p>
+                      <h2 className="text-2xl font-bold text-foreground tracking-tight">{seat?.name}</h2>
+                      <p className="text-base text-muted-foreground mt-3 max-w-sm mx-auto leading-relaxed">
+                        Select a conversation from the sidebar to start messaging
+                      </p>
+                      <div className="flex items-center justify-center gap-2 mt-6">
+                        <div className="w-2 h-2 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <div className="w-2 h-2 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <div className="w-2 h-2 rounded-full bg-primary/60 animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1312,11 +1357,11 @@ const SeatChat: React.FC = () => {
 
               {/* Contact Details Panel */}
               {selectedConversation && (
-                <div className="w-80 bg-card border-l border-border/50 flex-shrink-0 overflow-y-auto animate-slide-in-right hidden xl:block">
+                <div className="w-80 bg-gradient-to-b from-card to-card/95 border-l border-border/30 flex-shrink-0 overflow-y-auto animate-slide-in-right hidden xl:block">
                   {/* Contact Header */}
-                  <div className="p-6 text-center border-b border-border/50">
+                  <div className="p-6 text-center border-b border-border/30 bg-gradient-to-br from-primary/5 to-transparent">
                     <div className="relative inline-block mb-4">
-                      <Avatar className="w-24 h-24 ring-4 ring-primary/20 ring-offset-4 ring-offset-card">
+                      <Avatar className="w-24 h-24 ring-4 ring-primary/20 ring-offset-4 ring-offset-card shadow-xl">
                         <AvatarImage src={selectedConversation.recipient_avatar || ''} />
                         <AvatarFallback className={cn(
                           "bg-gradient-to-br text-white text-2xl font-bold",
@@ -1325,43 +1370,44 @@ const SeatChat: React.FC = () => {
                           {getAvatarInitial(selectedConversation)}
                         </AvatarFallback>
                       </Avatar>
-                      <span className="absolute bottom-1 right-1 w-5 h-5 bg-green-500 rounded-full border-3 border-card" />
+                      <span className="absolute bottom-1 right-1 w-5 h-5 bg-green-500 rounded-full border-3 border-card shadow-md" />
                     </div>
                     <h3 className="text-xl font-bold text-foreground">
                       {getDisplayName(selectedConversation)}
                     </h3>
-                    <p className="text-sm text-muted-foreground mt-1">
+                    <p className="text-sm text-muted-foreground mt-1 flex items-center justify-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
                       {formatLastSeen(selectedConversation)}
                     </p>
                   </div>
 
                   {/* Contact Info */}
-                  <div className="p-5 space-y-4">
-                    <div className="bg-muted/50 rounded-xl p-4">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phone Number</p>
-                      <p className="text-foreground font-medium flex items-center gap-2">
+                  <div className="p-5 space-y-3">
+                    <div className="bg-muted/40 rounded-xl p-4 border border-border/30 hover:bg-muted/60 transition-colors">
+                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">Phone Number</p>
+                      <p className="text-foreground font-medium flex items-center gap-2 text-sm">
                         <Phone className="w-4 h-4 text-primary" />
                         {selectedConversation.recipient_phone || 'Not available'}
                       </p>
                     </div>
 
                     {selectedConversation.recipient_username && (
-                      <div className="bg-muted/50 rounded-xl p-4">
-                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Username</p>
-                        <p className="text-foreground font-medium">
+                      <div className="bg-muted/40 rounded-xl p-4 border border-border/30 hover:bg-muted/60 transition-colors">
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">Username</p>
+                        <p className="text-foreground font-medium text-sm">
                           @{selectedConversation.recipient_username}
                         </p>
                       </div>
                     )}
 
-                    <div className="bg-muted/50 rounded-xl p-4">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Status</p>
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-primary/10 text-primary border-primary/20 text-xs">
+                    <div className="bg-muted/40 rounded-xl p-4 border border-border/30">
+                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-2">Status</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge className="bg-primary/10 text-primary border-primary/20 text-xs font-medium">
                           Campaign Contact
                         </Badge>
                         {selectedConversation.has_reply && (
-                          <Badge className="bg-green-500/10 text-green-600 border-green-500/20 text-xs">
+                          <Badge className="bg-green-500/10 text-green-600 border-green-500/20 text-xs font-medium">
                             Replied
                           </Badge>
                         )}
