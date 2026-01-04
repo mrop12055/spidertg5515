@@ -1270,6 +1270,7 @@ serve(async (req) => {
         .select("*, conversations(*), campaign_recipients(campaign_id)")
         .eq("status", "pending")
         .eq("direction", "outgoing")
+        .not("campaign_recipient_id", "is", null) // IMPORTANT: only campaign-linked messages
         .limit(50);
 
       if (campaignMessages && campaignMessages.length > 0) {
