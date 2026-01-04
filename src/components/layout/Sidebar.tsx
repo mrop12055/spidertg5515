@@ -43,7 +43,7 @@ const navItems: NavItem[] = [
 ];
 
 export const Sidebar: React.FC = () => {
-  const { user, logout, isSuperAdmin } = useAuth();
+  const { logout } = useAuth();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const { conversations } = useTelegram();
@@ -51,9 +51,7 @@ export const Sidebar: React.FC = () => {
   // Calculate count of unread *visible* chats (campaign/user-initiated only)
   const totalUnread = conversations.filter(c => (c.firstMessageSent ?? false) && (c.unreadCount || 0) > 0).length;
 
-  const filteredNavItems = navItems.filter(item => 
-    !item.superAdminOnly || isSuperAdmin
-  );
+  const filteredNavItems = navItems.filter(item => !item.superAdminOnly);
 
   return (
     <aside 
@@ -139,14 +137,11 @@ export const Sidebar: React.FC = () => {
           collapsed && "justify-center"
         )}>
           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-telegram-light flex items-center justify-center text-primary-foreground font-semibold text-sm">
-            {user?.name.charAt(0)}
+            A
           </div>
           {!collapsed && (
             <div className="flex-1 min-w-0 animate-fade-in">
-              <p className="text-sm font-medium text-sidebar-foreground truncate">{user?.name}</p>
-              <p className="text-xs text-muted-foreground truncate">
-                {isSuperAdmin ? 'Super Admin' : 'Admin'}
-              </p>
+              <p className="text-sm font-medium text-sidebar-foreground truncate">Admin</p>
             </div>
           )}
           {!collapsed && (
