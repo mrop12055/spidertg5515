@@ -171,8 +171,8 @@ const SeatChat: React.FC = () => {
     }
   };
 
-  // Time filter cutoff
-  const getTimeFilterCutoff = () => {
+  // Time filter cutoff - memoized
+  const timeFilterCutoff = React.useMemo(() => {
     const now = new Date();
     switch (timeFilter) {
       case '24h': return subDays(now, 1);
@@ -181,10 +181,10 @@ const SeatChat: React.FC = () => {
       case '7d': return subDays(now, 7);
       default: return subDays(now, 7);
     }
-  };
+  }, [timeFilter]);
 
   // Deduplicate conversations by phone number - keep the most recent one
-  const deduplicateConversations = (convs: Conversation[]) => {
+  const deduplicateConversations = useCallback((convs: Conversation[]) => {
     const phoneMap = new Map<string, Conversation>();
     
     const sorted = [...convs].sort((a, b) => {
@@ -201,17 +201,27 @@ const SeatChat: React.FC = () => {
     });
     
     return Array.from(phoneMap.values());
-  };
+  }, []);
+
+  // Time-filtered base conversations
+  const timeFilteredConversations = React.useMemo(() => {
+    const cutoffTime = timeFilterCutoff.getTime();
+    return conversations.filter(conv => {
+      const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
+      return lastMsgTime >= cutoffTime;
+    });
+  }, [conversations, timeFilterCutoff]);
 
   // Filter conversations based on current tab and filters
-  const getFilteredConversations = () => {
-    let filtered = conversations;
+  const filteredConversations = React.useMemo(() => {
+    let filtered = timeFilteredConversations;
     
     // Filter by tab
     if (chatTab === 'pinned') {
       filtered = filtered.filter(conv => conv.is_pinned);
     } else if (chatTab === 'hidden') {
-      filtered = filtered.filter(conv => conv.is_hidden);
+      // Hidden tab should show all hidden regardless of time filter
+      filtered = conversations.filter(conv => conv.is_hidden);
     } else {
       // "all" tab shows non-hidden conversations
       filtered = filtered.filter(conv => !conv.is_hidden);
@@ -223,21 +233,24 @@ const SeatChat: React.FC = () => {
     }
     
     // When searching, ignore time filter to search ALL conversations
-    if (!searchQuery) {
-      const cutoff = getTimeFilterCutoff();
-      filtered = filtered.filter(conv => {
-        const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
-        return lastMsgTime >= cutoff.getTime();
-      });
-    } else {
-      // Search in name, phone, username, and message content
+    if (searchQuery) {
+      // Re-filter from all conversations for search
       const searchLower = searchQuery.toLowerCase();
-      filtered = filtered.filter(conv => (
+      filtered = conversations.filter(conv => (
         conv.recipient_name?.toLowerCase().includes(searchLower) ||
         conv.recipient_phone?.toLowerCase().includes(searchLower) ||
         conv.recipient_username?.toLowerCase().includes(searchLower) ||
         conv.last_message_content?.toLowerCase().includes(searchLower)
       ));
+      
+      // Apply tab filter after search
+      if (chatTab === 'pinned') {
+        filtered = filtered.filter(conv => conv.is_pinned);
+      } else if (chatTab === 'hidden') {
+        filtered = filtered.filter(conv => conv.is_hidden);
+      } else {
+        filtered = filtered.filter(conv => !conv.is_hidden);
+      }
     }
     
     // Sort: pinned first, then by last message time
@@ -248,13 +261,11 @@ const SeatChat: React.FC = () => {
       const timeB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
       return timeB - timeA;
     });
-  };
+  }, [timeFilteredConversations, conversations, chatTab, showRepliedOnly, searchQuery, deduplicateConversations]);
 
-  const filteredConversations = getFilteredConversations();
-
-  // Count for each tab
-  const allCount = conversations.filter(c => !c.is_hidden).length;
-  const pinnedCount = conversations.filter(c => c.is_pinned).length;
+  // Count for each tab (using time-filtered base)
+  const allCount = timeFilteredConversations.filter(c => !c.is_hidden).length;
+  const pinnedCount = timeFilteredConversations.filter(c => c.is_pinned).length;
   const hiddenCount = conversations.filter(c => c.is_hidden).length;
 
   // Filter messages by search
