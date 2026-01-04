@@ -886,13 +886,30 @@ const Campaigns: React.FC = () => {
   const isTemporarilyRestricted = (account: typeof accounts[0]) => {
     return account.restrictedUntil && new Date(account.restrictedUntil) > now;
   };
+  
+  // Check if account is spambot limited (should not be used for campaigns)
+  const isSpambotLimited = (account: typeof accounts[0]) => {
+    return account.spambotStatus === 'limited' || account.spambotStatus === 'restricted';
+  };
 
-  // For campaigns: only active accounts that are NOT temporarily restricted
+  // For campaigns: only active accounts that are NOT temporarily restricted AND NOT spambot limited
   const campaignEligibleAccounts = accounts.filter(
-    (a) => a.status === 'active' && !isTemporarilyRestricted(a)
+    (a) => a.status === 'active' && !isTemporarilyRestricted(a) && !isSpambotLimited(a)
   );
+  
+  // Accounts that are temporarily restricted (will become available after timer)
   const tempRestrictedAccounts = accounts.filter(
     (a) => a.status === 'active' && isTemporarilyRestricted(a)
+  );
+  
+  // Accounts that are spambot limited (restricted by Telegram)
+  const spambotLimitedAccounts = accounts.filter(
+    (a) => a.status === 'active' && isSpambotLimited(a) && !isTemporarilyRestricted(a)
+  );
+  
+  // Accounts with status 'restricted' or 'cooldown' (system-level restrictions)
+  const restrictedStatusAccounts = accounts.filter(
+    (a) => a.status === 'restricted' || a.status === 'cooldown'
   );
 
   // Legacy naming kept for backward compat in UI
@@ -1129,6 +1146,60 @@ username123
                                   <CountdownTimer 
                                     targetDate={new Date(acc.restrictedUntil)} 
                                     className="text-yellow-600"
+                                  />
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Show spambot limited accounts */}
+                  {spambotLimitedAccounts.length > 0 && (
+                    <div className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/30">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-orange-600 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium text-orange-600">
+                            {spambotLimitedAccounts.length} Account(s) SpamBot Limited
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            These accounts are flagged by Telegram's SpamBot and cannot be used for campaigns.
+                          </p>
+                          <div className="mt-2 space-y-1">
+                            {spambotLimitedAccounts.map((acc) => (
+                              <div key={acc.id} className="text-xs text-orange-600 bg-orange-500/5 rounded px-2 py-1">
+                                • {acc.firstName || acc.phoneNumber} ({acc.spambotStatus})
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Show system-level restricted accounts */}
+                  {restrictedStatusAccounts.length > 0 && (
+                    <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/30">
+                      <div className="flex items-start gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-600 mt-0.5" />
+                        <div>
+                          <p className="text-sm font-medium text-red-600">
+                            {restrictedStatusAccounts.length} Account(s) Restricted
+                          </p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            These accounts have a restricted status and cannot be used for campaigns.
+                          </p>
+                          <div className="mt-2 space-y-1">
+                            {restrictedStatusAccounts.map((acc) => (
+                              <div key={acc.id} className="flex items-center justify-between text-xs text-red-600 bg-red-500/5 rounded px-2 py-1">
+                                <span>• {acc.firstName || acc.phoneNumber} ({acc.status})</span>
+                                {acc.restrictedUntil && new Date(acc.restrictedUntil) > now && (
+                                  <CountdownTimer 
+                                    targetDate={new Date(acc.restrictedUntil)} 
+                                    className="text-red-600"
                                   />
                                 )}
                               </div>

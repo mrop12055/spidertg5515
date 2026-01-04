@@ -1097,12 +1097,21 @@ const Accounts: React.FC = () => {
   });
 
   // Split accounts by status - frozen WITH timer goes to restricted, frozen WITHOUT timer goes to inactive
+  // Helper to check if account is spambot limited (should be in restricted)
+  const isSpambotLimited = (a: TelegramAccount) => 
+    a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
+
   const accountsByStatus = {
-    active: filteredAccounts.filter(a => a.status === 'active'),
+    // Active: only truly active accounts (not spambot limited)
+    active: filteredAccounts.filter(a => 
+      a.status === 'active' && !isSpambotLimited(a)
+    ),
+    // Restricted: includes status restricted/cooldown, frozen with timer, AND spambot limited
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' || 
-      (a.status === 'frozen' && a.restrictedUntil) // Only frozen WITH countdown timer
+      (a.status === 'frozen' && a.restrictedUntil) || // Only frozen WITH countdown timer
+      (a.status === 'active' && isSpambotLimited(a)) // Active but spambot limited
     ),
     inactive: filteredAccounts.filter(a => 
       a.status === 'banned' || 
@@ -1152,12 +1161,17 @@ const Accounts: React.FC = () => {
     return proxy?.status || null;
   };
 
-  // Calculate stats - frozen/banned are always inactive
+  // Calculate stats - frozen/banned are always inactive, spambot limited = restricted
+  const isAccountSpambotLimited = (a: TelegramAccount) => 
+    a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
+  
   const stats = {
     total: accounts.length,
-    active: accounts.filter(a => a.status === 'active').length,
+    active: accounts.filter(a => a.status === 'active' && !isAccountSpambotLimited(a)).length,
     restricted: accounts.filter(a => 
-      a.status === 'restricted' || a.status === 'cooldown'
+      a.status === 'restricted' || 
+      a.status === 'cooldown' ||
+      (a.status === 'active' && isAccountSpambotLimited(a))
     ).length,
     inactive: accounts.filter(a => 
       a.status === 'banned' || 
