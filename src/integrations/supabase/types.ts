@@ -1076,27 +1076,6 @@ export type Database = {
         }
         Relationships: []
       }
-      user_roles: {
-        Row: {
-          created_at: string | null
-          id: string
-          role: Database["public"]["Enums"]["app_role"]
-          user_id: string
-        }
-        Insert: {
-          created_at?: string | null
-          id?: string
-          role: Database["public"]["Enums"]["app_role"]
-          user_id: string
-        }
-        Update: {
-          created_at?: string | null
-          id?: string
-          role?: Database["public"]["Enums"]["app_role"]
-          user_id?: string
-        }
-        Relationships: []
-      }
       vps_connections: {
         Row: {
           api_key: string
@@ -1382,13 +1361,6 @@ export type Database = {
       }
     }
     Functions: {
-      has_role: {
-        Args: {
-          _role: Database["public"]["Enums"]["app_role"]
-          _user_id: string
-        }
-        Returns: boolean
-      }
       increment_account_failure: {
         Args: { acc_id: string }
         Returns: undefined
@@ -1405,8 +1377,6 @@ export type Database = {
         Args: { cid: string }
         Returns: undefined
       }
-      is_admin: { Args: never; Returns: boolean }
-      is_authenticated: { Args: never; Returns: boolean }
       reset_daily_message_counts: { Args: never; Returns: undefined }
     }
     Enums: {
@@ -1417,7 +1387,6 @@ export type Database = {
         | "disconnected"
         | "cooldown"
         | "frozen"
-      app_role: "admin" | "user"
       campaign_status:
         | "draft"
         | "scheduled"
@@ -1571,7 +1540,6 @@ export const Constants = {
         "cooldown",
         "frozen",
       ],
-      app_role: ["admin", "user"],
       campaign_status: [
         "draft",
         "scheduled",
