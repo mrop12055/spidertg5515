@@ -281,7 +281,7 @@ const SeatChat: React.FC = () => {
   useEffect(() => {
     const validateSeat = async () => {
       if (!token) {
-        setError('Invalid seat link');
+        setError('invalid_link');
         setIsLoading(false);
         return;
       }
@@ -296,13 +296,13 @@ const SeatChat: React.FC = () => {
         if (seatError) throw seatError;
         
         if (!data) {
-          setError('Seat not found');
+          setError('revoked');
           setIsLoading(false);
           return;
         }
 
         if (!data.is_active) {
-          setError('This seat has been deactivated');
+          setError('deactivated');
           setIsLoading(false);
           return;
         }
@@ -311,7 +311,7 @@ const SeatChat: React.FC = () => {
         setIsLoading(false);
       } catch (err) {
         console.error('Error validating seat:', err);
-        setError('Failed to load seat');
+        setError('failed');
         setIsLoading(false);
       }
     };
@@ -660,15 +660,53 @@ const SeatChat: React.FC = () => {
   }
 
   if (error) {
+    const getErrorContent = () => {
+      switch (error) {
+        case 'revoked':
+          return {
+            title: 'Link Revoked',
+            message: 'This link has been revoked and you can no longer access this chat. Please ask your administrator for a new link.',
+            icon: <AlertCircle className="w-8 h-8 text-destructive" />
+          };
+        case 'deactivated':
+          return {
+            title: 'Seat Deactivated',
+            message: 'This workspace has been deactivated. Please contact your administrator to reactivate it.',
+            icon: <AlertCircle className="w-8 h-8 text-orange-500" />
+          };
+        case 'invalid_link':
+          return {
+            title: 'Invalid Link',
+            message: 'The link you are trying to access is invalid. Please check the URL or request a new link.',
+            icon: <AlertCircle className="w-8 h-8 text-destructive" />
+          };
+        default:
+          return {
+            title: 'Access Error',
+            message: 'Failed to load this workspace. Please try again later.',
+            icon: <AlertCircle className="w-8 h-8 text-destructive" />
+          };
+      }
+    };
+
+    const errorContent = getErrorContent();
+
     return (
-      <div className="h-screen bg-background flex items-center justify-center p-4">
+      <div className="h-screen bg-gradient-to-br from-muted/30 via-background to-muted/20 flex items-center justify-center p-4">
         <Card className="max-w-md w-full bg-card border-border shadow-2xl">
-          <CardContent className="pt-8 pb-8 text-center">
-            <div className="w-16 h-16 rounded-full bg-destructive/20 flex items-center justify-center mx-auto mb-4">
-              <AlertCircle className="w-8 h-8 text-destructive" />
+          <CardContent className="pt-10 pb-10 text-center space-y-4">
+            <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
+              {errorContent.icon}
             </div>
-            <h2 className="text-xl font-bold mb-2 text-foreground">Access Error</h2>
-            <p className="text-muted-foreground">{error}</p>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold text-foreground">{errorContent.title}</h2>
+              <p className="text-muted-foreground leading-relaxed">{errorContent.message}</p>
+            </div>
+            <div className="pt-4">
+              <p className="text-xs text-muted-foreground/70">
+                Need help? Contact your workspace administrator.
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
