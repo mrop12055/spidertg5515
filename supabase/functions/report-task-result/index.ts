@@ -291,7 +291,7 @@ serve(async (req) => {
             'spam',
             'user_is_blocked',
             'frozen accounts',   // ImportContactsRequest errors on frozen accounts
-            'too many requests', // Rate limit - account needs 24h cooldown
+            'too many requests', // Rate limit - account needs 12h cooldown
             'floodwaiterror'     // Telegram flood wait error
           ];
           
@@ -417,16 +417,16 @@ serve(async (req) => {
               }
             }
           } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
-            // TEMPORARY - set to restricted status with 24h cooldown
+            // TEMPORARY - set to restricted status with 12h cooldown
             // Account can still be used for replying to existing chats, but not new campaign messages
-            console.log(`[report-task-result] Account ${account_id} RESTRICTED for 24h: ${error}`);
+            console.log(`[report-task-result] Account ${account_id} RESTRICTED for 12h: ${error}`);
             
             await supabase
               .from("telegram_accounts")
               .update({
                 status: "restricted",
                 ban_reason: error,
-                restricted_until: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
               })
               .eq("id", account_id);
             
