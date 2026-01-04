@@ -1259,11 +1259,26 @@ username123
             <div className="space-y-4 pt-4">
               {(() => {
                 const report = campaignReports.get(selectedReportCampaign.id);
-                if (isLoadingReport || !report || report.failedRecipients.length === 0 && report.failed > 0) {
+                // Only show loading if actively loading AND report not ready
+                // Don't show loading forever if campaign has no recipients
+                if (isLoadingReport) {
                   return (
                     <div className="flex items-center justify-center py-8 gap-3">
                       <Loader2 className="w-5 h-5 animate-spin text-primary" />
                       <p className="text-muted-foreground">Loading report details...</p>
+                    </div>
+                  );
+                }
+                
+                // Handle case where campaign has no recipients at all
+                if (!report || (report.total === 0 && selectedReportCampaign.recipientCount === 0)) {
+                  return (
+                    <div className="text-center py-8">
+                      <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+                      <p className="text-muted-foreground">No recipients in this campaign</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Add recipients before starting the campaign
+                      </p>
                     </div>
                   );
                 }
@@ -1671,7 +1686,7 @@ username123
                       
                       {/* Right Section - Actions */}
                       <div className="flex items-center gap-0.5 shrink-0">
-                        <Dialog>
+                        <Dialog onOpenChange={(open) => { if (open) fetchSingleCampaignReport(campaign.id); }}>
                           <DialogTrigger asChild>
                             <Button variant="ghost" size="sm" className="h-9 px-3 gap-2 text-muted-foreground hover:text-foreground">
                               <Eye className="w-4 h-4" />
@@ -1722,6 +1737,19 @@ username123
                                 const failed = report?.failed ?? campaign.failedCount ?? 0;
                                 const pending = report?.pending ?? Math.max(0, total - sent - failed);
                                 const successRate = total > 0 ? Math.round((sent / total) * 100) : 0;
+                                
+                                // Show empty state if no recipients
+                                if (total === 0) {
+                                  return (
+                                    <div className="text-center py-6 bg-muted/30 rounded-xl border border-border/50">
+                                      <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+                                      <p className="text-muted-foreground font-medium">No recipients added</p>
+                                      <p className="text-xs text-muted-foreground mt-1">
+                                        This campaign has no recipients to send to
+                                      </p>
+                                    </div>
+                                  );
+                                }
                                 
                                 return (
                                   <div className="grid grid-cols-5 gap-3">
@@ -1848,33 +1876,47 @@ username123
                               )}
                               
                               {/* Failed Recipients with Reasons */}
-                              {report?.failedRecipients && report.failedRecipients.length > 0 && (
-                                <div>
-                                  <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                                    <XCircle className="w-4 h-4 text-destructive" />
-                                    Failed Recipients ({report.failedRecipients.length})
-                                  </h4>
-                                  <ScrollArea className="h-[200px] border rounded-xl">
-                                    <div className="divide-y">
-                                      {report.failedRecipients.map((recipient, idx) => (
-                                        <div key={idx} className="p-3">
-                                          <div className="flex justify-between items-start">
-                                            <div>
-                                              <span className="font-medium text-sm">{recipient.name || recipient.phone_number}</span>
-                                              {recipient.name && (
-                                                <span className="text-xs text-muted-foreground ml-2">{recipient.phone_number}</span>
-                                              )}
+                              {(() => {
+                                const failedCount = report?.failed ?? campaign.failedCount ?? 0;
+                                const failedRecipients = report?.failedRecipients || [];
+                                
+                                if (failedCount === 0) return null;
+                                
+                                return (
+                                  <div>
+                                    <h4 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                                      <XCircle className="w-4 h-4 text-destructive" />
+                                      Failed Recipients ({failedCount})
+                                    </h4>
+                                    {failedRecipients.length > 0 ? (
+                                      <ScrollArea className="h-[200px] border rounded-xl">
+                                        <div className="divide-y">
+                                          {failedRecipients.map((recipient, idx) => (
+                                            <div key={idx} className="p-3">
+                                              <div className="flex justify-between items-start">
+                                                <div>
+                                                  <span className="font-medium text-sm">{recipient.name || recipient.phone_number}</span>
+                                                  {recipient.name && (
+                                                    <span className="text-xs text-muted-foreground ml-2">{recipient.phone_number}</span>
+                                                  )}
+                                                </div>
+                                              </div>
+                                              <p className="text-xs text-destructive mt-1" title={recipient.failed_reason || 'Unknown error'}>
+                                                {recipient.failed_reason || 'Unknown error'}
+                                              </p>
                                             </div>
-                                          </div>
-                                          <p className="text-xs text-destructive mt-1 truncate" title={recipient.failed_reason || 'Unknown error'}>
-                                            {recipient.failed_reason || 'Unknown error'}
-                                          </p>
+                                          ))}
                                         </div>
-                                      ))}
-                                    </div>
-                                  </ScrollArea>
-                                </div>
-                              )}
+                                      </ScrollArea>
+                                    ) : (
+                                      <div className="flex items-center justify-center py-4 border rounded-xl bg-muted/30">
+                                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground mr-2" />
+                                        <span className="text-sm text-muted-foreground">Loading failure details...</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </DialogContent>
                         </Dialog>
