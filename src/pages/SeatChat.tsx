@@ -114,7 +114,7 @@ const SeatChat: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('7d');
   const [showRepliedOnly, setShowRepliedOnly] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -1324,7 +1324,7 @@ const SeatChat: React.FC = () => {
         ) : (
           /* Reports View */
           <div className="flex-1 overflow-y-auto p-5 bg-muted/30">
-            <div className="max-w-5xl mx-auto space-y-5">
+            <div className="space-y-5">
               {/* Page Header */}
               <div className="mb-6">
                 <h2 className="text-xl font-bold text-foreground tracking-tight">Analytics Dashboard</h2>
