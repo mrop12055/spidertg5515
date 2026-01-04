@@ -801,7 +801,7 @@ async def main_loop():
                     for acc in new_accounts:
                         if acc.get("id"):
                             connected_ids.add(acc["id"])
-                await asyncio.sleep(task.get("seconds", 0.05))  # Faster polling
+                await asyncio.sleep(0.01)  # Near-instant polling
             
             elif task_type == "send":
                 msg = task.get("message", {})
