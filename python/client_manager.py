@@ -434,24 +434,25 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
             "recipient_username": getattr(entity, "username", None),
         }
 
-        # Ensure URLs are clickable by forcing HTML link entities when we detect a URL.
+        # Ensure URLs are clickable by using HTML parse mode with <a> tags
         formatted_content = content
+        parse_mode = None
         try:
-            import re, html as _html
-            url_re = re.compile(r"((?:https?://|www\.)[^\s<]+)")
+            import re
+            url_re = re.compile(r'(https?://[^\s<>"\']+)')
             if content and url_re.search(content):
-                # Escape everything, then re-insert URLs as <a> tags
-                escaped = _html.escape(content)
-
+                parse_mode = 'html'
+                
                 def _to_link(m):
-                    raw = m.group(1)
-                    href = raw if raw.startswith("http") else f"https://{raw}"
-                    return f'<a href="{_html.escape(href)}">{_html.escape(raw)}</a>'
-
-                formatted_content = url_re.sub(_to_link, escaped)
-        except Exception:
-            # If anything goes wrong, fall back to plain content
+                    url = m.group(1)
+                    return f'<a href="{url}">{url}</a>'
+                
+                formatted_content = url_re.sub(_to_link, content)
+                print(f"  [LINK] Formatted with HTML: {formatted_content[:100]}...")
+        except Exception as e:
+            print(f"  [LINK ERROR] {e}")
             formatted_content = content
+            parse_mode = None
 
         # Send message with timeout
         if media_url:
@@ -478,16 +479,16 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
 
                         # For images, use force_document=False to send as photo preview
                         await asyncio.wait_for(
-                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode='html'),
+                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
                             timeout=30
                         )
                     else:
-                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode='html'), timeout=15)
+                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
-                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode='html'), timeout=15)
+                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
         else:
-            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode='html'), timeout=15)
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
 
         return True, None, meta
     except asyncio.TimeoutError:
