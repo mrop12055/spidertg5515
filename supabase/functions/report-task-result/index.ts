@@ -310,17 +310,18 @@ serve(async (req) => {
           } else if (isRetryable && campaign_recipient_id && account_id) {
             // PRIVACY ERROR - try with a different account (up to 5 attempts)
             // Takes priority over temporary restriction since "privacy restricted" contains "restricted"
+            // NOTE: Do NOT apply cooldown to account - privacy is recipient-specific, not account problem
             console.log(`[report-task-result] Privacy error for recipient ${campaign_recipient_id} - checking for retry with different account`);
             
-            // ADD 1-HOUR COOLDOWN to prevent this account from being assigned to ANY new recipients
+            // Just update last_active, no cooldown needed for privacy errors
             await supabase
               .from("telegram_accounts")
               .update({
-                restricted_until: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour cooldown
+                last_active: new Date().toISOString(),
               })
               .eq("id", account_id);
             
-            console.log(`[report-task-result] Account ${account_id} given 1-hour cooldown after privacy error`);
+            console.log(`[report-task-result] Privacy error is recipient-specific - account ${account_id} remains available`);
             
             // Get recipient's current failed_account_ids
             const { data: recipientData } = await supabase
