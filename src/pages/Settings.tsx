@@ -92,53 +92,40 @@ const Settings: React.FC = () => {
       const yesterday = new Date();
       yesterday.setHours(yesterday.getHours() - 24);
       
-      // Get all accounts with their api_credential_id
-      const { data: accountsData } = await supabase
-        .from('telegram_accounts')
-        .select('id, api_credential_id');
-      
-      // Get messages sent in last 24h
+      // Get messages sent in last 24h WITH api_credential_id for accurate tracking
       const { data: messagesData } = await supabase
         .from('messages')
-        .select('account_id')
+        .select('api_credential_id')
         .eq('direction', 'outgoing')
         .eq('status', 'sent')
+        .not('api_credential_id', 'is', null)
         .gte('created_at', yesterday.toISOString());
       
-      // Get campaign recipients from last 24 hours for success rate
+      // Get campaign recipients from last 24 hours WITH api_credential_id
       const { data: recipientsData } = await supabase
         .from('campaign_recipients')
-        .select('sent_by_account_id, status')
+        .select('api_credential_id, status')
         .in('status', ['sent', 'failed'])
+        .not('api_credential_id', 'is', null)
         .gte('sent_at', yesterday.toISOString());
       
-      // Build account to API mapping
-      const accountToApi = new Map<string, string>();
-      (accountsData || []).forEach((acc: any) => {
-        if (acc.api_credential_id) {
-          accountToApi.set(acc.id, acc.api_credential_id);
-        }
-      });
-      
-      // Count 24h messages per API
+      // Count 24h messages per API (using stored api_credential_id)
       const apiCounts = new Map<string, number>();
       (messagesData || []).forEach((msg: any) => {
-        const apiId = accountToApi.get(msg.account_id);
-        if (apiId) {
-          apiCounts.set(apiId, (apiCounts.get(apiId) || 0) + 1);
+        if (msg.api_credential_id) {
+          apiCounts.set(msg.api_credential_id, (apiCounts.get(msg.api_credential_id) || 0) + 1);
         }
       });
       
-      // Count 24h success/fail per API
+      // Count 24h success/fail per API (using stored api_credential_id)
       const apiSuccess = new Map<string, number>();
       const apiFailed = new Map<string, number>();
       (recipientsData || []).forEach((rec: any) => {
-        const apiId = accountToApi.get(rec.sent_by_account_id);
-        if (apiId) {
+        if (rec.api_credential_id) {
           if (rec.status === 'sent') {
-            apiSuccess.set(apiId, (apiSuccess.get(apiId) || 0) + 1);
+            apiSuccess.set(rec.api_credential_id, (apiSuccess.get(rec.api_credential_id) || 0) + 1);
           } else if (rec.status === 'failed') {
-            apiFailed.set(apiId, (apiFailed.get(apiId) || 0) + 1);
+            apiFailed.set(rec.api_credential_id, (apiFailed.get(rec.api_credential_id) || 0) + 1);
           }
         }
       });

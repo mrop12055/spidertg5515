@@ -143,12 +143,17 @@ async def main_loop():
                         "privacyrestricted", "privacy restricted", "userprivacyrestricted"
                     ])
 
+                    # Get the API credential ID that was used (from joined data or account)
+                    api_creds = account.get("telegram_api_credentials")
+                    api_credential_id = api_creds.get("id") if api_creds else account.get("api_credential_id")
+
                     result = {
                         "success": success,
                         "error": error,
                         "campaign_recipient_id": msg.get("campaign_recipient_id"),
                         "message_id": msg.get("id"),
                         "account_id": account_id,
+                        "api_credential_id": api_credential_id,  # Track which API was actually used
                         "content": content,
                         "recipient_phone": recipient,
                         "recipient_name": recipient_name,
