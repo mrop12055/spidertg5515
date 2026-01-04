@@ -1056,264 +1056,347 @@ const SeatChat: React.FC = () => {
               </div>
             </div>
 
-            {/* Message Area */}
-            <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-slate-100/50 to-slate-50 dark:from-slate-900/50 dark:via-slate-800/30 dark:to-slate-900/50">
-              {selectedConversation ? (
-                <>
-                  {/* Chat Header */}
-                  <div className="bg-card/90 backdrop-blur-sm border-b border-border/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="w-11 h-11">
+            {/* Message Area with Contact Details */}
+            <div className="flex-1 flex overflow-hidden">
+              {/* Chat Container */}
+              <div className="flex-1 flex flex-col overflow-hidden p-4 lg:p-6">
+                {selectedConversation ? (
+                  <div className="flex-1 flex flex-col bg-card rounded-2xl shadow-xl border border-border/50 overflow-hidden animate-scale-in">
+                    {/* Chat Header */}
+                    <div className="bg-gradient-to-r from-card via-card to-muted/20 border-b border-border/50 px-5 py-4 flex items-center justify-between flex-shrink-0">
+                      <div className="flex items-center gap-4">
+                        <div className="relative">
+                          <Avatar className="w-12 h-12 ring-2 ring-primary/20 ring-offset-2 ring-offset-card">
+                            <AvatarImage src={selectedConversation.recipient_avatar || ''} />
+                            <AvatarFallback className={cn(
+                              "bg-gradient-to-br text-white text-base font-semibold",
+                              getAvatarColor(selectedConversation.recipient_phone)
+                            )}>
+                              {getAvatarInitial(selectedConversation)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 bg-green-500 rounded-full border-2 border-card" />
+                        </div>
+                        <div>
+                          <p className="font-semibold text-foreground text-lg">
+                            {getDisplayName(selectedConversation)}
+                          </p>
+                          <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                            {formatLastSeen(selectedConversation)}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => setIsMessageSearchOpen(true)}
+                          className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-10 w-10 rounded-xl"
+                        >
+                          <Search className="w-5 h-5" />
+                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button 
+                              variant="ghost" 
+                              size="icon"
+                              className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-10 w-10 rounded-xl"
+                            >
+                              <MoreVertical className="w-5 h-5" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground">
+                            <DropdownMenuItem 
+                              onClick={() => togglePinConversation(selectedConversation.id, !!selectedConversation.is_pinned)}
+                              className="text-muted-foreground hover:bg-muted focus:bg-muted"
+                            >
+                              {selectedConversation.is_pinned ? (
+                                <>
+                                  <PinOff className="w-4 h-4 mr-2" />
+                                  Unpin conversation
+                                </>
+                              ) : (
+                                <>
+                                  <Pin className="w-4 h-4 mr-2" />
+                                  Pin conversation
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem 
+                              onClick={() => toggleHideConversation(selectedConversation.id, !!selectedConversation.is_hidden)}
+                              className="text-muted-foreground hover:bg-muted focus:bg-muted"
+                            >
+                              <EyeOff className="w-4 h-4 mr-2" />
+                              Hide conversation
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </div>
+
+                    {/* Messages Container */}
+                    <div 
+                      ref={messagesContainerRef}
+                      className="flex-1 overflow-y-auto px-5 py-4 scrollbar-thin bg-gradient-to-b from-muted/20 to-muted/5"
+                    >
+                      <div className="space-y-2">
+                        {messageGroups.length === 0 ? (
+                          <div className="flex flex-col items-center justify-center h-full py-16 animate-fade-in">
+                            <div className="w-20 h-20 rounded-full bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center mb-4 border border-border/30">
+                              <MessageSquare className="w-8 h-8 text-muted-foreground/50" />
+                            </div>
+                            <p className="text-muted-foreground text-base font-medium">
+                              {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
+                            </p>
+                            <p className="text-muted-foreground/60 text-sm mt-1">
+                              Start the conversation by sending a message
+                            </p>
+                          </div>
+                        ) : (
+                          messageGroups.map((group, groupIndex) => (
+                            <div key={groupIndex} className="animate-fade-in" style={{ animationDelay: `${groupIndex * 50}ms` }}>
+                              {/* Date Separator */}
+                              <div className="flex justify-center my-4">
+                                <span className="bg-card text-muted-foreground text-xs font-medium px-4 py-1.5 rounded-full shadow-sm border border-border/50">
+                                  {formatDateSeparator(group.date)}
+                                </span>
+                              </div>
+                              
+                              {/* Messages */}
+                              {group.messages.map((msg, msgIndex) => (
+                                <div
+                                  key={msg.id}
+                                  className={cn(
+                                    "flex mb-2 animate-fade-in",
+                                    msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
+                                  )}
+                                  style={{ animationDelay: `${msgIndex * 30}ms` }}
+                                >
+                                  <div
+                                    className={cn(
+                                      "relative max-w-[80%] rounded-2xl px-4 py-3 transition-all duration-200 hover:shadow-lg",
+                                      msg.direction === 'outgoing'
+                                        ? 'bg-gradient-to-br from-primary via-primary to-primary/90 text-primary-foreground rounded-br-md shadow-lg shadow-primary/25'
+                                        : 'bg-card text-card-foreground rounded-bl-md shadow-md border border-border/50'
+                                    )}
+                                  >
+                                    {msg.media_url && (
+                                      <img
+                                        src={msg.media_url}
+                                        alt="Media"
+                                        className="max-w-full rounded-xl mb-2"
+                                      />
+                                    )}
+                                    <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+                                      {msg.content}
+                                    </p>
+                                    <div className={cn(
+                                      "flex items-center gap-1.5 mt-2",
+                                      msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
+                                    )}>
+                                      <span className={cn(
+                                        "text-xs",
+                                        msg.direction === 'outgoing' ? 'text-primary-foreground/70' : 'text-muted-foreground'
+                                      )}>
+                                        {formatMessageTime(msg.created_at)}
+                                      </span>
+                                      {msg.direction === 'outgoing' && getMessageStatusIcon(msg.status)}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ))
+                        )}
+                        <div ref={messagesEndRef} />
+                      </div>
+                    </div>
+
+                    {/* Image Preview */}
+                    {imagePreview && (
+                      <div className="bg-muted/50 border-t border-border/50 p-3 flex-shrink-0">
+                        <div className="relative inline-block">
+                          <img 
+                            src={imagePreview} 
+                            alt="Selected" 
+                            className="max-h-24 rounded-xl shadow-md"
+                          />
+                          <Button
+                            variant="destructive"
+                            size="icon"
+                            className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-destructive hover:bg-destructive/90 shadow-lg"
+                            onClick={clearSelectedImage}
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Message Input */}
+                    <div className="bg-gradient-to-r from-card via-card to-muted/10 border-t border-border/50 px-5 py-4 flex-shrink-0">
+                      <div className="flex items-center gap-3">
+                        {/* Emoji */}
+                        <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
+                        
+                        {/* Attachment */}
+                        <input
+                          type="file"
+                          ref={fileInputRef}
+                          onChange={handleImageSelect}
+                          accept="image/*"
+                          className="hidden"
+                        />
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => fileInputRef.current?.click()}
+                          className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-10 w-10 flex-shrink-0 rounded-xl"
+                        >
+                          <Paperclip className="w-5 h-5" />
+                        </Button>
+
+                        {/* Input */}
+                        <Input
+                          placeholder="Type a message..."
+                          value={messageInput}
+                          onChange={(e) => setMessageInput(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                          disabled={isSending}
+                          className="flex-1 bg-muted/50 border border-border/50 text-foreground placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 h-12 rounded-xl text-base px-4 transition-all shadow-sm"
+                        />
+
+                        {/* Send / Mic Button */}
+                        {messageInput.trim() || selectedImage ? (
+                          <Button 
+                            onClick={handleSendMessage} 
+                            disabled={isSending}
+                            className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary/80 text-primary-foreground h-12 w-12 rounded-xl flex-shrink-0 shadow-lg shadow-primary/30 transition-all hover:shadow-xl hover:shadow-primary/40 hover:scale-105"
+                            size="icon"
+                          >
+                            {isSending ? (
+                              <Loader2 className="w-5 h-5 animate-spin" />
+                            ) : (
+                              <Send className="w-5 h-5" />
+                            )}
+                          </Button>
+                        ) : (
+                          <Button 
+                            variant="ghost"
+                            className="text-muted-foreground hover:text-foreground hover:bg-muted/80 h-12 w-12 rounded-xl flex-shrink-0"
+                            size="icon"
+                          >
+                            <Mic className="w-5 h-5" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex-1 flex items-center justify-center bg-card rounded-2xl shadow-xl border border-border/50 animate-fade-in">
+                    <div className="text-center">
+                      <div className="w-32 h-32 mx-auto mb-6 relative">
+                        <div className="absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5 rounded-full animate-pulse" />
+                        <div className="absolute inset-4 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
+                        <div className="absolute inset-8 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
+                          <Send className="w-8 h-8 text-primary-foreground rotate-[-45deg]" />
+                        </div>
+                      </div>
+                      <h2 className="text-2xl font-bold text-foreground">{seat?.name}</h2>
+                      <p className="text-base text-muted-foreground mt-2">Select a conversation to start messaging</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Contact Details Panel */}
+              {selectedConversation && (
+                <div className="w-80 bg-card border-l border-border/50 flex-shrink-0 overflow-y-auto animate-slide-in-right hidden xl:block">
+                  {/* Contact Header */}
+                  <div className="p-6 text-center border-b border-border/50">
+                    <div className="relative inline-block mb-4">
+                      <Avatar className="w-24 h-24 ring-4 ring-primary/20 ring-offset-4 ring-offset-card">
                         <AvatarImage src={selectedConversation.recipient_avatar || ''} />
                         <AvatarFallback className={cn(
-                          "bg-gradient-to-br text-white text-sm font-medium",
+                          "bg-gradient-to-br text-white text-2xl font-bold",
                           getAvatarColor(selectedConversation.recipient_phone)
                         )}>
                           {getAvatarInitial(selectedConversation)}
                         </AvatarFallback>
                       </Avatar>
-                      <div>
-                        <p className="font-medium text-foreground text-base">
-                          {getDisplayName(selectedConversation)}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {formatLastSeen(selectedConversation)}
+                      <span className="absolute bottom-1 right-1 w-5 h-5 bg-green-500 rounded-full border-3 border-card" />
+                    </div>
+                    <h3 className="text-xl font-bold text-foreground">
+                      {getDisplayName(selectedConversation)}
+                    </h3>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {formatLastSeen(selectedConversation)}
+                    </p>
+                  </div>
+
+                  {/* Contact Info */}
+                  <div className="p-5 space-y-4">
+                    <div className="bg-muted/50 rounded-xl p-4">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Phone Number</p>
+                      <p className="text-foreground font-medium flex items-center gap-2">
+                        <Phone className="w-4 h-4 text-primary" />
+                        {selectedConversation.recipient_phone || 'Not available'}
+                      </p>
+                    </div>
+
+                    {selectedConversation.recipient_username && (
+                      <div className="bg-muted/50 rounded-xl p-4">
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Username</p>
+                        <p className="text-foreground font-medium">
+                          @{selectedConversation.recipient_username}
                         </p>
                       </div>
+                    )}
+
+                    <div className="bg-muted/50 rounded-xl p-4">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Status</p>
+                      <div className="flex items-center gap-2">
+                        <Badge className="bg-primary/10 text-primary border-primary/20 text-xs">
+                          Campaign Contact
+                        </Badge>
+                        {selectedConversation.has_reply && (
+                          <Badge className="bg-green-500/10 text-green-600 border-green-500/20 text-xs">
+                            Replied
+                          </Badge>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-1">
+
+                    {/* Quick Actions */}
+                    <div className="pt-4 space-y-2">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Quick Actions</p>
                       <Button 
-                        variant="ghost" 
-                        size="icon"
-                        onClick={() => setIsMessageSearchOpen(true)}
-                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-8 w-8"
+                        variant="outline" 
+                        className="w-full justify-start gap-2 h-11 rounded-xl"
+                        onClick={() => togglePinConversation(selectedConversation.id, !!selectedConversation.is_pinned)}
                       >
-                        <Search className="w-4 h-4" />
+                        {selectedConversation.is_pinned ? (
+                          <>
+                            <PinOff className="w-4 h-4" />
+                            Unpin Conversation
+                          </>
+                        ) : (
+                          <>
+                            <Pin className="w-4 h-4" />
+                            Pin Conversation
+                          </>
+                        )}
                       </Button>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button 
-                            variant="ghost" 
-                            size="icon"
-                            className="text-muted-foreground hover:text-foreground hover:bg-muted h-8 w-8"
-                          >
-                            <MoreVertical className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground">
-                          <DropdownMenuItem 
-                            onClick={() => togglePinConversation(selectedConversation.id, !!selectedConversation.is_pinned)}
-                            className="text-muted-foreground hover:bg-muted focus:bg-muted"
-                          >
-                            {selectedConversation.is_pinned ? (
-                              <>
-                                <PinOff className="w-4 h-4 mr-2" />
-                                Unpin conversation
-                              </>
-                            ) : (
-                              <>
-                                <Pin className="w-4 h-4 mr-2" />
-                                Pin conversation
-                              </>
-                            )}
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => toggleHideConversation(selectedConversation.id, !!selectedConversation.is_hidden)}
-                            className="text-muted-foreground hover:bg-muted focus:bg-muted"
-                          >
-                            <EyeOff className="w-4 h-4 mr-2" />
-                            Hide conversation
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  </div>
-
-                  {/* Messages Container - with subtle pattern */}
-                  <div 
-                    ref={messagesContainerRef}
-                    className="flex-1 overflow-y-auto px-6 py-4 scrollbar-thin"
-                    style={{
-                      backgroundImage: `
-                        radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground) / 0.05) 1px, transparent 0),
-                        linear-gradient(135deg, hsl(var(--muted) / 0.3) 0%, transparent 50%, hsl(var(--muted) / 0.2) 100%)
-                      `,
-                      backgroundSize: '20px 20px, 100% 100%'
-                    }}
-                  >
-                    <div className="max-w-2xl space-y-1">
-                      {messageGroups.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full py-16">
-                          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center mb-4 border border-border/30">
-                            <MessageSquare className="w-8 h-8 text-muted-foreground/50" />
-                          </div>
-                          <p className="text-muted-foreground text-base font-medium">
-                            {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
-                          </p>
-                          <p className="text-muted-foreground/60 text-sm mt-1">
-                            Start the conversation by sending a message
-                          </p>
-                        </div>
-                      ) : (
-                        messageGroups.map((group, groupIndex) => (
-                          <div key={groupIndex}>
-                            {/* Date Separator */}
-                            <div className="flex justify-start my-4">
-                              <span className="bg-card/90 backdrop-blur-sm text-muted-foreground text-xs font-medium px-3.5 py-1.5 rounded-full shadow-sm border border-border/30">
-                                {formatDateSeparator(group.date)}
-                              </span>
-                            </div>
-                            
-                            {/* Messages */}
-                            {group.messages.map((msg) => (
-                              <div
-                                key={msg.id}
-                                className={cn(
-                                  "flex mb-0.5",
-                                  msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
-                                )}
-                              >
-                                <div
-                                  className={cn(
-                                    "relative max-w-[85%] rounded-2xl px-4 py-2.5",
-                                    msg.direction === 'outgoing'
-                                      ? 'bg-gradient-to-br from-primary via-primary to-primary/90 text-primary-foreground rounded-br-md shadow-lg shadow-primary/20'
-                                      : 'bg-card text-card-foreground rounded-bl-md shadow-md border border-border/30'
-                                  )}
-                                >
-                                  {msg.media_url && (
-                                    <img
-                                      src={msg.media_url}
-                                      alt="Media"
-                                      className="max-w-full rounded-xl mb-2"
-                                    />
-                                  )}
-                                  <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
-                                    {msg.content}
-                                  </p>
-                                  <div className={cn(
-                                    "flex items-center gap-1.5 mt-1.5",
-                                    msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
-                                  )}>
-                                    <span className={cn(
-                                      "text-xs",
-                                      msg.direction === 'outgoing' ? 'text-primary-foreground/70' : 'text-muted-foreground'
-                                    )}>
-                                      {formatMessageTime(msg.created_at)}
-                                    </span>
-                                    {msg.direction === 'outgoing' && getMessageStatusIcon(msg.status)}
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        ))
-                      )}
-                      <div ref={messagesEndRef} />
-                    </div>
-                  </div>
-
-                  {/* Image Preview */}
-                  {imagePreview && (
-                    <div className="bg-card border-t border-border p-2.5 flex-shrink-0">
-                      <div className="max-w-2xl mx-auto relative inline-block">
-                        <img 
-                          src={imagePreview} 
-                          alt="Selected" 
-                          className="max-h-20 rounded-lg"
-                        />
-                        <Button
-                          variant="destructive"
-                          size="icon"
-                          className="absolute -top-2 -right-2 h-5 w-5 rounded-full bg-destructive hover:bg-destructive/90"
-                          onClick={clearSelectedImage}
-                        >
-                          <X className="w-2.5 h-2.5" />
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Message Input */}
-                  <div className="bg-card border-t border-border/40 px-6 py-3 flex-shrink-0">
-                    <div className="max-w-2xl flex items-center gap-2">
-                      {/* Emoji */}
-                      <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
-                      
-                      {/* Attachment */}
-                      <input
-                        type="file"
-                        ref={fileInputRef}
-                        onChange={handleImageSelect}
-                        accept="image/*"
-                        className="hidden"
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 flex-shrink-0 rounded-lg"
+                      <Button 
+                        variant="outline" 
+                        className="w-full justify-start gap-2 h-11 rounded-xl"
+                        onClick={() => toggleHideConversation(selectedConversation.id, !!selectedConversation.is_hidden)}
                       >
-                        <Paperclip className="w-5 h-5" />
+                        <EyeOff className="w-4 h-4" />
+                        Hide Conversation
                       </Button>
-
-                      {/* Input */}
-                      <Input
-                        placeholder="Type a message..."
-                        value={messageInput}
-                        onChange={(e) => setMessageInput(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
-                        disabled={isSending}
-                        className="flex-1 bg-muted/50 border border-border/50 text-foreground placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 h-12 rounded-xl text-base px-4 transition-all shadow-sm"
-                      />
-
-                      {/* Send / Mic Button */}
-                      {messageInput.trim() || selectedImage ? (
-                        <Button 
-                          onClick={handleSendMessage} 
-                          disabled={isSending}
-                          className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary/80 text-primary-foreground h-12 w-12 rounded-xl flex-shrink-0 shadow-lg shadow-primary/30 transition-all hover:shadow-xl hover:shadow-primary/40"
-                          size="icon"
-                        >
-                          {isSending ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
-                          ) : (
-                            <Send className="w-5 h-5" />
-                          )}
-                        </Button>
-                      ) : (
-                        <Button 
-                          variant="ghost"
-                          className="text-muted-foreground hover:text-foreground hover:bg-muted h-12 w-12 rounded-xl flex-shrink-0"
-                          size="icon"
-                        >
-                          <Mic className="w-5 h-5" />
-                        </Button>
-                      )}
                     </div>
-                  </div>
-                </>
-              ) : (
-                <div 
-                  className="flex-1 flex items-center justify-center"
-                  style={{
-                    background: `
-                      radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground) / 0.04) 1px, transparent 0),
-                      linear-gradient(135deg, hsl(var(--muted) / 0.4) 0%, hsl(var(--background)) 50%, hsl(var(--muted) / 0.3) 100%)
-                    `,
-                    backgroundSize: '20px 20px, 100% 100%'
-                  }}
-                >
-                  <div className="text-center">
-                    <div className="w-28 h-28 mx-auto mb-5 relative">
-                      <div className="absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5 rounded-full animate-pulse" />
-                      <div className="absolute inset-3 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
-                      <div className="absolute inset-6 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
-                        <Send className="w-6 h-6 text-primary-foreground rotate-[-45deg]" />
-                      </div>
-                    </div>
-                    <h2 className="text-xl font-bold text-foreground">{seat?.name}</h2>
-                    <p className="text-sm text-muted-foreground mt-1">Select a conversation to start messaging</p>
                   </div>
                 </div>
               )}
