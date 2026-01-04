@@ -942,7 +942,7 @@ const SeatChat: React.FC = () => {
                       <div
                         key={conv.id}
                         className={cn(
-                          "flex items-center gap-3 px-3 py-3 cursor-pointer transition-all duration-200 group rounded-xl",
+                          "flex items-center gap-3.5 px-3 py-4 cursor-pointer transition-all duration-200 group rounded-xl",
                           selectedConversation?.id === conv.id
                             ? "bg-primary/10 border border-primary/30 shadow-sm shadow-primary/10"
                             : "hover:bg-muted/60 border border-transparent"
@@ -951,10 +951,10 @@ const SeatChat: React.FC = () => {
                       >
                         {/* Avatar */}
                         <div className="relative flex-shrink-0">
-                          <Avatar className="w-12 h-12 ring-2 ring-background/80 shadow-md">
+                          <Avatar className="w-14 h-14 ring-2 ring-background/80 shadow-md">
                             <AvatarImage src={conv.recipient_avatar || ''} />
                             <AvatarFallback className={cn(
-                              "bg-gradient-to-br text-white text-sm font-bold",
+                              "bg-gradient-to-br text-white text-base font-bold",
                               getAvatarColor(conv.recipient_phone)
                             )}>
                               {getAvatarInitial(conv)}
@@ -972,26 +972,26 @@ const SeatChat: React.FC = () => {
                         
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-1.5 min-w-0">
-                              <p className="font-semibold text-sm text-foreground truncate">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <p className="font-semibold text-base text-foreground truncate">
                                 {getDisplayName(conv)}
                               </p>
                               {conv.first_message_sent && (
-                                <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                                <span className="flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
                                   Campaign
                                 </span>
                               )}
                             </div>
                             <span className={cn(
-                              "text-xs flex-shrink-0 font-medium tabular-nums",
+                              "text-sm flex-shrink-0 font-medium tabular-nums",
                               conv.unread_count > 0 ? "text-primary font-semibold" : "text-muted-foreground/70"
                             )}>
                               {formatConversationTime(conv.last_message_at)}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between gap-2 mt-1">
+                          <div className="flex items-center justify-between gap-2 mt-1.5">
                             <p className={cn(
-                              "text-xs truncate",
+                              "text-sm truncate",
                               conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
                             )}>
                               {conv.last_message_content ? (
@@ -999,7 +999,7 @@ const SeatChat: React.FC = () => {
                                   {conv.last_message_direction === 'outgoing' && (
                                     <span className="text-muted-foreground/50">You: </span>
                                   )}
-                                  {conv.last_message_content.slice(0, 40)}{conv.last_message_content.length > 40 ? '...' : ''}
+                                  {conv.last_message_content.slice(0, 45)}{conv.last_message_content.length > 45 ? '...' : ''}
                                 </>
                               ) : (
                                 <span className="italic text-muted-foreground/50">No messages</span>
@@ -1081,20 +1081,20 @@ const SeatChat: React.FC = () => {
                   {/* Chat Header */}
                   <div className="bg-card/90 backdrop-blur-sm border-b border-border/50 px-4 py-2.5 flex items-center justify-between flex-shrink-0">
                     <div className="flex items-center gap-3">
-                      <Avatar className="w-9 h-9">
+                      <Avatar className="w-11 h-11">
                         <AvatarImage src={selectedConversation.recipient_avatar || ''} />
                         <AvatarFallback className={cn(
-                          "bg-gradient-to-br text-white text-xs font-medium",
+                          "bg-gradient-to-br text-white text-sm font-medium",
                           getAvatarColor(selectedConversation.recipient_phone)
                         )}>
                           {getAvatarInitial(selectedConversation)}
                         </AvatarFallback>
                       </Avatar>
                       <div>
-                        <p className="font-medium text-foreground text-sm">
+                        <p className="font-medium text-foreground text-base">
                           {getDisplayName(selectedConversation)}
                         </p>
-                        <p className="text-[10px] text-muted-foreground">
+                        <p className="text-xs text-muted-foreground">
                           {formatLastSeen(selectedConversation)}
                         </p>
                       </div>
@@ -1170,7 +1170,7 @@ const SeatChat: React.FC = () => {
                           <div key={groupIndex}>
                             {/* Date Separator */}
                             <div className="flex justify-center my-4">
-                              <span className="bg-card/90 backdrop-blur-sm text-muted-foreground text-[10px] font-medium px-3 py-1.5 rounded-full shadow-sm border border-border/30">
+                              <span className="bg-card/90 backdrop-blur-sm text-muted-foreground text-xs font-medium px-3.5 py-1.5 rounded-full shadow-sm border border-border/30">
                                 {formatDateSeparator(group.date)}
                               </span>
                             </div>
@@ -1186,7 +1186,7 @@ const SeatChat: React.FC = () => {
                               >
                                 <div
                                   className={cn(
-                                    "relative max-w-[70%] rounded-2xl px-3 py-2",
+                                    "relative max-w-[70%] rounded-2xl px-4 py-2.5",
                                     msg.direction === 'outgoing'
                                       ? 'bg-gradient-to-br from-primary via-primary to-primary/90 text-primary-foreground rounded-br-md shadow-lg shadow-primary/20'
                                       : 'bg-card text-card-foreground rounded-bl-md shadow-md border border-border/30'
@@ -1196,18 +1196,18 @@ const SeatChat: React.FC = () => {
                                     <img
                                       src={msg.media_url}
                                       alt="Media"
-                                      className="max-w-full rounded-xl mb-1.5"
+                                      className="max-w-full rounded-xl mb-2"
                                     />
                                   )}
-                                  <p className="text-[13px] leading-relaxed whitespace-pre-wrap break-words">
+                                  <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
                                     {msg.content}
                                   </p>
                                   <div className={cn(
-                                    "flex items-center gap-1 mt-1",
+                                    "flex items-center gap-1.5 mt-1.5",
                                     msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'
                                   )}>
                                     <span className={cn(
-                                      "text-[10px]",
+                                      "text-xs",
                                       msg.direction === 'outgoing' ? 'text-primary-foreground/70' : 'text-muted-foreground'
                                     )}>
                                       {formatMessageTime(msg.created_at)}
@@ -1246,8 +1246,8 @@ const SeatChat: React.FC = () => {
                   )}
 
                   {/* Message Input */}
-                  <div className="bg-card/95 backdrop-blur-sm border-t border-border/30 px-4 py-3 flex-shrink-0">
-                    <div className="max-w-2xl mx-auto flex items-center gap-2">
+                  <div className="bg-card/95 backdrop-blur-sm border-t border-border/30 px-4 py-3.5 flex-shrink-0">
+                    <div className="max-w-2xl mx-auto flex items-center gap-2.5">
                       {/* Emoji */}
                       <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
                       
@@ -1263,9 +1263,9 @@ const SeatChat: React.FC = () => {
                         variant="ghost"
                         size="icon"
                         onClick={() => fileInputRef.current?.click()}
-                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-8 w-8 flex-shrink-0"
+                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 flex-shrink-0"
                       >
-                        <Paperclip className="w-4 h-4" />
+                        <Paperclip className="w-5 h-5" />
                       </Button>
 
                       {/* Input */}
@@ -1275,7 +1275,7 @@ const SeatChat: React.FC = () => {
                         onChange={(e) => setMessageInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                         disabled={isSending}
-                        className="flex-1 bg-muted/60 border border-border/30 text-foreground placeholder:text-muted-foreground/70 focus:ring-1 focus:ring-primary/30 focus:border-primary/50 h-10 rounded-xl text-sm transition-all"
+                        className="flex-1 bg-muted/60 border border-border/30 text-foreground placeholder:text-muted-foreground/70 focus:ring-1 focus:ring-primary/30 focus:border-primary/50 h-12 rounded-xl text-base transition-all"
                       />
 
                       {/* Send / Mic Button */}
@@ -1283,22 +1283,22 @@ const SeatChat: React.FC = () => {
                         <Button 
                           onClick={handleSendMessage} 
                           disabled={isSending}
-                          className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary/80 text-primary-foreground h-10 w-10 rounded-xl flex-shrink-0 shadow-lg shadow-primary/30 transition-all hover:shadow-xl hover:shadow-primary/40"
+                          className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary/80 text-primary-foreground h-12 w-12 rounded-xl flex-shrink-0 shadow-lg shadow-primary/30 transition-all hover:shadow-xl hover:shadow-primary/40"
                           size="icon"
                         >
                           {isSending ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <Loader2 className="w-5 h-5 animate-spin" />
                           ) : (
-                            <Send className="w-4 h-4" />
+                            <Send className="w-5 h-5" />
                           )}
                         </Button>
                       ) : (
                         <Button 
                           variant="ghost"
-                          className="text-muted-foreground hover:text-foreground hover:bg-muted h-9 w-9 rounded-full flex-shrink-0"
+                          className="text-muted-foreground hover:text-foreground hover:bg-muted h-11 w-11 rounded-full flex-shrink-0"
                           size="icon"
                         >
-                          <Mic className="w-4 h-4" />
+                          <Mic className="w-5 h-5" />
                         </Button>
                       )}
                     </div>
