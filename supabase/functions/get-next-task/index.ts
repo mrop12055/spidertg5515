@@ -1127,7 +1127,12 @@ serve(async (req) => {
               media_type: msg.media_type,
               campaign_recipient_id: msg.campaign_recipient_id,
             },
+            // Backwards-compatible string target (username or phone)
             recipient: conv.recipient_username || conv.recipient_phone,
+            // Preferred fast path for replies (avoids slow phone contact imports)
+            recipient_telegram_id: conv.recipient_telegram_id,
+            recipient_username: conv.recipient_username,
+            recipient_phone: conv.recipient_phone,
             account: {
               id: account.id,
               phone_number: account.phone_number,

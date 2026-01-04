@@ -312,26 +312,33 @@ async def main_loop():
             elif task_type == "send":
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
+                recipient_tid = task.get("recipient_telegram_id")
                 account = task.get("account", {})
-                
+
                 # Skip profile sync for speed - just get/reuse client connection
                 client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True)
-                if client and recipient:
+                target = recipient_tid if recipient_tid else recipient
+
+                if client and target:
                     print(f"  ⚡ Live reply to {recipient}...")
-                    
-                    success, error = await send_message(
-                        client, recipient, msg.get("content", ""),
+
+                    success, error, meta = await send_message(
+                        client, target, msg.get("content", ""),
                         msg.get("media_url")
                     )
-                    
-                    await report_result("send", {
+
+                    payload = {
                         "message_id": msg.get("id"),
                         "success": success,
                         "error": error,
                         "campaign_recipient_id": msg.get("campaign_recipient_id"),
-                        "account_id": account.get("id")
-                    })
-                    
+                        "account_id": account.get("id"),
+                    }
+                    if meta:
+                        payload.update(meta)
+
+                    await report_result("send", payload)
+
                     if success:
                         print(f"    ✓ Sent!")
                     else:

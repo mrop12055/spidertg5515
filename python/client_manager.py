@@ -345,66 +345,88 @@ async def report_result(task_type: str, result: dict):
         print(f"  [WARN] Failed to report result: {e}")
 
 
-async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
-    """Send a message to a recipient with timeout protection and retry logic"""
+async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
+    """Send a message and return (success, error, meta).
+
+    meta includes:
+      - recipient_telegram_id
+      - recipient_username
+
+    Using telegram_id when available avoids slow phone contact imports (major source of delays).
+    """
+    meta = None
     try:
         entity = None
-        
-        if recipient.startswith("@"):
-            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=15)
+
+        # Fast path: telegram user id
+        if isinstance(recipient, int):
+            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)
         else:
-            from telethon.tl.functions.contacts import ImportContactsRequest
-            from telethon.tl.types import InputPhoneContact
-            import random
-            
-            phone = recipient.strip()
-            if not phone.startswith("+"):
-                phone = "+" + phone
-            
-            # Try direct lookup first
-            try:
-                entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
-            except:
-                pass
-            
-            # Import as contact with retry logic for rate limits
-            if not entity:
-                max_retries = 2
-                for attempt in range(max_retries + 1):
-                    contact = InputPhoneContact(
-                        client_id=random.randint(0, 2**62),
-                        phone=phone,
-                        first_name="TG",
-                        last_name=str(random.randint(1000, 9999))
-                    )
-                    result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
-                    
-                    if result.users:
-                        entity = result.users[0]
-                        break
-                    elif result.retry_contacts:
-                        # retry_contacts means rate limited, not privacy restricted
-                        if attempt < max_retries:
-                            print(f"  [RATE] Contact lookup rate limited, retrying in 3s (attempt {attempt + 1}/{max_retries})")
-                            await asyncio.sleep(3)
+            recipient_str = str(recipient or "").strip()
+
+            # If backend sent a numeric id as string
+            if recipient_str.isdigit():
+                entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=10)
+            elif recipient_str.startswith("@"): 
+                entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=15)
+            else:
+                from telethon.tl.functions.contacts import ImportContactsRequest
+                from telethon.tl.types import InputPhoneContact
+                import random
+
+                phone = recipient_str
+                if not phone.startswith("+"):
+                    phone = "+" + phone
+
+                # Try direct lookup first
+                try:
+                    entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+                except Exception:
+                    pass
+
+                # Import as contact with retry logic for rate limits
+                if not entity:
+                    max_retries = 2
+                    for attempt in range(max_retries + 1):
+                        contact = InputPhoneContact(
+                            client_id=random.randint(0, 2**62),
+                            phone=phone,
+                            first_name="TG",
+                            last_name=str(random.randint(1000, 9999))
+                        )
+                        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+
+                        if result.users:
+                            entity = result.users[0]
+                            break
+                        elif result.retry_contacts:
+                            # retry_contacts means rate limited, not privacy restricted
+                            if attempt < max_retries:
+                                print(f"  [RATE] Contact lookup rate limited, retrying in 3s (attempt {attempt + 1}/{max_retries})")
+                                await asyncio.sleep(3)
+                            else:
+                                # After retries, try ResolvePhoneRequest as fallback
+                                try:
+                                    from telethon.tl.functions.contacts import ResolvePhoneRequest
+                                    resolve_result = await asyncio.wait_for(client(ResolvePhoneRequest(phone=phone)), timeout=10)
+                                    if resolve_result.users:
+                                        entity = resolve_result.users[0]
+                                        break
+                                except Exception as resolve_err:
+                                    print(f"  [WARN] ResolvePhoneRequest failed: {resolve_err}")
+                                return False, "Contact lookup rate limited - try again later", None
                         else:
-                            # After retries, try ResolvePhoneRequest as fallback
-                            try:
-                                from telethon.tl.functions.contacts import ResolvePhoneRequest
-                                resolve_result = await asyncio.wait_for(client(ResolvePhoneRequest(phone=phone)), timeout=10)
-                                if resolve_result.users:
-                                    entity = resolve_result.users[0]
-                                    break
-                            except Exception as resolve_err:
-                                print(f"  [WARN] ResolvePhoneRequest failed: {resolve_err}")
-                            return False, "Contact lookup rate limited - try again later"
-                    else:
-                        # No users and no retry_contacts means user not found
-                        break
-        
+                            # No users and no retry_contacts means user not found
+                            break
+
         if not entity:
-            return False, "User not found on Telegram"
-        
+            return False, "User not found on Telegram", None
+
+        meta = {
+            "recipient_telegram_id": getattr(entity, "id", None),
+            "recipient_username": getattr(entity, "username", None),
+        }
+
         # Send message with timeout
         if media_url:
             try:
@@ -416,18 +438,18 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                         from urllib.parse import urlparse, unquote
                         url_path = urlparse(media_url).path
                         filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
-                        
+
                         # Check if it's an image based on extension or content-type
                         content_type = media_resp.headers.get("content-type", "").lower()
                         ext = filename.split(".")[-1].lower() if "." in filename else ""
                         is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
-                        
+
                         # Wrap bytes in BytesIO with a name so Telethon knows the file type
                         file_bytes = io.BytesIO(media_resp.content)
-                        file_bytes.name = filename if "." in filename else f"photo.jpg"
-                        
+                        file_bytes.name = filename if "." in filename else "photo.jpg"
+
                         print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
-                        
+
                         # For images, use force_document=False to send as photo preview
                         await asyncio.wait_for(
                             client.send_file(entity, file_bytes, caption=content, force_document=not is_image),
@@ -440,22 +462,22 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                 await asyncio.wait_for(client.send_message(entity, content), timeout=15)
         else:
             await asyncio.wait_for(client.send_message(entity, content), timeout=15)
-        
-        return True, None
+
+        return True, None, meta
     except asyncio.TimeoutError:
-        return False, "Request timeout"
+        return False, "Request timeout", meta
     except UserPrivacyRestrictedError as e:
-        return False, f"UserPrivacyRestrictedError: {e}"
+        return False, f"UserPrivacyRestrictedError: {e}", meta
     except FloodWaitError as e:
-        return False, f"FloodWaitError: {e.seconds}s wait required (caused by {e.request.__class__.__name__ if e.request else 'unknown'})"
+        return False, f"FloodWaitError: {e.seconds}s wait required (caused by {e.request.__class__.__name__ if e.request else 'unknown'})", meta
     except Exception as e:
         error_str = str(e)
         error_type = type(e).__name__
         if "No user has" in error_str:
-            return False, f"{error_type}: Username not found - {error_str}"
+            return False, f"{error_type}: Username not found - {error_str}", meta
         if "private" in error_str.lower():
-            return False, f"{error_type}: Private profile - {error_str}"
-        return False, f"{error_type}: {error_str}"
+            return False, f"{error_type}: Private profile - {error_str}", meta
+        return False, f"{error_type}: {error_str}", meta
 
 
 async def validate_contact(client: TelegramClient, phone: str):

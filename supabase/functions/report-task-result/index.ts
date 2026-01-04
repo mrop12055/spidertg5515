@@ -24,7 +24,7 @@ serve(async (req) => {
 
     switch (task_type) {
       case "send": {
-        let { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name } = result;
+        let { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name, recipient_telegram_id, recipient_username } = result;
         let isNewConversation = false; // Track if this is first message to a new contact
 
         if (success) {
@@ -91,6 +91,14 @@ serve(async (req) => {
                 conversationId = newConv.id;
                 console.log(`[report-task-result] Created new conversation ${conversationId}`);
               }
+            }
+
+            // If the sender resolved the recipient, persist it for faster future replies
+            if (conversationId && (recipient_telegram_id || recipient_username)) {
+              const updateFields: Record<string, unknown> = {};
+              if (recipient_telegram_id) updateFields.recipient_telegram_id = recipient_telegram_id;
+              if (recipient_username) updateFields.recipient_username = recipient_username;
+              await supabase.from("conversations").update(updateFields).eq("id", conversationId);
             }
 
             // Create message record for the sent message
@@ -170,6 +178,22 @@ serve(async (req) => {
               })
               .eq("id", message_id)
               .in("status", ["pending", "sending"]);
+
+            // Persist resolved recipient identifiers to speed up future sends
+            if (recipient_telegram_id || recipient_username) {
+              const { data: msgRow } = await supabase
+                .from("messages")
+                .select("conversation_id")
+                .eq("id", message_id)
+                .maybeSingle();
+
+              if (msgRow?.conversation_id) {
+                const updateFields: Record<string, unknown> = {};
+                if (recipient_telegram_id) updateFields.recipient_telegram_id = recipient_telegram_id;
+                if (recipient_username) updateFields.recipient_username = recipient_username;
+                await supabase.from("conversations").update(updateFields).eq("id", msgRow.conversation_id);
+              }
+            }
           }
 
           // Increment account message count ONLY for new contacts (first message to this recipient)
