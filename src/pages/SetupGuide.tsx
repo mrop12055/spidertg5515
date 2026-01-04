@@ -388,21 +388,21 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         if not entity:
             return False, "User not found on Telegram"
         
-        # Ensure URLs are clickable by using HTML parse mode with <a> tags
+        # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected
         formatted_content = content
         parse_mode = None
         try:
             import re
-            url_re = re.compile(r'(https?://[^\s<>"\\x27]+)')
+            url_re = re.compile(r"(https?://[^\s<>\"]+)")
             if content and url_re.search(content):
-                parse_mode = 'html'
-                
-                def _to_link(m):
+                parse_mode = 'md'
+
+                def _to_md_link(m):
                     url = m.group(1)
-                    return f'<a href="{url}">{url}</a>'
-                
-                formatted_content = url_re.sub(_to_link, content)
-                print(f"  [LINK] Formatted with HTML: {formatted_content[:100]}...")
+                    return f"[{url}]({url})"
+
+                formatted_content = url_re.sub(_to_md_link, content)
+                print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
         except Exception as e:
             print(f"  [LINK ERROR] {e}")
             formatted_content = content
