@@ -9,6 +9,29 @@ const corsHeaders = {
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
+// Helper to verify JWT token from request
+async function verifyAuth(req: Request): Promise<{ user: any; error: string | null }> {
+  const authHeader = req.headers.get('authorization');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return { user: null, error: 'Missing or invalid authorization header' };
+  }
+
+  const token = authHeader.replace('Bearer ', '');
+  
+  // Create client with the user's token to verify it
+  const supabaseClient = createClient(supabaseUrl, Deno.env.get('SUPABASE_ANON_KEY')!, {
+    global: { headers: { Authorization: `Bearer ${token}` } }
+  });
+
+  const { data: { user }, error } = await supabaseClient.auth.getUser();
+  
+  if (error || !user) {
+    return { user: null, error: 'Invalid or expired token' };
+  }
+
+  return { user, error: null };
+}
+
 serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
@@ -16,16 +39,88 @@ serve(async (req) => {
   }
 
   try {
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
     const url = new URL(req.url);
     const path = url.pathname.replace('/telegram-api', '');
     
-    // VPS API Key authentication (optional for VPS backend)
+    // VPS API Key authentication (for VPS backend endpoints only)
     const vpsApiKey = req.headers.get('x-vps-api-key');
     
     console.log(`[telegram-api] ${req.method} ${path}`);
 
-    // Route handling
+    // VPS-specific endpoints that use API key auth
+    if (path.startsWith('/vps/')) {
+      if (!vpsApiKey) {
+        return jsonResponse({ error: 'VPS API key required' }, 401);
+      }
+      
+      const supabase = createClient(supabaseUrl, supabaseServiceKey);
+      
+      // Verify VPS API key
+      const { data: vpsConnection, error: vpsError } = await supabase
+        .from('vps_connections')
+        .select('id')
+        .eq('api_key', vpsApiKey)
+        .single();
+      
+      if (vpsError || !vpsConnection) {
+        return jsonResponse({ error: 'Invalid VPS API key' }, 401);
+      }
+
+      switch (true) {
+        case path === '/vps/heartbeat' && req.method === 'POST': {
+          const { data, error } = await supabase
+            .from('vps_connections')
+            .update({ 
+              last_seen: new Date().toISOString(), 
+              status: 'connected',
+              ip_address: req.headers.get('x-forwarded-for') || 'unknown'
+            })
+            .eq('api_key', vpsApiKey)
+            .select()
+            .single();
+          
+          if (error) throw error;
+          return jsonResponse({ status: 'ok', server_time: new Date().toISOString() });
+        }
+
+        case path === '/vps/accounts-to-process' && req.method === 'GET': {
+          const { data, error } = await supabase
+            .from('telegram_accounts')
+            .select('*, proxies(*)')
+            .in('status', ['active', 'cooldown'])
+            .not('session_data', 'is', null);
+          
+          if (error) throw error;
+          return jsonResponse(data);
+        }
+
+        case path === '/vps/pending-messages' && req.method === 'GET': {
+          const { data, error } = await supabase
+            .from('messages')
+            .select('*, conversations(*), telegram_accounts(*)')
+            .eq('status', 'pending')
+            .eq('direction', 'outgoing')
+            .order('created_at', { ascending: true })
+            .limit(50);
+          
+          if (error) throw error;
+          return jsonResponse(data);
+        }
+
+        default:
+          return jsonResponse({ error: 'VPS endpoint not found', path }, 404);
+      }
+    }
+
+    // All other endpoints require user authentication
+    const { user, error: authError } = await verifyAuth(req);
+    if (authError || !user) {
+      return jsonResponse({ error: authError || 'Unauthorized' }, 401);
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Route handling for authenticated users
     switch (true) {
       // ==================== ACCOUNTS ====================
       case path === '/accounts' && req.method === 'GET': {
@@ -178,9 +273,7 @@ serve(async (req) => {
         await supabase
           .from('conversations')
           .update({ 
-            last_message_at: new Date().toISOString(),
-            unread_count: body.direction === 'incoming' ? 
-              supabase.rpc('increment_unread', { conv_id: body.conversation_id }) : undefined
+            last_message_at: new Date().toISOString()
           })
           .eq('id', body.conversation_id);
         
@@ -235,57 +328,6 @@ serve(async (req) => {
         }
         
         return jsonResponse(campaign, 201);
-      }
-
-      // ==================== VPS SYNC ====================
-      case path === '/vps/heartbeat' && req.method === 'POST': {
-        // VPS backend sends heartbeat to confirm it's running
-        if (!vpsApiKey) {
-          return jsonResponse({ error: 'VPS API key required' }, 401);
-        }
-        
-        const { data, error } = await supabase
-          .from('vps_connections')
-          .update({ 
-            last_seen: new Date().toISOString(), 
-            status: 'connected',
-            ip_address: req.headers.get('x-forwarded-for') || 'unknown'
-          })
-          .eq('api_key', vpsApiKey)
-          .select()
-          .single();
-        
-        if (error || !data) {
-          return jsonResponse({ error: 'Invalid VPS API key' }, 401);
-        }
-        
-        return jsonResponse({ status: 'ok', server_time: new Date().toISOString() });
-      }
-
-      case path === '/vps/accounts-to-process' && req.method === 'GET': {
-        // Get accounts that need processing by VPS
-        const { data, error } = await supabase
-          .from('telegram_accounts')
-          .select('*, proxies(*)')
-          .in('status', ['active', 'cooldown'])
-          .not('session_data', 'is', null);
-        
-        if (error) throw error;
-        return jsonResponse(data);
-      }
-
-      case path === '/vps/pending-messages' && req.method === 'GET': {
-        // Get messages waiting to be sent
-        const { data, error } = await supabase
-          .from('messages')
-          .select('*, conversations(*), telegram_accounts(*)')
-          .eq('status', 'pending')
-          .eq('direction', 'outgoing')
-          .order('created_at', { ascending: true })
-          .limit(50);
-        
-        if (error) throw error;
-        return jsonResponse(data);
       }
 
       default:
