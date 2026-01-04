@@ -149,7 +149,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         .from('telegram_accounts')
         .select('id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id')
         .order('created_at', { ascending: false })
-        .limit(500);
+        .limit(200);
 
       if (accountsData) {
         setAccounts(accountsData.map(acc => ({
@@ -210,11 +210,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         })));
       }
 
-      // Fetch campaigns
+      // Fetch campaigns - simplified query without nested select
       const { data: campaignsData } = await supabase
         .from('campaigns')
-        .select('*, campaign_accounts(account_id)')
-        .order('created_at', { ascending: false });
+        .select('id, name, message_template, status, scheduled_at, recipient_count, sent_count, failed_count, reply_count, created_at, updated_at, seat_id')
+        .order('created_at', { ascending: false })
+        .limit(50);
 
       if (campaignsData) {
         setCampaigns(campaignsData.map(c => ({
@@ -227,7 +228,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           sentCount: c.sent_count || 0,
           failedCount: c.failed_count || 0,
           replyCount: c.reply_count || 0,
-          accountIds: c.campaign_accounts?.map((ca: any) => ca.account_id) || [],
+          accountIds: [], // Fetched separately if needed
           createdAt: new Date(c.created_at),
           updatedAt: new Date(c.updated_at),
           seatId: c.seat_id || undefined,
@@ -290,28 +291,34 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         );
       }
 
-      // Fetch messages
+      // Fetch messages - optimized query without join
       const { data: messagesData } = await supabase
         .from('messages')
-        .select('*, conversations(recipient_phone)')
+        .select('id, conversation_id, account_id, content, direction, status, created_at, telegram_message_id, failed_reason, media_url, media_type, campaign_recipient_id')
         .order('created_at', { ascending: false })
-        .limit(500);
+        .limit(200);
 
-      if (messagesData) {
+      if (messagesData && conversationsData) {
+        // Create a lookup map for conversation recipient phones
+        const convPhoneMap = new Map<string, string>();
+        for (const c of conversationsData) {
+          convPhoneMap.set(c.id, c.recipient_phone || '');
+        }
+        
         setMessages(messagesData.map(m => ({
           id: m.id,
           conversationId: m.conversation_id,
           accountId: m.account_id,
-          recipientPhone: m.conversations?.recipient_phone || '',
+          recipientPhone: convPhoneMap.get(m.conversation_id) || '',
           content: m.content,
           direction: m.direction as Message['direction'],
           status: m.status as Message['status'],
           timestamp: new Date(m.created_at),
           telegramMessageId: m.telegram_message_id || undefined,
-          failedReason: (m as any).failed_reason || undefined,
-          mediaUrl: (m as any).media_url || undefined,
-          mediaType: (m as any).media_type || undefined,
-          campaignRecipientId: (m as any).campaign_recipient_id || undefined,
+          failedReason: m.failed_reason || undefined,
+          mediaUrl: m.media_url || undefined,
+          mediaType: m.media_type || undefined,
+          campaignRecipientId: m.campaign_recipient_id || undefined,
         })));
       }
 
