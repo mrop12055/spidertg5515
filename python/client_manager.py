@@ -422,17 +422,18 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         return True, None
     except asyncio.TimeoutError:
         return False, "Request timeout"
-    except UserPrivacyRestrictedError:
-        return False, "Privacy restricted"
+    except UserPrivacyRestrictedError as e:
+        return False, f"UserPrivacyRestrictedError: {e}"
     except FloodWaitError as e:
-        return False, f"Rate limited: {e.seconds}s"
+        return False, f"FloodWaitError: {e.seconds}s wait required (caused by {e.request.__class__.__name__ if e.request else 'unknown'})"
     except Exception as e:
         error_str = str(e)
+        error_type = type(e).__name__
         if "No user has" in error_str:
-            return False, "Username not found"
+            return False, f"{error_type}: Username not found - {error_str}"
         if "private" in error_str.lower():
-            return False, "Private profile"
-        return False, error_str
+            return False, f"{error_type}: Private profile - {error_str}"
+        return False, f"{error_type}: {error_str}"
 
 
 async def validate_contact(client: TelegramClient, phone: str):
