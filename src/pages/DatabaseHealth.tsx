@@ -86,8 +86,8 @@ const DatabaseHealth = () => {
   const [completedWarmupTasks, setCompletedWarmupTasks] = useState<Task[]>([]);
   const [completedRecipients, setCompletedRecipients] = useState<Recipient[]>([]);
   const [completedMessages, setCompletedMessages] = useState<PendingMessage[]>([]);
-  // Recent individual errors with timestamps
-  const [recentErrors, setRecentErrors] = useState<{id: string; phone: string; reason: string; timestamp: string}[]>([]);
+  // Recent individual errors with timestamps from ALL sources
+  const [recentErrors, setRecentErrors] = useState<{id: string; phone: string; reason: string; timestamp: string; source: string}[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -189,23 +189,130 @@ const DatabaseHealth = () => {
       if (completedMessagesRes.data) setCompletedMessages(completedMessagesRes.data);
 
 
-      // Fetch recent individual errors (last 50)
-      const { data: recentFailedRecipients } = await supabase
-        .from('campaign_recipients')
-        .select('id, phone_number, failed_reason, sent_at')
-        .eq('status', 'failed')
-        .not('failed_reason', 'is', null)
-        .order('sent_at', { ascending: false, nullsFirst: false })
-        .limit(50);
+      // Fetch recent individual errors from ALL sources (last 100 each)
+      const [
+        failedRecipientsRes,
+        failedMessagesRes,
+        failedAccountTasksRes,
+        failedBlockTasksRes,
+        failedImportTasksRes,
+        failedWarmupRes
+      ] = await Promise.all([
+        supabase
+          .from('campaign_recipients')
+          .select('id, phone_number, failed_reason, sent_at')
+          .eq('status', 'failed')
+          .not('failed_reason', 'is', null)
+          .order('sent_at', { ascending: false, nullsFirst: false })
+          .limit(100),
+        supabase
+          .from('messages')
+          .select('id, failed_reason, created_at, conversation_id')
+          .eq('status', 'failed')
+          .not('failed_reason', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('account_check_tasks')
+          .select('id, account_id, result, created_at')
+          .eq('status', 'failed')
+          .not('result', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('block_contact_tasks')
+          .select('id, target_phone, result, created_at')
+          .eq('status', 'failed')
+          .not('result', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('contact_import_tasks')
+          .select('id, result, created_at')
+          .eq('status', 'failed')
+          .not('result', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(100),
+        supabase
+          .from('warmup_schedule')
+          .select('id, account_id, task_type, created_at')
+          .eq('status', 'failed')
+          .order('created_at', { ascending: false })
+          .limit(100)
+      ]);
 
-      setRecentErrors(
-        (recentFailedRecipients || []).map(r => ({
+      // Combine all errors into a single array
+      const allErrors: {id: string; phone: string; reason: string; timestamp: string; source: string}[] = [];
+
+      // Campaign recipients errors
+      (failedRecipientsRes.data || []).forEach(r => {
+        allErrors.push({
           id: r.id,
           phone: r.phone_number,
           reason: r.failed_reason || 'Unknown error',
-          timestamp: r.sent_at || new Date().toISOString()
-        }))
-      );
+          timestamp: r.sent_at || new Date().toISOString(),
+          source: 'Campaign'
+        });
+      });
+
+      // Message errors
+      (failedMessagesRes.data || []).forEach(m => {
+        allErrors.push({
+          id: m.id,
+          phone: m.conversation_id?.substring(0, 8) || 'Unknown',
+          reason: m.failed_reason || 'Unknown error',
+          timestamp: m.created_at || new Date().toISOString(),
+          source: 'Message'
+        });
+      });
+
+      // Account check task errors
+      (failedAccountTasksRes.data || []).forEach(t => {
+        allErrors.push({
+          id: t.id,
+          phone: t.account_id?.substring(0, 8) || 'Unknown',
+          reason: t.result || 'Account check failed',
+          timestamp: t.created_at || new Date().toISOString(),
+          source: 'Account Check'
+        });
+      });
+
+      // Block task errors
+      (failedBlockTasksRes.data || []).forEach(t => {
+        allErrors.push({
+          id: t.id,
+          phone: t.target_phone || 'Unknown',
+          reason: t.result || 'Block task failed',
+          timestamp: t.created_at || new Date().toISOString(),
+          source: 'Block Task'
+        });
+      });
+
+      // Import task errors
+      (failedImportTasksRes.data || []).forEach(t => {
+        allErrors.push({
+          id: t.id,
+          phone: 'Import',
+          reason: t.result || 'Import failed',
+          timestamp: t.created_at || new Date().toISOString(),
+          source: 'Import'
+        });
+      });
+
+      // Warmup errors
+      (failedWarmupRes.data || []).forEach(w => {
+        allErrors.push({
+          id: w.id,
+          phone: w.account_id?.substring(0, 8) || 'Unknown',
+          reason: `Warmup ${w.task_type} failed`,
+          timestamp: w.created_at || new Date().toISOString(),
+          source: 'Warmup'
+        });
+      });
+
+      // Sort by timestamp descending and take latest 200
+      allErrors.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      setRecentErrors(allErrors.slice(0, 200));
 
     } catch (error) {
       console.error('Error fetching data:', error);
@@ -566,15 +673,18 @@ const DatabaseHealth = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 text-destructive" />
-            Recent Errors
+            All Recent Errors
             <Badge variant="outline" className="ml-2 bg-destructive/10 text-destructive border-destructive/30">
               Live Feed
             </Badge>
+            <Badge variant="outline" className="ml-1 bg-muted text-muted-foreground">
+              {recentErrors.length} errors
+            </Badge>
           </CardTitle>
-          <CardDescription>Latest 50 failed messages with timestamps</CardDescription>
+          <CardDescription>Latest 200 errors from all sources (campaigns, messages, tasks, warmup)</CardDescription>
         </CardHeader>
         <CardContent>
-          <ScrollArea className="h-[400px]">
+          <ScrollArea className="h-[500px]">
             {recentErrors.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
                 <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
@@ -583,9 +693,12 @@ const DatabaseHealth = () => {
             ) : (
               <div className="space-y-2">
                 {recentErrors.map((error) => (
-                  <div key={error.id} className="p-3 rounded-lg border bg-destructive/5 border-destructive/20">
+                  <div key={`${error.source}-${error.id}`} className="p-3 rounded-lg border bg-destructive/5 border-destructive/20">
                     <div className="flex items-center justify-between mb-1">
                       <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs bg-muted/50">
+                          {error.source}
+                        </Badge>
                         <Phone className="w-4 h-4 text-muted-foreground" />
                         <span className="font-medium text-sm">{error.phone}</span>
                       </div>
