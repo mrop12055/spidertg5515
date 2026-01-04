@@ -566,98 +566,99 @@ const SeatChat: React.FC = () => {
   const messageGroups = groupMessagesByDate(filteredMessages);
 
   return (
-    <div className="h-screen flex bg-background overflow-hidden">
-      {/* Left Sidebar Navigation - Professional Design */}
-      <aside className="w-72 bg-card border-r border-border flex flex-col flex-shrink-0 shadow-sm">
+    <div className="h-screen flex bg-gradient-to-br from-background via-background to-muted/20 overflow-hidden">
+      {/* Left Sidebar Navigation - Premium Design */}
+      <aside className="w-64 bg-card/80 backdrop-blur-xl border-r border-border/50 flex flex-col flex-shrink-0 shadow-xl">
         {/* Header with Logo */}
-        <div className="h-16 flex items-center justify-between px-5 border-b border-border bg-gradient-to-r from-primary/5 to-transparent">
+        <div className="h-16 flex items-center justify-between px-4 border-b border-border/50">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/25">
-              <Send className="w-5 h-5 text-primary-foreground rotate-[-45deg]" />
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/30 ring-2 ring-primary/20">
+              <Send className="w-4 h-4 text-primary-foreground rotate-[-45deg]" />
             </div>
             <div>
-              <h1 className="font-semibold text-base text-foreground tracking-tight">{seat?.name || 'Workspace'}</h1>
-              <p className="text-[11px] text-muted-foreground font-medium uppercase tracking-wider">Chat Console</p>
+              <h1 className="font-bold text-sm text-foreground tracking-tight">{seat?.name || 'Workspace'}</h1>
+              <p className="text-[10px] text-muted-foreground/80 font-medium uppercase tracking-widest">Console</p>
             </div>
           </div>
-          <ThemeToggle className="text-muted-foreground hover:text-foreground hover:bg-muted" />
+          <ThemeToggle className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg" />
         </div>
 
-        {/* Quick Stats */}
-        <div className="px-4 py-3 border-b border-border/50">
+        {/* Quick Stats - Modern Cards */}
+        <div className="p-3">
           <div className="grid grid-cols-2 gap-2">
-            <div className="bg-muted/50 rounded-lg p-2.5 text-center">
-              <p className="text-lg font-bold text-foreground">{stats.total_conversations}</p>
-              <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Chats</p>
+            <div className="relative overflow-hidden bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-xl p-3 border border-primary/10">
+              <div className="absolute -top-4 -right-4 w-12 h-12 bg-primary/10 rounded-full blur-xl" />
+              <p className="text-2xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
+              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mt-0.5">Chats</p>
             </div>
-            <div className="bg-muted/50 rounded-lg p-2.5 text-center">
-              <p className="text-lg font-bold text-foreground">{stats.messages_sent_today}</p>
-              <p className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Sent Today</p>
+            <div className="relative overflow-hidden bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-xl p-3 border border-emerald-500/10">
+              <div className="absolute -top-4 -right-4 w-12 h-12 bg-emerald-500/10 rounded-full blur-xl" />
+              <p className="text-2xl font-bold text-foreground tracking-tight">{stats.messages_sent_today}</p>
+              <p className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider mt-0.5">Sent</p>
             </div>
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-1 py-3 px-3 space-y-1">
-          <p className="px-3 py-2 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Navigation</p>
+        {/* Navigation - Clean Pills */}
+        <nav className="flex-1 py-2 px-3">
+          <p className="px-2 py-2 text-[9px] font-bold text-muted-foreground/60 uppercase tracking-[0.2em]">Navigation</p>
           
-          <button
-            onClick={() => setCurrentView('chats')}
-            className={cn(
-              "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
-              currentView === 'chats'
-                ? "bg-primary text-primary-foreground shadow-md shadow-primary/30"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            )}
-          >
-            <div className={cn(
-              "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
-              currentView === 'chats' ? "bg-primary-foreground/20" : "bg-muted"
-            )}>
-              <MessageSquare className="w-4 h-4" />
-            </div>
-            <span className="text-sm font-medium">Conversations</span>
-            {conversations.filter(c => (c.unread_count || 0) > 0).length > 0 && (
-              <span className="ml-auto min-w-[22px] h-[22px] rounded-full bg-destructive text-destructive-foreground text-[11px] font-bold flex items-center justify-center shadow-sm">
-                {conversations.filter(c => (c.unread_count || 0) > 0).length}
-              </span>
-            )}
-          </button>
+          <div className="space-y-1">
+            <button
+              onClick={() => setCurrentView('chats')}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 group",
+                currentView === 'chats'
+                  ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-lg shadow-primary/25 scale-[1.02]"
+                  : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+              )}
+            >
+              <div className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
+                currentView === 'chats' ? "bg-white/20" : "bg-muted/80"
+              )}>
+                <MessageSquare className="w-4 h-4" />
+              </div>
+              <span className="text-sm font-semibold">Conversations</span>
+              {conversations.filter(c => (c.unread_count || 0) > 0).length > 0 && (
+                <span className="ml-auto min-w-[20px] h-5 rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center px-1.5 shadow-sm animate-pulse">
+                  {conversations.filter(c => (c.unread_count || 0) > 0).length}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setCurrentView('reports')}
-            className={cn(
-              "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group",
-              currentView === 'reports'
-                ? "bg-primary text-primary-foreground shadow-md shadow-primary/30"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground"
-            )}
-          >
-            <div className={cn(
-              "w-8 h-8 rounded-lg flex items-center justify-center transition-colors",
-              currentView === 'reports' ? "bg-primary-foreground/20" : "bg-muted"
-            )}>
-              <BarChart3 className="w-4 h-4" />
-            </div>
-            <span className="text-sm font-medium">Analytics</span>
-          </button>
+            <button
+              onClick={() => setCurrentView('reports')}
+              className={cn(
+                "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-300 group",
+                currentView === 'reports'
+                  ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-lg shadow-primary/25 scale-[1.02]"
+                  : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+              )}
+            >
+              <div className={cn(
+                "w-8 h-8 rounded-lg flex items-center justify-center transition-all",
+                currentView === 'reports' ? "bg-white/20" : "bg-muted/80"
+              )}>
+                <BarChart3 className="w-4 h-4" />
+              </div>
+              <span className="text-sm font-semibold">Analytics</span>
+            </button>
+          </div>
         </nav>
 
-        {/* Seat Profile Card */}
-        <div className="p-3 border-t border-border">
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-muted/80 to-muted/40 border border-border/50">
-            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-sm shadow-md">
-              {seat?.name?.charAt(0).toUpperCase() || 'S'}
+        {/* Seat Profile - Elegant Footer */}
+        <div className="p-3 border-t border-border/50">
+          <div className="flex items-center gap-3 p-2.5 rounded-xl bg-gradient-to-r from-muted/60 to-muted/30 hover:from-muted/80 hover:to-muted/50 transition-colors cursor-pointer">
+            <div className="relative">
+              <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary via-primary/90 to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-sm shadow-md ring-2 ring-background">
+                {seat?.name?.charAt(0).toUpperCase() || 'S'}
+              </div>
+              <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-card" />
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-foreground truncate">{seat?.name}</p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500"></span>
-                </span>
-                <p className="text-[11px] text-muted-foreground font-medium">Active Now</p>
-              </div>
+              <p className="text-[10px] text-green-500 font-medium">● Active Now</p>
             </div>
           </div>
         </div>
@@ -691,43 +692,41 @@ const SeatChat: React.FC = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Header - Minimal & Clean */}
-        <header className="bg-card/50 backdrop-blur-sm border-b border-border/50 flex-shrink-0 px-5 py-3">
+        {/* Header - Refined & Minimal */}
+        <header className="bg-card/60 backdrop-blur-md border-b border-border/30 flex-shrink-0 px-5 py-3">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div>
-                <h1 className="font-semibold text-foreground text-lg tracking-tight">
-                  {currentView === 'chats' ? 'Conversations' : 'Analytics'}
-                </h1>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {currentView === 'chats' 
-                    ? `${filteredConversations.length} active threads` 
-                    : 'Performance overview'}
-                </p>
-              </div>
+            <div>
+              <h1 className="font-bold text-foreground text-lg tracking-tight">
+                {currentView === 'chats' ? 'Conversations' : 'Analytics'}
+              </h1>
+              <p className="text-xs text-muted-foreground/80 mt-0.5">
+                {currentView === 'chats' 
+                  ? `${filteredConversations.length} active threads` 
+                  : 'Performance overview'}
+              </p>
             </div>
             
             {/* Quick Actions */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
               {currentView === 'chats' && (
-                <div className="hidden lg:flex items-center gap-2 bg-muted/50 rounded-full px-1 py-1">
-                  <div className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-background shadow-sm">
+                <div className="hidden lg:flex items-center gap-1 bg-muted/40 backdrop-blur-sm rounded-full px-1 py-1 border border-border/30">
+                  <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full bg-card shadow-sm border border-border/50">
                     <MessageSquare className="w-3.5 h-3.5 text-primary" />
-                    <span className="font-semibold text-foreground">{stats.total_conversations}</span>
+                    <span className="font-bold text-foreground">{stats.total_conversations}</span>
                   </div>
-                  <div className="flex items-center gap-1.5 text-xs px-2.5 py-1">
-                    <Send className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="font-medium text-muted-foreground">{stats.messages_sent_today}</span>
+                  <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 text-muted-foreground">
+                    <Send className="w-3.5 h-3.5" />
+                    <span className="font-medium">{stats.messages_sent_today}</span>
                   </div>
-                  <div className="flex items-center gap-1.5 text-xs px-2.5 py-1">
-                    <Users className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="font-medium text-muted-foreground">{stats.responses_received}</span>
+                  <div className="flex items-center gap-1.5 text-xs px-3 py-1.5 text-muted-foreground">
+                    <Users className="w-3.5 h-3.5" />
+                    <span className="font-medium">{stats.responses_received}</span>
                   </div>
                 </div>
               )}
               
-              <Badge className="bg-green-500/10 text-green-600 dark:text-green-400 border-green-500/20 text-xs px-2.5 py-1 font-medium">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 mr-1.5 animate-pulse" />
+              <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-xs px-3 py-1.5 font-semibold rounded-full">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-2 animate-pulse" />
                 Live
               </Badge>
             </div>
@@ -739,19 +738,19 @@ const SeatChat: React.FC = () => {
           /* Chats View */
           <div className="flex-1 flex overflow-hidden">
         {/* Conversation Sidebar */}
-        <div className="w-[320px] lg:w-[380px] bg-card/30 border-r border-border/50 flex flex-col flex-shrink-0">
+        <div className="w-[300px] lg:w-[340px] bg-card/40 backdrop-blur-sm border-r border-border/30 flex flex-col flex-shrink-0">
           {/* Search & Filter */}
           <div className="p-3 space-y-2">
-            {/* Time Filters */}
-            <div className="flex gap-1 p-1 bg-muted/50 rounded-xl">
+            {/* Time Filters - Pill Style */}
+            <div className="flex gap-0.5 p-0.5 bg-muted/40 rounded-full border border-border/30">
               {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
                 <button
                   key={filter}
                   onClick={() => setTimeFilter(filter)}
                   className={cn(
-                    "flex-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all",
+                    "flex-1 px-3 py-1.5 text-xs font-semibold rounded-full transition-all duration-200",
                     timeFilter === filter 
-                      ? "bg-background text-foreground shadow-sm" 
+                      ? "bg-card text-foreground shadow-sm border border-border/50" 
                       : "text-muted-foreground hover:text-foreground"
                   )}
                 >
@@ -760,14 +759,14 @@ const SeatChat: React.FC = () => {
               ))}
             </div>
 
-            {/* Search */}
+            {/* Search - Modern Style */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/60" />
               <Input
                 placeholder="Search conversations..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 bg-muted/50 border-0 text-foreground placeholder:text-muted-foreground focus:ring-1 focus:ring-primary/50 h-10 rounded-xl"
+                className="pl-10 bg-muted/40 border-border/30 text-foreground placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 h-10 rounded-xl"
               />
             </div>
           </div>
@@ -778,11 +777,11 @@ const SeatChat: React.FC = () => {
           <div className="flex-1 overflow-y-auto px-2">
             {filteredConversations.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-full py-12">
-                <div className="w-16 h-16 rounded-2xl bg-muted/50 flex items-center justify-center mb-4">
-                  <MessageSquare className="w-8 h-8 text-muted-foreground/50" />
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-muted/80 to-muted/40 flex items-center justify-center mb-4 border border-border/50">
+                  <MessageSquare className="w-6 h-6 text-muted-foreground/50" />
                 </div>
-                <p className="text-foreground font-medium text-sm">No conversations yet</p>
-                <p className="text-xs text-muted-foreground mt-1 text-center max-w-[200px]">
+                <p className="text-foreground font-semibold text-sm">No conversations yet</p>
+                <p className="text-xs text-muted-foreground/80 mt-1 text-center max-w-[180px]">
                   {searchQuery ? 'No results match your search' : 'New conversations will appear here'}
                 </p>
               </div>
@@ -792,47 +791,47 @@ const SeatChat: React.FC = () => {
                   <div
                     key={conv.id}
                     className={cn(
-                      "flex items-center gap-3 px-3 py-3 cursor-pointer transition-all group rounded-xl",
+                      "flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-all duration-200 group rounded-xl",
                       selectedConversation?.id === conv.id
-                        ? "bg-primary/10 border border-primary/20"
-                        : "hover:bg-muted/50 border border-transparent"
+                        ? "bg-primary/10 border border-primary/30 shadow-sm shadow-primary/10"
+                        : "hover:bg-muted/60 border border-transparent"
                     )}
                     onClick={() => setSelectedConversation(conv)}
                   >
                     {/* Avatar */}
                     <div className="relative">
-                      <Avatar className="w-11 h-11 flex-shrink-0 ring-2 ring-background shadow-sm">
+                      <Avatar className="w-10 h-10 flex-shrink-0 ring-2 ring-background/80 shadow-md">
                         <AvatarImage src={conv.recipient_avatar || ''} />
                         <AvatarFallback className={cn(
-                          "bg-gradient-to-br text-white text-sm font-semibold",
+                          "bg-gradient-to-br text-white text-xs font-bold",
                           getAvatarColor(conv.recipient_phone)
                         )}>
                           {getAvatarInitial(conv)}
                         </AvatarFallback>
                       </Avatar>
                       {conv.unread_count > 0 && (
-                        <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-background" />
+                        <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-card animate-pulse" />
                       )}
                     </div>
                     
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="font-medium text-sm text-foreground truncate">
+                        <p className="font-semibold text-sm text-foreground truncate">
                           {getDisplayName(conv)}
                         </p>
                         <span className={cn(
-                          "text-[11px] flex-shrink-0 font-medium",
-                          conv.unread_count > 0 ? "text-primary" : "text-muted-foreground"
+                          "text-[10px] flex-shrink-0 font-medium tabular-nums",
+                          conv.unread_count > 0 ? "text-primary font-semibold" : "text-muted-foreground/70"
                         )}>
                           {formatConversationTime(conv.last_message_at)}
                         </span>
                       </div>
-                      <div className="flex items-center justify-between gap-2 mt-1">
-                        <p className="text-xs text-muted-foreground truncate">
+                      <div className="flex items-center justify-between gap-2 mt-0.5">
+                        <p className="text-[11px] text-muted-foreground/70 truncate">
                           Click to view messages
                         </p>
                         {conv.unread_count > 0 && (
-                          <span className="bg-primary text-primary-foreground text-[10px] font-bold min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1.5 flex-shrink-0 shadow-sm">
+                          <span className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-[9px] font-bold min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1.5 flex-shrink-0 shadow-sm">
                             {conv.unread_count}
                           </span>
                         )}
@@ -845,22 +844,22 @@ const SeatChat: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted rounded-lg"
+                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg"
                           onClick={(e) => e.stopPropagation()}
                         >
-                          <MoreVertical className="w-4 h-4" />
+                          <MoreVertical className="w-3.5 h-3.5" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground w-44">
+                      <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground w-40">
                         <DropdownMenuItem 
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleHideConversation(conv.id);
                           }}
-                          className="text-muted-foreground hover:bg-muted focus:bg-muted"
+                          className="text-muted-foreground hover:bg-muted focus:bg-muted text-xs"
                         >
-                          <EyeOff className="w-4 h-4 mr-2" />
-                          Hide conversation
+                          <EyeOff className="w-3.5 h-3.5 mr-2" />
+                          Hide
                         </DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -1093,20 +1092,20 @@ const SeatChat: React.FC = () => {
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
+            <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-muted/20 to-muted/5">
               <div className="text-center">
-                <div className="w-[280px] h-[280px] mx-auto mb-8 relative">
-                  <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-primary/10 rounded-full animate-pulse" />
-                  <div className="absolute inset-8 bg-gradient-to-br from-primary/30 to-primary/20 rounded-full" />
-                  <div className="absolute inset-16 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center">
-                    <Send className="w-16 h-16 text-primary-foreground" />
+                <div className="w-48 h-48 mx-auto mb-6 relative">
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5 rounded-full animate-pulse" />
+                  <div className="absolute inset-6 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
+                  <div className="absolute inset-12 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
+                    <Send className="w-10 h-10 text-primary-foreground rotate-[-45deg]" />
                   </div>
                 </div>
-                <h2 className="text-[32px] font-light text-foreground mb-2">{seat?.name}</h2>
-                <p className="text-sm text-muted-foreground max-w-md mx-auto">
-                  Send and receive messages without keeping your phone online.
+                <h2 className="text-2xl font-bold text-foreground mb-2">{seat?.name}</h2>
+                <p className="text-sm text-muted-foreground/80 max-w-xs mx-auto leading-relaxed">
+                  Send and receive messages seamlessly.
                   <br />
-                  Select a conversation to start chatting.
+                  <span className="text-primary/80 font-medium">Select a conversation to start.</span>
                 </p>
               </div>
             </div>
