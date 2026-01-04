@@ -250,9 +250,16 @@ async def main_loop():
     print("=" * 60)
     print("\n✓ Starting main loop...\n")
     
+    # Cycle through runners to handle all task types
+    runners = ["campaign", "livechat", "account", "block", "warmup"]
+    runner_index = 0
+    consecutive_waits = 0
+    
     while RUNNING:
         try:
-            task = await get_next_task()  # No runner filter = all tasks
+            # Cycle through runners to pick up all task types
+            current_runner = runners[runner_index]
+            task = await get_next_task(runner=current_runner)
             task_type = task.get("task", "wait")
             
             if task.get("stop_signal"):
@@ -261,15 +268,29 @@ async def main_loop():
                 continue
             
             if task_type == "wait":
+                consecutive_waits += 1
+                # Move to next runner
+                runner_index = (runner_index + 1) % len(runners)
+                
+                # Keep clients connected for incoming messages
                 accounts = task.get("accounts", [])
                 for acc in accounts:
                     await get_or_create_client(acc, setup_handler=setup_message_handler)
-                # IMPORTANT: Respect backend wait time - don't poll faster than the server allows
-                wait_seconds = task.get("seconds", 5)
-                reason = task.get("reason", "")
-                if reason:
-                    print(f"  ⏳ {reason}")
-                await asyncio.sleep(wait_seconds)
+                
+                # Only sleep if ALL runners returned wait
+                if consecutive_waits >= len(runners):
+                    wait_seconds = task.get("seconds", 2)
+                    reason = task.get("reason", "")
+                    if reason:
+                        print(f"  ⏳ {reason}")
+                    await asyncio.sleep(wait_seconds)
+                    consecutive_waits = 0
+                else:
+                    # Quick poll next runner
+                    await asyncio.sleep(0.1)
+            else:
+                # Got a real task, reset counter
+                consecutive_waits = 0
             
             elif task_type == "send":
                 msg = task.get("message", {})
