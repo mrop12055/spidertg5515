@@ -264,7 +264,6 @@ async def main_loop():
             task_type = task.get("task", "wait")
             
             if task_type == "wait":
-                seconds = task.get("seconds", 0.05)
                 # Only connect NEW accounts (skip already connected for speed)
                 accounts = task.get("accounts", [])
                 new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
@@ -277,7 +276,7 @@ async def main_loop():
                     for acc in new_accounts:
                         if acc.get("id"):
                             connected_ids.add(acc["id"])
-                await asyncio.sleep(0.01)  # Near-instant polling
+                # No artificial delay - server returns seconds=0 for instant polling
             
             elif task_type == "send":
                 msg = task.get("message", {})
