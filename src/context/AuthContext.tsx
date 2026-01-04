@@ -9,7 +9,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // The access code - in production, store this securely in app_settings
-const VALID_ACCESS_CODE = 'admin2024';
+const VALID_ACCESS_CODE = 'MROP548446';
 
 const AUTH_STORAGE_KEY = 'admin_authenticated';
 
