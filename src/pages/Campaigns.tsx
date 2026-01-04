@@ -1604,8 +1604,8 @@ username123
                           {campaign.status === 'draft' && <FileText className="w-5 h-5" />}
                         </div>
                         
-                        <div className="min-w-0">
-                          <h3 className="font-semibold text-base truncate group-hover:text-primary transition-colors">{campaign.name}</h3>
+                        <div className="min-w-0 flex-1">
+                          <h3 className="font-semibold text-base group-hover:text-primary transition-colors break-words">{campaign.name}</h3>
                           <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                             <span className={`text-xs font-medium uppercase tracking-wider ${
                               campaign.status === 'running' 
