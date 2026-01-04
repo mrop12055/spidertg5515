@@ -458,8 +458,8 @@ const Campaigns: React.FC = () => {
           table: 'campaigns'
         },
         () => {
+          // Only fetch reports, don't call refreshData() as it causes page flash
           debouncedFetchReports();
-          refreshData();
         }
       )
       .subscribe();
@@ -498,7 +498,7 @@ const Campaigns: React.FC = () => {
       supabase.removeChannel(messagesChannel);
       window.clearInterval(interval);
     };
-  }, [campaignsLength, debouncedFetchReports, fetchReports, refreshData]);
+  }, [campaignsLength, debouncedFetchReports, fetchReports]);
 
   // Fetch unique recipients per account for today (for campaign account selection display)
   const fetchAccountUniqueRecipients = useCallback(async () => {
