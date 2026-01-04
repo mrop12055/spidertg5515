@@ -1139,7 +1139,7 @@ serve(async (req) => {
 
       return new Response(JSON.stringify({
         task: "wait",
-        seconds: 0.1,
+        seconds: 0,  // No artificial delay - poll as fast as network allows
         accounts: allUsableAccounts.map((a: { id: string; phone_number: string; session_data: string }) => ({
           id: a.id,
           phone_number: a.phone_number,
