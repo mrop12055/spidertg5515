@@ -197,9 +197,11 @@ const Chat: React.FC = () => {
       const cutoff = getTimeFilterCutoff();
       const lastMsgTime = getLastMessageTime(c);
       const matchesTime = lastMsgTime >= cutoff.getTime();
-      const matchesSearch = 
-        c.recipientName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        c.recipientPhone?.includes(searchQuery);
+      const searchLower = searchQuery.toLowerCase();
+      const matchesSearch = !searchQuery || 
+        c.recipientName?.toLowerCase().includes(searchLower) ||
+        c.recipientPhone?.toLowerCase().includes(searchLower) ||
+        c.recipientUsername?.toLowerCase().includes(searchLower);
       // Exclude SpamBot conversations
       const isNotSpamBot = 
         c.recipientPhone !== '@SpamBot' && 
