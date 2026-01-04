@@ -150,12 +150,15 @@ Deno.serve(async (req) => {
 
     // 10. Fix stuck accounts that are marked "active" but have a ban_reason set
     // These are accounts that got frozen/restricted but somehow reverted to active status
+    // EXCLUDE accounts that have a valid future restricted_until (they're legitimately restricted, not stuck)
+    const now = new Date().toISOString();
     const { data: stuckActiveAccounts, error: stuckAccountsError } = await supabase
       .from('telegram_accounts')
       .update({ status: 'frozen' })
       .eq('status', 'active')
       .not('ban_reason', 'is', null)
       .neq('ban_reason', '')
+      .or(`restricted_until.is.null,restricted_until.lt.${now}`)
       .select('id, phone_number, ban_reason');
     
     if (stuckAccountsError) {
