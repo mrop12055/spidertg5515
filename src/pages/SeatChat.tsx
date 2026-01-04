@@ -1240,7 +1240,8 @@ const SeatChat: React.FC = () => {
                                             <img
                                               src={msg.media_url}
                                               alt="Media"
-                                              className="max-w-full rounded-xl mb-3 shadow-md"
+                                              className="max-w-[200px] max-h-[200px] object-cover rounded-lg mb-2 shadow-md cursor-pointer hover:opacity-90 transition-opacity"
+                                              onClick={() => window.open(msg.media_url!, '_blank')}
                                             />
                                           )}
                                           <p className={cn(
