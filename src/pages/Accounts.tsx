@@ -1102,8 +1102,13 @@ const Accounts: React.FC = () => {
     a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
   
   // Helper to check if account has a future restrictedUntil date (temporarily restricted)
-  const isTemporarilyRestricted = (a: TelegramAccount) => 
-    a.restrictedUntil && new Date(a.restrictedUntil) > new Date();
+  const isTemporarilyRestricted = (a: TelegramAccount) => {
+    if (!a.restrictedUntil) return false;
+    const restrictedTime = a.restrictedUntil instanceof Date 
+      ? a.restrictedUntil.getTime() 
+      : new Date(a.restrictedUntil).getTime();
+    return restrictedTime > Date.now();
+  };
 
   const accountsByStatus = {
     // Active: only truly active accounts (not spambot limited, not temporarily restricted)
@@ -1170,8 +1175,13 @@ const Accounts: React.FC = () => {
   const isAccountSpambotLimited = (a: TelegramAccount) => 
     a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
   
-  const isAccountTemporarilyRestricted = (a: TelegramAccount) =>
-    a.restrictedUntil && new Date(a.restrictedUntil) > new Date();
+  const isAccountTemporarilyRestricted = (a: TelegramAccount) => {
+    if (!a.restrictedUntil) return false;
+    const restrictedTime = a.restrictedUntil instanceof Date 
+      ? a.restrictedUntil.getTime() 
+      : new Date(a.restrictedUntil).getTime();
+    return restrictedTime > Date.now();
+  };
   
   const stats = {
     total: accounts.length,
