@@ -18,6 +18,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { format, isToday, isYesterday, subDays, differenceInMinutes } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { LinkifiedText } from '@/components/chat/LinkifiedText';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1355,7 +1356,7 @@ const SeatChat: React.FC = () => {
                                             "text-[15px] leading-relaxed whitespace-pre-wrap break-words",
                                             isOutgoing ? "text-primary-foreground" : "text-foreground"
                                           )}>
-                                            {msg.content}
+                                            <LinkifiedText text={msg.content} />
                                           </p>
                                         </div>
                                         
