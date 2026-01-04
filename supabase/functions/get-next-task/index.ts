@@ -311,6 +311,35 @@ serve(async (req) => {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         }
+
+        // RECOVERY: if a runner crashed mid-send, recipients can get stuck in "sending" forever.
+        // If there is no messages row for that campaign_recipient_id, it's safe to reset back to pending.
+        const { data: stuckRecipients } = await supabase
+          .from("campaign_recipients")
+          .select("id")
+          .eq("status", "sending")
+          .in("campaign_id", runningIds)
+          .limit(50);
+
+        const stuckIds = (stuckRecipients || []).map((r: any) => r.id);
+        if (stuckIds.length > 0) {
+          const { data: existingMsgs } = await supabase
+            .from("messages")
+            .select("campaign_recipient_id")
+            .in("campaign_recipient_id", stuckIds);
+
+          const withMsg = new Set<string>((existingMsgs || []).map((m: any) => m.campaign_recipient_id).filter(Boolean));
+          const toReset = stuckIds.filter((id: string) => !withMsg.has(id));
+
+          if (toReset.length > 0) {
+            await supabase
+              .from("campaign_recipients")
+              .update({ status: "pending" })
+              .in("id", toReset);
+
+            console.log(`[get-next-task] Reset ${toReset.length} stuck campaign recipient(s) back to pending`);
+          }
+        }
         
         // Step 1: Check for ALREADY ASSIGNED pending recipients (one at a time for sequential processing)
         const { data: assignedRecipients } = await supabase
