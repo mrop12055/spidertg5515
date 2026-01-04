@@ -116,17 +116,23 @@ async def setup_message_handler(client, account_id: str):
                         import time
                         from config import SUPABASE_URL, SUPABASE_KEY
                         
-                        # Upload to Supabase storage
+                        # Upload to Supabase storage using PUT with x-upsert
                         file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.jpg"
                         file_path = f"{account_id}/{file_name}"
                         
+                        # Get mime type from message if available
+                        mime_type = "image/jpeg"
+                        if hasattr(event.message, 'file') and event.message.file:
+                            mime_type = getattr(event.message.file, 'mime_type', None) or "image/jpeg"
+                        
                         async with httpx.AsyncClient(timeout=30.0) as http:
-                            upload_response = await http.post(
+                            upload_response = await http.put(
                                 f"{SUPABASE_URL}/storage/v1/object/message-attachments/{file_path}",
                                 headers={
                                     "apikey": SUPABASE_KEY,
                                     "Authorization": f"Bearer {SUPABASE_KEY}",
-                                    "Content-Type": "image/jpeg"
+                                    "Content-Type": mime_type,
+                                    "x-upsert": "true"
                                 },
                                 content=photo_bytes
                             )
@@ -135,7 +141,8 @@ async def setup_message_handler(client, account_id: str):
                                 media_url = f"{SUPABASE_URL}/storage/v1/object/public/message-attachments/{file_path}"
                                 print(f"    ✓ Photo uploaded: {file_name}")
                             else:
-                                print(f"    ⚠ Photo upload failed: {upload_response.status_code}")
+                                error_text = upload_response.text[:300] if upload_response.text else "No details"
+                                print(f"    ⚠ Photo upload failed: {upload_response.status_code} - {error_text}")
                 except Exception as e:
                     print(f"    ⚠ Could not download/upload photo: {e}")
             
