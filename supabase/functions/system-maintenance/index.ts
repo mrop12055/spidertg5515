@@ -151,15 +151,40 @@ Deno.serve(async (req) => {
     // 10. Fix stuck accounts that are marked "active" but have a ban_reason set
     // These are accounts that got frozen/restricted but somehow reverted to active status
     // EXCLUDE accounts that have a valid future restricted_until (they're legitimately restricted, not stuck)
-    const now = new Date().toISOString();
-    const { data: stuckActiveAccounts, error: stuckAccountsError } = await supabase
+    // First, get candidates that are active with a ban_reason
+    const { data: activeWithBanReason, error: fetchError } = await supabase
       .from('telegram_accounts')
-      .update({ status: 'frozen' })
+      .select('id, phone_number, ban_reason, restricted_until')
       .eq('status', 'active')
       .not('ban_reason', 'is', null)
-      .neq('ban_reason', '')
-      .or(`restricted_until.is.null,restricted_until.lt.${now}`)
-      .select('id, phone_number, ban_reason');
+      .neq('ban_reason', '');
+    
+    if (fetchError) {
+      console.error('[system-maintenance] Error fetching active accounts with ban_reason:', fetchError);
+    } else if (activeWithBanReason && activeWithBanReason.length > 0) {
+      const now = new Date();
+      // Filter out accounts that have a valid future restricted_until
+      const accountsToFreeze = activeWithBanReason.filter(acc => {
+        if (!acc.restricted_until) return true; // No restriction date = should be frozen
+        const restrictedUntil = new Date(acc.restricted_until);
+        return restrictedUntil <= now; // Already expired = should be frozen
+      });
+      
+      if (accountsToFreeze.length > 0) {
+        const { data: stuckActiveAccounts, error: stuckAccountsError } = await supabase
+          .from('telegram_accounts')
+          .update({ status: 'frozen' })
+          .in('id', accountsToFreeze.map(a => a.id))
+          .select('id, phone_number, ban_reason');
+        
+        if (stuckAccountsError) {
+          console.error('[system-maintenance] Error fixing stuck active accounts:', stuckAccountsError);
+        } else if (stuckActiveAccounts && stuckActiveAccounts.length > 0) {
+          console.log(`[system-maintenance] Fixed ${stuckActiveAccounts.length} stuck active accounts with ban_reason:`, 
+            stuckActiveAccounts.map(a => `${a.phone_number}: ${a.ban_reason}`));
+        }
+      }
+    }
     
     if (stuckAccountsError) {
       console.error('[system-maintenance] Error fixing stuck active accounts:', stuckAccountsError);
