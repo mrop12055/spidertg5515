@@ -88,6 +88,7 @@ const DatabaseHealth = () => {
   const [completedMessages, setCompletedMessages] = useState<PendingMessage[]>([]);
   // Recent individual errors with timestamps from ALL sources
   const [recentErrors, setRecentErrors] = useState<{id: string; phone: string; reason: string; timestamp: string; source: string}[]>([]);
+  const [restrictedAccountsCount, setRestrictedAccountsCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -197,7 +198,8 @@ const DatabaseHealth = () => {
         failedBlockTasksRes,
         failedImportTasksRes,
         failedWarmupRes,
-        accountErrorsRes
+        accountErrorsRes,
+        restrictedCountRes
       ] = await Promise.all([
         supabase
           .from('campaign_recipients')
@@ -247,8 +249,16 @@ const DatabaseHealth = () => {
           .not('ban_reason', 'is', null)
           .neq('ban_reason', '')
           .order('restricted_until', { ascending: false, nullsFirst: false })
-          .limit(100)
+          .limit(100),
+        // Count restricted accounts
+        supabase
+          .from('telegram_accounts')
+          .select('id', { count: 'exact', head: true })
+          .in('status', ['restricted', 'cooldown'])
       ]);
+
+      // Set restricted accounts count
+      setRestrictedAccountsCount(restrictedCountRes.count || 0);
 
       // Combine all errors into a single array
       const allErrors: {id: string; phone: string; reason: string; timestamp: string; source: string}[] = [];
@@ -581,7 +591,7 @@ const DatabaseHealth = () => {
       />
 
       {/* Health Overview Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         <Card>
           <CardContent className="pt-6">
             <div className="flex items-center gap-3">
@@ -591,6 +601,20 @@ const DatabaseHealth = () => {
               <div>
                 <p className="text-2xl font-bold">{health?.active_accounts || 0}</p>
                 <p className="text-xs text-muted-foreground">Active Accounts</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-orange-500/30">
+          <CardContent className="pt-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-orange-500/10">
+                <AlertCircle className="w-5 h-5 text-orange-500" />
+              </div>
+              <div>
+                <p className="text-2xl font-bold text-orange-500">{restrictedAccountsCount}</p>
+                <p className="text-xs text-muted-foreground">Restricted Accounts</p>
               </div>
             </div>
           </CardContent>
@@ -701,7 +725,7 @@ const DatabaseHealth = () => {
               {recentErrors.length} errors
             </Badge>
           </CardTitle>
-          <CardDescription>Latest 200 errors from all sources (campaigns, messages, tasks, warmup)</CardDescription>
+          <CardDescription>Latest 300 errors from all sources (campaigns, messages, tasks, warmup, accounts)</CardDescription>
         </CardHeader>
         <CardContent>
           <ScrollArea className="h-[500px]">
