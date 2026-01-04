@@ -12,7 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Copy, Trash2, Users, MessageSquare, Send, Eye, 
-  ExternalLink, RefreshCw, CheckCircle 
+  ExternalLink, RefreshCw, CheckCircle, RotateCcw 
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -140,7 +140,7 @@ const Seats: React.FC = () => {
     }
   };
 
-  const handleDeleteSeat = async (seatId: string) => {
+const handleDeleteSeat = async (seatId: string) => {
     if (!confirm('Are you sure you want to delete this seat? This cannot be undone.')) {
       return;
     }
@@ -158,6 +158,30 @@ const Seats: React.FC = () => {
     } catch (error) {
       console.error('Error deleting seat:', error);
       toast.error('Failed to delete seat');
+    }
+  };
+
+  const handleResetLink = async (seat: Seat) => {
+    if (!confirm(`Reset link for "${seat.name}"? The old link will stop working immediately.`)) {
+      return;
+    }
+
+    try {
+      // Generate a new UUID for access_token
+      const newToken = crypto.randomUUID();
+      
+      const { error } = await supabase
+        .from('seats')
+        .update({ access_token: newToken, updated_at: new Date().toISOString() })
+        .eq('id', seat.id);
+
+      if (error) throw error;
+      
+      toast.success('Link reset successfully. Share the new link with your worker.');
+      fetchSeats();
+    } catch (error) {
+      console.error('Error resetting link:', error);
+      toast.error('Failed to reset link');
     }
   };
 
@@ -377,6 +401,15 @@ const Seats: React.FC = () => {
                                 title="Open in new tab"
                               >
                                 <ExternalLink className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleResetLink(seat)}
+                                className="text-orange-500 hover:text-orange-600"
+                                title="Reset link"
+                              >
+                                <RotateCcw className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
