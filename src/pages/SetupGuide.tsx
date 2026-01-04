@@ -134,10 +134,31 @@ import socks
 from typing import Dict, Optional
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
+from telethon.errors import FloodWaitError, UserPrivacyRestrictedError, ApiIdInvalidError
 
 from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
 from fingerprint_generator import generate_fingerprint
+
+# Known working API format validation
+def validate_api_format(api_id: str, api_hash: str) -> tuple:
+    """Validate API credentials format before trying to connect"""
+    try:
+        # API ID must be a valid integer
+        int(api_id)
+    except (ValueError, TypeError):
+        return False, "API ID must be a number"
+    
+    # API Hash must be 32 hex characters
+    if not api_hash or len(api_hash) != 32:
+        return False, f"API Hash must be 32 characters (got {len(api_hash) if api_hash else 0})"
+    
+    # Check if it's valid hex
+    try:
+        int(api_hash, 16)
+    except ValueError:
+        return False, "API Hash must be hexadecimal (0-9, a-f only)"
+    
+    return True, None
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
@@ -951,11 +972,29 @@ async def main_loop():
                     print(f"    Error: {e}")
             
             elif task_type == "api_test":
-                # Test API credential validity by attempting to connect
+                # Test API credential validity
                 task_id = task.get("task_id")
                 account = task.get("account", {})
                 api_credential_id = account.get("api_credential_id")
+                api_id = account.get("api_id")
+                api_hash = account.get("api_hash")
+                
                 print(f"  [API] Testing API for {account.get('phone_number')}...")
+                
+                # First validate format (catches obviously wrong credentials)
+                is_valid_format, format_error = validate_api_format(api_id, api_hash)
+                if not is_valid_format:
+                    await report_result("api_test", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "api_credential_id": api_credential_id,
+                        "success": False,
+                        "error": f"Invalid format: {format_error}"
+                    })
+                    print(f"    [INVALID] {format_error}")
+                    continue
+                
+                # Format is valid, try to connect
                 try:
                     client = await get_or_create_client(account)
                     if client:
@@ -975,15 +1014,35 @@ async def main_loop():
                             "error": "Connection failed"
                         })
                         print(f"    [FAIL] Connection failed")
-                except Exception as e:
+                except ApiIdInvalidError:
                     await report_result("api_test", {
                         "task_id": task_id,
                         "account_id": account.get("id"),
                         "api_credential_id": api_credential_id,
                         "success": False,
-                        "error": str(e)
+                        "error": "API ID or Hash is invalid"
                     })
-                    print(f"    [FAIL] {e}")
+                    print(f"    [INVALID] API ID or Hash is invalid")
+                except Exception as e:
+                    err_str = str(e).lower()
+                    if "api" in err_str and ("invalid" in err_str or "incorrect" in err_str):
+                        await report_result("api_test", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "api_credential_id": api_credential_id,
+                            "success": False,
+                            "error": "API credentials invalid"
+                        })
+                        print(f"    [INVALID] API credentials invalid")
+                    else:
+                        await report_result("api_test", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "api_credential_id": api_credential_id,
+                            "success": False,
+                            "error": str(e)
+                        })
+                        print(f"    [FAIL] {e}")
         
         except Exception as e:
             print(f"  [ERROR] {e}")
