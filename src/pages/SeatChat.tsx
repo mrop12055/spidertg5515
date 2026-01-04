@@ -203,10 +203,13 @@ const SeatChat: React.FC = () => {
     return Array.from(phoneMap.values());
   }, []);
 
-  // Time-filtered base conversations
+  // Time-filtered base conversations - ONLY show campaign conversations (where we messaged first)
   const timeFilteredConversations = React.useMemo(() => {
     const cutoffTime = timeFilterCutoff.getTime();
     return conversations.filter(conv => {
+      // Only include conversations where we sent the first message (campaign initiated)
+      if (!conv.first_message_sent) return false;
+      
       const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
       return lastMsgTime >= cutoffTime;
     });
@@ -220,8 +223,8 @@ const SeatChat: React.FC = () => {
     if (chatTab === 'pinned') {
       filtered = filtered.filter(conv => conv.is_pinned);
     } else if (chatTab === 'hidden') {
-      // Hidden tab should show all hidden regardless of time filter
-      filtered = conversations.filter(conv => conv.is_hidden);
+      // Hidden tab should show all hidden regardless of time filter (only campaign conversations)
+      filtered = conversations.filter(conv => conv.is_hidden && conv.first_message_sent);
     } else {
       // "all" tab shows non-hidden conversations
       filtered = filtered.filter(conv => !conv.is_hidden);
@@ -234,13 +237,14 @@ const SeatChat: React.FC = () => {
     
     // When searching, ignore time filter to search ALL conversations
     if (searchQuery) {
-      // Re-filter from all conversations for search
+      // Re-filter from all conversations for search (still only campaign conversations)
       const searchLower = searchQuery.toLowerCase();
       filtered = conversations.filter(conv => (
-        conv.recipient_name?.toLowerCase().includes(searchLower) ||
+        conv.first_message_sent && // Only campaign conversations
+        (conv.recipient_name?.toLowerCase().includes(searchLower) ||
         conv.recipient_phone?.toLowerCase().includes(searchLower) ||
         conv.recipient_username?.toLowerCase().includes(searchLower) ||
-        conv.last_message_content?.toLowerCase().includes(searchLower)
+        conv.last_message_content?.toLowerCase().includes(searchLower))
       ));
       
       // Apply tab filter after search
@@ -263,10 +267,10 @@ const SeatChat: React.FC = () => {
     });
   }, [timeFilteredConversations, conversations, chatTab, showRepliedOnly, searchQuery, deduplicateConversations]);
 
-  // Count for each tab (using time-filtered base)
+  // Count for each tab (using time-filtered base - only campaign conversations)
   const allCount = timeFilteredConversations.filter(c => !c.is_hidden).length;
   const pinnedCount = timeFilteredConversations.filter(c => c.is_pinned).length;
-  const hiddenCount = conversations.filter(c => c.is_hidden).length;
+  const hiddenCount = conversations.filter(c => c.is_hidden && c.first_message_sent).length;
 
   // Filter messages by search
   const filteredMessages = messageSearchQuery
