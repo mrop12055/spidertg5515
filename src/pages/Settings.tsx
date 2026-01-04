@@ -168,7 +168,7 @@ const Settings: React.FC = () => {
   };
 
 
-  // Add new API credential
+  // Add new API credential with auto-redistribution
   const handleAddApiCredential = async () => {
     if (!newApiName.trim() || !newApiId.trim() || !newApiHash.trim()) {
       toast.error('Please fill all fields');
@@ -190,12 +190,27 @@ const Settings: React.FC = () => {
       
       if (error) throw error;
       
-      toast.success('API credential added successfully!');
+      toast.success('API credential added! Auto-redistributing accounts...');
       setNewApiName('');
       setNewApiId('');
       setNewApiHash('');
       setNewApiType('android');
       setIsAddApiOpen(false);
+      
+      // Auto-redistribute accounts to include the new API
+      try {
+        const { data, error: redistError } = await supabase.functions.invoke('redistribute-api-credentials');
+        if (redistError) {
+          console.error('Auto-redistribution failed:', redistError);
+          toast.error('API added but auto-redistribution failed. Please redistribute manually.');
+        } else {
+          toast.success(`Accounts redistributed! ${data?.assigned || 0} accounts assigned across all APIs.`);
+        }
+      } catch (redistErr) {
+        console.error('Auto-redistribution error:', redistErr);
+        toast.error('API added but auto-redistribution failed.');
+      }
+      
       fetchApiCredentials();
     } catch (error) {
       console.error('Failed to add API credential:', error);
