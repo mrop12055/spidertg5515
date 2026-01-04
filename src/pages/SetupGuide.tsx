@@ -390,13 +390,35 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         
         if media_url:
             try:
+                import io
                 async with httpx.AsyncClient(timeout=30) as http:
                     resp = await http.get(media_url)
                     if resp.status_code == 200:
-                        await asyncio.wait_for(client.send_file(entity, resp.content, caption=content), timeout=30)
+                        # Determine filename from URL to help Telethon classify the file
+                        from urllib.parse import urlparse, unquote
+                        url_path = urlparse(media_url).path
+                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+                        
+                        # Check if it's an image based on extension or content-type
+                        content_type = resp.headers.get("content-type", "").lower()
+                        ext = filename.split(".")[-1].lower() if "." in filename else ""
+                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+                        
+                        # Wrap bytes in BytesIO with a name so Telethon knows the file type
+                        file_bytes = io.BytesIO(resp.content)
+                        file_bytes.name = filename if "." in filename else f"photo.jpg"
+                        
+                        print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
+                        
+                        # For images, use force_document=False to send as photo preview
+                        await asyncio.wait_for(
+                            client.send_file(entity, file_bytes, caption=content, force_document=not is_image),
+                            timeout=30
+                        )
                     else:
                         await asyncio.wait_for(client.send_message(entity, content), timeout=15)
-            except:
+            except Exception as media_err:
+                print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, content), timeout=15)
         else:
             await asyncio.wait_for(client.send_message(entity, content), timeout=15)
