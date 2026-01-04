@@ -23,6 +23,36 @@ from client_manager import (
 # ========== GLOBAL STATE ==========
 RUNNING = True
 
+# Reduce noise + avoid slowing the event loop with repeated DB checks for non-campaign senders
+LOG_IGNORED_NON_CAMPAIGN = False
+
+# Cache conversation existence results to avoid repeated REST calls (which can block the loop and delay sends)
+NEGATIVE_CACHE_TTL_SECONDS = 24 * 60 * 60   # 24h: permanently ignore non-campaign senders for the day
+POSITIVE_CACHE_TTL_SECONDS = 6 * 60 * 60    # 6h: re-check sometimes for safety
+
+# (account_id, sender_id) -> (exists: bool, cached_at: float)
+_conversation_cache = {}
+
+
+def _cache_get(account_id: str, sender_id: int):
+    import time
+    key = (account_id, int(sender_id))
+    val = _conversation_cache.get(key)
+    if not val:
+        return None
+    exists, ts = val
+    ttl = POSITIVE_CACHE_TTL_SECONDS if exists else NEGATIVE_CACHE_TTL_SECONDS
+    if (time.time() - ts) > ttl:
+        _conversation_cache.pop(key, None)
+        return None
+    return exists
+
+
+def _cache_set(account_id: str, sender_id: int, exists: bool):
+    import time
+    _conversation_cache[(account_id, int(sender_id))] = (bool(exists), time.time())
+
+
 
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
@@ -148,16 +178,17 @@ async def setup_message_handler(client, account_id: str):
 
             # FILTER: Only process messages from conversations WE initiated
             # Uses multi-strategy matching: telegram_id -> username -> phone
-            conversation_exists = await check_conversation_exists(
-                account_id, sender.id, sender_username, sender_phone
-            )
-            if not conversation_exists:
-                # Log occasionally for debugging (rate-limited)
-                import time
-                if not hasattr(handler, '_ignored_log') or time.time() - handler._ignored_log.get(sender.id, 0) > 60:
-                    if not hasattr(handler, '_ignored_log'):
-                        handler._ignored_log = {}
-                    handler._ignored_log[sender.id] = time.time()
+            cached_exists = _cache_get(account_id, sender.id)
+            if cached_exists is None:
+                conversation_exists = await check_conversation_exists(
+                    account_id, sender.id, sender_username, sender_phone
+                )
+                _cache_set(account_id, sender.id, conversation_exists)
+                cached_exists = conversation_exists
+
+            if not cached_exists:
+                # Permanently skip (cached) non-campaign senders to keep loop fast
+                if LOG_IGNORED_NON_CAMPAIGN:
                     print(f"    [IGNORED] {sender_name} (id={sender.id}, @{sender_username}, phone={sender_phone}): no campaign conversation")
                 return
             
