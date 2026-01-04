@@ -465,15 +465,41 @@ const SeatChat: React.FC = () => {
 
     setIsSending(true);
     try {
+      let mediaUrl: string | null = null;
+      let mediaType: string | null = null;
+
+      // Upload image if selected
+      if (selectedImage) {
+        const fileName = `${Date.now()}_${selectedImage.name}`;
+        const filePath = `${selectedConversation.account_id}/${fileName}`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('message-attachments')
+          .upload(filePath, selectedImage);
+
+        if (uploadError) throw uploadError;
+
+        const { data: { publicUrl } } = supabase.storage
+          .from('message-attachments')
+          .getPublicUrl(filePath);
+
+        mediaUrl = publicUrl;
+        mediaType = selectedImage.type.startsWith('image/') ? 'image' : 
+                    selectedImage.type.startsWith('video/') ? 'video' : 
+                    selectedImage.type.startsWith('audio/') ? 'audio' : 'document';
+      }
+
       const { error } = await supabase
         .from('messages')
         .insert({
           conversation_id: selectedConversation.id,
           account_id: selectedConversation.account_id,
-          content: messageInput.trim() || '📷 Image',
+          content: messageInput.trim() || (mediaUrl ? '' : ''),
           direction: 'outgoing',
           status: 'pending',
-          priority: 10
+          priority: 10,
+          media_url: mediaUrl,
+          media_type: mediaType
         });
 
       if (error) throw error;
