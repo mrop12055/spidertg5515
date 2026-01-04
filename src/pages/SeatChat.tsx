@@ -836,7 +836,7 @@ const SeatChat: React.FC = () => {
           /* Chats View */
           <div className="flex-1 flex overflow-hidden">
             {/* Conversation Sidebar */}
-            <div className="w-[280px] lg:w-[320px] bg-card/40 backdrop-blur-sm border-r border-border/30 flex flex-col flex-shrink-0">
+            <div className="w-[364px] lg:w-[416px] bg-card/40 backdrop-blur-sm border-r border-border/30 flex flex-col flex-shrink-0">
               {/* Chat Tabs */}
               <div className="p-2.5 border-b border-border/30">
                 <Tabs value={chatTab} onValueChange={(v) => setChatTab(v as ChatTab)} className="w-full">
