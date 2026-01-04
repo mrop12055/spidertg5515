@@ -1075,7 +1075,7 @@ const SeatChat: React.FC = () => {
             </div>
 
             {/* Message Area */}
-            <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-b from-muted/20 via-muted/10 to-muted/5">
+            <div className="flex-1 flex flex-col overflow-hidden bg-gradient-to-br from-slate-50 via-slate-100/50 to-slate-50 dark:from-slate-900/50 dark:via-slate-800/30 dark:to-slate-900/50">
               {selectedConversation ? (
                 <>
                   {/* Chat Header */}
@@ -1152,18 +1152,25 @@ const SeatChat: React.FC = () => {
                     ref={messagesContainerRef}
                     className="flex-1 overflow-y-auto px-4 lg:px-8 py-4 scrollbar-thin"
                     style={{
-                      backgroundImage: `radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground) / 0.03) 1px, transparent 0)`,
-                      backgroundSize: '24px 24px'
+                      backgroundImage: `
+                        radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground) / 0.05) 1px, transparent 0),
+                        linear-gradient(135deg, hsl(var(--muted) / 0.3) 0%, transparent 50%, hsl(var(--muted) / 0.2) 100%)
+                      `,
+                      backgroundSize: '20px 20px, 100% 100%'
                     }}
                   >
-                    <div className="max-w-2xl mx-auto space-y-1">
+                    <div className="max-w-3xl mx-auto space-y-1">
                       {messageGroups.length === 0 ? (
-                        <div className="flex flex-col items-center justify-center h-full py-20">
-                          <div className="bg-muted rounded-lg px-3 py-1.5 mb-4">
-                            <p className="text-muted-foreground text-xs">
-                              {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
-                            </p>
+                        <div className="flex flex-col items-center justify-center h-full py-16">
+                          <div className="w-20 h-20 rounded-full bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center mb-4 border border-border/30">
+                            <MessageSquare className="w-8 h-8 text-muted-foreground/50" />
                           </div>
+                          <p className="text-muted-foreground text-base font-medium">
+                            {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
+                          </p>
+                          <p className="text-muted-foreground/60 text-sm mt-1">
+                            Start the conversation by sending a message
+                          </p>
                         </div>
                       ) : (
                         messageGroups.map((group, groupIndex) => (
@@ -1246,8 +1253,8 @@ const SeatChat: React.FC = () => {
                   )}
 
                   {/* Message Input */}
-                  <div className="bg-card/95 backdrop-blur-sm border-t border-border/30 px-4 py-3.5 flex-shrink-0">
-                    <div className="max-w-2xl mx-auto flex items-center gap-2.5">
+                  <div className="bg-card border-t border-border/40 px-4 lg:px-6 py-4 flex-shrink-0">
+                    <div className="max-w-3xl mx-auto flex items-center gap-3">
                       {/* Emoji */}
                       <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
                       
@@ -1263,7 +1270,7 @@ const SeatChat: React.FC = () => {
                         variant="ghost"
                         size="icon"
                         onClick={() => fileInputRef.current?.click()}
-                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 flex-shrink-0"
+                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-12 w-12 flex-shrink-0 rounded-xl"
                       >
                         <Paperclip className="w-5 h-5" />
                       </Button>
@@ -1275,7 +1282,7 @@ const SeatChat: React.FC = () => {
                         onChange={(e) => setMessageInput(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                         disabled={isSending}
-                        className="flex-1 bg-muted/60 border border-border/30 text-foreground placeholder:text-muted-foreground/70 focus:ring-1 focus:ring-primary/30 focus:border-primary/50 h-12 rounded-xl text-base transition-all"
+                        className="flex-1 bg-muted/50 border border-border/50 text-foreground placeholder:text-muted-foreground/60 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 h-14 rounded-2xl text-base px-5 transition-all shadow-sm"
                       />
 
                       {/* Send / Mic Button */}
@@ -1283,39 +1290,48 @@ const SeatChat: React.FC = () => {
                         <Button 
                           onClick={handleSendMessage} 
                           disabled={isSending}
-                          className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary/80 text-primary-foreground h-12 w-12 rounded-xl flex-shrink-0 shadow-lg shadow-primary/30 transition-all hover:shadow-xl hover:shadow-primary/40"
+                          className="bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary/80 text-primary-foreground h-14 w-14 rounded-2xl flex-shrink-0 shadow-lg shadow-primary/30 transition-all hover:shadow-xl hover:shadow-primary/40"
                           size="icon"
                         >
                           {isSending ? (
-                            <Loader2 className="w-5 h-5 animate-spin" />
+                            <Loader2 className="w-6 h-6 animate-spin" />
                           ) : (
-                            <Send className="w-5 h-5" />
+                            <Send className="w-6 h-6" />
                           )}
                         </Button>
                       ) : (
                         <Button 
                           variant="ghost"
-                          className="text-muted-foreground hover:text-foreground hover:bg-muted h-11 w-11 rounded-full flex-shrink-0"
+                          className="text-muted-foreground hover:text-foreground hover:bg-muted h-14 w-14 rounded-2xl flex-shrink-0"
                           size="icon"
                         >
-                          <Mic className="w-5 h-5" />
+                          <Mic className="w-6 h-6" />
                         </Button>
                       )}
                     </div>
                   </div>
                 </>
               ) : (
-                <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-muted/20 to-muted/5">
+                <div 
+                  className="flex-1 flex items-center justify-center"
+                  style={{
+                    background: `
+                      radial-gradient(circle at 1px 1px, hsl(var(--muted-foreground) / 0.04) 1px, transparent 0),
+                      linear-gradient(135deg, hsl(var(--muted) / 0.4) 0%, hsl(var(--background)) 50%, hsl(var(--muted) / 0.3) 100%)
+                    `,
+                    backgroundSize: '20px 20px, 100% 100%'
+                  }}
+                >
                   <div className="text-center">
-                    <div className="w-32 h-32 mx-auto mb-5 relative">
+                    <div className="w-28 h-28 mx-auto mb-5 relative">
                       <div className="absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5 rounded-full animate-pulse" />
-                      <div className="absolute inset-4 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
-                      <div className="absolute inset-8 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
+                      <div className="absolute inset-3 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
+                      <div className="absolute inset-6 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
                         <Send className="w-6 h-6 text-primary-foreground rotate-[-45deg]" />
                       </div>
                     </div>
-                    <h2 className="text-lg font-bold text-foreground">{seat?.name}</h2>
-                    <p className="text-xs text-muted-foreground mt-1">Select a conversation to start messaging</p>
+                    <h2 className="text-xl font-bold text-foreground">{seat?.name}</h2>
+                    <p className="text-sm text-muted-foreground mt-1">Select a conversation to start messaging</p>
                   </div>
                 </div>
               )}
