@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAppSettings } from '@/hooks/useAppSettings';
+import { cn } from '@/lib/utils';
 import { 
   Bell, 
   Calendar,
@@ -38,7 +39,10 @@ interface ApiCredential {
   client_type: string;
   accounts_count: number;
   is_active: boolean;
+  sent_24h?: number; // Dynamic: messages sent in last 24h
 }
+
+const API_DAILY_LIMIT = 40; // Max messages per API per 24 hours
 
 const Settings: React.FC = () => {
   const { toast: showToast } = useToast();
@@ -73,7 +77,7 @@ const Settings: React.FC = () => {
   const [newApiType, setNewApiType] = useState<string>('android');
   const [isAddingApi, setIsAddingApi] = useState(false);
 
-  // Fetch API credentials
+  // Fetch API credentials with 24h send counts
   const fetchApiCredentials = async () => {
     setIsLoadingCredentials(true);
     try {
@@ -83,13 +87,54 @@ const Settings: React.FC = () => {
         .order('client_type');
       
       if (error) throw error;
-      setApiCredentials(data || []);
-
+      
       // Get total accounts
       const { count } = await supabase
         .from('telegram_accounts')
         .select('*', { count: 'exact', head: true });
       setTotalAccounts(count || 0);
+
+      // Get 24h message counts per API credential
+      const yesterday = new Date();
+      yesterday.setHours(yesterday.getHours() - 24);
+      
+      // Get all accounts with their api_credential_id
+      const { data: accountsData } = await supabase
+        .from('telegram_accounts')
+        .select('id, api_credential_id');
+      
+      // Get messages sent in last 24h
+      const { data: messagesData } = await supabase
+        .from('messages')
+        .select('account_id')
+        .eq('direction', 'outgoing')
+        .eq('status', 'sent')
+        .gte('created_at', yesterday.toISOString());
+      
+      // Build account to API mapping
+      const accountToApi = new Map<string, string>();
+      (accountsData || []).forEach((acc: any) => {
+        if (acc.api_credential_id) {
+          accountToApi.set(acc.id, acc.api_credential_id);
+        }
+      });
+      
+      // Count messages per API
+      const apiCounts = new Map<string, number>();
+      (messagesData || []).forEach((msg: any) => {
+        const apiId = accountToApi.get(msg.account_id);
+        if (apiId) {
+          apiCounts.set(apiId, (apiCounts.get(apiId) || 0) + 1);
+        }
+      });
+      
+      // Merge 24h counts into credentials
+      const credentialsWithCounts = (data || []).map((cred: ApiCredential) => ({
+        ...cred,
+        sent_24h: apiCounts.get(cred.id) || 0,
+      }));
+      
+      setApiCredentials(credentialsWithCounts);
     } catch (error) {
       console.error('Failed to fetch API credentials:', error);
     } finally {
@@ -381,17 +426,39 @@ const Settings: React.FC = () => {
                             {cred.client_type}
                           </Badge>
                         </div>
-                        <div className="space-y-1">
+                        <div className="space-y-2">
+                          {/* 24h Send Stats - Primary display */}
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className="text-muted-foreground">
+                                Sent (24h)
+                              </span>
+                              <span className={cn(
+                                "font-medium",
+                                (cred.sent_24h || 0) >= API_DAILY_LIMIT ? "text-destructive" : 
+                                (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "text-yellow-500" : "text-green-500"
+                              )}>
+                                {cred.sent_24h || 0}/{API_DAILY_LIMIT}
+                              </span>
+                            </div>
+                            <Progress 
+                              value={Math.min(((cred.sent_24h || 0) / API_DAILY_LIMIT) * 100, 100)} 
+                              className={cn(
+                                "h-2",
+                                (cred.sent_24h || 0) >= API_DAILY_LIMIT ? "[&>div]:bg-destructive" : 
+                                (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "[&>div]:bg-yellow-500" : "[&>div]:bg-green-500"
+                              )}
+                            />
+                          </div>
+                          
+                          {/* Account distribution */}
                           <div className="flex items-center justify-between text-xs">
                             <span className="text-muted-foreground">
                               {cred.accounts_count} accounts
                             </span>
                             <span className="font-medium">{percentage}%</span>
                           </div>
-                          <Progress value={percentage} className="h-2" />
-                        </div>
-                        <div className="text-xs text-muted-foreground font-mono">
-                          API ID: {cred.api_id}
+                          <Progress value={percentage} className="h-1.5 opacity-50" />
                         </div>
                       </div>
                     );

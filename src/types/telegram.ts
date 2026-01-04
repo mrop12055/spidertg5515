@@ -34,6 +34,12 @@ export interface TelegramAccount {
   apiCredentialId?: string;
   // Tags for organization
   tags?: string[];
+  // Health tracking
+  successCount?: number;
+  failureCount?: number;
+  successRate?: number;
+  autoDisabled?: boolean;
+  disabledReason?: string;
 }
 
 export interface Proxy {

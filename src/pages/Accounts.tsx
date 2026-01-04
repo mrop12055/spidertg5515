@@ -1422,6 +1422,47 @@ const Accounts: React.FC = () => {
                 </Tooltip>
               </TooltipProvider>
             )}
+            
+            {/* Health Badge - Success rate indicator */}
+            {(account.successCount !== undefined || account.failureCount !== undefined) && 
+             ((account.successCount || 0) + (account.failureCount || 0)) >= 3 && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className={cn(
+                      "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium border",
+                      account.autoDisabled 
+                        ? "bg-destructive/20 text-destructive border-destructive/30"
+                        : (account.successRate ?? 100) >= 80 
+                          ? "bg-green-500/15 text-green-600 border-green-500/30"
+                          : (account.successRate ?? 100) >= 50 
+                            ? "bg-yellow-500/15 text-yellow-600 border-yellow-500/30"
+                            : "bg-red-500/15 text-red-600 border-red-500/30"
+                    )}>
+                      {account.autoDisabled ? (
+                        <>
+                          <XCircle className="w-3 h-3" />
+                          Disabled
+                        </>
+                      ) : (
+                        `${Math.round(account.successRate ?? 100)}%`
+                      )}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p className="font-medium">
+                      {account.autoDisabled ? 'Auto-Disabled' : 'Account Health'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {account.successCount || 0} sent, {account.failureCount || 0} failed
+                    </p>
+                    {account.disabledReason && (
+                      <p className="text-xs text-destructive">{account.disabledReason}</p>
+                    )}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
           </div>
           <div className="flex flex-col text-xs text-muted-foreground mt-0.5">
             {(account.firstName || account.lastName) && (

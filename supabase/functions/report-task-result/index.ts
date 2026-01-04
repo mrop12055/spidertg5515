@@ -268,6 +268,12 @@ serve(async (req) => {
             console.log(`[report-task-result] Updated last_campaign_send_at for account ${account_id}`);
           }
 
+          // Track account success for health monitoring
+          if (account_id) {
+            await supabase.rpc('increment_account_success', { acc_id: account_id });
+            console.log(`[report-task-result] Incremented success count for account ${account_id}`);
+          }
+
           console.log(`[report-task-result] Message sent successfully for recipient ${campaign_recipient_id || message_id}`);
         } else {
           // Separate PERMANENT ban errors from TEMPORARY restrictions
@@ -321,6 +327,37 @@ serve(async (req) => {
           // Also check for explicit skip_account flag from Python runner
           const isRetryable = retryWithDifferentAccountErrors.some(r => errorLower.includes(r)) || (skip_account && retry_with_different_account);
           
+          // Track account failure for health monitoring (only for account-related errors, not recipient issues)
+          // Skip-only errors are recipient problems, not account problems
+          if (account_id && !isSkipOnly) {
+            await supabase.rpc('increment_account_failure', { acc_id: account_id });
+            console.log(`[report-task-result] Incremented failure count for account ${account_id}`);
+            
+            // Check if account should be auto-disabled due to low success rate
+            const { data: accountHealth } = await supabase
+              .from("telegram_accounts")
+              .select("success_count, failure_count, success_rate")
+              .eq("id", account_id)
+              .single();
+            
+            if (accountHealth) {
+              const totalAttempts = (accountHealth.success_count || 0) + (accountHealth.failure_count || 0);
+              const successRate = accountHealth.success_rate ?? 100;
+              
+              // Auto-disable if: success rate < 50% AND at least 3 failures
+              if (successRate < 50 && (accountHealth.failure_count || 0) >= 3 && totalAttempts >= 5) {
+                await supabase
+                  .from("telegram_accounts")
+                  .update({
+                    auto_disabled: true,
+                    disabled_reason: `Low success rate: ${successRate.toFixed(1)}% (${accountHealth.failure_count} failures)`,
+                  })
+                  .eq("id", account_id);
+                
+                console.log(`[report-task-result] Auto-disabled account ${account_id} - success rate ${successRate.toFixed(1)}%`);
+              }
+            }
+          }
           if (isPermanentBan && account_id) {
             // PERMANENT BAN - mark account as banned, cannot be used anymore
             console.log(`[report-task-result] Account ${account_id} PERMANENTLY BANNED: ${error}`);
