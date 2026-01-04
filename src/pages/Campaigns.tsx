@@ -416,14 +416,55 @@ const Campaigns: React.FC = () => {
     if (campaignsLength > 0) fetchReports();
   }, [campaignsLength, fetchReports]);
 
-  // Keep progress fresh while viewing this page
+  // Real-time subscriptions for campaign_recipients and campaigns for instant updates
   useEffect(() => {
     if (campaignsLength === 0) return;
+    
+    // Subscribe to campaign_recipients changes for instant progress updates
+    const recipientsChannel = supabase
+      .channel('campaign-recipients-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'campaign_recipients'
+        },
+        () => {
+          // Refresh reports when recipients change
+          fetchReports();
+        }
+      )
+      .subscribe();
+
+    // Also subscribe to campaigns table for status changes
+    const campaignsChannel = supabase
+      .channel('campaigns-page-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'campaigns'
+        },
+        () => {
+          fetchReports();
+          refreshData();
+        }
+      )
+      .subscribe();
+
+    // Fallback polling every 10 seconds (reduced from 5s since we have realtime now)
     const interval = window.setInterval(() => {
       fetchReports();
-    }, 5000);
-    return () => window.clearInterval(interval);
-  }, [campaignsLength, fetchReports]);
+    }, 10000);
+
+    return () => {
+      supabase.removeChannel(recipientsChannel);
+      supabase.removeChannel(campaignsChannel);
+      window.clearInterval(interval);
+    };
+  }, [campaignsLength, fetchReports, refreshData]);
 
   // Fetch unique recipients per account for today (for campaign account selection display)
   const fetchAccountUniqueRecipients = useCallback(async () => {
