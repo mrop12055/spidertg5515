@@ -535,16 +535,34 @@ serve(async (req) => {
             
             if (runningCampaigns && runningCampaigns.length > 0) {
               for (const campaign of runningCampaigns) {
-                // Get accounts assigned to this campaign
+                // Get accounts assigned to this campaign with their status AND restricted_until
                 const { data: campaignAccountLinks } = await supabase
                   .from("campaign_accounts")
-                  .select("account_id, telegram_accounts!inner(id, status)")
+                  .select("account_id, telegram_accounts!inner(id, status, restricted_until)")
                   .eq("campaign_id", campaign.id);
                 
                 // Check if any assigned account is still active
                 const hasActiveAccount = (campaignAccountLinks || []).some((ca: any) => {
                   const acc = ca.telegram_accounts;
                   return acc && acc.status === 'active';
+                });
+                
+                // Check if ALL accounts are PERMANENTLY banned (not just temporarily restricted)
+                const allPermanentlyBanned = (campaignAccountLinks || []).every((ca: any) => {
+                  const acc = ca.telegram_accounts;
+                  return acc && acc.status === 'banned';
+                });
+                
+                // Check if some accounts are just temporarily restricted (can recover)
+                const hasTemporarilyRestricted = (campaignAccountLinks || []).some((ca: any) => {
+                  const acc = ca.telegram_accounts;
+                  // Account is temporarily restricted if status is 'restricted' or 'cooldown' 
+                  // OR if restricted_until is set and in the future
+                  return acc && (
+                    acc.status === 'restricted' || 
+                    acc.status === 'cooldown' ||
+                    (acc.restricted_until && new Date(acc.restricted_until) > new Date())
+                  );
                 });
                 
                 if (!hasActiveAccount) {
@@ -555,14 +573,29 @@ serve(async (req) => {
                     .eq("campaign_id", campaign.id)
                     .eq("status", "pending");
                   
-                  // If pending recipients exist, mark as FAILED (couldn't complete)
-                  // If no pending recipients, mark as completed (all were processed)
-                  const newStatus = (pendingCount && pendingCount > 0) ? "failed" : "completed";
-                  console.log(`[report-task-result] All accounts for campaign "${campaign.name}" are restricted - marking as ${newStatus} (${pendingCount || 0} pending)`);
-                  await supabase
-                    .from("campaigns")
-                    .update({ status: newStatus })
-                    .eq("id", campaign.id);
+                  if (pendingCount && pendingCount > 0) {
+                    // There are pending recipients - decide what to do
+                    if (allPermanentlyBanned) {
+                      // ALL accounts are permanently banned - campaign truly failed
+                      console.log(`[report-task-result] All accounts for campaign "${campaign.name}" are PERMANENTLY BANNED - marking as failed (${pendingCount} pending)`);
+                      await supabase
+                        .from("campaigns")
+                        .update({ status: "failed" })
+                        .eq("id", campaign.id);
+                    } else if (hasTemporarilyRestricted) {
+                      // Some accounts are just temporarily restricted - keep campaign running
+                      // They will become available again when restrictions expire
+                      console.log(`[report-task-result] All accounts for campaign "${campaign.name}" are temporarily restricted - keeping campaign running (${pendingCount} pending, will resume when restrictions expire)`);
+                      // DO NOT change status - let it stay as 'running' so Python runner can resume later
+                    }
+                  } else {
+                    // No pending recipients - mark as completed
+                    console.log(`[report-task-result] Campaign "${campaign.name}" has no pending recipients - marking as completed`);
+                    await supabase
+                      .from("campaigns")
+                      .update({ status: "completed" })
+                      .eq("id", campaign.id);
+                  }
                 }
               }
             }
