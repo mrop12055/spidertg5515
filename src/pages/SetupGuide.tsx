@@ -583,8 +583,11 @@ from client_manager import (
     send_message, shutdown_all
 )
 from config import SUPABASE_URL, SUPABASE_KEY
+from urllib.parse import urlparse
 
-SUPABASE_URL_BASE = SUPABASE_URL.replace("/functions/v1", "") if "/functions/v1" in SUPABASE_URL else SUPABASE_URL.rsplit("/", 1)[0]
+# Ensure we always get the *origin* (e.g. https://xxxx.supabase.co)
+_u = urlparse(SUPABASE_URL)
+SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
 RUNNING = True
 
