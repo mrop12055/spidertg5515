@@ -343,7 +343,7 @@ const Accounts: React.FC = () => {
     };
   }, [isAccountTaskRunning, accountTasksProgress]);
    
-  // Fetch messages sent in last 24 hours per account
+  // Fetch unique conversations (recipients) contacted in last 24 hours per account
   useEffect(() => {
     const fetchMessageCounts = async () => {
       const yesterday = new Date();
@@ -351,14 +351,24 @@ const Accounts: React.FC = () => {
       
       const { data, error } = await supabase
         .from('messages')
-        .select('account_id')
+        .select('account_id, conversation_id')
         .eq('direction', 'outgoing')
         .gte('created_at', yesterday.toISOString());
       
       if (data && !error) {
-        const counts = new Map<string, number>();
+        // Count unique conversations per account (not total messages)
+        const accountConversations = new Map<string, Set<string>>();
         data.forEach((msg: any) => {
-          counts.set(msg.account_id, (counts.get(msg.account_id) || 0) + 1);
+          if (!accountConversations.has(msg.account_id)) {
+            accountConversations.set(msg.account_id, new Set());
+          }
+          accountConversations.get(msg.account_id)!.add(msg.conversation_id);
+        });
+        
+        // Convert to count of unique recipients
+        const counts = new Map<string, number>();
+        accountConversations.forEach((convSet, accountId) => {
+          counts.set(accountId, convSet.size);
         });
         setMessagesSentLast24h(counts);
       }
