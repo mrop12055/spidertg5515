@@ -24,7 +24,7 @@ serve(async (req) => {
 
     switch (task_type) {
       case "send": {
-        let { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name, recipient_telegram_id, recipient_username } = result;
+        let { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name, recipient_telegram_id, recipient_username, skip_account, retry_with_different_account } = result;
         let isNewConversation = false; // Track if this is first message to a new contact
 
         if (success) {
@@ -318,7 +318,8 @@ serve(async (req) => {
           const isPermanentBan = permanentBanErrors.some(r => errorLower.includes(r));
           const isTemporaryRestriction = temporaryRestrictionErrors.some(r => errorLower.includes(r));
           const isSkipOnly = skipRecipientErrors.some(r => errorLower.includes(r));
-          const isRetryable = retryWithDifferentAccountErrors.some(r => errorLower.includes(r));
+          // Also check for explicit skip_account flag from Python runner
+          const isRetryable = retryWithDifferentAccountErrors.some(r => errorLower.includes(r)) || (skip_account && retry_with_different_account);
           
           if (isPermanentBan && account_id) {
             // PERMANENT BAN - mark account as banned, cannot be used anymore
@@ -334,7 +335,7 @@ serve(async (req) => {
           } else if (isRetryable && campaign_recipient_id && account_id) {
             // PRIVACY ERROR - try with a different account (up to 5 attempts)
             // Takes priority over temporary restriction since "privacy restricted" contains "restricted"
-            console.log(`[report-task-result] Privacy error for recipient ${campaign_recipient_id} - checking for retry with different account`);
+            console.log(`[report-task-result] Privacy/skip error for recipient ${campaign_recipient_id} - checking for retry with different account (skip_account=${skip_account})`);
             
             // Count recent privacy errors for this account in the last 10 minutes
             // If too many consecutive privacy errors, apply a short cooldown to rotate to other accounts
