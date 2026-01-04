@@ -1387,6 +1387,24 @@ const Accounts: React.FC = () => {
             <div className="font-medium text-foreground">{getAccountAge(account.createdAt)}d</div>
             <div className="text-muted-foreground">Age</div>
           </div>
+          
+          {/* Messages sent in last 24h */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className={cn(
+                  "flex items-center gap-1 px-2 py-1 rounded text-xs",
+                  msgSent24h > 0 ? "bg-primary/10 text-primary" : "bg-muted/50 text-muted-foreground"
+                )}>
+                  <MessageSquare className="w-3 h-3" />
+                  <span className="font-medium">{msgSent24h}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Messages sent in last 24h: {msgSent24h}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
 
           {/* SpamBot Status */}
           {account.spambotStatus && account.spambotStatus !== 'unknown' && (
