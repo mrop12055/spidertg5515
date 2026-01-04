@@ -38,6 +38,95 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const { account_id, runner } = body as { account_id?: string; runner?: string };
 
+    // ========== ULTRA-FAST PATH FOR LIVECHAT ==========
+    // Livechat needs instant response (<100ms). Skip ALL heavy operations.
+    // Only check for pending messages and return immediately.
+    if (runner === "livechat") {
+      // Minimal select for speed - only what we need
+      const { data: pendingMessages } = await supabase
+        .from("messages")
+        .select("id, content, media_url, media_type, account_id, campaign_recipient_id, priority, conversations!inner(id, recipient_phone, recipient_username, recipient_telegram_id)")
+        .eq("status", "pending")
+        .eq("direction", "outgoing")
+        .is("campaign_recipient_id", null)
+        .order("priority", { ascending: false })
+        .order("created_at", { ascending: true })
+        .limit(5);
+
+      if (pendingMessages && pendingMessages.length > 0) {
+        // Get minimal account data for the first message with available account
+        for (const msg of pendingMessages) {
+          const { data: account } = await supabase
+            .from("telegram_accounts")
+            .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
+            .eq("id", msg.account_id)
+            .in("status", ["active", "restricted", "cooldown", "frozen"])
+            .single();
+
+          // proxies is an array from the join, get first element
+          const proxy = Array.isArray(account?.proxies) ? account.proxies[0] : account?.proxies;
+          if (account && proxy?.status === "active") {
+            // Mark as sending
+            await supabase
+              .from("messages")
+              .update({ status: "sending" })
+              .eq("id", msg.id)
+              .eq("status", "pending");
+
+            const conv = (msg as any).conversations || {};
+            const apiCred = account.telegram_api_credentials as any;
+            
+            console.log(`[get-next-task] FAST livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
+            
+            return new Response(JSON.stringify({
+              task: "send",
+              message: {
+                id: msg.id,
+                content: msg.content,
+                media_url: msg.media_url,
+                media_type: msg.media_type,
+                campaign_recipient_id: msg.campaign_recipient_id,
+              },
+              recipient: conv.recipient_username || conv.recipient_phone,
+              recipient_telegram_id: conv.recipient_telegram_id,
+              recipient_username: conv.recipient_username,
+              recipient_phone: conv.recipient_phone,
+              account: {
+                id: account.id,
+                phone_number: account.phone_number,
+                session_data: account.session_data,
+                device_model: account.device_model,
+                system_version: account.system_version,
+                app_version: account.app_version,
+                lang_code: account.lang_code,
+                system_lang_code: account.system_lang_code,
+                api_id: apiCred?.api_id || account.api_id,
+                api_hash: apiCred?.api_hash || account.api_hash,
+                proxy: proxy,
+              },
+              mode: "live",
+            }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+        }
+      }
+
+      // No messages - return fast "wait" (no accounts list to avoid slow query)
+      // Heartbeat separately (fire and forget)
+      supabase
+        .from("runner_heartbeats")
+        .upsert({ runner_name: "livechat", last_seen: new Date().toISOString(), status: "online" }, { onConflict: "runner_name" })
+        .then(() => {});
+
+      return new Response(JSON.stringify({
+        task: "wait",
+        seconds: 0,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     console.log(`[get-next-task] Request for runner: ${runner || 'all'}, account: ${account_id || 'any'}`);
 
     // Record runner heartbeat if runner name provided
