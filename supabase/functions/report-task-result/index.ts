@@ -310,18 +310,45 @@ serve(async (req) => {
           } else if (isRetryable && campaign_recipient_id && account_id) {
             // PRIVACY ERROR - try with a different account (up to 5 attempts)
             // Takes priority over temporary restriction since "privacy restricted" contains "restricted"
-            // NOTE: Do NOT apply cooldown to account - privacy is recipient-specific, not account problem
             console.log(`[report-task-result] Privacy error for recipient ${campaign_recipient_id} - checking for retry with different account`);
             
-            // Just update last_active, no cooldown needed for privacy errors
-            await supabase
-              .from("telegram_accounts")
-              .update({
-                last_active: new Date().toISOString(),
-              })
-              .eq("id", account_id);
+            // Count recent privacy errors for this account in the last 10 minutes
+            // If too many consecutive privacy errors, apply a short cooldown to rotate to other accounts
+            const PRIVACY_ERROR_THRESHOLD = 3;  // 3+ privacy errors = switch accounts
+            const PRIVACY_COOLDOWN_SECONDS = 60;  // 1 minute cooldown
             
-            console.log(`[report-task-result] Privacy error is recipient-specific - account ${account_id} remains available`);
+            const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+            const { count: recentPrivacyErrors } = await supabase
+              .from("campaign_recipients")
+              .select("id", { count: "exact", head: true })
+              .contains("failed_account_ids", [account_id])
+              .gte("sent_at", tenMinutesAgo);
+            
+            if ((recentPrivacyErrors || 0) >= PRIVACY_ERROR_THRESHOLD) {
+              // Too many privacy errors - apply short cooldown to force switch
+              const until = new Date(Date.now() + PRIVACY_COOLDOWN_SECONDS * 1000).toISOString();
+              await supabase
+                .from("telegram_accounts")
+                .update({
+                  status: "cooldown",
+                  restricted_until: until,
+                  last_active: new Date().toISOString(),
+                })
+                .eq("id", account_id)
+                .eq("status", "active");
+              
+              console.log(`[report-task-result] Account ${account_id} hit ${recentPrivacyErrors} privacy errors - applying ${PRIVACY_COOLDOWN_SECONDS}s cooldown`);
+            } else {
+              // Just update last_active
+              await supabase
+                .from("telegram_accounts")
+                .update({
+                  last_active: new Date().toISOString(),
+                })
+                .eq("id", account_id);
+              
+              console.log(`[report-task-result] Privacy error is recipient-specific - account ${account_id} remains available`);
+            }
             
             // Get recipient's current failed_account_ids
             const { data: recipientData } = await supabase
