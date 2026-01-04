@@ -143,8 +143,11 @@ const Accounts: React.FC = () => {
   const [spamBotProgress, setSpamBotProgress] = useState<{ total: number; completed: number; results: Map<string, { status: string; result?: string }> }>({ total: 0, completed: 0, results: new Map() });
   
   
-  // Messages sent today tracking
+  // Messages sent today tracking (unique recipients in last 24h)
   const [messagesSentLast24h, setMessagesSentLast24h] = useState<Map<string, number>>(new Map());
+  
+  // Total lifetime conversations per account
+  const [totalConversations, setTotalConversations] = useState<Map<string, number>>(new Map());
 
   // Processing tasks state
   const [processingTasks, setProcessingTasks] = useState<Map<string, string>>(new Map());
@@ -376,6 +379,27 @@ const Accounts: React.FC = () => {
     
     fetchMessageCounts();
     const interval = setInterval(fetchMessageCounts, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Fetch total lifetime conversations per account
+  useEffect(() => {
+    const fetchTotalConversations = async () => {
+      const { data, error } = await supabase
+        .from('conversations')
+        .select('account_id');
+      
+      if (data && !error) {
+        const counts = new Map<string, number>();
+        data.forEach((conv: any) => {
+          counts.set(conv.account_id, (counts.get(conv.account_id) || 0) + 1);
+        });
+        setTotalConversations(counts);
+      }
+    };
+    
+    fetchTotalConversations();
+    const interval = setInterval(fetchTotalConversations, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -1249,6 +1273,7 @@ const Accounts: React.FC = () => {
     const proxyLabel = getProxyLabel(account.proxyId);
     const proxyStatus = getProxyStatus(account.proxyId);
     const msgSent24h = messagesSentLast24h.get(account.id) || 0;
+    const totalConvs = totalConversations.get(account.id) || 0;
     const accountGroup = groups.find(g => g.accountIds.includes(account.id));
     
     // Accounts without username AND no first/last name might be blocked/restricted
@@ -1431,7 +1456,25 @@ const Accounts: React.FC = () => {
             <div className="text-muted-foreground">Age</div>
           </div>
           
-          {/* Messages sent in last 24h */}
+          {/* Total Conversations (lifetime) */}
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className={cn(
+                  "flex items-center gap-1 px-2 py-1 rounded text-xs",
+                  totalConvs > 0 ? "bg-blue-500/10 text-blue-600" : "bg-muted/50 text-muted-foreground"
+                )}>
+                  <Users className="w-3 h-3" />
+                  <span className="font-medium">{totalConvs}</span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Total conversations (lifetime): {totalConvs}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          
+          {/* Recipients contacted in last 24h */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1444,7 +1487,7 @@ const Accounts: React.FC = () => {
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Messages sent in last 24h: {msgSent24h}</p>
+                <p>Recipients contacted in last 24h: {msgSent24h}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
