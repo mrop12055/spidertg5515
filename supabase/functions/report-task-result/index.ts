@@ -947,25 +947,21 @@ serve(async (req) => {
         }
 
         if (!convId) {
-          // Create new conversation only if we really couldn't find one
-          console.log(`[report-task-result] Creating new conversation for ${displayName}`);
-          const { data: newConv } = await supabase
-            .from("conversations")
-            .insert({
-              account_id,
-              recipient_telegram_id: sender_id,
-              recipient_name: displayName,
-              recipient_username: sender_username ? `@${sender_username}` : null,
-              recipient_phone: sender_phone || phoneDisplay,
-              recipient_avatar: sender_avatar ? `data:image/jpeg;base64,${sender_avatar}` : null,
-              is_active: true,
-              unread_count: 1,
-              last_message_at: new Date().toISOString(),
-            })
-            .select()
-            .single();
-
-          if (newConv) convId = newConv.id;
+          // DO NOT create new conversations for incoming messages
+          // The Python runner should have already filtered this - if we can't find
+          // an existing conversation, it means:
+          // 1. Phone/username format mismatch from campaign send
+          // 2. The runner filter failed
+          // Either way, we should NOT create orphan conversations
+          console.log(`[report-task-result] WARNING: Could not find existing conversation for incoming message from sender_id=${sender_id}, phone=${sender_phone}, username=${sender_username} - SKIPPING (no conversation created)`);
+          
+          return new Response(
+            JSON.stringify({ 
+              success: false, 
+              warning: "No matching campaign conversation found - message ignored" 
+            }),
+            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
         }
 
         if (convId) {
