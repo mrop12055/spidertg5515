@@ -465,6 +465,8 @@ export type Database = {
           has_prior_contact: boolean | null
           id: string
           is_active: boolean | null
+          is_hidden: boolean | null
+          is_pinned: boolean | null
           last_message_at: string | null
           recipient_avatar: string | null
           recipient_name: string | null
@@ -483,6 +485,8 @@ export type Database = {
           has_prior_contact?: boolean | null
           id?: string
           is_active?: boolean | null
+          is_hidden?: boolean | null
+          is_pinned?: boolean | null
           last_message_at?: string | null
           recipient_avatar?: string | null
           recipient_name?: string | null
@@ -501,6 +505,8 @@ export type Database = {
           has_prior_contact?: boolean | null
           id?: string
           is_active?: boolean | null
+          is_hidden?: boolean | null
+          is_pinned?: boolean | null
           last_message_at?: string | null
           recipient_avatar?: string | null
           recipient_name?: string | null
