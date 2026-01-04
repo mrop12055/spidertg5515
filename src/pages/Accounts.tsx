@@ -1100,18 +1100,23 @@ const Accounts: React.FC = () => {
   // Helper to check if account is spambot limited (should be in restricted)
   const isSpambotLimited = (a: TelegramAccount) => 
     a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
+  
+  // Helper to check if account has a future restrictedUntil date (temporarily restricted)
+  const isTemporarilyRestricted = (a: TelegramAccount) => 
+    a.restrictedUntil && new Date(a.restrictedUntil) > new Date();
 
   const accountsByStatus = {
-    // Active: only truly active accounts (not spambot limited)
+    // Active: only truly active accounts (not spambot limited, not temporarily restricted)
     active: filteredAccounts.filter(a => 
-      a.status === 'active' && !isSpambotLimited(a)
+      a.status === 'active' && !isSpambotLimited(a) && !isTemporarilyRestricted(a)
     ),
-    // Restricted: includes status restricted/cooldown, frozen with timer, AND spambot limited
+    // Restricted: includes status restricted/cooldown, frozen with timer, spambot limited, AND temporarily restricted
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' || 
       (a.status === 'frozen' && a.restrictedUntil) || // Only frozen WITH countdown timer
-      (a.status === 'active' && isSpambotLimited(a)) // Active but spambot limited
+      (a.status === 'active' && isSpambotLimited(a)) || // Active but spambot limited
+      (a.status === 'active' && isTemporarilyRestricted(a)) // Active but has countdown timer
     ),
     inactive: filteredAccounts.filter(a => 
       a.status === 'banned' || 
@@ -1165,13 +1170,21 @@ const Accounts: React.FC = () => {
   const isAccountSpambotLimited = (a: TelegramAccount) => 
     a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
   
+  const isAccountTemporarilyRestricted = (a: TelegramAccount) =>
+    a.restrictedUntil && new Date(a.restrictedUntil) > new Date();
+  
   const stats = {
     total: accounts.length,
-    active: accounts.filter(a => a.status === 'active' && !isAccountSpambotLimited(a)).length,
+    active: accounts.filter(a => 
+      a.status === 'active' && 
+      !isAccountSpambotLimited(a) && 
+      !isAccountTemporarilyRestricted(a)
+    ).length,
     restricted: accounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' ||
-      (a.status === 'active' && isAccountSpambotLimited(a))
+      (a.status === 'active' && isAccountSpambotLimited(a)) ||
+      (a.status === 'active' && isAccountTemporarilyRestricted(a))
     ).length,
     inactive: accounts.filter(a => 
       a.status === 'banned' || 
