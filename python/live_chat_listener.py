@@ -35,14 +35,18 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def check_conversation_exists(account_id: str, sender_id: int) -> bool:
-    """Check if we have an existing conversation (meaning we messaged them first)"""
+async def check_conversation_exists(account_id: str, sender_id: int, sender_username: str = None, sender_phone: str = None) -> bool:
+    """
+    Check if we have an existing campaign conversation with this sender.
+    Uses multi-strategy matching: telegram_id -> username -> phone
+    This handles the case where recipient_telegram_id was NULL when we first messaged.
+    """
     import httpx
     from config import SUPABASE_URL, SUPABASE_KEY
     
     try:
         async with httpx.AsyncClient(timeout=5.0) as http:
-            # Check if conversation exists where we initiated contact
+            # Strategy 1: Match by telegram_id (fastest, most reliable)
             response = await http.get(
                 f"{SUPABASE_URL}/rest/v1/conversations",
                 headers={
@@ -52,15 +56,62 @@ async def check_conversation_exists(account_id: str, sender_id: int) -> bool:
                 params={
                     "account_id": f"eq.{account_id}",
                     "recipient_telegram_id": f"eq.{sender_id}",
-                    "select": "id,first_message_sent"
+                    "first_message_sent": "eq.true",
+                    "select": "id"
                 }
             )
-            
             if response.status_code == 200:
                 data = response.json()
-                # Return True only if conversation exists AND we sent first message
                 if data and len(data) > 0:
-                    return data[0].get("first_message_sent", False)
+                    return True
+            
+            # Strategy 2: Match by username (if sender has one)
+            if sender_username:
+                username_clean = sender_username.lstrip("@").lower()
+                for variant in [f"@{username_clean}", username_clean]:
+                    response = await http.get(
+                        f"{SUPABASE_URL}/rest/v1/conversations",
+                        headers={
+                            "apikey": SUPABASE_KEY,
+                            "Authorization": f"Bearer {SUPABASE_KEY}"
+                        },
+                        params={
+                            "account_id": f"eq.{account_id}",
+                            "recipient_username": f"ilike.{variant}",
+                            "first_message_sent": "eq.true",
+                            "select": "id"
+                        }
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data and len(data) > 0:
+                            return True
+            
+            # Strategy 3: Match by phone (if sender has phone exposed)
+            if sender_phone:
+                # Normalize phone: remove non-digits, try with/without +
+                import re
+                digits = re.sub(r'\D', '', sender_phone)
+                phone_variants = [f"+{digits}", digits, sender_phone]
+                for pv in phone_variants:
+                    response = await http.get(
+                        f"{SUPABASE_URL}/rest/v1/conversations",
+                        headers={
+                            "apikey": SUPABASE_KEY,
+                            "Authorization": f"Bearer {SUPABASE_KEY}"
+                        },
+                        params={
+                            "account_id": f"eq.{account_id}",
+                            "recipient_phone": f"eq.{pv}",
+                            "first_message_sent": "eq.true",
+                            "select": "id"
+                        }
+                    )
+                    if response.status_code == 200:
+                        data = response.json()
+                        if data and len(data) > 0:
+                            return True
+            
             return False
     except Exception as e:
         print(f"    ⚠ Check conversation error: {e}")
@@ -86,15 +137,28 @@ async def setup_message_handler(client, account_id: str):
             if getattr(sender, 'bot', False):
                 return
 
-            # Get sender name safely for logging
+            # Get sender info for matching
             first_name = getattr(sender, 'first_name', None) or ''
             last_name = getattr(sender, 'last_name', None) or ''
             sender_name = f"{first_name} {last_name}".strip() or str(sender.id)
+            sender_username = getattr(sender, 'username', None)
+            sender_phone = None
+            if hasattr(sender, 'phone') and sender.phone:
+                sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
 
             # FILTER: Only process messages from conversations WE initiated
-            conversation_exists = await check_conversation_exists(account_id, sender.id)
+            # Uses multi-strategy matching: telegram_id -> username -> phone
+            conversation_exists = await check_conversation_exists(
+                account_id, sender.id, sender_username, sender_phone
+            )
             if not conversation_exists:
-                # Telegram will still deliver all messages to the client; we just ignore non-campaign contacts.
+                # Log occasionally for debugging (rate-limited)
+                import time
+                if not hasattr(handler, '_ignored_log') or time.time() - handler._ignored_log.get(sender.id, 0) > 60:
+                    if not hasattr(handler, '_ignored_log'):
+                        handler._ignored_log = {}
+                    handler._ignored_log[sender.id] = time.time()
+                    print(f"    [IGNORED] {sender_name} (id={sender.id}, @{sender_username}, phone={sender_phone}): no campaign conversation")
                 return
             
             content = event.message.text or "[Media message]"
