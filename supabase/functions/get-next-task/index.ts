@@ -21,6 +21,9 @@ let SCHEDULER_ENABLED = true;
 let MAX_MESSAGES_BEFORE_ROTATION = 10;
 let COOLDOWN_DURATION_SECONDS = 300;
 
+// API rate limiting - 40 messages per API per 24 hours
+const API_DAILY_LIMIT = 40;
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -104,8 +107,9 @@ serve(async (req) => {
     // Get all active accounts with joins but LIMIT to prevent timeout
     // NOTE: select only the columns runners actually need (session_data is large but required for connection)
     // IMPORTANT: last_campaign_send_at is required for server-side rate limiting
+    // IMPORTANT: api_credential_id is required for API-level rate limiting
     const ACCOUNT_WITH_JOINS_SELECT =
-      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,last_campaign_send_at,telegram_api_credentials(id,api_id,api_hash,client_type,is_active),proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
+      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,last_campaign_send_at,api_credential_id,auto_disabled,success_rate,telegram_api_credentials(id,api_id,api_hash,client_type,is_active),proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
 
     const { data: activeAccountsRaw, error: activeAccountsError } = await supabase
       .from("telegram_accounts")
@@ -176,7 +180,71 @@ serve(async (req) => {
     const allUsableAccounts = [...activeAccountsWithProxy, ...restrictedAccountsWithProxy, ...cooldownAccountsWithProxy, ...frozenAccountsWithProxy];
 
     // For CAMPAIGNS: only active accounts that are NOT temporarily restricted (with active proxy)
-    const accounts = activeAccountsWithProxy.filter((a: any) => !isTimeRestricted(a));
+    // Also filter out auto-disabled accounts (low success rate)
+    const accountsBeforeApiLimit = activeAccountsWithProxy.filter((a: any) => 
+      !isTimeRestricted(a) && !a.auto_disabled
+    );
+
+    // ========== API-LEVEL RATE LIMITING (40 per API per 24h) ==========
+    // Calculate how many messages each API credential has sent in the last 24 hours
+    const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    // Get all sent messages in last 24h with their account IDs
+    const { data: recentMessages } = await supabase
+      .from("messages")
+      .select("account_id")
+      .eq("direction", "outgoing")
+      .eq("status", "sent")
+      .gte("created_at", cutoff24h);
+
+    // Build a map: api_credential_id -> count of messages sent in last 24h
+    const apiSendCounts = new Map<string, number>();
+    const accountToApi = new Map<string, string>();
+    
+    // First map all accounts to their API credentials
+    for (const acc of accountsBeforeApiLimit) {
+      if (acc.api_credential_id) {
+        accountToApi.set(acc.id, acc.api_credential_id);
+      }
+    }
+    
+    // Count messages per API
+    for (const msg of (recentMessages || []) as any[]) {
+      const apiId = accountToApi.get(msg.account_id);
+      if (apiId) {
+        apiSendCounts.set(apiId, (apiSendCounts.get(apiId) || 0) + 1);
+      }
+    }
+
+    // Filter accounts: only include those whose API is under the 40/24h limit
+    const accountsWithApiLimit = accountsBeforeApiLimit.filter((a: any) => {
+      if (!a.api_credential_id) return true; // No API assigned = allow
+      const apiSent = apiSendCounts.get(a.api_credential_id) || 0;
+      if (apiSent >= API_DAILY_LIMIT) {
+        console.log(`[get-next-task] Skipping account ${a.phone_number} - API at limit (${apiSent}/${API_DAILY_LIMIT})`);
+        return false;
+      }
+      return true;
+    });
+
+    // Sort accounts by their API's usage (prefer least-used APIs) AND by success rate (prefer reliable accounts)
+    accountsWithApiLimit.sort((a: any, b: any) => {
+      const aSent = apiSendCounts.get(a.api_credential_id) || 0;
+      const bSent = apiSendCounts.get(b.api_credential_id) || 0;
+      
+      // Primary sort: by API usage (ascending - prefer least used)
+      if (aSent !== bSent) return aSent - bSent;
+      
+      // Secondary sort: by success rate (descending - prefer more reliable)
+      const aRate = a.success_rate ?? 100;
+      const bRate = b.success_rate ?? 100;
+      return bRate - aRate;
+    });
+
+    const accounts = accountsWithApiLimit;
+    
+    console.log(`[get-next-task] API rate limits: ${Array.from(apiSendCounts.entries()).map(([id, count]) => `${id.slice(0,8)}:${count}/${API_DAILY_LIMIT}`).join(', ') || 'none tracked yet'}`);
+    console.log(`[get-next-task] Eligible accounts after API limit: ${accounts.length}/${accountsBeforeApiLimit.length}`);
 
     if (activeAccountsError) {
       console.error("[get-next-task] Error fetching accounts:", activeAccountsError);

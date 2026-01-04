@@ -879,11 +879,14 @@ export type Database = {
           api_hash: string | null
           api_id: string | null
           app_version: string | null
+          auto_disabled: boolean | null
           avatar_url: string | null
           ban_reason: string | null
           created_at: string | null
           daily_limit: number | null
           device_model: string | null
+          disabled_reason: string | null
+          failure_count: number | null
           first_name: string | null
           geo_mismatch: boolean | null
           id: string
@@ -903,6 +906,8 @@ export type Database = {
           session_data: string | null
           spambot_status: string | null
           status: Database["public"]["Enums"]["account_status"] | null
+          success_count: number | null
+          success_rate: number | null
           system_lang_code: string | null
           system_version: string | null
           tags: string[] | null
@@ -916,11 +921,14 @@ export type Database = {
           api_hash?: string | null
           api_id?: string | null
           app_version?: string | null
+          auto_disabled?: boolean | null
           avatar_url?: string | null
           ban_reason?: string | null
           created_at?: string | null
           daily_limit?: number | null
           device_model?: string | null
+          disabled_reason?: string | null
+          failure_count?: number | null
           first_name?: string | null
           geo_mismatch?: boolean | null
           id?: string
@@ -940,6 +948,8 @@ export type Database = {
           session_data?: string | null
           spambot_status?: string | null
           status?: Database["public"]["Enums"]["account_status"] | null
+          success_count?: number | null
+          success_rate?: number | null
           system_lang_code?: string | null
           system_version?: string | null
           tags?: string[] | null
@@ -953,11 +963,14 @@ export type Database = {
           api_hash?: string | null
           api_id?: string | null
           app_version?: string | null
+          auto_disabled?: boolean | null
           avatar_url?: string | null
           ban_reason?: string | null
           created_at?: string | null
           daily_limit?: number | null
           device_model?: string | null
+          disabled_reason?: string | null
+          failure_count?: number | null
           first_name?: string | null
           geo_mismatch?: boolean | null
           id?: string
@@ -977,6 +990,8 @@ export type Database = {
           session_data?: string | null
           spambot_status?: string | null
           status?: Database["public"]["Enums"]["account_status"] | null
+          success_count?: number | null
+          success_rate?: number | null
           system_lang_code?: string | null
           system_version?: string | null
           tags?: string[] | null
@@ -1326,6 +1341,14 @@ export type Database = {
       }
     }
     Functions: {
+      increment_account_failure: {
+        Args: { acc_id: string }
+        Returns: undefined
+      }
+      increment_account_success: {
+        Args: { acc_id: string }
+        Returns: undefined
+      }
       increment_campaign_failed_count: {
         Args: { cid: string }
         Returns: undefined

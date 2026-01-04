@@ -185,6 +185,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           apiCredentialId: (acc as any).api_credential_id || undefined,
           // Tags
           tags: (acc as any).tags || [],
+          // Health tracking
+          successCount: (acc as any).success_count ?? 0,
+          failureCount: (acc as any).failure_count ?? 0,
+          successRate: (acc as any).success_rate ?? 100,
+          autoDisabled: (acc as any).auto_disabled ?? false,
+          disabledReason: (acc as any).disabled_reason || undefined,
         })));
       }
 
