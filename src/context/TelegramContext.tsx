@@ -374,8 +374,17 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
               return next.length > MAX_MESSAGES ? next.slice(0, MAX_MESSAGES) : next;
             });
 
-            // Play notification sound for incoming messages
+            // Play notification sound for incoming messages - ONLY for campaign conversations
             if (m.direction === 'incoming') {
+              // Check if this is from a campaign conversation (where we messaged first)
+              const conversation = conversationsRef.current.find(c => c.id === m.conversation_id);
+              
+              // Only notify for campaign conversations
+              if (!conversation?.firstMessageSent) {
+                console.log('Skipping notification - not a campaign conversation');
+                return;
+              }
+              
               try {
                 // Check if AudioContext is available
                 const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
