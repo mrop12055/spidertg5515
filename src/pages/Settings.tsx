@@ -418,11 +418,6 @@ const Settings: React.FC = () => {
                               )}
                             />
                           </div>
-                          
-                          {/* Account count - simplified */}
-                          <div className="text-xs text-muted-foreground">
-                            {cred.accounts_count} accounts assigned
-                          </div>
                         </div>
                       </div>
                     );
