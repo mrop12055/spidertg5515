@@ -134,31 +134,10 @@ import socks
 from typing import Dict, Optional
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, UserPrivacyRestrictedError, ApiIdInvalidError
+from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
 
 from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
 from fingerprint_generator import generate_fingerprint
-
-# Known working API format validation
-def validate_api_format(api_id: str, api_hash: str) -> tuple:
-    """Validate API credentials format before trying to connect"""
-    try:
-        # API ID must be a valid integer
-        int(api_id)
-    except (ValueError, TypeError):
-        return False, "API ID must be a number"
-    
-    # API Hash must be 32 hex characters
-    if not api_hash or len(api_hash) != 32:
-        return False, f"API Hash must be 32 characters (got {len(api_hash) if api_hash else 0})"
-    
-    # Check if it's valid hex
-    try:
-        int(api_hash, 16)
-    except ValueError:
-        return False, "API Hash must be hexadecimal (0-9, a-f only)"
-    
-    return True, None
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
@@ -275,19 +254,6 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
     try:
         api_id = account.get("api_id") or TELEGRAM_API_ID
         api_hash = account.get("api_hash") or TELEGRAM_API_HASH
-        api_credential_id = account.get("api_credential_id")
-        
-        # Validate API format BEFORE trying to connect
-        is_valid, format_error = validate_api_format(api_id, api_hash)
-        if not is_valid:
-            print(f"  [API_INVALID] {account['phone_number']}: {format_error}")
-            if api_credential_id:
-                await report_result("api_credential_invalid", {
-                    "account_id": account_id,
-                    "api_credential_id": api_credential_id,
-                    "error": format_error
-                })
-            return None
         
         client = TelegramClient(
             session_path, int(api_id), api_hash,
@@ -720,12 +686,9 @@ import signal
 import os
 import base64
 
-from telethon import TelegramClient
-from telethon.errors import ApiIdInvalidError
-
 from client_manager import (
     get_or_create_client, get_next_task, report_result, shutdown_all, 
-    validate_contact, SESSION_FOLDER, validate_api_format
+    validate_contact, SESSION_FOLDER
 )
 
 RUNNING = True
@@ -986,153 +949,6 @@ async def main_loop():
                 except Exception as e:
                     await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": "disconnected", "error": str(e)})
                     print(f"    Error: {e}")
-            
-            elif task_type == "api_test":
-                # Test API credential validity with REAL Telegram connection
-                task_id = task.get("task_id")
-                account = task.get("account", {})
-                api_credential_id = account.get("api_credential_id")
-                api_id = str(account.get("api_id", ""))
-                api_hash = str(account.get("api_hash", ""))
-                
-                print(f"  [API] Testing API credentials...")
-                print(f"        api_id={api_id}, api_hash={api_hash}")
-                
-                # Step 1: Format validation
-                format_error = None
-                try:
-                    int(api_id)
-                except:
-                    format_error = f"API ID must be a number, got: {api_id}"
-                
-                if not format_error:
-                    if len(api_hash) != 32:
-                        format_error = f"API Hash must be 32 chars, got {len(api_hash)}"
-                    else:
-                        try:
-                            int(api_hash, 16)
-                        except:
-                            format_error = f"API Hash must be hex characters only"
-                
-                if format_error:
-                    await report_result("api_test", {
-                        "task_id": task_id,
-                        "account_id": account.get("id"),
-                        "api_credential_id": api_credential_id,
-                        "success": False,
-                        "error": format_error
-                    })
-                    print(f"    [INVALID] {format_error}")
-                    continue
-                
-                # Step 2: Test API with EXISTING session file (not cached client)
-                print(f"    Testing with existing session...")
-                try:
-                    # Get session from account
-                    session_data = account.get("session_data")
-                    if not session_data:
-                        await report_result("api_test", {
-                            "task_id": task_id,
-                            "account_id": account.get("id"),
-                            "api_credential_id": api_credential_id,
-                            "success": False,
-                            "error": "No session file available for testing"
-                        })
-                        print(f"    [SKIP] No session file")
-                        continue
-                    
-                    # Decode session to temp file
-                    import tempfile
-                    import uuid
-                    temp_name = f"api_test_{uuid.uuid4().hex[:8]}"
-                    temp_session = os.path.join(tempfile.gettempdir(), temp_name)
-                    
-                    session_bytes = base64.b64decode(session_data)
-                    with open(temp_session + ".session", "wb") as f:
-                        f.write(session_bytes)
-                    
-                    # Create NEW client with test API credentials (bypass cache)
-                    test_client = TelegramClient(
-                        temp_session,
-                        int(api_id),
-                        api_hash,
-                        timeout=20,
-                        connection_retries=2
-                    )
-                    
-                    # Connect with existing session but NEW api credentials
-                    print(f"    Connecting to Telegram...")
-                    await asyncio.wait_for(test_client.connect(), timeout=25)
-                    
-                    # Try to get user info - this will fail if API is wrong
-                    print(f"    Checking authorization...")
-                    me = await asyncio.wait_for(test_client.get_me(), timeout=15)
-                    
-                    await test_client.disconnect()
-                    
-                    # Clean up
-                    try:
-                        os.remove(temp_session + ".session")
-                    except:
-                        pass
-                    
-                    if me:
-                        await report_result("api_test", {
-                            "task_id": task_id,
-                            "account_id": account.get("id"),
-                            "api_credential_id": api_credential_id,
-                            "success": True
-                        })
-                        print(f"    [OK] API credentials valid - connected as {me.first_name}")
-                    else:
-                        await report_result("api_test", {
-                            "task_id": task_id,
-                            "account_id": account.get("id"),
-                            "api_credential_id": api_credential_id,
-                            "success": False,
-                            "error": "Could not verify user"
-                        })
-                        print(f"    [FAIL] Could not get user info")
-                    
-                except ApiIdInvalidError as e:
-                    await report_result("api_test", {
-                        "task_id": task_id,
-                        "account_id": account.get("id"),
-                        "api_credential_id": api_credential_id,
-                        "success": False,
-                        "error": "API ID is invalid - not registered with Telegram"
-                    })
-                    print(f"    [INVALID] API ID not registered with Telegram")
-                except Exception as e:
-                    err_str = str(e).lower()
-                    # Detect API errors
-                    if any(x in err_str for x in ["api_id", "api_hash", "api id", "invalid"]):
-                        await report_result("api_test", {
-                            "task_id": task_id,
-                            "account_id": account.get("id"),
-                            "api_credential_id": api_credential_id,
-                            "success": False,
-                            "error": f"API credentials invalid: {str(e)[:80]}"
-                        })
-                        print(f"    [INVALID] API rejected: {e}")
-                    elif any(x in err_str for x in ["auth", "session", "revoked", "expired"]):
-                        # Session issue, not API issue
-                        await report_result("api_test", {
-                            "task_id": task_id,
-                            "account_id": account.get("id"),
-                            "api_credential_id": api_credential_id,
-                            "success": True  # API might be valid, session is the problem
-                        })
-                        print(f"    [OK] API format valid (session expired separately)")
-                    else:
-                        await report_result("api_test", {
-                            "task_id": task_id,
-                            "account_id": account.get("id"),
-                            "api_credential_id": api_credential_id,
-                            "success": False,
-                            "error": f"Test failed: {str(e)[:80]}"
-                        })
-                        print(f"    [ERROR] {e}")
         
         except Exception as e:
             print(f"  [ERROR] {e}")

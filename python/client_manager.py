@@ -13,13 +13,7 @@ import socks
 from typing import Dict, Optional
 
 from telethon import TelegramClient, events
-from telethon.errors import (
-    FloodWaitError, 
-    UserPrivacyRestrictedError,
-    ApiIdInvalidError,
-    ApiIdPublishedFloodError,
-    AuthKeyUnregisteredError
-)
+from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
 from telethon.network.connection import ConnectionTcpFull
 
 from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
@@ -162,7 +156,6 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         # Get API credentials
         api_id = account.get("api_id") or TELEGRAM_API_ID
         api_hash = account.get("api_hash") or TELEGRAM_API_HASH
-        api_credential_id = account.get("api_credential_id")
         
         # Create client with optimized settings
         client = TelegramClient(
@@ -235,42 +228,10 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
-    except ApiIdInvalidError as e:
-        # API ID/Hash is invalid - report to backend for auto-redistribution
-        print(f"  [API_INVALID] {account['phone_number']}: API credentials invalid - {e}")
-        await report_result("api_credential_invalid", {
-            "account_id": account_id,
-            "api_credential_id": api_credential_id,
-            "error": f"ApiIdInvalidError: {str(e)}"
-        })
-        return None
-    except ApiIdPublishedFloodError as e:
-        # API ID has been published and is rate limited
-        print(f"  [API_FLOOD] {account['phone_number']}: API credentials rate limited - {e}")
-        await report_result("api_credential_invalid", {
-            "account_id": account_id,
-            "api_credential_id": api_credential_id,
-            "error": f"ApiIdPublishedFloodError: {str(e)}"
-        })
-        return None
-    except AuthKeyUnregisteredError as e:
-        # Auth key invalid - could be API or session issue
-        print(f"  [AUTH_KEY] {account['phone_number']}: Auth key unregistered - {e}")
-        await report_result("account_disconnected", {"account_id": account_id, "reason": str(e)})
-        return None
     except Exception as e:
         error_str = str(e).lower()
-        # Check for API-related errors in the exception message
-        if any(x in error_str for x in ["api_id_invalid", "api_id_published_flood", "invalid api"]):
-            print(f"  [API_INVALID] {account['phone_number']}: {e}")
-            await report_result("api_credential_invalid", {
-                "account_id": account_id,
-                "api_credential_id": api_credential_id,
-                "error": str(e)
-            })
-            return None
         # Detect user-deleted (frozen) vs Telegram-banned from connection errors
-        elif any(x in error_str for x in ["user_deactivated", "deactivated"]):
+        if any(x in error_str for x in ["user_deactivated", "deactivated"]):
             print(f"  [FROZEN] {account['phone_number']}: {e}")
             await report_result("account_frozen", {"account_id": account_id, "reason": str(e)})
         elif any(x in error_str for x in ["deleted", "banned"]):

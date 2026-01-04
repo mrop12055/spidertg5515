@@ -996,9 +996,7 @@ export type Database = {
           created_at: string | null
           id: string
           is_active: boolean | null
-          last_validated_at: string | null
           name: string
-          validation_error: string | null
         }
         Insert: {
           accounts_count?: number | null
@@ -1008,9 +1006,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           is_active?: boolean | null
-          last_validated_at?: string | null
           name: string
-          validation_error?: string | null
         }
         Update: {
           accounts_count?: number | null
@@ -1020,9 +1016,7 @@ export type Database = {
           created_at?: string | null
           id?: string
           is_active?: boolean | null
-          last_validated_at?: string | null
           name?: string
-          validation_error?: string | null
         }
         Relationships: []
       }

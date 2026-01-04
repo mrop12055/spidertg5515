@@ -25,10 +25,7 @@ import {
   Plus,
   X,
   Trash2,
-  Save,
-  CheckCircle2,
-  AlertTriangle,
-  RotateCcw
+  Save
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -41,8 +38,6 @@ interface ApiCredential {
   client_type: string;
   accounts_count: number;
   is_active: boolean;
-  last_validated_at: string | null;
-  validation_error: string | null;
 }
 
 const Settings: React.FC = () => {
@@ -77,8 +72,6 @@ const Settings: React.FC = () => {
   const [newApiHash, setNewApiHash] = useState('');
   const [newApiType, setNewApiType] = useState<string>('android');
   const [isAddingApi, setIsAddingApi] = useState(false);
-  const [reactivatingId, setReactivatingId] = useState<string | null>(null);
-  const [testingId, setTestingId] = useState<string | null>(null);
 
   // Fetch API credentials
   const fetchApiCredentials = async () => {
@@ -183,55 +176,6 @@ const Settings: React.FC = () => {
     } catch (error) {
       console.error('Failed to delete API credential:', error);
       toast.error('Failed to delete API credential');
-    }
-  };
-
-  // Reactivate an API credential
-  const handleReactivateCredential = async (id: string) => {
-    setReactivatingId(id);
-    try {
-      const { error } = await supabase
-        .from('telegram_api_credentials')
-        .update({
-          is_active: true,
-          validation_error: null,
-          last_validated_at: new Date().toISOString(),
-        })
-        .eq('id', id);
-      
-      if (error) throw error;
-      
-      toast.success('API credential reactivated! Redistributing accounts...');
-      await handleRedistribute();
-      fetchApiCredentials();
-    } catch (error) {
-      console.error('Failed to reactivate API credential:', error);
-      toast.error('Failed to reactivate API credential');
-    } finally {
-      setReactivatingId(null);
-    }
-  };
-
-  // Test an API credential
-  const handleTestCredential = async (id: string) => {
-    setTestingId(id);
-    try {
-      const { data, error } = await supabase.functions.invoke('test-api-credential', {
-        body: { api_credential_id: id }
-      });
-      
-      if (error) throw error;
-      
-      if (data.success) {
-        toast.success(`Test started: ${data.message}. Run Python runner to complete the test.`);
-      } else {
-        toast.error(data.error || 'Failed to start test');
-      }
-    } catch (error) {
-      console.error('Failed to test API credential:', error);
-      toast.error('Failed to test API credential');
-    } finally {
-      setTestingId(null);
     }
   };
 
@@ -415,14 +359,10 @@ const Settings: React.FC = () => {
                       macos: <Monitor className="w-4 h-4 text-gray-500" />,
                     };
                     
-                    const isInvalid = !cred.is_active || !!cred.validation_error;
-                    
                     return (
                       <div 
                         key={cred.id} 
-                        className={`p-4 rounded-lg border bg-card/50 space-y-2 group relative ${
-                          isInvalid ? 'border-destructive/50 bg-destructive/5' : ''
-                        }`}
+                        className="p-4 rounded-lg border bg-card/50 space-y-2 group relative"
                       >
                         <Button
                           variant="ghost"
@@ -436,24 +376,11 @@ const Settings: React.FC = () => {
                           <div className="flex items-center gap-2">
                             {iconMap[cred.client_type] || <Smartphone className="w-4 h-4" />}
                             <span className="font-medium text-sm">{cred.name}</span>
-                            {isInvalid ? (
-                              <AlertTriangle className="w-4 h-4 text-destructive" />
-                            ) : (
-                              <CheckCircle2 className="w-4 h-4 text-green-500" />
-                            )}
                           </div>
-                          <Badge variant={isInvalid ? "destructive" : "outline"} className="text-xs">
-                            {isInvalid ? 'Invalid' : cred.client_type}
+                          <Badge variant="outline" className="text-xs">
+                            {cred.client_type}
                           </Badge>
                         </div>
-                        
-                        {/* Show error message if invalid */}
-                        {cred.validation_error && (
-                          <div className="text-xs text-destructive bg-destructive/10 p-2 rounded">
-                            {cred.validation_error}
-                          </div>
-                        )}
-                        
                         <div className="space-y-1">
                           <div className="flex items-center justify-between text-xs">
                             <span className="text-muted-foreground">
@@ -463,64 +390,8 @@ const Settings: React.FC = () => {
                           </div>
                           <Progress value={percentage} className="h-2" />
                         </div>
-                        <div className="flex items-center justify-between">
-                          <div className="text-xs text-muted-foreground font-mono">
-                            API ID: {cred.api_id}
-                          </div>
-                          {cred.last_validated_at && (
-                            <div className="text-xs text-muted-foreground">
-                              Checked: {new Date(cred.last_validated_at).toLocaleDateString()}
-                            </div>
-                          )}
-                        </div>
-                        
-                        {/* Action buttons */}
-                        <div className="flex gap-2 mt-2">
-                          {/* Test button for valid credentials */}
-                          {!isInvalid && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="flex-1"
-                              onClick={() => handleTestCredential(cred.id)}
-                              disabled={testingId === cred.id}
-                            >
-                              {testingId === cred.id ? (
-                                <>
-                                  <Loader2 className="w-3 h-3 mr-2 animate-spin" />
-                                  Testing...
-                                </>
-                              ) : (
-                                <>
-                                  <RefreshCw className="w-3 h-3 mr-2" />
-                                  Test API
-                                </>
-                              )}
-                            </Button>
-                          )}
-                          
-                          {/* Reactivate button for invalid credentials */}
-                          {isInvalid && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="flex-1"
-                              onClick={() => handleReactivateCredential(cred.id)}
-                              disabled={reactivatingId === cred.id}
-                            >
-                              {reactivatingId === cred.id ? (
-                                <>
-                                  <Loader2 className="w-3 h-3 mr-2 animate-spin" />
-                                  Reactivating...
-                                </>
-                              ) : (
-                                <>
-                                  <RotateCcw className="w-3 h-3 mr-2" />
-                                  Reactivate & Redistribute
-                                </>
-                              )}
-                            </Button>
-                          )}
+                        <div className="text-xs text-muted-foreground font-mono">
+                          API ID: {cred.api_id}
                         </div>
                       </div>
                     );

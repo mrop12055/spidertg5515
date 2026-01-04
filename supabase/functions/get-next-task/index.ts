@@ -794,7 +794,7 @@ serve(async (req) => {
         .from("account_check_tasks")
         .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(*))")
         .eq("status", "pending")
-        .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "sync_profile", "verify_session", "api_test"])
+        .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "sync_profile", "verify_session"])
         .limit(1);
 
       if (checkTasks && checkTasks.length > 0) {
@@ -887,7 +887,6 @@ serve(async (req) => {
                   system_lang_code: accountData.system_lang_code,
                   api_id: apiCred?.api_id || accountData.api_id,
                   api_hash: apiCred?.api_hash || accountData.api_hash,
-                  api_credential_id: apiCred?.id || accountData.api_credential_id,
                   proxy_id: accountData.proxy_id,
                 },
                 proxy: proxyData
