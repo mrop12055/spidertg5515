@@ -463,11 +463,14 @@ export type Database = {
           created_at: string | null
           first_message_sent: boolean | null
           has_prior_contact: boolean | null
+          has_reply: boolean | null
           id: string
           is_active: boolean | null
           is_hidden: boolean | null
           is_pinned: boolean | null
           last_message_at: string | null
+          last_message_content: string | null
+          last_message_direction: string | null
           recipient_avatar: string | null
           recipient_name: string | null
           recipient_phone: string | null
@@ -483,11 +486,14 @@ export type Database = {
           created_at?: string | null
           first_message_sent?: boolean | null
           has_prior_contact?: boolean | null
+          has_reply?: boolean | null
           id?: string
           is_active?: boolean | null
           is_hidden?: boolean | null
           is_pinned?: boolean | null
           last_message_at?: string | null
+          last_message_content?: string | null
+          last_message_direction?: string | null
           recipient_avatar?: string | null
           recipient_name?: string | null
           recipient_phone?: string | null
@@ -503,11 +509,14 @@ export type Database = {
           created_at?: string | null
           first_message_sent?: boolean | null
           has_prior_contact?: boolean | null
+          has_reply?: boolean | null
           id?: string
           is_active?: boolean | null
           is_hidden?: boolean | null
           is_pinned?: boolean | null
           last_message_at?: string | null
+          last_message_content?: string | null
+          last_message_direction?: string | null
           recipient_avatar?: string | null
           recipient_name?: string | null
           recipient_phone?: string | null
