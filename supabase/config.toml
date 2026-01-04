@@ -50,3 +50,9 @@ verify_jwt = false
 
 [functions.system-maintenance]
 verify_jwt = false
+
+[functions.start-warmup-chat]
+verify_jwt = false
+
+[functions.stop-warmup-chat]
+verify_jwt = false

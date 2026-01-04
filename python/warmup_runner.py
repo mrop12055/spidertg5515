@@ -187,7 +187,7 @@ async def send_interaction_message(client, recipient_phone: str, message: str):
     """Send a message to another account (bidirectional interaction)"""
     try:
         # Try to find user by phone
-        from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+        from telethon.tl.functions.contacts import ImportContactsRequest
         from telethon.tl.types import InputPhoneContact
         
         # Import as contact first
@@ -207,6 +207,59 @@ async def send_interaction_message(client, recipient_phone: str, message: str):
             return True, None
         else:
             return False, "Could not find user"
+    except Exception as e:
+        return False, str(e)
+
+
+async def send_warmup_chat(client, recipient_phone: str, message: str, recipient_telegram_id: int = None, recipient_username: str = None):
+    """Send warmup chat message with typing simulation for human-like behavior"""
+    try:
+        from telethon.tl.functions.contacts import ImportContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        
+        user = None
+        
+        # Try to get user by telegram_id first (fastest)
+        if recipient_telegram_id:
+            try:
+                user = await client.get_entity(recipient_telegram_id)
+            except:
+                pass
+        
+        # Try username next
+        if not user and recipient_username:
+            try:
+                user = await client.get_entity(recipient_username)
+            except:
+                pass
+        
+        # Fallback to phone number
+        if not user:
+            contact = InputPhoneContact(
+                client_id=random.randint(0, 999999),
+                phone=recipient_phone,
+                first_name="WarmupFriend",
+                last_name=""
+            )
+            result = await client(ImportContactsRequest([contact]))
+            if result.users:
+                user = result.users[0]
+        
+        if not user:
+            return False, "Could not find user"
+        
+        # Simulate typing (30 chars per 3 seconds)
+        typing_time = max(1, len(message) / 30 * 3) + random.uniform(0.5, 2)
+        async with client.action(user, 'typing'):
+            await asyncio.sleep(typing_time)
+        
+        # Send message
+        await client.send_message(user, message)
+        
+        # Small random delay after sending
+        await asyncio.sleep(random.uniform(0.5, 2))
+        
+        return True, None
     except Exception as e:
         return False, str(e)
 
@@ -338,6 +391,30 @@ async def main_loop():
                     "error": error
                 })
                 print(f"    {'✓' if success else '✗'} {error or 'Sent'}")
+            
+            elif task_type == "warmup_chat":
+                # 1-to-1 pair warmup chat with typing simulation
+                recipient_phone = task_data.get("recipient_phone")
+                recipient_telegram_id = task_data.get("recipient_telegram_id")
+                recipient_username = task_data.get("recipient_username")
+                message = task_data.get("message", "Hey! 👋")
+                pair_id = task.get("pair_id")
+                print(f"  🔥 Warmup chat from {phone} to {recipient_phone[:8]}...")
+                success, error = await send_warmup_chat(
+                    client, 
+                    recipient_phone, 
+                    message, 
+                    recipient_telegram_id, 
+                    recipient_username
+                )
+                await report_result("warmup_chat", {
+                    "task_id": task_id,
+                    "pair_id": pair_id,
+                    "account_id": account.get("id"),
+                    "success": success,
+                    "error": error
+                })
+                print(f"    {'✓' if success else '✗'} {message[:30]}{'...' if len(message) > 30 else ''}")
             
             else:
                 print(f"  ❓ Unknown warmup task: {task_type}")

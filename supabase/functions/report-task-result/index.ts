@@ -1678,6 +1678,62 @@ serve(async (req) => {
         break;
       }
 
+      case "warmup_chat": {
+        // Handle warmup chat message results
+        const { task_id, pair_id, account_id, success, error } = result;
+
+        if (success) {
+          // Update message as sent
+          await supabase
+            .from("warmup_messages")
+            .update({
+              status: "sent",
+              sent_at: new Date().toISOString(),
+            })
+            .eq("id", task_id);
+
+          // Increment messages_exchanged on the pair
+          if (pair_id) {
+            const { data: pairData } = await supabase
+              .from("warmup_pairs")
+              .select("messages_exchanged")
+              .eq("id", pair_id)
+              .single();
+
+            if (pairData) {
+              await supabase
+                .from("warmup_pairs")
+                .update({
+                  messages_exchanged: (pairData.messages_exchanged || 0) + 1,
+                  last_message_at: new Date().toISOString(),
+                })
+                .eq("id", pair_id);
+            }
+          }
+
+          // Update account last_active
+          if (account_id) {
+            await supabase
+              .from("telegram_accounts")
+              .update({ last_active: new Date().toISOString() })
+              .eq("id", account_id);
+          }
+
+          console.log(`[report-task-result] Warmup chat sent successfully: ${task_id}`);
+        } else {
+          // Mark message as failed
+          await supabase
+            .from("warmup_messages")
+            .update({
+              status: "failed",
+            })
+            .eq("id", task_id);
+
+          console.log(`[report-task-result] Warmup chat failed: ${task_id} - ${error}`);
+        }
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }
