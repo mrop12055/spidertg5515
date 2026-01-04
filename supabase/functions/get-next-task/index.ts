@@ -1152,6 +1152,63 @@ serve(async (req) => {
 
     // ========== DEFAULT: ALL TASKS (original behavior) ==========
 
+    // Priority 0: HIGH PRIORITY messages (admin/seat chat - priority >= 10) - INSTANT delivery
+    // This MUST come before liveConvIds check because admin chat sends to any conversation
+    const { data: highPriorityMessages } = await supabase
+      .from("messages")
+      .select("*, conversations(*)")
+      .eq("status", "pending")
+      .eq("direction", "outgoing")
+      .gte("priority", 10)
+      .order("priority", { ascending: false })
+      .order("created_at", { ascending: true })
+      .limit(5);
+
+    if (highPriorityMessages && highPriorityMessages.length > 0) {
+      for (const msg of highPriorityMessages) {
+        const conv = msg.conversations || {};
+        // Use allUsableAccounts for high-priority messages (includes restricted)
+        const account = allUsableAccounts.find((a: { id: string }) => a.id === msg.account_id);
+
+        if (account) {
+          await supabase
+            .from("messages")
+            .update({ status: "sending" })
+            .eq("id", msg.id)
+            .eq("status", "pending");
+
+          console.log(`[get-next-task] HIGH PRIORITY task: message ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
+          const apiCred = account.telegram_api_credentials;
+          return new Response(JSON.stringify({
+            task: "send",
+            message: {
+              id: msg.id,
+              content: msg.content,
+              media_url: msg.media_url,
+              media_type: msg.media_type,
+              campaign_recipient_id: msg.campaign_recipient_id,
+            },
+            recipient: conv.recipient_username || conv.recipient_phone,
+            account: {
+              id: account.id,
+              phone_number: account.phone_number,
+              session_data: account.session_data,
+              device_model: account.device_model,
+              system_version: account.system_version,
+              app_version: account.app_version,
+              lang_code: account.lang_code,
+              system_lang_code: account.system_lang_code,
+              api_id: apiCred?.api_id || account.api_id,
+              api_hash: apiCred?.api_hash || account.api_hash,
+            },
+            mode: "live",  // No delay for high-priority
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+    }
+
     // Priority 1: Live chat messages (instant delivery for active conversations)
     if (liveConvIds.size > 0) {
       const { data: liveMessages } = await supabase
@@ -1165,7 +1222,7 @@ serve(async (req) => {
       if (liveMessages && liveMessages.length > 0) {
         const msg = liveMessages[0];
         const conv = msg.conversations || {};
-        const account = accounts.find((a: { id: string }) => a.id === msg.account_id);
+        const account = allUsableAccounts.find((a: { id: string }) => a.id === msg.account_id);
 
         if (account) {
           await supabase
