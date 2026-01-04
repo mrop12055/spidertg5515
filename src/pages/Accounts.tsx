@@ -1378,13 +1378,15 @@ const Accounts: React.FC = () => {
               </TooltipProvider>
             )}
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
+          <div className="flex flex-col text-xs text-muted-foreground mt-0.5">
             {(account.firstName || account.lastName) && (
               <span>{account.firstName || ''} {account.lastName || ''}</span>
             )}
             {account.username && !account.username.includes('update_state') && (
               <span className="text-primary/70">@{account.username}</span>
             )}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5 flex-wrap">
             {/* Show countdown for temporary restrictions (restricted OR frozen with timer) */}
             {account.restrictedUntil && 
              new Date(account.restrictedUntil) > new Date() && 
