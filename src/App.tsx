@@ -20,6 +20,7 @@ import Data from "./pages/Data";
 import Seats from "./pages/Seats";
 import SeatChat from "./pages/SeatChat";
 import DatabaseHealth from "./pages/DatabaseHealth";
+import Warmup from "./pages/Warmup";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -51,6 +52,7 @@ const App = () => (
                 <Route path="/data" element={<ProtectedRoute><Data /></ProtectedRoute>} />
                 <Route path="/seats" element={<ProtectedRoute><Seats /></ProtectedRoute>} />
                 <Route path="/database" element={<ProtectedRoute><DatabaseHealth /></ProtectedRoute>} />
+                <Route path="/warmup" element={<ProtectedRoute><Warmup /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </BrowserRouter>

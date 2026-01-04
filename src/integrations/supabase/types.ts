@@ -1071,6 +1071,148 @@ export type Database = {
         }
         Relationships: []
       }
+      warmup_message_templates: {
+        Row: {
+          category: string | null
+          created_at: string | null
+          id: string
+          is_question: boolean | null
+          message_text: string
+          sender_position: string
+          sequence_order: number
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string | null
+          id?: string
+          is_question?: boolean | null
+          message_text: string
+          sender_position: string
+          sequence_order: number
+        }
+        Update: {
+          category?: string | null
+          created_at?: string | null
+          id?: string
+          is_question?: boolean | null
+          message_text?: string
+          sender_position?: string
+          sequence_order?: number
+        }
+        Relationships: []
+      }
+      warmup_messages: {
+        Row: {
+          created_at: string | null
+          id: string
+          message_content: string
+          message_type: string | null
+          pair_id: string
+          receiver_account_id: string
+          reply_delay_seconds: number | null
+          scheduled_at: string
+          sender_account_id: string
+          sent_at: string | null
+          status: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          message_content: string
+          message_type?: string | null
+          pair_id: string
+          receiver_account_id: string
+          reply_delay_seconds?: number | null
+          scheduled_at: string
+          sender_account_id: string
+          sent_at?: string | null
+          status?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          message_content?: string
+          message_type?: string | null
+          pair_id?: string
+          receiver_account_id?: string
+          reply_delay_seconds?: number | null
+          scheduled_at?: string
+          sender_account_id?: string
+          sent_at?: string | null
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_messages_pair_id_fkey"
+            columns: ["pair_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_pairs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_messages_receiver_account_id_fkey"
+            columns: ["receiver_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_messages_sender_account_id_fkey"
+            columns: ["sender_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      warmup_pairs: {
+        Row: {
+          account_a_id: string
+          account_b_id: string
+          created_at: string | null
+          id: string
+          last_message_at: string | null
+          messages_exchanged: number | null
+          session_id: string
+          status: string | null
+        }
+        Insert: {
+          account_a_id: string
+          account_b_id: string
+          created_at?: string | null
+          id?: string
+          last_message_at?: string | null
+          messages_exchanged?: number | null
+          session_id: string
+          status?: string | null
+        }
+        Update: {
+          account_a_id?: string
+          account_b_id?: string
+          created_at?: string | null
+          id?: string
+          last_message_at?: string | null
+          messages_exchanged?: number | null
+          session_id?: string
+          status?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_pairs_account_a_id_fkey"
+            columns: ["account_a_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_pairs_account_b_id_fkey"
+            columns: ["account_b_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       warmup_schedule: {
         Row: {
           account_id: string
@@ -1120,6 +1262,39 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      warmup_sessions: {
+        Row: {
+          created_at: string | null
+          id: string
+          messages_per_pair_max: number | null
+          messages_per_pair_min: number | null
+          started_at: string | null
+          status: string | null
+          stopped_at: string | null
+          total_pairs: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          messages_per_pair_max?: number | null
+          messages_per_pair_min?: number | null
+          started_at?: string | null
+          status?: string | null
+          stopped_at?: string | null
+          total_pairs?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          messages_per_pair_max?: number | null
+          messages_per_pair_min?: number | null
+          started_at?: string | null
+          status?: string | null
+          stopped_at?: string | null
+          total_pairs?: number | null
+        }
+        Relationships: []
       }
     }
     Views: {

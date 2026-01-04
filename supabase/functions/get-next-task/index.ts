@@ -676,6 +676,82 @@ serve(async (req) => {
       });
     }
 
+    // RUNNER: warmup_chat - 1-to-1 pair chat warmup system
+    if (runner === "warmup_chat") {
+      // Get next pending warmup message that's due to be sent
+      const { data: warmupMessages } = await supabase
+        .from("warmup_messages")
+        .select(`
+          *,
+          warmup_pairs(*),
+          sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, telegram_api_credentials(*)),
+          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number, telegram_id, username)
+        `)
+        .eq("status", "pending")
+        .lte("scheduled_at", new Date().toISOString())
+        .order("scheduled_at", { ascending: true })
+        .limit(1);
+
+      if (warmupMessages && warmupMessages.length > 0) {
+        const msg = warmupMessages[0] as any;
+        const senderAccount = msg.sender;
+        const receiverAccount = msg.receiver;
+
+        if (senderAccount && senderAccount.status === "active" && receiverAccount) {
+          const apiCred = senderAccount.telegram_api_credentials;
+
+          // Mark as in_progress
+          await supabase
+            .from("warmup_messages")
+            .update({ status: "in_progress" })
+            .eq("id", msg.id);
+
+          console.log(`[get-next-task] Warmup chat: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
+          return new Response(JSON.stringify({
+            task: "warmup_chat",
+            task_id: msg.id,
+            pair_id: msg.pair_id,
+            task_data: {
+              recipient_phone: receiverAccount.phone_number,
+              recipient_telegram_id: receiverAccount.telegram_id,
+              recipient_username: receiverAccount.username,
+              message: msg.message_content,
+              message_type: msg.message_type,
+            },
+            account: {
+              id: senderAccount.id,
+              phone_number: senderAccount.phone_number,
+              session_data: senderAccount.session_data,
+              device_model: senderAccount.device_model,
+              system_version: senderAccount.system_version,
+              app_version: senderAccount.app_version,
+              lang_code: senderAccount.lang_code,
+              system_lang_code: senderAccount.system_lang_code,
+              api_id: apiCred?.api_id || senderAccount.api_id,
+              api_hash: apiCred?.api_hash || senderAccount.api_hash,
+            },
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        } else {
+          // Account not usable, cancel this message
+          await supabase
+            .from("warmup_messages")
+            .update({ status: "cancelled" })
+            .eq("id", msg.id);
+        }
+      }
+
+      // No warmup chat tasks
+      return new Response(JSON.stringify({
+        task: "wait",
+        seconds: 5,
+        reason: "No pending warmup chat messages",
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // RUNNER: warmup - Only warmup tasks (from warmup_schedule table)
     if (runner === "warmup") {
       // Priority 1: Check for bidirectional interaction tasks
