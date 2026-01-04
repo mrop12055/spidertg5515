@@ -1141,7 +1141,7 @@ const SeatChat: React.FC = () => {
                       backgroundSize: '20px 20px, 100% 100%'
                     }}
                   >
-                    <div className="max-w-4xl mx-auto space-y-1">
+                    <div className="max-w-2xl space-y-1">
                       {messageGroups.length === 0 ? (
                         <div className="flex flex-col items-center justify-center h-full py-16">
                           <div className="w-20 h-20 rounded-full bg-gradient-to-br from-muted to-muted/50 flex items-center justify-center mb-4 border border-border/30">
@@ -1158,7 +1158,7 @@ const SeatChat: React.FC = () => {
                         messageGroups.map((group, groupIndex) => (
                           <div key={groupIndex}>
                             {/* Date Separator */}
-                            <div className="flex justify-center my-4">
+                            <div className="flex justify-start my-4">
                               <span className="bg-card/90 backdrop-blur-sm text-muted-foreground text-xs font-medium px-3.5 py-1.5 rounded-full shadow-sm border border-border/30">
                                 {formatDateSeparator(group.date)}
                               </span>
@@ -1236,7 +1236,7 @@ const SeatChat: React.FC = () => {
 
                   {/* Message Input */}
                   <div className="bg-card border-t border-border/40 px-6 py-3 flex-shrink-0">
-                    <div className="max-w-4xl mx-auto flex items-center gap-2">
+                    <div className="max-w-2xl flex items-center gap-2">
                       {/* Emoji */}
                       <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
                       
