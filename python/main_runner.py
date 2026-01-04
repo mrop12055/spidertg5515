@@ -201,16 +201,20 @@ async def setup_message_handler(client, account_id: str):
             from telethon.tl.types import User
             if not isinstance(sender, User):
                 return
-            
+
+            # Skip bots (often spam / auto messages)
+            if getattr(sender, 'bot', False):
+                return
+
             # Get sender name safely for logging
             first_name = getattr(sender, 'first_name', None) or ''
             last_name = getattr(sender, 'last_name', None) or ''
             sender_name = f"{first_name} {last_name}".strip() or str(sender.id)
-            
+
             # FILTER: Only process messages from conversations WE initiated
             conversation_exists = await check_conversation_exists(account_id, sender.id)
             if not conversation_exists:
-                print(f"  🚫 Skipping message from {sender_name} (not a campaign contact)")
+                # Telegram will still deliver all messages to the client; we just ignore non-campaign contacts.
                 return
             
             content = event.message.text or "[Media message]"
