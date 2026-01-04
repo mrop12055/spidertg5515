@@ -292,9 +292,69 @@ async def setup_message_handler(client, account_id: str):
 
 
 # ========== MAIN LOOP ==========
+async def _process_livechat_once() -> bool:
+    """While campaign pacing is waiting, keep admin/seat chat instant by processing 1 livechat task."""
+    try:
+        task = await get_next_task(runner="livechat")
+        if task.get("task") != "send":
+            return False
+
+        if task.get("mode") != "live":
+            return False
+
+        msg = task.get("message", {})
+        recipient = task.get("recipient")
+        account = task.get("account", {})
+        account_id = account.get("id")
+
+        client = await get_or_create_client(account, setup_handler=setup_message_handler)
+        if not client or not recipient:
+            return False
+
+        print(f"  ⚡ [LIVE] Sending to {recipient}...")
+        success, error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+        await report_result("send", {
+            "message_id": msg.get("id"),
+            "success": success,
+            "error": error,
+            "campaign_recipient_id": msg.get("campaign_recipient_id"),
+            "account_id": account_id,
+        })
+        print(f"    {'✓ Sent!' if success else '✗ Failed: ' + str(error)}")
+        return True
+    except Exception:
+        return False
+
+
+async def _sleep_with_livechat(seconds: float):
+    """Sleep, but wake up frequently to process high-priority live chat messages."""
+    try:
+        seconds = float(seconds)
+    except Exception:
+        await asyncio.sleep(0)
+        return
+
+    if seconds <= 0:
+        return
+
+    loop = asyncio.get_event_loop()
+    end_at = loop.time() + seconds
+
+    while RUNNING:
+        # First, try to process 1 livechat message immediately.
+        await _process_livechat_once()
+
+        remaining = end_at - loop.time()
+        if remaining <= 0:
+            break
+
+        # Sleep in small chunks so admin/seat chat stays responsive.
+        await asyncio.sleep(min(0.5, remaining))
+
+
 async def main_loop():
     global RUNNING, last_campaign_account_id
-    
+
     print("=" * 60)
     print("  TelegramCRM - Main Runner (All-in-One)")
     print("=" * 60)
@@ -302,17 +362,17 @@ async def main_loop():
     print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
     print("\n✓ Starting main loop...\n")
-    
+
     while RUNNING:
         try:
             task = await get_next_task()  # No runner filter = all tasks
             task_type = task.get("task", "wait")
-            
+
             if task.get("stop_signal"):
                 print("⏹ Stop signal from backend. Pausing...")
                 await asyncio.sleep(5)
                 continue
-            
+
             if task_type == "wait":
                 accounts = task.get("accounts", [])
                 for acc in accounts:
@@ -323,7 +383,7 @@ async def main_loop():
                 if reason:
                     print(f"  ⏳ {reason}")
                 await asyncio.sleep(wait_seconds)
-            
+
             elif task_type == "send":
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
@@ -344,7 +404,7 @@ async def main_loop():
 
                     if account_switch_delay > 0:
                         print(f"  🔄 Switching campaign accounts... waiting {account_switch_delay:.1f}s")
-                        await asyncio.sleep(account_switch_delay)
+                        await _sleep_with_livechat(account_switch_delay)
 
                 client = await get_or_create_client(account, setup_handler=setup_message_handler)
                 if client and recipient:
@@ -360,7 +420,7 @@ async def main_loop():
                     })
                     print(f"    {'✓ Sent!' if success else '✗ Failed: ' + str(error)}")
 
-                    # Apply campaign pacing (main_runner previously sent back-to-back)
+                    # Apply campaign pacing (but keep livechat responsive during the wait)
                     if RUNNING and mode == "campaign":
                         last_campaign_account_id = account_id
 
@@ -383,8 +443,8 @@ async def main_loop():
 
                         if delay_seconds and delay_seconds > 0:
                             print(f"    ⏳ Waiting {delay_seconds:.1f}s before next campaign message...")
-                            await asyncio.sleep(delay_seconds)
-            
+                            await _sleep_with_livechat(delay_seconds)
+
             elif task_type == "validate":
                 recipients = task.get("recipients", [])
                 account = task.get("account", {})
