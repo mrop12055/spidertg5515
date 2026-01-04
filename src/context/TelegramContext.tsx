@@ -971,6 +971,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       }
 
       // Insert message to database with 'pending' status for Python to pick up
+      // Priority 10 = instant delivery (same as seat chat)
       const { data: msgData, error: msgError } = await supabase
         .from('messages')
         .insert({
@@ -979,6 +980,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           content,
           direction: 'outgoing',
           status: 'pending', // Python script will pick this up
+          priority: 10, // High priority for instant delivery
           media_url: mediaUrl,
           media_type: mediaType,
         })
