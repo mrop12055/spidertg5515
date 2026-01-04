@@ -668,8 +668,8 @@ const SeatChat: React.FC = () => {
             subtitle: 'Access Denied',
             message: 'This link has been revoked and you can no longer access this chat.',
             action: 'Please ask your administrator for a new link.',
-            iconBg: 'from-red-500/20 to-rose-500/20',
-            iconColor: 'text-red-500'
+            iconBg: 'from-destructive/25 to-destructive/10',
+            iconColor: 'text-destructive',
           };
         case 'deactivated':
           return {
@@ -677,8 +677,8 @@ const SeatChat: React.FC = () => {
             subtitle: 'Temporarily Unavailable',
             message: 'This workspace has been deactivated by the administrator.',
             action: 'Contact your administrator to reactivate access.',
-            iconBg: 'from-orange-500/20 to-amber-500/20',
-            iconColor: 'text-orange-500'
+            iconBg: 'from-primary/25 to-primary/10',
+            iconColor: 'text-primary',
           };
         case 'invalid_link':
           return {
@@ -686,17 +686,17 @@ const SeatChat: React.FC = () => {
             subtitle: 'Page Not Found',
             message: 'The link you are trying to access is invalid or expired.',
             action: 'Please check the URL or request a new link.',
-            iconBg: 'from-red-500/20 to-rose-500/20',
-            iconColor: 'text-red-500'
+            iconBg: 'from-destructive/25 to-destructive/10',
+            iconColor: 'text-destructive',
           };
         default:
           return {
             title: 'Something Went Wrong',
             subtitle: 'Connection Error',
-            message: 'We couldn\'t load this workspace at the moment.',
+            message: "We couldn't load this workspace at the moment.",
             action: 'Please try again later or contact support.',
-            iconBg: 'from-red-500/20 to-rose-500/20',
-            iconColor: 'text-red-500'
+            iconBg: 'from-destructive/25 to-destructive/10',
+            iconColor: 'text-destructive',
           };
       }
     };
@@ -704,75 +704,79 @@ const SeatChat: React.FC = () => {
     const errorContent = getErrorContent();
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-6">
+      <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-background via-background to-muted/40 flex items-center justify-center p-6">
         {/* Animated background elements */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-primary/5 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-1/4 right-1/4 w-80 h-80 bg-destructive/5 rounded-full blur-3xl animate-pulse delay-1000" />
+          <div className="absolute -top-24 -left-24 w-96 h-96 bg-primary/10 rounded-full blur-3xl animate-pulse" />
+          <div className="absolute -bottom-24 -right-24 w-80 h-80 bg-destructive/10 rounded-full blur-3xl animate-pulse delay-1000" />
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[520px] h-[520px] bg-muted/30 rounded-full blur-3xl" />
         </div>
-        
+
         <div className="relative max-w-lg w-full">
           {/* Main Card */}
-          <div className="relative bg-gradient-to-b from-slate-800/90 to-slate-900/90 backdrop-blur-xl rounded-3xl border border-slate-700/50 shadow-2xl overflow-hidden">
+          <div className="relative bg-card/80 backdrop-blur-xl rounded-3xl border border-border/60 shadow-2xl overflow-hidden">
             {/* Top decorative bar */}
-            <div className="h-1.5 bg-gradient-to-r from-red-500 via-rose-500 to-orange-500" />
-            
+            <div className="h-1.5 bg-gradient-to-r from-primary via-primary/70 to-destructive" />
+
             <div className="p-10 text-center space-y-8">
               {/* Icon with animated rings */}
               <div className="relative mx-auto w-28 h-28">
-                <div className={`absolute inset-0 bg-gradient-to-br ${errorContent.iconBg} rounded-full animate-ping opacity-20`} />
-                <div className={`absolute inset-2 bg-gradient-to-br ${errorContent.iconBg} rounded-full animate-pulse`} />
-                <div className="relative w-full h-full rounded-full bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-600/50 flex items-center justify-center shadow-xl">
+                <div
+                  className={`absolute inset-0 bg-gradient-to-br ${errorContent.iconBg} rounded-full animate-ping opacity-20`}
+                />
+                <div
+                  className={`absolute inset-2 bg-gradient-to-br ${errorContent.iconBg} rounded-full animate-pulse`}
+                />
+                <div className="relative w-full h-full rounded-full bg-background/70 border border-border/60 flex items-center justify-center shadow-xl">
                   <AlertCircle className={`w-12 h-12 ${errorContent.iconColor}`} />
                 </div>
               </div>
-              
+
               {/* Content */}
               <div className="space-y-4">
                 <div className="space-y-2">
-                  <p className="text-sm font-semibold uppercase tracking-widest text-slate-400">
+                  <p className="text-sm font-semibold uppercase tracking-widest text-muted-foreground">
                     {errorContent.subtitle}
                   </p>
-                  <h1 className="text-3xl font-bold text-white tracking-tight">
+                  <h1 className="text-3xl font-bold text-foreground tracking-tight">
                     {errorContent.title}
                   </h1>
                 </div>
-                
+
                 <div className="max-w-sm mx-auto space-y-2">
-                  <p className="text-slate-300 text-base leading-relaxed">
+                  <p className="text-foreground/80 text-base leading-relaxed">
                     {errorContent.message}
                   </p>
-                  <p className="text-slate-400 text-sm">
+                  <p className="text-muted-foreground text-sm">
                     {errorContent.action}
                   </p>
                 </div>
               </div>
-              
+
               {/* Divider */}
               <div className="flex items-center gap-4">
-                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
-                <span className="text-slate-500 text-xs font-medium">NEED HELP?</span>
-                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-slate-600 to-transparent" />
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
+                <span className="text-muted-foreground/70 text-xs font-medium tracking-wide">NEED HELP?</span>
+                <div className="flex-1 h-px bg-gradient-to-r from-transparent via-border to-transparent" />
               </div>
-              
+
               {/* Footer */}
               <div className="space-y-4">
-                <p className="text-slate-500 text-sm">
+                <p className="text-muted-foreground/80 text-sm">
                   Contact your workspace administrator for assistance
                 </p>
-                
-                {/* Decorative elements */}
+
                 <div className="flex justify-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-slate-600" />
-                  <div className="w-2 h-2 rounded-full bg-slate-700" />
-                  <div className="w-2 h-2 rounded-full bg-slate-600" />
+                  <div className="w-2 h-2 rounded-full bg-muted-foreground/30" />
+                  <div className="w-2 h-2 rounded-full bg-muted-foreground/20" />
+                  <div className="w-2 h-2 rounded-full bg-muted-foreground/30" />
                 </div>
               </div>
             </div>
           </div>
-          
-          {/* Bottom shadow accent */}
-          <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-3/4 h-8 bg-primary/20 blur-2xl rounded-full" />
+
+          {/* Bottom glow accent */}
+          <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-3/4 h-8 bg-primary/15 blur-2xl rounded-full" />
         </div>
       </div>
     );
