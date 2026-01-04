@@ -554,14 +554,45 @@ serve(async (req) => {
               .eq("campaign_id", campaign.id)
               .eq("status", "pending");
             
-            // If pending recipients exist, mark as FAILED (couldn't complete)
-            // If no pending recipients, mark as completed (all were processed)
-            const newStatus = (pendingCount && pendingCount > 0) ? "failed" : "completed";
-            console.log(`[get-next-task] No usable accounts left for campaign "${campaign.name}" - marking as ${newStatus} (${pendingCount || 0} pending)`);
-            await supabase
-              .from("campaigns")
-              .update({ status: newStatus })
-              .eq("id", campaign.id);
+            // If pending recipients exist, mark campaign as FAILED and mark ALL pending recipients as failed
+            if (pendingCount && pendingCount > 0) {
+              console.log(`[get-next-task] No usable accounts for campaign "${campaign.name}" - marking ${pendingCount} pending recipients as failed`);
+              
+              // Mark all pending recipients as failed
+              await supabase
+                .from("campaign_recipients")
+                .update({ 
+                  status: "failed", 
+                  failed_reason: "No accounts available to send message",
+                  sent_at: new Date().toISOString()
+                })
+                .eq("campaign_id", campaign.id)
+                .eq("status", "pending");
+              
+              // Get current failed count and update campaign
+              const { count: existingFailedCount } = await supabase
+                .from("campaign_recipients")
+                .select("id", { count: "exact", head: true })
+                .eq("campaign_id", campaign.id)
+                .eq("status", "failed");
+              
+              await supabase
+                .from("campaigns")
+                .update({ 
+                  status: "failed",
+                  failed_count: (existingFailedCount || 0)
+                })
+                .eq("id", campaign.id);
+                
+              console.log(`[get-next-task] Campaign "${campaign.name}" marked as FAILED - no accounts available`);
+            } else {
+              // No pending recipients - mark as completed
+              console.log(`[get-next-task] Campaign "${campaign.name}" completed - all recipients processed`);
+              await supabase
+                .from("campaigns")
+                .update({ status: "completed" })
+                .eq("id", campaign.id);
+            }
           } else {
             allCampaignsStopped = false;
           }
