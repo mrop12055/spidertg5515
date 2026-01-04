@@ -39,9 +39,12 @@ interface ApiCredential {
   accounts_count: number;
   is_active: boolean;
   sent_24h?: number; // Dynamic: messages sent in last 24h
+  success_rate_7d?: number; // Dynamic: success rate over last 7 days
+  sent_7d?: number; // Dynamic: total sends in last 7 days
+  failed_7d?: number; // Dynamic: total fails in last 7 days
 }
 
-const API_DAILY_LIMIT = 40; // Max messages per API per 24 hours
+const API_DAILY_LIMIT = 45; // Max messages per API per 24 hours
 
 const Settings: React.FC = () => {
   const { toast: showToast } = useToast();
@@ -74,7 +77,7 @@ const Settings: React.FC = () => {
   const [newApiType, setNewApiType] = useState<string>('android');
   const [isAddingApi, setIsAddingApi] = useState(false);
 
-  // Fetch API credentials with 24h send counts
+  // Fetch API credentials with 24h send counts and 7d success rates
   const fetchApiCredentials = async () => {
     setIsLoadingCredentials(true);
     try {
@@ -85,9 +88,11 @@ const Settings: React.FC = () => {
       
       if (error) throw error;
 
-      // Get 24h message counts per API credential
+      // Get 24h and 7d timestamps
       const yesterday = new Date();
       yesterday.setHours(yesterday.getHours() - 24);
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
       
       // Get all accounts with their api_credential_id
       const { data: accountsData } = await supabase
@@ -102,6 +107,13 @@ const Settings: React.FC = () => {
         .eq('status', 'sent')
         .gte('created_at', yesterday.toISOString());
       
+      // Get campaign recipients from last 7 days for success rate
+      const { data: recipientsData } = await supabase
+        .from('campaign_recipients')
+        .select('sent_by_account_id, status')
+        .in('status', ['sent', 'failed'])
+        .gte('sent_at', sevenDaysAgo.toISOString());
+      
       // Build account to API mapping
       const accountToApi = new Map<string, string>();
       (accountsData || []).forEach((acc: any) => {
@@ -110,7 +122,7 @@ const Settings: React.FC = () => {
         }
       });
       
-      // Count messages per API
+      // Count 24h messages per API
       const apiCounts = new Map<string, number>();
       (messagesData || []).forEach((msg: any) => {
         const apiId = accountToApi.get(msg.account_id);
@@ -119,11 +131,35 @@ const Settings: React.FC = () => {
         }
       });
       
-      // Merge 24h counts into credentials
-      const credentialsWithCounts = (data || []).map((cred: ApiCredential) => ({
-        ...cred,
-        sent_24h: apiCounts.get(cred.id) || 0,
-      }));
+      // Count 7d success/fail per API
+      const apiSuccess = new Map<string, number>();
+      const apiFailed = new Map<string, number>();
+      (recipientsData || []).forEach((rec: any) => {
+        const apiId = accountToApi.get(rec.sent_by_account_id);
+        if (apiId) {
+          if (rec.status === 'sent') {
+            apiSuccess.set(apiId, (apiSuccess.get(apiId) || 0) + 1);
+          } else if (rec.status === 'failed') {
+            apiFailed.set(apiId, (apiFailed.get(apiId) || 0) + 1);
+          }
+        }
+      });
+      
+      // Merge counts into credentials
+      const credentialsWithCounts = (data || []).map((cred: ApiCredential) => {
+        const sent = apiSuccess.get(cred.id) || 0;
+        const failed = apiFailed.get(cred.id) || 0;
+        const total = sent + failed;
+        const successRate = total > 0 ? (sent / total) * 100 : null;
+        
+        return {
+          ...cred,
+          sent_24h: apiCounts.get(cred.id) || 0,
+          success_rate_7d: successRate,
+          sent_7d: sent,
+          failed_7d: failed,
+        };
+      });
       
       setApiCredentials(credentialsWithCounts);
     } catch (error) {
@@ -394,7 +430,7 @@ const Settings: React.FC = () => {
                             {cred.client_type}
                           </Badge>
                         </div>
-                        <div className="space-y-2">
+                        <div className="space-y-3">
                           {/* 24h Send Stats - Primary display */}
                           <div className="space-y-1">
                             <div className="flex items-center justify-between text-xs">
@@ -417,6 +453,25 @@ const Settings: React.FC = () => {
                                 (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "[&>div]:bg-yellow-500" : "[&>div]:bg-green-500"
                               )}
                             />
+                          </div>
+                          
+                          {/* 7d Success Rate */}
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-muted-foreground">Success Rate (7d)</span>
+                            {cred.success_rate_7d !== null && cred.success_rate_7d !== undefined ? (
+                              <Badge 
+                                variant="outline" 
+                                className={cn(
+                                  "text-xs font-medium",
+                                  cred.success_rate_7d >= 90 ? "border-green-500 text-green-500" : 
+                                  cred.success_rate_7d >= 70 ? "border-yellow-500 text-yellow-500" : "border-destructive text-destructive"
+                                )}
+                              >
+                                {cred.success_rate_7d.toFixed(1)}% ({cred.sent_7d}/{(cred.sent_7d || 0) + (cred.failed_7d || 0)})
+                              </Badge>
+                            ) : (
+                              <span className="text-muted-foreground">No data</span>
+                            )}
                           </div>
                         </div>
                       </div>
