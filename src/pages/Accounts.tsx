@@ -1236,6 +1236,24 @@ const Accounts: React.FC = () => {
     return proxy?.status || null;
   };
 
+  const getProxyCountry = (proxyId?: string) => {
+    if (!proxyId) return null;
+    const proxy = proxies.find(p => p.id === proxyId);
+    return proxy?.country || null;
+  };
+
+  // Convert country code to flag emoji
+  const countryToFlag = (countryCode: string | null) => {
+    if (!countryCode) return '🌐';
+    const code = countryCode.toUpperCase();
+    // Convert country code to regional indicator symbols
+    if (code.length === 2) {
+      const offset = 127397;
+      return String.fromCodePoint(...[...code].map(c => c.charCodeAt(0) + offset));
+    }
+    return '🌐';
+  };
+
   // Calculate stats - frozen/banned are always inactive, spambot limited = restricted
   const isAccountSpambotLimited = (a: TelegramAccount) => 
     a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
@@ -1272,6 +1290,8 @@ const Accounts: React.FC = () => {
     const verifyResult = verifyResults.get(account.id);
     const proxyLabel = getProxyLabel(account.proxyId);
     const proxyStatus = getProxyStatus(account.proxyId);
+    const proxyCountry = getProxyCountry(account.proxyId);
+    const proxyFlag = countryToFlag(proxyCountry);
     const msgSent24h = messagesSentLast24h.get(account.id) || 0;
     const totalConvs = totalConversations.get(account.id) || 0;
     const accountGroup = groups.find(g => g.accountIds.includes(account.id));
@@ -1555,13 +1575,22 @@ const Accounts: React.FC = () => {
           )}
           
           {proxyLabel && (
-            <div className={cn(
-              "flex items-center gap-1 px-2 py-1 rounded text-xs",
-              proxyStatus === 'active' ? "bg-status-active/10 text-status-active" : "bg-muted text-muted-foreground"
-            )}>
-              <Globe className="w-3 h-3" />
-              <span className="max-w-[80px] truncate">{proxyLabel}</span>
-            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={cn(
+                    "flex items-center justify-center w-7 h-7 rounded text-base",
+                    proxyStatus === 'active' ? "bg-status-active/10" : "bg-muted"
+                  )}>
+                    <span>{proxyFlag}</span>
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Proxy: {proxyLabel}</p>
+                  {proxyCountry && <p className="text-xs text-muted-foreground">Country: {proxyCountry.toUpperCase()}</p>}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
         </div>
 
