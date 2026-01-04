@@ -187,16 +187,21 @@ const SeatChat: React.FC = () => {
     conversations.filter(conv => {
       if (hiddenConversations.has(conv.id)) return false;
       
-      const cutoff = getTimeFilterCutoff();
-      const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
-      if (lastMsgTime < cutoff.getTime()) return false;
+      // When searching, ignore time filter to search ALL conversations
+      if (!searchQuery) {
+        const cutoff = getTimeFilterCutoff();
+        const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
+        if (lastMsgTime < cutoff.getTime()) return false;
+        return true;
+      }
       
-      if (!searchQuery) return true;
+      // Search in name, phone, username, and message content
       const searchLower = searchQuery.toLowerCase();
       return (
         conv.recipient_name?.toLowerCase().includes(searchLower) ||
         conv.recipient_phone?.toLowerCase().includes(searchLower) ||
-        conv.recipient_username?.toLowerCase().includes(searchLower)
+        conv.recipient_username?.toLowerCase().includes(searchLower) ||
+        conv.last_message_content?.toLowerCase().includes(searchLower)
       );
     })
   );
