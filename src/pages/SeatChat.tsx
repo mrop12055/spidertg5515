@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
+import { ThemeToggle } from '@/components/ThemeToggle';
 import { 
   Send, MessageSquare, Users, Eye, CheckCheck, Check, 
   RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
@@ -701,6 +702,7 @@ const SeatChat: React.FC = () => {
             )}
 
             <div className="flex items-center gap-2">
+              <ThemeToggle className="text-[#8696a0] hover:text-white hover:bg-[#2a3942]" />
               <Badge className="bg-[#00a884] text-white border-0 text-xs px-2 py-0.5">
                 ● Online
               </Badge>
