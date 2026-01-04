@@ -388,6 +388,23 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         if not entity:
             return False, "User not found on Telegram"
         
+        # Ensure URLs are clickable by forcing HTML link entities when we detect a URL.
+        formatted_content = content
+        try:
+            import re, html as _html
+            url_re = re.compile(r"((?:https?://|www\.)[^\s<]+)")
+            if content and url_re.search(content):
+                escaped = _html.escape(content)
+
+                def _to_link(m):
+                    raw = m.group(1)
+                    href = raw if raw.startswith("http") else f"https://{raw}"
+                    return f'<a href="{_html.escape(href)}">{_html.escape(raw)}</a>'
+
+                formatted_content = url_re.sub(_to_link, escaped)
+        except Exception:
+            formatted_content = content
+
         if media_url:
             try:
                 import io
@@ -412,16 +429,16 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                         
                         # For images, use force_document=False to send as photo preview
                         await asyncio.wait_for(
-                            client.send_file(entity, file_bytes, caption=content, force_document=not is_image),
+                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode='html'),
                             timeout=30
                         )
                     else:
-                        await asyncio.wait_for(client.send_message(entity, content, link_preview=True), timeout=15)
+                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode='html'), timeout=15)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
-                await asyncio.wait_for(client.send_message(entity, content, link_preview=True), timeout=15)
+                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode='html'), timeout=15)
         else:
-            await asyncio.wait_for(client.send_message(entity, content, link_preview=True), timeout=15)
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode='html'), timeout=15)
         
         return True, None
     except asyncio.TimeoutError:
