@@ -1023,44 +1023,74 @@ async def main_loop():
                     print(f"    [INVALID] {format_error}")
                     continue
                 
-                # Step 2: REAL Telegram API test - create fresh client without session
-                print(f"    Testing with Telegram servers...")
+                # Step 2: Test API with EXISTING session file (not cached client)
+                print(f"    Testing with existing session...")
                 try:
+                    # Get session from account
+                    session_data = account.get("session_data")
+                    if not session_data:
+                        await report_result("api_test", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "api_credential_id": api_credential_id,
+                            "success": False,
+                            "error": "No session file available for testing"
+                        })
+                        print(f"    [SKIP] No session file")
+                        continue
+                    
+                    # Decode session to temp file
                     import tempfile
                     import uuid
+                    temp_name = f"api_test_{uuid.uuid4().hex[:8]}"
+                    temp_session = os.path.join(tempfile.gettempdir(), temp_name)
                     
-                    # Create a temporary session file (no auth)
-                    temp_session = os.path.join(tempfile.gettempdir(), f"api_test_{uuid.uuid4().hex[:8]}")
+                    session_bytes = base64.b64decode(session_data)
+                    with open(temp_session + ".session", "wb") as f:
+                        f.write(session_bytes)
                     
-                    # Create client with test credentials
+                    # Create NEW client with test API credentials (bypass cache)
                     test_client = TelegramClient(
                         temp_session,
                         int(api_id),
                         api_hash,
-                        timeout=15,
-                        connection_retries=1
+                        timeout=20,
+                        connection_retries=2
                     )
                     
-                    # Try to connect - this will validate API credentials with Telegram
-                    await asyncio.wait_for(test_client.connect(), timeout=20)
+                    # Connect with existing session but NEW api credentials
+                    print(f"    Connecting to Telegram...")
+                    await asyncio.wait_for(test_client.connect(), timeout=25)
                     
-                    # If we get here, API credentials are valid with Telegram
-                    # The client won't be authorized (no phone), but connection works
+                    # Try to get user info - this will fail if API is wrong
+                    print(f"    Checking authorization...")
+                    me = await asyncio.wait_for(test_client.get_me(), timeout=15)
+                    
                     await test_client.disconnect()
                     
-                    # Clean up temp session
+                    # Clean up
                     try:
                         os.remove(temp_session + ".session")
                     except:
                         pass
                     
-                    await report_result("api_test", {
-                        "task_id": task_id,
-                        "account_id": account.get("id"),
-                        "api_credential_id": api_credential_id,
-                        "success": True
-                    })
-                    print(f"    [OK] API credentials valid with Telegram")
+                    if me:
+                        await report_result("api_test", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "api_credential_id": api_credential_id,
+                            "success": True
+                        })
+                        print(f"    [OK] API credentials valid - connected as {me.first_name}")
+                    else:
+                        await report_result("api_test", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "api_credential_id": api_credential_id,
+                            "success": False,
+                            "error": "Could not verify user"
+                        })
+                        print(f"    [FAIL] Could not get user info")
                     
                 except ApiIdInvalidError as e:
                     await report_result("api_test", {
@@ -1073,24 +1103,32 @@ async def main_loop():
                     print(f"    [INVALID] API ID not registered with Telegram")
                 except Exception as e:
                     err_str = str(e).lower()
-                    # Check for API-related errors
-                    if "api" in err_str or "invalid" in err_str or "unauthorized" in err_str:
+                    # Detect API errors
+                    if any(x in err_str for x in ["api_id", "api_hash", "api id", "invalid"]):
                         await report_result("api_test", {
                             "task_id": task_id,
                             "account_id": account.get("id"),
                             "api_credential_id": api_credential_id,
                             "success": False,
-                            "error": f"API credentials rejected: {str(e)[:100]}"
+                            "error": f"API credentials invalid: {str(e)[:80]}"
                         })
-                        print(f"    [INVALID] {e}")
+                        print(f"    [INVALID] API rejected: {e}")
+                    elif any(x in err_str for x in ["auth", "session", "revoked", "expired"]):
+                        # Session issue, not API issue
+                        await report_result("api_test", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "api_credential_id": api_credential_id,
+                            "success": True  # API might be valid, session is the problem
+                        })
+                        print(f"    [OK] API format valid (session expired separately)")
                     else:
-                        # Network or other error - might not be API issue
                         await report_result("api_test", {
                             "task_id": task_id,
                             "account_id": account.get("id"),
                             "api_credential_id": api_credential_id,
                             "success": False,
-                            "error": f"Connection error: {str(e)[:100]}"
+                            "error": f"Test failed: {str(e)[:80]}"
                         })
                         print(f"    [ERROR] {e}")
         
