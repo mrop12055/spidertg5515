@@ -81,7 +81,7 @@ export const Sidebar: React.FC = () => {
       <nav className="flex-1 py-4 px-3 space-y-1 overflow-y-auto scrollbar-thin">
         {filteredNavItems.map((item) => {
           const isActive = location.pathname === item.path || 
-                          (item.path !== '/dashboard' && location.pathname.startsWith(item.path));
+                          (item.path !== '/dashboard' && item.path !== '/data' && item.path !== '/database' && location.pathname.startsWith(item.path));
           
           const showBadge = item.path === '/conversations' && totalUnread > 0;
           
