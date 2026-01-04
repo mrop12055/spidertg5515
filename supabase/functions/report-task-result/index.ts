@@ -24,7 +24,7 @@ serve(async (req) => {
 
     switch (task_type) {
       case "send": {
-        let { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name, recipient_telegram_id, recipient_username, skip_account, retry_with_different_account } = result;
+        let { message_id, success, error, campaign_recipient_id, account_id, content, recipient_phone, recipient_name, recipient_telegram_id, recipient_username, skip_account, retry_with_different_account, api_credential_id } = result;
         let isNewConversation = false; // Track if this is first message to a new contact
 
         if (success) {
@@ -113,6 +113,7 @@ serve(async (req) => {
                   status: 'sent',
                   delivered_at: new Date().toISOString(),
                   campaign_recipient_id: campaign_recipient_id,
+                  api_credential_id: api_credential_id || null, // Track which API was used
                 });
 
               if (msgError) {
@@ -120,12 +121,13 @@ serve(async (req) => {
               }
             }
 
-            // Update campaign recipient status
+            // Update campaign recipient status with API used
             await supabase
               .from("campaign_recipients")
               .update({
                 status: "sent",
                 sent_at: new Date().toISOString(),
+                api_credential_id: api_credential_id || null, // Track which API was used
               })
               .eq("id", campaign_recipient_id);
 

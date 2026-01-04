@@ -200,7 +200,34 @@ serve(async (req) => {
       apiCredentialsMap.set(cred.id, cred);
     }
     
-    // Build account -> API mapping (for counting, using assigned API)
+    // Get all sent messages in last 24h WITH api_credential_id for accurate tracking
+    // This uses the stored api_credential_id (which API was actually used) rather than current account assignment
+    const { data: recentMessages } = await supabase
+      .from("messages")
+      .select("api_credential_id")
+      .eq("direction", "outgoing")
+      .eq("status", "sent")
+      .not("api_credential_id", "is", null)
+      .gte("created_at", cutoff24h);
+
+    // Count successful sends per API in last 24h (using stored api_credential_id)
+    const apiSendCounts = new Map<string, number>();
+    for (const msg of (recentMessages || []) as any[]) {
+      if (msg.api_credential_id) {
+        apiSendCounts.set(msg.api_credential_id, (apiSendCounts.get(msg.api_credential_id) || 0) + 1);
+      }
+    }
+    
+    // For messages without api_credential_id (old data), fall back to account mapping
+    const { data: oldMessages } = await supabase
+      .from("messages")
+      .select("account_id")
+      .eq("direction", "outgoing")
+      .eq("status", "sent")
+      .is("api_credential_id", null)
+      .gte("created_at", cutoff24h);
+    
+    // Build account -> API mapping for fallback
     const accountToApi = new Map<string, string>();
     for (const acc of accountsBeforeApiLimit) {
       if (acc.api_credential_id) {
@@ -208,17 +235,7 @@ serve(async (req) => {
       }
     }
     
-    // Get all sent messages in last 24h (for rate limiting)
-    const { data: recentMessages } = await supabase
-      .from("messages")
-      .select("account_id")
-      .eq("direction", "outgoing")
-      .eq("status", "sent")
-      .gte("created_at", cutoff24h);
-
-    // Count successful sends per API in last 24h
-    const apiSendCounts = new Map<string, number>();
-    for (const msg of (recentMessages || []) as any[]) {
+    for (const msg of (oldMessages || []) as any[]) {
       const apiId = accountToApi.get(msg.account_id);
       if (apiId) {
         apiSendCounts.set(apiId, (apiSendCounts.get(apiId) || 0) + 1);
@@ -226,18 +243,20 @@ serve(async (req) => {
     }
     
     // Calculate API success rates from campaign_recipients (last 24h for faster response)
+    // Use stored api_credential_id when available
     const { data: recentRecipients } = await supabase
       .from("campaign_recipients")
-      .select("sent_by_account_id, status")
+      .select("api_credential_id, sent_by_account_id, status")
       .in("status", ["sent", "failed"])
       .gte("sent_at", cutoff24h);
     
-    // Count success/failure per API
+    // Count success/failure per API (using stored api_credential_id when available)
     const apiSuccessCounts = new Map<string, number>();
     const apiFailureCounts = new Map<string, number>();
     
     for (const rec of (recentRecipients || []) as any[]) {
-      const apiId = accountToApi.get(rec.sent_by_account_id);
+      // Prefer stored api_credential_id, fall back to account mapping
+      const apiId = rec.api_credential_id || accountToApi.get(rec.sent_by_account_id);
       if (apiId) {
         if (rec.status === "sent") {
           apiSuccessCounts.set(apiId, (apiSuccessCounts.get(apiId) || 0) + 1);

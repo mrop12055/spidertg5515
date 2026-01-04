@@ -193,6 +193,7 @@ export type Database = {
       }
       campaign_recipients: {
         Row: {
+          api_credential_id: string | null
           campaign_id: string
           failed_account_ids: string[] | null
           failed_reason: string | null
@@ -205,6 +206,7 @@ export type Database = {
           status: string | null
         }
         Insert: {
+          api_credential_id?: string | null
           campaign_id: string
           failed_account_ids?: string[] | null
           failed_reason?: string | null
@@ -217,6 +219,7 @@ export type Database = {
           status?: string | null
         }
         Update: {
+          api_credential_id?: string | null
           campaign_id?: string
           failed_account_ids?: string[] | null
           failed_reason?: string | null
@@ -229,6 +232,13 @@ export type Database = {
           status?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "campaign_recipients_api_credential_id_fkey"
+            columns: ["api_credential_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_api_credentials"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "campaign_recipients_campaign_id_fkey"
             columns: ["campaign_id"]
@@ -642,6 +652,7 @@ export type Database = {
       messages: {
         Row: {
           account_id: string
+          api_credential_id: string | null
           campaign_recipient_id: string | null
           content: string
           conversation_id: string
@@ -659,6 +670,7 @@ export type Database = {
         }
         Insert: {
           account_id: string
+          api_credential_id?: string | null
           campaign_recipient_id?: string | null
           content: string
           conversation_id: string
@@ -676,6 +688,7 @@ export type Database = {
         }
         Update: {
           account_id?: string
+          api_credential_id?: string | null
           campaign_recipient_id?: string | null
           content?: string
           conversation_id?: string
@@ -697,6 +710,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_api_credential_id_fkey"
+            columns: ["api_credential_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_api_credentials"
             referencedColumns: ["id"]
           },
           {
