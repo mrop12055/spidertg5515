@@ -255,6 +255,8 @@ async def main_loop():
     print("=" * 60)
     print("\n✓ Starting live chat listener...\n")
     
+    connected_ids = set()  # Track connected accounts to avoid redundant work
+    
     while RUNNING:
         try:
             # Get next task - ONLY livechat tasks
@@ -263,10 +265,18 @@ async def main_loop():
             
             if task_type == "wait":
                 seconds = task.get("seconds", 0.05)
-                # Connect all accounts and set up handlers
+                # Only connect NEW accounts (skip already connected for speed)
                 accounts = task.get("accounts", [])
-                for acc in accounts:
-                    await get_or_create_client(acc, setup_handler=setup_message_handler)
+                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
+                if new_accounts:
+                    # Connect in parallel for faster startup
+                    results = await asyncio.gather(
+                        *[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts],
+                        return_exceptions=True
+                    )
+                    for acc in new_accounts:
+                        if acc.get("id"):
+                            connected_ids.add(acc["id"])
                 await asyncio.sleep(seconds)
             
             elif task_type == "send":

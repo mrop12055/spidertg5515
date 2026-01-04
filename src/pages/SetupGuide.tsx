@@ -781,6 +781,8 @@ async def main_loop():
     print("  [Incoming + Replies]")
     print("=" * 50)
     
+    connected_ids = set()  # Track connected accounts to avoid redundant work
+    
     while RUNNING:
         try:
             task = await get_next_task(runner="livechat")
@@ -788,9 +790,18 @@ async def main_loop():
             
             if task_type == "wait":
                 accounts = task.get("accounts", [])
-                for acc in accounts:
-                    await get_or_create_client(acc, setup_handler=setup_message_handler)
-                await asyncio.sleep(task.get("seconds", 0.1))
+                # Only connect NEW accounts (skip already connected)
+                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
+                if new_accounts:
+                    # Connect in parallel for speed
+                    results = await asyncio.gather(
+                        *[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts],
+                        return_exceptions=True
+                    )
+                    for acc in new_accounts:
+                        if acc.get("id"):
+                            connected_ids.add(acc["id"])
+                await asyncio.sleep(task.get("seconds", 0.05))  # Faster polling
             
             elif task_type == "send":
                 msg = task.get("message", {})
