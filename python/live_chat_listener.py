@@ -27,8 +27,8 @@ RUNNING = True
 LOG_IGNORED_NON_CAMPAIGN = False
 
 # Cache conversation existence results to avoid repeated REST calls (which can block the loop and delay sends)
-NEGATIVE_CACHE_TTL_SECONDS = 24 * 60 * 60   # 24h: permanently ignore non-campaign senders for the day
-POSITIVE_CACHE_TTL_SECONDS = 6 * 60 * 60    # 6h: re-check sometimes for safety
+NEGATIVE_CACHE_TTL_SECONDS = 365 * 24 * 60 * 60  # 1 year = permanent (non-campaign senders are NEVER processed)
+POSITIVE_CACHE_TTL_SECONDS = 6 * 60 * 60         # 6h: re-check campaign contacts occasionally
 
 # (account_id, sender_id) -> (exists: bool, cached_at: float)
 _conversation_cache = {}
