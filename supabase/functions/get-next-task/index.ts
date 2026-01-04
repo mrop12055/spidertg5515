@@ -185,11 +185,22 @@ serve(async (req) => {
       !isTimeRestricted(a) && !a.auto_disabled
     );
 
-    // ========== API-LEVEL RATE LIMITING (40 per API per 24h) + SUCCESS RATE FILTERING ==========
+    // ========== SMART API ROUTING: Dynamic API assignment based on capacity ==========
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const cutoff7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     
-    // Build account -> API mapping
+    // Fetch ALL active API credentials for dynamic routing
+    const { data: allApiCredentials } = await supabase
+      .from("telegram_api_credentials")
+      .select("id, api_id, api_hash, client_type, name, is_active")
+      .eq("is_active", true);
+    
+    const apiCredentialsMap = new Map<string, any>();
+    for (const cred of (allApiCredentials || [])) {
+      apiCredentialsMap.set(cred.id, cred);
+    }
+    
+    // Build account -> API mapping (for counting, using assigned API)
     const accountToApi = new Map<string, string>();
     for (const acc of accountsBeforeApiLimit) {
       if (acc.api_credential_id) {
@@ -214,13 +225,12 @@ serve(async (req) => {
       }
     }
     
-    // Calculate API success rates from campaign_recipients (last 7 days)
-    // This captures actual failures that don't create message records
+    // Calculate API success rates from campaign_recipients (last 24h for faster response)
     const { data: recentRecipients } = await supabase
       .from("campaign_recipients")
       .select("sent_by_account_id, status")
       .in("status", ["sent", "failed"])
-      .gte("sent_at", cutoff7d);
+      .gte("sent_at", cutoff24h);
     
     // Count success/failure per API
     const apiSuccessCounts = new Map<string, number>();
@@ -249,40 +259,89 @@ serve(async (req) => {
       apiSuccessRates.set(apiId, rate);
     }
 
-    // Filter accounts: API under 40/24h limit AND API success rate >= 50%
-    const accountsWithApiLimit = accountsBeforeApiLimit.filter((a: any) => {
-      if (!a.api_credential_id) return true; // No API assigned = allow
-      
-      const apiSent = apiSendCounts.get(a.api_credential_id) || 0;
-      const apiRate = apiSuccessRates.get(a.api_credential_id) ?? 100;
-      
-      // Check 24h limit
-      if (apiSent >= API_DAILY_LIMIT) {
-        console.log(`[get-next-task] Skipping account ${a.phone_number} - API at limit (${apiSent}/${API_DAILY_LIMIT})`);
-        return false;
-      }
-      
-      // Check API success rate (only if we have enough data)
-      const apiTotal = (apiSuccessCounts.get(a.api_credential_id) || 0) + (apiFailureCounts.get(a.api_credential_id) || 0);
-      if (apiTotal >= 10 && apiRate < MIN_API_SUCCESS_RATE) {
-        console.log(`[get-next-task] Skipping account ${a.phone_number} - API success rate too low (${apiRate.toFixed(1)}%)`);
-        return false;
-      }
-      
-      return true;
-    });
+    // ========== SMART API SELECTION: Find available APIs with capacity ==========
+    // Sort APIs by usage (ascending) to balance load
+    const availableApis = (allApiCredentials || [])
+      .filter((api: any) => {
+        const sent = apiSendCounts.get(api.id) || 0;
+        const rate = apiSuccessRates.get(api.id) ?? 100;
+        const total = (apiSuccessCounts.get(api.id) || 0) + (apiFailureCounts.get(api.id) || 0);
+        
+        // Must be under daily limit
+        if (sent >= API_DAILY_LIMIT) return false;
+        
+        // Must have acceptable success rate (if enough data)
+        if (total >= 10 && rate < MIN_API_SUCCESS_RATE) return false;
+        
+        return true;
+      })
+      .sort((a: any, b: any) => {
+        // Sort by usage ascending (prefer least used to balance load)
+        const aSent = apiSendCounts.get(a.id) || 0;
+        const bSent = apiSendCounts.get(b.id) || 0;
+        if (aSent !== bSent) return aSent - bSent;
+        
+        // Then by success rate descending
+        const aRate = apiSuccessRates.get(a.id) ?? 100;
+        const bRate = apiSuccessRates.get(b.id) ?? 100;
+        return bRate - aRate;
+      });
+    
+    console.log(`[get-next-task] Available APIs with capacity: ${availableApis.length}/${(allApiCredentials || []).length}`);
 
-    // Sort accounts: prefer APIs with lowest 24h usage, then highest success rate
-    accountsWithApiLimit.sort((a: any, b: any) => {
-      const aSent = apiSendCounts.get(a.api_credential_id) || 0;
-      const bSent = apiSendCounts.get(b.api_credential_id) || 0;
+    // Function to get best available API for an account
+    const getBestApiForAccount = (account: any): any => {
+      const currentApiId = account.api_credential_id;
+      const currentSent = apiSendCounts.get(currentApiId) || 0;
+      const currentRate = apiSuccessRates.get(currentApiId) ?? 100;
+      const currentTotal = (apiSuccessCounts.get(currentApiId) || 0) + (apiFailureCounts.get(currentApiId) || 0);
+      
+      // Check if current API is still good
+      const currentApiOk = currentApiId && 
+        currentSent < API_DAILY_LIMIT && 
+        (currentTotal < 10 || currentRate >= MIN_API_SUCCESS_RATE);
+      
+      if (currentApiOk) {
+        // Current API is fine, use it
+        return account.telegram_api_credentials;
+      }
+      
+      // Current API is at limit or has low success rate - find alternative
+      if (availableApis.length > 0) {
+        // Pick the API with lowest usage (first in sorted list)
+        const bestApi = availableApis[0];
+        console.log(`[get-next-task] SMART ROUTE: Account ${account.phone_number} API at limit/low rate, routing to ${bestApi.name} (${apiSendCounts.get(bestApi.id) || 0}/${API_DAILY_LIMIT})`);
+        return bestApi;
+      }
+      
+      // No APIs available - return null
+      return null;
+    };
+
+    // Process accounts: allow all accounts but dynamically route their API
+    const accountsWithSmartApi = accountsBeforeApiLimit.map((a: any) => {
+      const bestApi = getBestApiForAccount(a);
+      if (!bestApi) {
+        // No API available - mark for skipping
+        return { ...a, _skipNoApi: true };
+      }
+      // Override the telegram_api_credentials with the best available API
+      return { ...a, telegram_api_credentials: bestApi, _originalApiId: a.api_credential_id };
+    }).filter((a: any) => !a._skipNoApi);
+
+    // Sort accounts: prefer accounts whose API has lowest 24h usage
+    accountsWithSmartApi.sort((a: any, b: any) => {
+      const aApiId = a.telegram_api_credentials?.id;
+      const bApiId = b.telegram_api_credentials?.id;
+      const aSent = apiSendCounts.get(aApiId) || 0;
+      const bSent = apiSendCounts.get(bApiId) || 0;
       
       // Primary: by API 24h usage (ascending - prefer least used)
       if (aSent !== bSent) return aSent - bSent;
       
       // Secondary: by API success rate (descending - prefer more reliable APIs)
-      const aApiRate = apiSuccessRates.get(a.api_credential_id) ?? 100;
-      const bApiRate = apiSuccessRates.get(b.api_credential_id) ?? 100;
+      const aApiRate = apiSuccessRates.get(aApiId) ?? 100;
+      const bApiRate = apiSuccessRates.get(bApiId) ?? 100;
       if (aApiRate !== bApiRate) return bApiRate - aApiRate;
       
       // Tertiary: by account success rate (descending - prefer reliable accounts)
@@ -291,16 +350,17 @@ serve(async (req) => {
       return bRate - aRate;
     });
 
-    const accounts = accountsWithApiLimit;
+    const accounts = accountsWithSmartApi;
     
     // Log API stats
-    const apiStats = Array.from(new Set([...apiSendCounts.keys(), ...apiSuccessRates.keys()])).map(id => {
-      const sent = apiSendCounts.get(id) || 0;
-      const rate = apiSuccessRates.get(id);
-      return `${id.slice(0,8)}:${sent}/${API_DAILY_LIMIT}${rate !== undefined ? ` (${rate.toFixed(0)}%)` : ''}`;
+    const apiStats = (allApiCredentials || []).map((api: any) => {
+      const sent = apiSendCounts.get(api.id) || 0;
+      const rate = apiSuccessRates.get(api.id);
+      const status = sent >= API_DAILY_LIMIT ? '❌' : (rate !== undefined && rate < MIN_API_SUCCESS_RATE ? '⚠️' : '✓');
+      return `${api.name.slice(0,10)}:${sent}/${API_DAILY_LIMIT}${rate !== undefined ? ` (${rate.toFixed(0)}%)` : ''} ${status}`;
     }).join(', ');
     console.log(`[get-next-task] API stats: ${apiStats || 'none tracked yet'}`);
-    console.log(`[get-next-task] Eligible accounts after API filtering: ${accounts.length}/${accountsBeforeApiLimit.length}`);
+    console.log(`[get-next-task] Smart-routed accounts: ${accounts.length}/${accountsBeforeApiLimit.length}`);
 
     if (activeAccountsError) {
       console.error("[get-next-task] Error fetching accounts:", activeAccountsError);
