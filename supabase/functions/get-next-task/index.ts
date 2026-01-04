@@ -185,11 +185,19 @@ serve(async (req) => {
       !isTimeRestricted(a) && !a.auto_disabled
     );
 
-    // ========== API-LEVEL RATE LIMITING (40 per API per 24h) ==========
-    // Calculate how many messages each API credential has sent in the last 24 hours
+    // ========== API-LEVEL RATE LIMITING (40 per API per 24h) + SUCCESS RATE FILTERING ==========
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const cutoff7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     
-    // Get all sent messages in last 24h with their account IDs
+    // Build account -> API mapping
+    const accountToApi = new Map<string, string>();
+    for (const acc of accountsBeforeApiLimit) {
+      if (acc.api_credential_id) {
+        accountToApi.set(acc.id, acc.api_credential_id);
+      }
+    }
+    
+    // Get all sent messages in last 24h (for rate limiting)
     const { data: recentMessages } = await supabase
       .from("messages")
       .select("account_id")
@@ -197,45 +205,87 @@ serve(async (req) => {
       .eq("status", "sent")
       .gte("created_at", cutoff24h);
 
-    // Build a map: api_credential_id -> count of messages sent in last 24h
+    // Count successful sends per API in last 24h
     const apiSendCounts = new Map<string, number>();
-    const accountToApi = new Map<string, string>();
-    
-    // First map all accounts to their API credentials
-    for (const acc of accountsBeforeApiLimit) {
-      if (acc.api_credential_id) {
-        accountToApi.set(acc.id, acc.api_credential_id);
-      }
-    }
-    
-    // Count messages per API
     for (const msg of (recentMessages || []) as any[]) {
       const apiId = accountToApi.get(msg.account_id);
       if (apiId) {
         apiSendCounts.set(apiId, (apiSendCounts.get(apiId) || 0) + 1);
       }
     }
+    
+    // Calculate API success rates from campaign_recipients (last 7 days)
+    // This captures actual failures that don't create message records
+    const { data: recentRecipients } = await supabase
+      .from("campaign_recipients")
+      .select("sent_by_account_id, status")
+      .in("status", ["sent", "failed"])
+      .gte("sent_at", cutoff7d);
+    
+    // Count success/failure per API
+    const apiSuccessCounts = new Map<string, number>();
+    const apiFailureCounts = new Map<string, number>();
+    
+    for (const rec of (recentRecipients || []) as any[]) {
+      const apiId = accountToApi.get(rec.sent_by_account_id);
+      if (apiId) {
+        if (rec.status === "sent") {
+          apiSuccessCounts.set(apiId, (apiSuccessCounts.get(apiId) || 0) + 1);
+        } else if (rec.status === "failed") {
+          apiFailureCounts.set(apiId, (apiFailureCounts.get(apiId) || 0) + 1);
+        }
+      }
+    }
+    
+    // Calculate API success rates
+    const apiSuccessRates = new Map<string, number>();
+    const MIN_API_SUCCESS_RATE = 50; // Skip APIs below 50% success rate
+    
+    for (const apiId of new Set([...apiSuccessCounts.keys(), ...apiFailureCounts.keys()])) {
+      const success = apiSuccessCounts.get(apiId) || 0;
+      const failure = apiFailureCounts.get(apiId) || 0;
+      const total = success + failure;
+      const rate = total > 0 ? (success / total) * 100 : 100;
+      apiSuccessRates.set(apiId, rate);
+    }
 
-    // Filter accounts: only include those whose API is under the 40/24h limit
+    // Filter accounts: API under 40/24h limit AND API success rate >= 50%
     const accountsWithApiLimit = accountsBeforeApiLimit.filter((a: any) => {
       if (!a.api_credential_id) return true; // No API assigned = allow
+      
       const apiSent = apiSendCounts.get(a.api_credential_id) || 0;
+      const apiRate = apiSuccessRates.get(a.api_credential_id) ?? 100;
+      
+      // Check 24h limit
       if (apiSent >= API_DAILY_LIMIT) {
         console.log(`[get-next-task] Skipping account ${a.phone_number} - API at limit (${apiSent}/${API_DAILY_LIMIT})`);
         return false;
       }
+      
+      // Check API success rate (only if we have enough data)
+      const apiTotal = (apiSuccessCounts.get(a.api_credential_id) || 0) + (apiFailureCounts.get(a.api_credential_id) || 0);
+      if (apiTotal >= 10 && apiRate < MIN_API_SUCCESS_RATE) {
+        console.log(`[get-next-task] Skipping account ${a.phone_number} - API success rate too low (${apiRate.toFixed(1)}%)`);
+        return false;
+      }
+      
       return true;
     });
 
-    // Sort accounts by their API's usage (prefer least-used APIs) AND by success rate (prefer reliable accounts)
+    // Sort accounts: prefer APIs with lowest 24h usage, then highest success rate
     accountsWithApiLimit.sort((a: any, b: any) => {
       const aSent = apiSendCounts.get(a.api_credential_id) || 0;
       const bSent = apiSendCounts.get(b.api_credential_id) || 0;
       
-      // Primary sort: by API usage (ascending - prefer least used)
+      // Primary: by API 24h usage (ascending - prefer least used)
       if (aSent !== bSent) return aSent - bSent;
       
-      // Secondary sort: by success rate (descending - prefer more reliable)
+      // Secondary: by API success rate (descending - prefer more reliable APIs)
+      const aApiRate = apiSuccessRates.get(a.api_credential_id) ?? 100;
+      const bApiRate = apiSuccessRates.get(b.api_credential_id) ?? 100;
+      if (aApiRate !== bApiRate) return bApiRate - aApiRate;
+      
+      // Tertiary: by account success rate (descending - prefer reliable accounts)
       const aRate = a.success_rate ?? 100;
       const bRate = b.success_rate ?? 100;
       return bRate - aRate;
@@ -243,8 +293,14 @@ serve(async (req) => {
 
     const accounts = accountsWithApiLimit;
     
-    console.log(`[get-next-task] API rate limits: ${Array.from(apiSendCounts.entries()).map(([id, count]) => `${id.slice(0,8)}:${count}/${API_DAILY_LIMIT}`).join(', ') || 'none tracked yet'}`);
-    console.log(`[get-next-task] Eligible accounts after API limit: ${accounts.length}/${accountsBeforeApiLimit.length}`);
+    // Log API stats
+    const apiStats = Array.from(new Set([...apiSendCounts.keys(), ...apiSuccessRates.keys()])).map(id => {
+      const sent = apiSendCounts.get(id) || 0;
+      const rate = apiSuccessRates.get(id);
+      return `${id.slice(0,8)}:${sent}/${API_DAILY_LIMIT}${rate !== undefined ? ` (${rate.toFixed(0)}%)` : ''}`;
+    }).join(', ');
+    console.log(`[get-next-task] API stats: ${apiStats || 'none tracked yet'}`);
+    console.log(`[get-next-task] Eligible accounts after API filtering: ${accounts.length}/${accountsBeforeApiLimit.length}`);
 
     if (activeAccountsError) {
       console.error("[get-next-task] Error fetching accounts:", activeAccountsError);
