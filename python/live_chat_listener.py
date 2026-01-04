@@ -101,11 +101,43 @@ async def setup_message_handler(client, account_id: str):
             media_url = None
             media_type = None
             
-            # Handle photos
+            # Handle photos - download and upload to Supabase storage
             if event.message.photo:
                 print(f"    📷 Receiving photo...")
                 content = "[Photo] " + (event.message.text or "")
                 media_type = "image"
+                
+                try:
+                    # Download the photo to bytes
+                    photo_bytes = await client.download_media(event.message.photo, bytes)
+                    if photo_bytes:
+                        import base64
+                        import httpx
+                        import time
+                        from config import SUPABASE_URL, SUPABASE_KEY
+                        
+                        # Upload to Supabase storage
+                        file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.jpg"
+                        file_path = f"{account_id}/{file_name}"
+                        
+                        async with httpx.AsyncClient(timeout=30.0) as http:
+                            upload_response = await http.post(
+                                f"{SUPABASE_URL}/storage/v1/object/message-attachments/{file_path}",
+                                headers={
+                                    "apikey": SUPABASE_KEY,
+                                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                                    "Content-Type": "image/jpeg"
+                                },
+                                content=photo_bytes
+                            )
+                            
+                            if upload_response.status_code in (200, 201):
+                                media_url = f"{SUPABASE_URL}/storage/v1/object/public/message-attachments/{file_path}"
+                                print(f"    ✓ Photo uploaded: {file_name}")
+                            else:
+                                print(f"    ⚠ Photo upload failed: {upload_response.status_code}")
+                except Exception as e:
+                    print(f"    ⚠ Could not download/upload photo: {e}")
             
             # Get phone number if available
             sender_phone = None
