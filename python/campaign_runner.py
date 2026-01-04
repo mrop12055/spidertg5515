@@ -120,6 +120,8 @@ async def main_loop():
             # Execute the send task
             print(f"  📨 [{account_phone}] → {recipient}")
             
+            skip_delay = False  # Flag to skip delay when account needs rotation
+            
             try:
                 client = await get_or_create_client(account)
                 if not client or not recipient:
@@ -135,6 +137,11 @@ async def main_loop():
                         client, recipient, content,
                         msg.get("media_url")
                     )
+                    
+                    # Check if this is a sender-side privacy restriction (account issue, not recipient)
+                    is_privacy_error = error and any(x in error.lower() for x in [
+                        "privacyrestricted", "privacy restricted", "userprivacyrestricted"
+                    ])
 
                     result = {
                         "success": success,
@@ -146,13 +153,21 @@ async def main_loop():
                         "recipient_phone": recipient,
                         "recipient_name": recipient_name,
                     }
+                    
+                    # If privacy error, signal backend to skip this account and retry with another
+                    if is_privacy_error:
+                        result["skip_account"] = True
+                        result["retry_with_different_account"] = True
+                        skip_delay = True
+                        print(f"    ⚠ Privacy restricted - requesting different account for this recipient")
+                    
                     if meta:
                         result.update(meta)
                     
                     if success:
                         messages_sent_by_account[account_id] = messages_sent_by_account.get(account_id, 0) + 1
                         print(f"    ✓ Sent ({messages_sent_by_account[account_id]} msgs this session)")
-                    else:
+                    elif not is_privacy_error:
                         print(f"    ✗ Failed: {error}")
                         
             except Exception as e:
@@ -169,10 +184,13 @@ async def main_loop():
             await report_result("send", result)
             
             # Wait random delay between min and max BEFORE next message
-            if RUNNING:
+            # Skip delay if we need to rotate account (privacy error)
+            if RUNNING and not skip_delay:
                 delay = random.uniform(min_delay, max_delay)
                 print(f"    ⏳ Waiting {delay:.1f}s before next message...")
                 await asyncio.sleep(delay)
+            elif skip_delay:
+                print(f"    🔄 Rotating account immediately...")
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
