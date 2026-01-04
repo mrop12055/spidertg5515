@@ -196,7 +196,8 @@ const DatabaseHealth = () => {
         failedAccountTasksRes,
         failedBlockTasksRes,
         failedImportTasksRes,
-        failedWarmupRes
+        failedWarmupRes,
+        accountErrorsRes
       ] = await Promise.all([
         supabase
           .from('campaign_recipients')
@@ -238,6 +239,14 @@ const DatabaseHealth = () => {
           .select('id, account_id, task_type, created_at')
           .eq('status', 'failed')
           .order('created_at', { ascending: false })
+          .limit(100),
+        // Account errors - accounts with ban_reason (restricted, banned, frozen, disconnected)
+        supabase
+          .from('telegram_accounts')
+          .select('id, phone_number, status, ban_reason, restricted_until, created_at')
+          .not('ban_reason', 'is', null)
+          .neq('ban_reason', '')
+          .order('restricted_until', { ascending: false, nullsFirst: false })
           .limit(100)
       ]);
 
@@ -310,9 +319,20 @@ const DatabaseHealth = () => {
         });
       });
 
-      // Sort by timestamp descending and take latest 200
+      // Account errors (restricted, banned, frozen, disconnected with ban_reason)
+      (accountErrorsRes.data || []).forEach(a => {
+        allErrors.push({
+          id: a.id,
+          phone: a.phone_number,
+          reason: `[${a.status?.toUpperCase()}] ${a.ban_reason}`,
+          timestamp: a.restricted_until || a.created_at || new Date().toISOString(),
+          source: 'Account'
+        });
+      });
+
+      // Sort by timestamp descending and take latest 300
       allErrors.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      setRecentErrors(allErrors.slice(0, 200));
+      setRecentErrors(allErrors.slice(0, 300));
 
     } catch (error) {
       console.error('Error fetching data:', error);
