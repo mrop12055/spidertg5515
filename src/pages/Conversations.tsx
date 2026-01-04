@@ -70,6 +70,8 @@ const Chat: React.FC = () => {
   );
   const [messageInput, setMessageInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [messageSearchQuery, setMessageSearchQuery] = useState('');
+  const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [newChatPhone, setNewChatPhone] = useState('');
   const [newChatName, setNewChatName] = useState('');
@@ -143,10 +145,19 @@ const Chat: React.FC = () => {
   const conversationMessages = useMemo(() => {
     if (!selectedConv) return [] as typeof messages;
 
-    return messages
+    let filtered = messages
       .filter(m => m.conversationId === selectedConv.id && m.status !== 'failed')
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-  }, [messages, selectedConv?.id]);
+    
+    // Apply message search filter
+    if (messageSearchQuery) {
+      filtered = filtered.filter(m => 
+        m.content.toLowerCase().includes(messageSearchQuery.toLowerCase())
+      );
+    }
+    
+    return filtered;
+  }, [messages, selectedConv?.id, messageSearchQuery]);
 
   // Filter conversations by time
   const getTimeFilterCutoff = () => {
@@ -764,7 +775,15 @@ const Chat: React.FC = () => {
                         />
                       )}
                       <button
-                        onClick={() => isSelectionMode ? toggleConversationSelection(conv.id) : setSelectedConversation(conv.id)}
+                        onClick={() => {
+                          if (isSelectionMode) {
+                            toggleConversationSelection(conv.id);
+                          } else {
+                            setSelectedConversation(conv.id);
+                            setMessageSearchQuery('');
+                            setIsMessageSearchOpen(false);
+                          }
+                        }}
                         className="flex-1 flex items-center gap-3 text-left"
                       >
                         <div className="relative flex-shrink-0">
@@ -907,7 +926,18 @@ const Chat: React.FC = () => {
                   <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
                     <Phone className="w-5 h-5" />
                   </Button>
-                  <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className={cn(
+                      "text-muted-foreground hover:text-foreground",
+                      isMessageSearchOpen && "bg-primary/10 text-primary"
+                    )}
+                    onClick={() => {
+                      setIsMessageSearchOpen(!isMessageSearchOpen);
+                      if (isMessageSearchOpen) setMessageSearchQuery('');
+                    }}
+                  >
                     <Search className="w-5 h-5" />
                   </Button>
                   <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground">
@@ -915,6 +945,36 @@ const Chat: React.FC = () => {
                   </Button>
                 </div>
               </div>
+
+              {/* Message Search Bar */}
+              {isMessageSearchOpen && (
+                <div className="px-4 py-2 border-b border-border bg-card/50 flex items-center gap-2">
+                  <Search className="w-4 h-4 text-muted-foreground" />
+                  <Input
+                    placeholder="Search in messages..."
+                    value={messageSearchQuery}
+                    onChange={(e) => setMessageSearchQuery(e.target.value)}
+                    className="flex-1 h-8 bg-transparent border-0 focus-visible:ring-0 text-sm"
+                    autoFocus
+                  />
+                  {messageSearchQuery && (
+                    <span className="text-xs text-muted-foreground">
+                      {conversationMessages.length} result{conversationMessages.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="h-6 w-6"
+                    onClick={() => {
+                      setIsMessageSearchOpen(false);
+                      setMessageSearchQuery('');
+                    }}
+                  >
+                    <X className="w-4 h-4" />
+                  </Button>
+                </div>
+              )}
 
               {/* Messages Area */}
               <ScrollArea className="flex-1 px-4 py-2">
