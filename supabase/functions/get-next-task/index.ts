@@ -1063,6 +1063,15 @@ serve(async (req) => {
           const account = allUsableAccounts.find((a: { id: string }) => a.id === msg.account_id);
 
           if (account) {
+            // If the account is temporarily rate-limited, don't keep flipping messages to "sending".
+            // Leave them pending so they can be sent automatically once the restriction window ends.
+            if (isTimeRestricted(account)) {
+              console.log(
+                `[get-next-task] Live chat message ${msg.id.slice(0, 8)} blocked: account ${account.phone_number} restricted until ${account.restricted_until}`
+              );
+              continue;
+            }
+
             await supabase
               .from("messages")
               .update({ status: "sending" })
