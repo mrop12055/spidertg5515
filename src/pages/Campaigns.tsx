@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
@@ -416,6 +416,17 @@ const Campaigns: React.FC = () => {
     if (campaignsLength > 0) fetchReports();
   }, [campaignsLength, fetchReports]);
 
+  // Debounced fetch to prevent too many updates
+  const debounceTimerRef = useRef<number | null>(null);
+  const debouncedFetchReports = useCallback(() => {
+    if (debounceTimerRef.current) {
+      window.clearTimeout(debounceTimerRef.current);
+    }
+    debounceTimerRef.current = window.setTimeout(() => {
+      fetchReports();
+    }, 500); // Wait 500ms before fetching to batch multiple updates
+  }, [fetchReports]);
+
   // Real-time subscriptions for campaign_recipients, campaigns, and messages for instant updates
   useEffect(() => {
     if (campaignsLength === 0) return;
@@ -431,8 +442,7 @@ const Campaigns: React.FC = () => {
           table: 'campaign_recipients'
         },
         () => {
-          // Refresh reports when recipients change
-          fetchReports();
+          debouncedFetchReports();
         }
       )
       .subscribe();
@@ -448,7 +458,7 @@ const Campaigns: React.FC = () => {
           table: 'campaigns'
         },
         () => {
-          fetchReports();
+          debouncedFetchReports();
           refreshData();
         }
       )
@@ -468,24 +478,27 @@ const Campaigns: React.FC = () => {
           // Only refresh on status changes (sent, failed, delivered)
           const newMsg = payload.new as any;
           if (newMsg && ['sent', 'failed', 'delivered'].includes(newMsg.status)) {
-            fetchReports();
+            debouncedFetchReports();
           }
         }
       )
       .subscribe();
 
-    // Fallback polling every 15 seconds (reduced since we have comprehensive realtime now)
+    // Fallback polling every 20 seconds
     const interval = window.setInterval(() => {
       fetchReports();
-    }, 15000);
+    }, 20000);
 
     return () => {
+      if (debounceTimerRef.current) {
+        window.clearTimeout(debounceTimerRef.current);
+      }
       supabase.removeChannel(recipientsChannel);
       supabase.removeChannel(campaignsChannel);
       supabase.removeChannel(messagesChannel);
       window.clearInterval(interval);
     };
-  }, [campaignsLength, fetchReports, refreshData]);
+  }, [campaignsLength, debouncedFetchReports, fetchReports, refreshData]);
 
   // Fetch unique recipients per account for today (for campaign account selection display)
   const fetchAccountUniqueRecipients = useCallback(async () => {
