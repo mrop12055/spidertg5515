@@ -536,12 +536,12 @@ const SeatChat: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="h-screen bg-[#111b21] flex items-center justify-center">
+      <div className="h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="w-16 h-16 rounded-full bg-[#00a884] flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <Send className="w-8 h-8 text-white" />
+          <div className="w-16 h-16 rounded-full bg-primary flex items-center justify-center mx-auto mb-4 animate-pulse">
+            <Send className="w-8 h-8 text-primary-foreground" />
           </div>
-          <p className="text-[#8696a0] font-medium">Loading workspace...</p>
+          <p className="text-muted-foreground font-medium">Loading workspace...</p>
         </div>
       </div>
     );
@@ -549,14 +549,14 @@ const SeatChat: React.FC = () => {
 
   if (error) {
     return (
-      <div className="h-screen bg-[#111b21] flex items-center justify-center p-4">
-        <Card className="max-w-md w-full bg-[#202c33] border-0 shadow-2xl">
+      <div className="h-screen bg-background flex items-center justify-center p-4">
+        <Card className="max-w-md w-full bg-card border-border shadow-2xl">
           <CardContent className="pt-8 pb-8 text-center">
-            <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center mx-auto mb-4">
-              <AlertCircle className="w-8 h-8 text-red-400" />
+            <div className="w-16 h-16 rounded-full bg-destructive/20 flex items-center justify-center mx-auto mb-4">
+              <AlertCircle className="w-8 h-8 text-destructive" />
             </div>
-            <h2 className="text-xl font-bold mb-2 text-white">Access Error</h2>
-            <p className="text-[#8696a0]">{error}</p>
+            <h2 className="text-xl font-bold mb-2 text-foreground">Access Error</h2>
+            <p className="text-muted-foreground">{error}</p>
           </CardContent>
         </Card>
       </div>
@@ -566,18 +566,18 @@ const SeatChat: React.FC = () => {
   const messageGroups = groupMessagesByDate(filteredMessages);
 
   return (
-    <div className="h-screen flex bg-[#111b21] overflow-hidden">
+    <div className="h-screen flex bg-background overflow-hidden">
       {/* Left Sidebar Navigation - Similar to Admin */}
-      <aside className="w-64 bg-[#111b21] border-r border-[#2a3942] flex flex-col flex-shrink-0">
+      <aside className="w-64 bg-sidebar border-r border-border flex flex-col flex-shrink-0">
         {/* Logo */}
-        <div className="h-16 flex items-center px-4 border-b border-[#2a3942]">
+        <div className="h-16 flex items-center px-4 border-b border-border">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#00a884] to-[#25d366] flex items-center justify-center shadow-lg">
-              <Send className="w-5 h-5 text-white" />
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg">
+              <Send className="w-5 h-5 text-primary-foreground" />
             </div>
             <div>
-              <h1 className="font-bold text-lg text-white">{seat?.name || 'Seat'}</h1>
-              <p className="text-xs text-[#8696a0]">Seat Dashboard</p>
+              <h1 className="font-bold text-lg text-foreground">{seat?.name || 'Seat'}</h1>
+              <p className="text-xs text-muted-foreground">Seat Dashboard</p>
             </div>
           </div>
         </div>
@@ -589,19 +589,19 @@ const SeatChat: React.FC = () => {
             className={cn(
               "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
               currentView === 'chats'
-                ? "bg-[#00a884] text-white shadow-lg shadow-[#00a884]/20"
-                : "text-[#8696a0] hover:bg-[#2a3942] hover:text-white"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
             <MessageSquare className="w-5 h-5 flex-shrink-0" />
             <span className="text-sm font-medium">Chats</span>
             {conversations.filter(c => (c.unread_count || 0) > 0).length > 0 && (
-              <span className="ml-auto min-w-[20px] h-[20px] rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+              <span className="ml-auto min-w-[20px] h-[20px] rounded-full bg-destructive text-destructive-foreground text-xs font-bold flex items-center justify-center">
                 {conversations.filter(c => (c.unread_count || 0) > 0).length}
               </span>
             )}
             {currentView === 'chats' && conversations.filter(c => (c.unread_count || 0) > 0).length === 0 && (
-              <div className="ml-auto w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+              <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-foreground animate-pulse" />
             )}
           </button>
 
@@ -610,29 +610,29 @@ const SeatChat: React.FC = () => {
             className={cn(
               "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group",
               currentView === 'reports'
-                ? "bg-[#00a884] text-white shadow-lg shadow-[#00a884]/20"
-                : "text-[#8696a0] hover:bg-[#2a3942] hover:text-white"
+                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20"
+                : "text-muted-foreground hover:bg-muted hover:text-foreground"
             )}
           >
             <BarChart3 className="w-5 h-5 flex-shrink-0" />
             <span className="text-sm font-medium">Reports</span>
             {currentView === 'reports' && (
-              <div className="ml-auto w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+              <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary-foreground animate-pulse" />
             )}
           </button>
         </nav>
 
         {/* Seat Info Section */}
-        <div className="p-3 border-t border-[#2a3942] space-y-2">
-          <div className="flex items-center gap-3 p-2 rounded-lg bg-[#2a3942]/50">
-            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-[#00a884] to-[#25d366] flex items-center justify-center text-white font-semibold text-sm">
+        <div className="p-3 border-t border-border space-y-2">
+          <div className="flex items-center gap-3 p-2 rounded-lg bg-muted/50">
+            <div className="w-9 h-9 rounded-full bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center text-primary-foreground font-semibold text-sm">
               {seat?.name?.charAt(0) || 'S'}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-white truncate">{seat?.name}</p>
+              <p className="text-sm font-medium text-foreground truncate">{seat?.name}</p>
               <div className="flex items-center gap-1">
-                <div className="w-2 h-2 rounded-full bg-[#00a884]" />
-                <p className="text-xs text-[#8696a0]">Online</p>
+                <div className="w-2 h-2 rounded-full bg-primary" />
+                <p className="text-xs text-muted-foreground">Online</p>
               </div>
             </div>
           </div>
@@ -643,9 +643,9 @@ const SeatChat: React.FC = () => {
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Message Search Dialog */}
         <Dialog open={isMessageSearchOpen} onOpenChange={setIsMessageSearchOpen}>
-          <DialogContent className="max-w-md bg-[#202c33] border-[#2a3942] text-white">
+          <DialogContent className="max-w-md bg-card border-border text-foreground">
             <DialogHeader>
-              <DialogTitle className="flex items-center gap-2 text-white">
+              <DialogTitle className="flex items-center gap-2 text-foreground">
                 <Search className="w-5 h-5" />
                 Search Messages
               </DialogTitle>
@@ -655,11 +655,11 @@ const SeatChat: React.FC = () => {
                 placeholder="Type to search messages..."
                 value={messageSearchQuery}
                 onChange={(e) => setMessageSearchQuery(e.target.value)}
-                className="bg-[#2a3942] border-0 text-white placeholder:text-[#8696a0] focus:ring-[#00a884]"
+                className="bg-muted border-0 text-foreground placeholder:text-muted-foreground focus:ring-primary"
                 autoFocus
               />
               {messageSearchQuery && (
-                <div className="text-sm text-[#8696a0]">
+                <div className="text-sm text-muted-foreground">
                   Found {filteredMessages.length} message{filteredMessages.length !== 1 ? 's' : ''} matching "{messageSearchQuery}"
                 </div>
               )}
@@ -668,12 +668,12 @@ const SeatChat: React.FC = () => {
         </Dialog>
 
         {/* Header */}
-        <header className="bg-[#202c33] border-b border-[#2a3942] flex-shrink-0 px-4 py-2">
+        <header className="bg-card border-b border-border flex-shrink-0 px-4 py-2">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div>
-                <h1 className="font-semibold text-white text-base">{seat?.name}</h1>
-                <p className="text-xs text-[#8696a0]">
+                <h1 className="font-semibold text-foreground text-base">{seat?.name}</h1>
+                <p className="text-xs text-muted-foreground">
                   {currentView === 'chats' ? 'Telegram Chats' : 'Reports & Statistics'}
                 </p>
               </div>
@@ -682,28 +682,28 @@ const SeatChat: React.FC = () => {
             {/* Stats - shown only in chats view */}
             {currentView === 'chats' && (
               <div className="hidden md:flex items-center gap-4">
-                <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
-                  <MessageSquare className="w-3.5 h-3.5 text-[#00a884]" />
-                  <span className="font-medium text-white">{stats.total_conversations}</span>
+                <div className="flex items-center gap-1.5 text-xs bg-muted rounded-full px-3 py-1.5">
+                  <MessageSquare className="w-3.5 h-3.5 text-primary" />
+                  <span className="font-medium text-foreground">{stats.total_conversations}</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
-                  <Send className="w-3.5 h-3.5 text-[#00a884]" />
-                  <span className="font-medium text-white">{stats.messages_sent_today}</span>
+                <div className="flex items-center gap-1.5 text-xs bg-muted rounded-full px-3 py-1.5">
+                  <Send className="w-3.5 h-3.5 text-primary" />
+                  <span className="font-medium text-foreground">{stats.messages_sent_today}</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
-                  <Eye className="w-3.5 h-3.5 text-[#00a884]" />
-                  <span className="font-medium text-white">{stats.messages_read}</span>
+                <div className="flex items-center gap-1.5 text-xs bg-muted rounded-full px-3 py-1.5">
+                  <Eye className="w-3.5 h-3.5 text-primary" />
+                  <span className="font-medium text-foreground">{stats.messages_read}</span>
                 </div>
-                <div className="flex items-center gap-1.5 text-xs bg-[#2a3942] rounded-full px-3 py-1.5">
-                  <Users className="w-3.5 h-3.5 text-[#00a884]" />
-                  <span className="font-medium text-white">{stats.responses_received}</span>
+                <div className="flex items-center gap-1.5 text-xs bg-muted rounded-full px-3 py-1.5">
+                  <Users className="w-3.5 h-3.5 text-primary" />
+                  <span className="font-medium text-foreground">{stats.responses_received}</span>
                 </div>
               </div>
             )}
 
             <div className="flex items-center gap-2">
-              <ThemeToggle className="text-[#8696a0] hover:text-white hover:bg-[#2a3942]" />
-              <Badge className="bg-[#00a884] text-white border-0 text-xs px-2 py-0.5">
+              <ThemeToggle className="text-muted-foreground hover:text-foreground hover:bg-muted" />
+              <Badge className="bg-primary text-primary-foreground border-0 text-xs px-2 py-0.5">
                 ● Online
               </Badge>
             </div>
@@ -715,9 +715,9 @@ const SeatChat: React.FC = () => {
           /* Chats View */
           <div className="flex-1 flex overflow-hidden">
         {/* Conversation Sidebar */}
-        <div className="w-[340px] lg:w-[420px] bg-[#111b21] border-r border-[#2a3942] flex flex-col flex-shrink-0">
+        <div className="w-[340px] lg:w-[420px] bg-sidebar border-r border-border flex flex-col flex-shrink-0">
           {/* Search & Filter */}
-          <div className="p-2 bg-[#111b21]">
+          <div className="p-2 bg-sidebar">
             {/* Time Filters */}
             <div className="flex gap-1 mb-2">
               {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
@@ -727,8 +727,8 @@ const SeatChat: React.FC = () => {
                   className={cn(
                     "flex-1 px-2 py-1.5 text-xs font-medium rounded-lg transition-all",
                     timeFilter === filter 
-                      ? "bg-[#00a884] text-white" 
-                      : "text-[#8696a0] hover:bg-[#2a3942]"
+                      ? "bg-primary text-primary-foreground" 
+                      : "text-muted-foreground hover:bg-muted"
                   )}
                 >
                   {filter}
@@ -738,23 +738,24 @@ const SeatChat: React.FC = () => {
 
             {/* Search */}
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8696a0]" />
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search or start new chat"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10 bg-[#202c33] border-0 text-white placeholder:text-[#8696a0] focus:ring-0 h-9 rounded-lg"
+                className="pl-10 bg-card border-0 text-foreground placeholder:text-muted-foreground focus:ring-0 h-9 rounded-lg"
               />
             </div>
           </div>
+
 
           {/* Conversation List */}
           <div className="flex-1 overflow-y-auto">
             {filteredConversations.length === 0 ? (
               <div className="p-8 text-center">
-                <MessageSquare className="w-12 h-12 text-[#2a3942] mx-auto mb-3" />
-                <p className="text-[#8696a0] font-medium text-sm">No conversations</p>
-                <p className="text-xs text-[#667781] mt-1">
+                <MessageSquare className="w-12 h-12 text-muted mx-auto mb-3" />
+                <p className="text-muted-foreground font-medium text-sm">No conversations</p>
+                <p className="text-xs text-muted-foreground/70 mt-1">
                   {searchQuery ? 'Try a different search' : 'Conversations will appear here'}
                 </p>
               </div>
@@ -766,8 +767,8 @@ const SeatChat: React.FC = () => {
                     className={cn(
                       "flex items-center gap-3 px-3 py-3 cursor-pointer transition-all group",
                       selectedConversation?.id === conv.id
-                        ? "bg-[#2a3942]"
-                        : "hover:bg-[#202c33]"
+                        ? "bg-muted"
+                        : "hover:bg-muted/50"
                     )}
                     onClick={() => setSelectedConversation(conv)}
                   >
@@ -782,24 +783,24 @@ const SeatChat: React.FC = () => {
                       </AvatarFallback>
                     </Avatar>
                     
-                    <div className="flex-1 min-w-0 border-b border-[#2a3942] py-1">
+                    <div className="flex-1 min-w-0 border-b border-border py-1">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="font-medium text-[15px] text-white truncate">
+                        <p className="font-medium text-[15px] text-foreground truncate">
                           {getDisplayName(conv)}
                         </p>
                         <span className={cn(
                           "text-xs flex-shrink-0",
-                          conv.unread_count > 0 ? "text-[#00a884]" : "text-[#667781]"
+                          conv.unread_count > 0 ? "text-primary" : "text-muted-foreground/70"
                         )}>
                           {formatConversationTime(conv.last_message_at)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-0.5">
-                        <p className="text-sm text-[#8696a0] truncate">
+                        <p className="text-sm text-muted-foreground truncate">
                           Tap to view messages
                         </p>
                         {conv.unread_count > 0 && (
-                          <span className="bg-[#00a884] text-white text-[11px] font-medium min-w-[20px] h-5 rounded-full flex items-center justify-center px-1.5 flex-shrink-0">
+                          <span className="bg-primary text-primary-foreground text-[11px] font-medium min-w-[20px] h-5 rounded-full flex items-center justify-center px-1.5 flex-shrink-0">
                             {conv.unread_count}
                           </span>
                         )}
@@ -812,19 +813,19 @@ const SeatChat: React.FC = () => {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-[#8696a0] hover:text-white hover:bg-transparent"
+                          className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-transparent"
                           onClick={(e) => e.stopPropagation()}
                         >
                           <MoreVertical className="w-4 h-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="bg-[#233138] border-[#2a3942] text-white">
+                      <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground">
                         <DropdownMenuItem 
                           onClick={(e) => {
                             e.stopPropagation();
                             toggleHideConversation(conv.id);
                           }}
-                          className="text-[#d1d7db] hover:bg-[#2a3942] focus:bg-[#2a3942]"
+                          className="text-muted-foreground hover:bg-muted focus:bg-muted"
                         >
                           <EyeOff className="w-4 h-4 mr-2" />
                           Hide conversation
@@ -839,14 +840,11 @@ const SeatChat: React.FC = () => {
         </div>
 
         {/* Message Area */}
-        <div className="flex-1 flex flex-col overflow-hidden" style={{
-          backgroundImage: `url("data:image/svg+xml,%3Csvg width='400' height='400' viewBox='0 0 400 400' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23182229' fill-opacity='0.8'%3E%3Cpath d='M20 20h10v10H20zM50 50h10v10H50zM80 20h10v10H80zM110 50h10v10H110zM140 20h10v10H140zM170 50h10v10H170zM200 20h10v10H200zM230 50h10v10H230zM260 20h10v10H260zM290 50h10v10H290zM320 20h10v10H320zM350 50h10v10H350zM20 80h10v10H20zM50 110h10v10H50zM80 80h10v10H80zM110 110h10v10H110zM140 80h10v10H140zM170 110h10v10H170zM200 80h10v10H200zM230 110h10v10H230zM260 80h10v10H260zM290 110h10v10H290zM320 80h10v10H320zM350 110h10v10H350zM20 140h10v10H20zM50 170h10v10H50zM80 140h10v10H80zM110 170h10v10H110zM140 140h10v10H140zM170 170h10v10H170zM200 140h10v10H200zM230 170h10v10H230zM260 140h10v10H260zM290 170h10v10H290zM320 140h10v10H320zM350 170h10v10H350zM20 200h10v10H20zM50 230h10v10H50zM80 200h10v10H80zM110 230h10v10H110zM140 200h10v10H140zM170 230h10v10H170zM200 200h10v10H200zM230 230h10v10H230zM260 200h10v10H260zM290 230h10v10H290zM320 200h10v10H320zM350 230h10v10H350zM20 260h10v10H20zM50 290h10v10H50zM80 260h10v10H80zM110 290h10v10H110zM140 260h10v10H140zM170 290h10v10H170zM200 260h10v10H200zM230 290h10v10H230zM260 260h10v10H260zM290 290h10v10H290zM320 260h10v10H320zM350 290h10v10H350zM20 320h10v10H20zM50 350h10v10H50zM80 320h10v10H80zM110 350h10v10H110zM140 320h10v10H140zM170 350h10v10H170zM200 320h10v10H200zM230 350h10v10H230zM260 320h10v10H260zM290 350h10v10H290zM320 320h10v10H320zM350 350h10v10H350z'/%3E%3C/g%3E%3C/svg%3E")`,
-          backgroundColor: '#0b141a'
-        }}>
+        <div className="flex-1 flex flex-col overflow-hidden bg-background">
           {selectedConversation ? (
             <>
               {/* Chat Header */}
-              <div className="bg-[#202c33] border-b border-[#2a3942] px-4 py-2 flex items-center justify-between flex-shrink-0">
+              <div className="bg-card border-b border-border px-4 py-2 flex items-center justify-between flex-shrink-0">
                 <div className="flex items-center gap-3">
                   <Avatar className="w-10 h-10">
                     <AvatarImage src={selectedConversation.recipient_avatar || ''} />
@@ -858,10 +856,10 @@ const SeatChat: React.FC = () => {
                     </AvatarFallback>
                   </Avatar>
                   <div>
-                    <p className="font-medium text-white text-[15px]">
+                    <p className="font-medium text-foreground text-[15px]">
                       {getDisplayName(selectedConversation)}
                     </p>
-                    <p className="text-xs text-[#8696a0]">
+                    <p className="text-xs text-muted-foreground">
                       {selectedConversation.is_active ? 'online' : 'last seen recently'}
                     </p>
                   </div>
@@ -871,14 +869,14 @@ const SeatChat: React.FC = () => {
                     variant="ghost" 
                     size="icon"
                     onClick={() => setIsMessageSearchOpen(true)}
-                    className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10"
+                    className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10"
                   >
                     <Search className="w-5 h-5" />
                   </Button>
                   <Button 
                     variant="ghost" 
                     size="icon"
-                    className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10"
+                    className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10"
                   >
                     <Phone className="w-5 h-5" />
                   </Button>
@@ -887,15 +885,15 @@ const SeatChat: React.FC = () => {
                       <Button 
                         variant="ghost" 
                         size="icon"
-                        className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10"
+                        className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10"
                       >
                         <MoreVertical className="w-5 h-5" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end" className="bg-[#233138] border-[#2a3942] text-white">
+                    <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground">
                       <DropdownMenuItem 
                         onClick={() => toggleHideConversation(selectedConversation.id)}
-                        className="text-[#d1d7db] hover:bg-[#2a3942] focus:bg-[#2a3942]"
+                        className="text-muted-foreground hover:bg-muted focus:bg-muted"
                       >
                         <EyeOff className="w-4 h-4 mr-2" />
                         Hide conversation
@@ -913,8 +911,8 @@ const SeatChat: React.FC = () => {
                 <div className="max-w-4xl mx-auto space-y-1">
                   {messageGroups.length === 0 ? (
                     <div className="flex flex-col items-center justify-center h-full py-20">
-                      <div className="bg-[#182229] rounded-lg px-3 py-1.5 mb-4">
-                        <p className="text-[#8696a0] text-xs">
+                      <div className="bg-muted rounded-lg px-3 py-1.5 mb-4">
+                        <p className="text-muted-foreground text-xs">
                           {messageSearchQuery ? 'No messages match your search' : 'No messages yet'}
                         </p>
                       </div>
@@ -924,7 +922,7 @@ const SeatChat: React.FC = () => {
                       <div key={groupIndex}>
                         {/* Date Separator */}
                         <div className="flex justify-center my-3">
-                          <span className="bg-[#182229] text-[#8696a0] text-[11px] px-3 py-1 rounded-lg shadow">
+                          <span className="bg-muted text-muted-foreground text-[11px] px-3 py-1 rounded-lg shadow">
                             {formatDateSeparator(group.date)}
                           </span>
                         </div>
@@ -942,20 +940,17 @@ const SeatChat: React.FC = () => {
                               className={cn(
                                 "relative max-w-[65%] rounded-lg px-2.5 py-1.5 shadow-sm",
                                 msg.direction === 'outgoing'
-                                  ? 'bg-[#005c4b] text-white rounded-tr-none'
-                                  : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
+                                  ? 'bg-primary text-primary-foreground rounded-tr-none'
+                                  : 'bg-card text-card-foreground rounded-tl-none'
                               )}
                             >
                               {/* Message tail */}
                               <div className={cn(
                                 "absolute top-0 w-2 h-3",
                                 msg.direction === 'outgoing'
-                                  ? '-right-2 border-l-8 border-l-[#005c4b] border-t-8 border-t-transparent'
-                                  : '-left-2 border-r-8 border-r-[#202c33] border-t-8 border-t-transparent'
-                              )} style={{
-                                borderLeftColor: msg.direction === 'outgoing' ? '#005c4b' : 'transparent',
-                                borderRightColor: msg.direction === 'incoming' ? '#202c33' : 'transparent',
-                              }} />
+                                  ? '-right-2 border-l-8 border-l-primary border-t-8 border-t-transparent'
+                                  : '-left-2 border-r-8 border-r-card border-t-8 border-t-transparent'
+                              )} />
                               
                               {msg.media_url && (
                                 <img
@@ -970,7 +965,7 @@ const SeatChat: React.FC = () => {
                               <div className={cn(
                                 "absolute bottom-1.5 right-2 flex items-center gap-1"
                               )}>
-                                <span className="text-[11px] text-[#8696a0]">
+                                <span className="text-[11px] text-muted-foreground">
                                   {formatMessageTime(msg.created_at)}
                                 </span>
                                 {msg.direction === 'outgoing' && getMessageStatusIcon(msg.status)}
@@ -987,7 +982,7 @@ const SeatChat: React.FC = () => {
 
               {/* Image Preview */}
               {imagePreview && (
-                <div className="bg-[#202c33] border-t border-[#2a3942] p-3 flex-shrink-0">
+                <div className="bg-card border-t border-border p-3 flex-shrink-0">
                   <div className="max-w-3xl mx-auto relative inline-block">
                     <img 
                       src={imagePreview} 
@@ -997,7 +992,7 @@ const SeatChat: React.FC = () => {
                     <Button
                       variant="destructive"
                       size="icon"
-                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-red-500 hover:bg-red-600"
+                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full bg-destructive hover:bg-destructive/90"
                       onClick={clearSelectedImage}
                     >
                       <X className="w-3 h-3" />
@@ -1007,7 +1002,7 @@ const SeatChat: React.FC = () => {
               )}
 
               {/* Message Input */}
-              <div className="bg-[#202c33] px-4 py-2 flex-shrink-0">
+              <div className="bg-card px-4 py-2 flex-shrink-0">
                 <div className="flex items-center gap-2">
                   {/* Emoji */}
                   <EmojiPicker onEmojiSelect={handleEmojiSelect} className="flex-shrink-0" />
@@ -1024,7 +1019,7 @@ const SeatChat: React.FC = () => {
                     variant="ghost"
                     size="icon"
                     onClick={() => fileInputRef.current?.click()}
-                    className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10 flex-shrink-0"
+                    className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 flex-shrink-0"
                   >
                     <Paperclip className="w-5 h-5" />
                   </Button>
@@ -1036,7 +1031,7 @@ const SeatChat: React.FC = () => {
                     onChange={(e) => setMessageInput(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                     disabled={isSending}
-                    className="flex-1 bg-[#2a3942] border-0 text-white placeholder:text-[#8696a0] focus:ring-0 h-10 rounded-lg"
+                    className="flex-1 bg-muted border-0 text-foreground placeholder:text-muted-foreground focus:ring-0 h-10 rounded-lg"
                   />
 
                   {/* Send / Mic Button */}
@@ -1044,7 +1039,7 @@ const SeatChat: React.FC = () => {
                     <Button 
                       onClick={handleSendMessage} 
                       disabled={isSending}
-                      className="bg-[#00a884] hover:bg-[#06cf9c] text-white h-10 w-10 rounded-full flex-shrink-0"
+                      className="bg-primary hover:bg-primary/90 text-primary-foreground h-10 w-10 rounded-full flex-shrink-0"
                       size="icon"
                     >
                       {isSending ? (
@@ -1056,7 +1051,7 @@ const SeatChat: React.FC = () => {
                   ) : (
                     <Button 
                       variant="ghost"
-                      className="text-[#8696a0] hover:text-white hover:bg-[#2a3942] h-10 w-10 rounded-full flex-shrink-0"
+                      className="text-muted-foreground hover:text-foreground hover:bg-muted h-10 w-10 rounded-full flex-shrink-0"
                       size="icon"
                     >
                       <Mic className="w-5 h-5" />
@@ -1069,14 +1064,14 @@ const SeatChat: React.FC = () => {
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
                 <div className="w-[280px] h-[280px] mx-auto mb-8 relative">
-                  <div className="absolute inset-0 bg-gradient-to-br from-[#00a884]/20 to-[#25d366]/20 rounded-full animate-pulse" />
-                  <div className="absolute inset-8 bg-gradient-to-br from-[#00a884]/30 to-[#25d366]/30 rounded-full" />
-                  <div className="absolute inset-16 bg-gradient-to-br from-[#00a884] to-[#25d366] rounded-full flex items-center justify-center">
-                    <Send className="w-16 h-16 text-white" />
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/20 to-primary/10 rounded-full animate-pulse" />
+                  <div className="absolute inset-8 bg-gradient-to-br from-primary/30 to-primary/20 rounded-full" />
+                  <div className="absolute inset-16 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center">
+                    <Send className="w-16 h-16 text-primary-foreground" />
                   </div>
                 </div>
-                <h2 className="text-[32px] font-light text-[#e9edef] mb-2">{seat?.name}</h2>
-                <p className="text-sm text-[#8696a0] max-w-md mx-auto">
+                <h2 className="text-[32px] font-light text-foreground mb-2">{seat?.name}</h2>
+                <p className="text-sm text-muted-foreground max-w-md mx-auto">
                   Send and receive messages without keeping your phone online.
                   <br />
                   Select a conversation to start chatting.
@@ -1092,57 +1087,57 @@ const SeatChat: React.FC = () => {
         <div className="max-w-5xl mx-auto space-y-6">
           {/* Stats Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-[#202c33] rounded-xl p-4 border border-[#2a3942]">
+            <div className="bg-card rounded-xl p-4 border border-border">
               <div className="flex items-center gap-3 mb-3">
-                <div className="w-10 h-10 rounded-lg bg-[#00a884]/20 flex items-center justify-center">
-                  <MessageSquare className="w-5 h-5 text-[#00a884]" />
+                <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
+                  <MessageSquare className="w-5 h-5 text-primary" />
                 </div>
-                <span className="text-[#8696a0] text-sm">Total Chats</span>
+                <span className="text-muted-foreground text-sm">Total Chats</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.total_conversations}</p>
+              <p className="text-3xl font-bold text-foreground">{stats.total_conversations}</p>
             </div>
             
-            <div className="bg-[#202c33] rounded-xl p-4 border border-[#2a3942]">
+            <div className="bg-card rounded-xl p-4 border border-border">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
                   <Send className="w-5 h-5 text-blue-400" />
                 </div>
-                <span className="text-[#8696a0] text-sm">Sent Today</span>
+                <span className="text-muted-foreground text-sm">Sent Today</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.messages_sent_today}</p>
+              <p className="text-3xl font-bold text-foreground">{stats.messages_sent_today}</p>
             </div>
             
-            <div className="bg-[#202c33] rounded-xl p-4 border border-[#2a3942]">
+            <div className="bg-card rounded-xl p-4 border border-border">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center">
                   <Eye className="w-5 h-5 text-purple-400" />
                 </div>
-                <span className="text-[#8696a0] text-sm">Messages Read</span>
+                <span className="text-muted-foreground text-sm">Messages Read</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.messages_read}</p>
+              <p className="text-3xl font-bold text-foreground">{stats.messages_read}</p>
             </div>
             
-            <div className="bg-[#202c33] rounded-xl p-4 border border-[#2a3942]">
+            <div className="bg-card rounded-xl p-4 border border-border">
               <div className="flex items-center gap-3 mb-3">
                 <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center">
                   <Users className="w-5 h-5 text-amber-400" />
                 </div>
-                <span className="text-[#8696a0] text-sm">Responses</span>
+                <span className="text-muted-foreground text-sm">Responses</span>
               </div>
-              <p className="text-3xl font-bold text-white">{stats.responses_received}</p>
+              <p className="text-3xl font-bold text-foreground">{stats.responses_received}</p>
             </div>
           </div>
           
           {/* Response Rate */}
-          <div className="bg-[#202c33] rounded-xl p-6 border border-[#2a3942]">
-            <h3 className="text-white font-medium mb-4 flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-[#00a884]" />
+          <div className="bg-card rounded-xl p-6 border border-border">
+            <h3 className="text-foreground font-medium mb-4 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-primary" />
               Response Rate
             </h3>
             <div className="flex items-center gap-4">
-              <div className="flex-1 bg-[#2a3942] rounded-full h-4 overflow-hidden">
+              <div className="flex-1 bg-muted rounded-full h-4 overflow-hidden">
                 <div 
-                  className="h-full bg-gradient-to-r from-[#00a884] to-[#25d366] transition-all duration-500"
+                  className="h-full bg-gradient-to-r from-primary to-primary/80 transition-all duration-500"
                   style={{ 
                     width: `${stats.total_conversations > 0 
                       ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
@@ -1150,28 +1145,28 @@ const SeatChat: React.FC = () => {
                   }}
                 />
               </div>
-              <span className="text-white font-bold text-lg min-w-[60px]">
+              <span className="text-foreground font-bold text-lg min-w-[60px]">
                 {stats.total_conversations > 0 
                   ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
                   : 0}%
               </span>
             </div>
-            <p className="text-[#8696a0] text-sm mt-2">
+            <p className="text-muted-foreground text-sm mt-2">
               {stats.responses_received} responses from {stats.total_conversations} conversations
             </p>
           </div>
           
           {/* Quick Info */}
-          <div className="bg-[#202c33] rounded-xl p-6 border border-[#2a3942]">
-            <h3 className="text-white font-medium mb-4">Seat Information</h3>
+          <div className="bg-card rounded-xl p-6 border border-border">
+            <h3 className="text-foreground font-medium mb-4">Seat Information</h3>
             <div className="grid grid-cols-2 gap-4 text-sm">
               <div>
-                <p className="text-[#8696a0]">Seat Name</p>
-                <p className="text-white font-medium">{seat?.name}</p>
+                <p className="text-muted-foreground">Seat Name</p>
+                <p className="text-foreground font-medium">{seat?.name}</p>
               </div>
               <div>
-                <p className="text-[#8696a0]">Status</p>
-                <p className="text-[#00a884] font-medium">● Active</p>
+                <p className="text-muted-foreground">Status</p>
+                <p className="text-primary font-medium">● Active</p>
               </div>
             </div>
           </div>
