@@ -51,6 +51,8 @@ interface Conversation {
   is_active: boolean;
   seat_id: string | null;
   first_message_sent: boolean | null;
+  last_message_content?: string;
+  last_message_direction?: 'incoming' | 'outgoing';
 }
 
 interface Message {
@@ -258,7 +260,27 @@ const SeatChat: React.FC = () => {
         .order('last_message_at', { ascending: false, nullsFirst: false });
 
       if (error) throw error;
-      setConversations(data || []);
+      
+      // Fetch last message for each conversation
+      const conversationsWithMessages = await Promise.all(
+        (data || []).map(async (conv) => {
+          const { data: lastMsg } = await supabase
+            .from('messages')
+            .select('content, direction')
+            .eq('conversation_id', conv.id)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          
+          return {
+            ...conv,
+            last_message_content: lastMsg?.content || null,
+            last_message_direction: lastMsg?.direction || null,
+          };
+        })
+      );
+      
+      setConversations(conversationsWithMessages);
     } catch (err) {
       console.error('Error fetching conversations:', err);
     }
@@ -816,9 +838,17 @@ const SeatChat: React.FC = () => {
                     
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="font-semibold text-sm text-foreground truncate">
-                          {getDisplayName(conv)}
-                        </p>
+                        <div className="flex items-center gap-1.5 min-w-0">
+                          <p className="font-semibold text-sm text-foreground truncate">
+                            {getDisplayName(conv)}
+                          </p>
+                          {/* Campaign Badge */}
+                          {conv.first_message_sent && (
+                            <span className="flex-shrink-0 px-1.5 py-0.5 rounded text-[8px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                              Campaign
+                            </span>
+                          )}
+                        </div>
                         <span className={cn(
                           "text-[10px] flex-shrink-0 font-medium tabular-nums",
                           conv.unread_count > 0 ? "text-primary font-semibold" : "text-muted-foreground/70"
@@ -827,8 +857,20 @@ const SeatChat: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2 mt-0.5">
-                        <p className="text-[11px] text-muted-foreground/70 truncate">
-                          Click to view messages
+                        <p className={cn(
+                          "text-[11px] truncate",
+                          conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
+                        )}>
+                          {conv.last_message_content ? (
+                            <>
+                              {conv.last_message_direction === 'outgoing' && (
+                                <span className="text-muted-foreground/50">You: </span>
+                              )}
+                              {conv.last_message_content.slice(0, 40)}{conv.last_message_content.length > 40 ? '...' : ''}
+                            </>
+                          ) : (
+                            <span className="italic text-muted-foreground/50">No messages yet</span>
+                          )}
                         </p>
                         {conv.unread_count > 0 && (
                           <span className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-[9px] font-bold min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1.5 flex-shrink-0 shadow-sm">
@@ -1094,19 +1136,14 @@ const SeatChat: React.FC = () => {
           ) : (
             <div className="flex-1 flex items-center justify-center bg-gradient-to-br from-muted/20 to-muted/5">
               <div className="text-center">
-                <div className="w-48 h-48 mx-auto mb-6 relative">
+                <div className="w-40 h-40 mx-auto mb-6 relative">
                   <div className="absolute inset-0 bg-gradient-to-br from-primary/15 to-primary/5 rounded-full animate-pulse" />
-                  <div className="absolute inset-6 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
-                  <div className="absolute inset-12 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
-                    <Send className="w-10 h-10 text-primary-foreground rotate-[-45deg]" />
+                  <div className="absolute inset-5 bg-gradient-to-br from-primary/25 to-primary/15 rounded-full" />
+                  <div className="absolute inset-10 bg-gradient-to-br from-primary to-primary/80 rounded-full flex items-center justify-center shadow-xl shadow-primary/30">
+                    <Send className="w-8 h-8 text-primary-foreground rotate-[-45deg]" />
                   </div>
                 </div>
-                <h2 className="text-2xl font-bold text-foreground mb-2">{seat?.name}</h2>
-                <p className="text-sm text-muted-foreground/80 max-w-xs mx-auto leading-relaxed">
-                  Send and receive messages seamlessly.
-                  <br />
-                  <span className="text-primary/80 font-medium">Select a conversation to start.</span>
-                </p>
+                <h2 className="text-xl font-bold text-foreground">{seat?.name}</h2>
               </div>
             </div>
           )}
