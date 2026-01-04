@@ -986,17 +986,17 @@ async def main_loop():
                     print(f"    Error: {e}")
             
             elif task_type == "api_test":
-                # Test API credential validity
+                # Test API credential validity with REAL Telegram connection
                 task_id = task.get("task_id")
                 account = task.get("account", {})
                 api_credential_id = account.get("api_credential_id")
                 api_id = str(account.get("api_id", ""))
                 api_hash = str(account.get("api_hash", ""))
                 
-                print(f"  [API] Testing API for {account.get('phone_number')}...")
-                print(f"        api_id={api_id}, api_hash={api_hash} (len={len(api_hash)})")
+                print(f"  [API] Testing API credentials...")
+                print(f"        api_id={api_id}, api_hash={api_hash}")
                 
-                # Inline validation - no function import needed
+                # Step 1: Format validation
                 format_error = None
                 try:
                     int(api_id)
@@ -1005,12 +1005,12 @@ async def main_loop():
                 
                 if not format_error:
                     if len(api_hash) != 32:
-                        format_error = f"API Hash must be 32 chars, got {len(api_hash)}: {api_hash}"
+                        format_error = f"API Hash must be 32 chars, got {len(api_hash)}"
                     else:
                         try:
                             int(api_hash, 16)
                         except:
-                            format_error = f"API Hash must be hex, got: {api_hash}"
+                            format_error = f"API Hash must be hex characters only"
                 
                 if format_error:
                     await report_result("api_test", {
@@ -1023,55 +1023,76 @@ async def main_loop():
                     print(f"    [INVALID] {format_error}")
                     continue
                 
-                # Format is valid, try to connect
+                # Step 2: REAL Telegram API test - create fresh client without session
+                print(f"    Testing with Telegram servers...")
                 try:
-                    client = await get_or_create_client(account)
-                    if client:
-                        await report_result("api_test", {
-                            "task_id": task_id,
-                            "account_id": account.get("id"),
-                            "api_credential_id": api_credential_id,
-                            "success": True
-                        })
-                        print(f"    [OK] API credential valid")
-                    else:
-                        await report_result("api_test", {
-                            "task_id": task_id,
-                            "account_id": account.get("id"),
-                            "api_credential_id": api_credential_id,
-                            "success": False,
-                            "error": "Connection failed"
-                        })
-                        print(f"    [FAIL] Connection failed")
-                except ApiIdInvalidError:
+                    import tempfile
+                    import uuid
+                    
+                    # Create a temporary session file (no auth)
+                    temp_session = os.path.join(tempfile.gettempdir(), f"api_test_{uuid.uuid4().hex[:8]}")
+                    
+                    # Create client with test credentials
+                    test_client = TelegramClient(
+                        temp_session,
+                        int(api_id),
+                        api_hash,
+                        timeout=15,
+                        connection_retries=1
+                    )
+                    
+                    # Try to connect - this will validate API credentials with Telegram
+                    await asyncio.wait_for(test_client.connect(), timeout=20)
+                    
+                    # If we get here, API credentials are valid with Telegram
+                    # The client won't be authorized (no phone), but connection works
+                    await test_client.disconnect()
+                    
+                    # Clean up temp session
+                    try:
+                        os.remove(temp_session + ".session")
+                    except:
+                        pass
+                    
+                    await report_result("api_test", {
+                        "task_id": task_id,
+                        "account_id": account.get("id"),
+                        "api_credential_id": api_credential_id,
+                        "success": True
+                    })
+                    print(f"    [OK] API credentials valid with Telegram")
+                    
+                except ApiIdInvalidError as e:
                     await report_result("api_test", {
                         "task_id": task_id,
                         "account_id": account.get("id"),
                         "api_credential_id": api_credential_id,
                         "success": False,
-                        "error": "API ID or Hash is invalid"
+                        "error": "API ID is invalid - not registered with Telegram"
                     })
-                    print(f"    [INVALID] API ID or Hash is invalid")
+                    print(f"    [INVALID] API ID not registered with Telegram")
                 except Exception as e:
                     err_str = str(e).lower()
-                    if "api" in err_str and ("invalid" in err_str or "incorrect" in err_str):
+                    # Check for API-related errors
+                    if "api" in err_str or "invalid" in err_str or "unauthorized" in err_str:
                         await report_result("api_test", {
                             "task_id": task_id,
                             "account_id": account.get("id"),
                             "api_credential_id": api_credential_id,
                             "success": False,
-                            "error": "API credentials invalid"
+                            "error": f"API credentials rejected: {str(e)[:100]}"
                         })
-                        print(f"    [INVALID] API credentials invalid")
+                        print(f"    [INVALID] {e}")
                     else:
+                        # Network or other error - might not be API issue
                         await report_result("api_test", {
                             "task_id": task_id,
                             "account_id": account.get("id"),
                             "api_credential_id": api_credential_id,
                             "success": False,
-                            "error": str(e)
+                            "error": f"Connection error: {str(e)[:100]}"
                         })
-                        print(f"    [FAIL] {e}")
+                        print(f"    [ERROR] {e}")
         
         except Exception as e:
             print(f"  [ERROR] {e}")
