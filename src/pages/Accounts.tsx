@@ -962,6 +962,37 @@ const Accounts: React.FC = () => {
     }
   };
 
+  // Remove proxy from account (user-initiated only)
+  const handleRemoveProxyFromAccount = async (accountId: string) => {
+    try {
+      // Get the current account's proxy_id first
+      const account = accounts.find(a => a.id === accountId);
+      const proxyId = account?.proxyId;
+
+      // Remove proxy_id from account
+      const { error: accountError } = await supabase
+        .from('telegram_accounts')
+        .update({ proxy_id: null, geo_mismatch: false })
+        .eq('id', accountId);
+      
+      if (accountError) throw accountError;
+
+      // Also clear the assigned_account_id from the proxy
+      if (proxyId) {
+        await supabase
+          .from('proxies')
+          .update({ assigned_account_id: null })
+          .eq('id', proxyId);
+      }
+      
+      toast.success('Proxy removed from account');
+      refreshData();
+    } catch (error) {
+      console.error('Error removing proxy:', error);
+      toast.error('Failed to remove proxy');
+    }
+  };
+
   // Real session verification via edge function (checks file validity)
   const handleBulkCheck = async () => {
     if (selectedIds.size === 0) return;
@@ -1487,6 +1518,15 @@ const Accounts: React.FC = () => {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
+            {account.proxyId && (
+              <>
+                <DropdownMenuItem onClick={() => handleRemoveProxyFromAccount(account.id)}>
+                  <Unlink className="w-4 h-4 mr-2" />
+                  Remove Proxy
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+              </>
+            )}
             <DropdownMenuItem onClick={() => handleDeleteAccount(account.id)} className="text-destructive">
               <Trash2 className="w-4 h-4 mr-2" />
               Delete Account
