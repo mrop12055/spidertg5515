@@ -114,6 +114,7 @@ TelegramCRM - Configuration
 """
 
 BACKEND_URL = "${supabaseUrl}/functions/v1"
+SUPABASE_URL = "${supabaseUrl}"
 SUPABASE_KEY = "${supabaseKey}"
 TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
@@ -572,13 +573,18 @@ LiveChat Runner - Handles incoming messages and live chat replies
 import asyncio
 import signal
 import base64
+import time
 
+import httpx
 from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all
 )
+from config import SUPABASE_URL, SUPABASE_KEY
+
+SUPABASE_URL_BASE = SUPABASE_URL.replace("/functions/v1", "") if "/functions/v1" in SUPABASE_URL else SUPABASE_URL.rsplit("/", 1)[0]
 
 RUNNING = True
 
@@ -591,40 +597,104 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
+async def check_conversation_exists(account_id: str, sender_id: int) -> bool:
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            response = await http.get(
+                f"{SUPABASE_URL_BASE}/rest/v1/conversations",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}"
+                },
+                params={
+                    "account_id": f"eq.{account_id}",
+                    "recipient_telegram_id": f"eq.{sender_id}",
+                    "select": "id,first_message_sent"
+                }
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    return data[0].get("first_message_sent", False)
+            return False
+    except Exception as e:
+        print(f"    [WARN] Check conversation error: {e}")
+        return False
+
+
 async def setup_message_handler(client, account_id: str):
     @client.on(events.NewMessage(incoming=True))
     async def handler(event):
         try:
             sender = await event.get_sender()
-            if sender:
-                content = event.message.text or "[Media]"
-                media_type = "image" if event.message.photo else None
-                if event.message.photo:
-                    content = "[Photo] " + (event.message.text or "")
-                
-                sender_phone = None
-                if hasattr(sender, 'phone') and sender.phone:
-                    sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
-                
-                avatar_base64 = None
+            if not sender:
+                return
+            
+            from telethon.tl.types import User
+            if not isinstance(sender, User):
+                return
+            if getattr(sender, 'bot', False):
+                return
+            
+            conversation_exists = await check_conversation_exists(account_id, sender.id)
+            if not conversation_exists:
+                return
+            
+            content = event.message.text or "[Media]"
+            media_url = None
+            media_type = None
+            
+            if event.message.photo:
+                print(f"    [PHOTO] Receiving...")
+                content = "[Photo] " + (event.message.text or "")
+                media_type = "image"
                 try:
-                    photo = await client.download_profile_photo(sender, bytes)
-                    if photo:
-                        avatar_base64 = base64.b64encode(photo).decode('utf-8')
-                except:
-                    pass
-                
-                print(f"  [IN] From {sender.first_name or sender.id}: {content[:40]}...")
-                await report_result("incoming_message", {
-                    "account_id": account_id,
-                    "sender_id": sender.id,
-                    "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
-                    "sender_username": sender.username,
-                    "sender_phone": sender_phone,
-                    "sender_avatar": avatar_base64,
-                    "content": content,
-                    "media_type": media_type
-                })
+                    photo_bytes = await client.download_media(event.message.photo, bytes)
+                    if photo_bytes:
+                        file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.jpg"
+                        file_path = f"{account_id}/{file_name}"
+                        async with httpx.AsyncClient(timeout=30.0) as http:
+                            upload_response = await http.post(
+                                f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{file_path}",
+                                headers={
+                                    "apikey": SUPABASE_KEY,
+                                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                                    "Content-Type": "image/jpeg"
+                                },
+                                content=photo_bytes
+                            )
+                            if upload_response.status_code in (200, 201):
+                                media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
+                                print(f"    [OK] Photo uploaded")
+                            else:
+                                print(f"    [WARN] Photo upload failed: {upload_response.status_code}")
+                except Exception as e:
+                    print(f"    [WARN] Could not upload photo: {e}")
+            
+            sender_phone = None
+            if hasattr(sender, 'phone') and sender.phone:
+                sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+            
+            avatar_base64 = None
+            try:
+                photo = await client.download_profile_photo(sender, bytes)
+                if photo:
+                    avatar_base64 = base64.b64encode(photo).decode('utf-8')
+            except:
+                pass
+            
+            print(f"  [IN] From {sender.first_name or sender.id}: {content[:40]}...")
+            await report_result("incoming_message", {
+                "account_id": account_id,
+                "sender_id": sender.id,
+                "sender_name": f"{sender.first_name or ''} {sender.last_name or ''}".strip(),
+                "sender_username": sender.username,
+                "sender_phone": sender_phone,
+                "sender_avatar": avatar_base64,
+                "content": content,
+                "media_url": media_url,
+                "media_type": media_type
+            })
         except Exception as e:
             print(f"  [WARN] Handler error: {e}")
 
