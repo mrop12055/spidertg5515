@@ -148,42 +148,39 @@ Deno.serve(async (req) => {
       .eq('status', 'completed')
       .lt('completed_at', sevenDaysAgo);
 
-    // 10. Fix stuck accounts that are marked "active" but have a ban_reason set
-    // These are accounts that got frozen/restricted but somehow reverted to active status
-    // EXCLUDE accounts that have a valid future restricted_until (they're legitimately restricted, not stuck)
-    // First, get candidates that are active with a ban_reason
-    const { data: activeWithBanReason, error: fetchError } = await supabase
+    // 10. Auto-recover frozen/restricted accounts with expired restriction timers
+    // These are accounts that got temporary FloodWait errors and should be back to active
+    const { data: expiredRestrictions, error: expiredError } = await supabase
       .from('telegram_accounts')
-      .select('id, phone_number, ban_reason, restricted_until')
+      .update({ status: 'active', restricted_until: null, ban_reason: null })
+      .in('status', ['restricted', 'cooldown', 'frozen'])
+      .not('restricted_until', 'is', null)
+      .lte('restricted_until', now.toISOString())
+      .select('id, phone_number');
+    
+    if (expiredError) {
+      console.error('[system-maintenance] Error recovering expired restrictions:', expiredError);
+    } else if (expiredRestrictions && expiredRestrictions.length > 0) {
+      console.log(`[system-maintenance] Recovered ${expiredRestrictions.length} accounts with expired restrictions:`,
+        expiredRestrictions.map(a => a.phone_number));
+    }
+
+    // 11. Fix active accounts that have ban_reason but NO valid restriction timer
+    // These are edge cases - clear the stale ban_reason to prevent confusion
+    const { data: staleReasons, error: staleError } = await supabase
+      .from('telegram_accounts')
+      .update({ ban_reason: null })
       .eq('status', 'active')
       .not('ban_reason', 'is', null)
-      .neq('ban_reason', '');
+      .neq('ban_reason', '')
+      .or('restricted_until.is.null,restricted_until.lte.' + now.toISOString())
+      .select('id, phone_number, ban_reason');
     
-    if (fetchError) {
-      console.error('[system-maintenance] Error fetching active accounts with ban_reason:', fetchError);
-    } else if (activeWithBanReason && activeWithBanReason.length > 0) {
-      const now = new Date();
-      // Filter out accounts that have a valid future restricted_until
-      const accountsToFreeze = activeWithBanReason.filter(acc => {
-        if (!acc.restricted_until) return true; // No restriction date = should be frozen
-        const restrictedUntil = new Date(acc.restricted_until);
-        return restrictedUntil <= now; // Already expired = should be frozen
-      });
-      
-      if (accountsToFreeze.length > 0) {
-        const { data: stuckActiveAccounts, error: stuckAccountsError } = await supabase
-          .from('telegram_accounts')
-          .update({ status: 'frozen' })
-          .in('id', accountsToFreeze.map(a => a.id))
-          .select('id, phone_number, ban_reason');
-        
-        if (stuckAccountsError) {
-          console.error('[system-maintenance] Error fixing stuck active accounts:', stuckAccountsError);
-        } else if (stuckActiveAccounts && stuckActiveAccounts.length > 0) {
-          console.log(`[system-maintenance] Fixed ${stuckActiveAccounts.length} stuck active accounts with ban_reason:`, 
-            stuckActiveAccounts.map(a => `${a.phone_number}: ${a.ban_reason}`));
-        }
-      }
+    if (staleError) {
+      console.error('[system-maintenance] Error clearing stale ban_reasons:', staleError);
+    } else if (staleReasons && staleReasons.length > 0) {
+      console.log(`[system-maintenance] Cleared stale ban_reasons from ${staleReasons.length} active accounts:`,
+        staleReasons.map(a => `${a.phone_number}: ${a.ban_reason}`));
     }
 
     // Log summary
