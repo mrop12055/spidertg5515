@@ -328,16 +328,22 @@ const SeatChat: React.FC = () => {
   }, [token]);
 
   // Fetch conversations for this seat - ONLY campaign conversations (where we messaged first)
+  // Limited to last 5 days
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
 
     try {
-      // Only fetch campaign conversations (first_message_sent = true) to reduce load
+      // Calculate 5 days ago cutoff
+      const fiveDaysAgo = new Date();
+      fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+      
+      // Only fetch campaign conversations (first_message_sent = true) from last 5 days
       const { data, error } = await supabase
         .from('conversations')
         .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
         .eq('seat_id', seat.id)
         .eq('first_message_sent', true)
+        .gte('last_message_at', fiveDaysAgo.toISOString())
         .order('last_message_at', { ascending: false, nullsFirst: false });
 
       if (error) throw error;
