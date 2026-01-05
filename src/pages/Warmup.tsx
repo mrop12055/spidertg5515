@@ -696,8 +696,8 @@ export default function Warmup() {
               <CardTitle className="text-lg flex items-center gap-2">
                 <Users className="h-5 w-5" />
                 Paired Accounts ({prePairedAccounts.length})
-                {session?.status === "active" && pairs.length > 0 && (
-                  <Badge className="ml-2 bg-green-500">{pairs.length} running</Badge>
+                {session?.status === "active" && pairs.filter(p => p.status === "active").length > 0 && (
+                  <Badge className="ml-2 bg-green-500">{pairs.filter(p => p.status === "active").length} running</Badge>
                 )}
               </CardTitle>
             </CardHeader>
