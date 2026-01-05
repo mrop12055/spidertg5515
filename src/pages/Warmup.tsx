@@ -602,38 +602,38 @@ export default function Warmup() {
                       return (
                         <div
                           key={account.id}
-                          className={`flex items-center justify-between p-3 rounded-lg ${
+                          className={`flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg gap-2 ${
                             isRunning ? "bg-green-500/10 border border-green-500/30" : "bg-muted/50"
                           }`}
                         >
-                          <div className="flex items-center gap-3">
-                            <Badge variant="outline" className="h-6 w-12 justify-center font-semibold">
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <Badge variant="outline" className="h-6 w-8 justify-center font-semibold shrink-0">
                               #{index + 1}
                             </Badge>
-                            <div className="flex items-center gap-2">
-                              <div className="text-left">
-                                <span className="font-mono text-sm block">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <div className="text-left min-w-0">
+                                <span className="font-mono text-sm block truncate">
                                   {formatPhone(account.phone_number)}
                                 </span>
                                 {account.first_name && (
-                                  <span className="text-xs text-muted-foreground">{account.first_name}</span>
+                                  <span className="text-xs text-muted-foreground truncate block">{account.first_name}</span>
                                 )}
                               </div>
-                              <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
-                              <div className="text-left">
-                                <span className="font-mono text-sm block">
+                              <ArrowLeftRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                              <div className="text-left min-w-0">
+                                <span className="font-mono text-sm block truncate">
                                   {formatPhone(account.pair_phone)}
                                 </span>
                                 {account.pair_first_name && (
-                                  <span className="text-xs text-muted-foreground">{account.pair_first_name}</span>
+                                  <span className="text-xs text-muted-foreground truncate block">{account.pair_first_name}</span>
                                 )}
                               </div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 shrink-0">
                             {isRunning ? (
                               <>
-                                <Badge variant="secondary">
+                                <Badge variant="secondary" className="shrink-0">
                                   {activePair?.messages_exchanged || 0} msgs
                                 </Badge>
                                 <Button
@@ -641,7 +641,7 @@ export default function Warmup() {
                                   variant="destructive"
                                   onClick={() => activePair && handleStopSinglePair(activePair.id)}
                                   disabled={stoppingPairId === activePair?.id}
-                                  className="h-7 text-xs"
+                                  className="h-7 text-xs shrink-0"
                                 >
                                   {stoppingPairId === activePair?.id ? (
                                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -650,7 +650,7 @@ export default function Warmup() {
                                   )}
                                   Stop
                                 </Button>
-                                <Badge className="bg-green-500">
+                                <Badge className="bg-green-500 shrink-0 whitespace-nowrap">
                                   <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                                   Running
                                 </Badge>
