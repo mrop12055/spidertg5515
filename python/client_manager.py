@@ -379,16 +379,17 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
     try:
         entity = None
 
-        # Fast path: telegram user id
-        if isinstance(recipient, int):
-            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)
+        # Normalize recipient to handle various types (int, str, float from JSON)
+        # Telegram IDs can come as int, float, or numeric string from JSON
+        if isinstance(recipient, (int, float)):
+            entity = await asyncio.wait_for(client.get_entity(int(recipient)), timeout=10)
         else:
             recipient_str = str(recipient or "").strip()
 
-            # If backend sent a numeric id as string
-            if recipient_str.isdigit():
+            # If backend sent a numeric id as string (handles large Telegram IDs)
+            if recipient_str.isdigit() or (recipient_str.startswith('-') and recipient_str[1:].isdigit()):
                 entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=10)
-            elif recipient_str.startswith("@"): 
+            elif recipient_str.startswith("@"):
                 entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=15)
             else:
                 from telethon.tl.functions.contacts import ImportContactsRequest
