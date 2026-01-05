@@ -1010,7 +1010,7 @@ export default function Warmup() {
                                 return dateB - dateA;
                               })
                               .slice(0, 100); // Show only 100 most recent
-                            const totalCount = stats.messagesSent + stats.failedMessages;
+                            const totalCount = combinedMessages.length; // Only count what's displayed
                             return combinedMessages.map((msg, index) => {
                               const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
                               const isFailed = msg.status === 'failed';
