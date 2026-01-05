@@ -1,5 +1,5 @@
 // Account status types
-export type AccountStatus = 'active' | 'banned' | 'restricted' | 'disconnected' | 'cooldown' | 'frozen';
+export type AccountStatus = 'active' | 'banned' | 'restricted' | 'disconnected' | 'cooldown';
 
 export interface TelegramAccount {
   id: string;

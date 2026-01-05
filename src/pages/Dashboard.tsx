@@ -57,7 +57,7 @@ const Dashboard: React.FC = () => {
   const accountStats = {
     active: accounts.filter(a => a.status === 'active').length,
     restricted: accounts.filter(a => a.status === 'restricted' || a.status === 'cooldown').length,
-    inactive: accounts.filter(a => a.status === 'banned' || a.status === 'frozen' || a.status === 'disconnected').length,
+    inactive: accounts.filter(a => a.status === 'banned' || a.status === 'disconnected').length,
   };
 
   const fetchQueueStats = async () => {
