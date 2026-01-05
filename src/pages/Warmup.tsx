@@ -191,7 +191,8 @@ export default function Warmup() {
 
       setPendingMessages((pendingData as unknown as WarmupMessage[]) || []);
 
-      // Fetch failed messages (errors)
+      // Fetch failed messages (errors) - only from last 24 hours, ordered by most recent
+      const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const { data: errorData } = await supabase
         .from("warmup_messages")
         .select(`
@@ -205,8 +206,9 @@ export default function Warmup() {
           receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number)
         `)
         .eq("status", "failed")
+        .gte("scheduled_at", twentyFourHoursAgo)
         .order("scheduled_at", { ascending: false })
-        .limit(10);
+        .limit(50);
 
       setRecentErrors((errorData as unknown as WarmupMessage[]) || []);
 
