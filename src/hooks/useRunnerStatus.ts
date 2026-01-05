@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface RunnerInfo {
@@ -28,36 +28,60 @@ export const useRunnerStatus = () => {
     }))
   );
 
-  useEffect(() => {
-    const checkRunnerStatus = async () => {
-      try {
-        const { data: heartbeats } = await supabase
-          .from('runner_heartbeats')
-          .select('runner_name, last_seen, status');
-        
-        const runnerMap = new Map<string, Date>();
-        if (heartbeats) {
-          for (const hb of heartbeats) {
-            runnerMap.set(hb.runner_name, new Date(hb.last_seen));
-          }
+  const checkRunnerStatus = useCallback(async () => {
+    try {
+      const { data: heartbeats } = await supabase
+        .from('runner_heartbeats')
+        .select('runner_name, last_seen, status');
+      
+      const runnerMap = new Map<string, Date>();
+      if (heartbeats) {
+        for (const hb of heartbeats) {
+          runnerMap.set(hb.runner_name, new Date(hb.last_seen));
         }
-        
-        const fifteenSecondsAgo = new Date(Date.now() - 15000);
-
-        setRunners(prev => prev.map(runner => ({
-          ...runner,
-          isOnline: runnerMap.has(runner.runnerKey) && runnerMap.get(runner.runnerKey)! > fifteenSecondsAgo,
-          lastSeen: runnerMap.get(runner.runnerKey) || runner.lastSeen,
-        })));
-      } catch (error) {
-        console.error('Error checking runner status:', error);
       }
-    };
+      
+      const fifteenSecondsAgo = new Date(Date.now() - 15000);
 
-    checkRunnerStatus();
-    const interval = setInterval(checkRunnerStatus, 5000);
-    return () => clearInterval(interval);
+      setRunners(prev => prev.map(runner => ({
+        ...runner,
+        isOnline: runnerMap.has(runner.runnerKey) && runnerMap.get(runner.runnerKey)! > fifteenSecondsAgo,
+        lastSeen: runnerMap.get(runner.runnerKey) || runner.lastSeen,
+      })));
+    } catch (error) {
+      console.error('Error checking runner status:', error);
+    }
   }, []);
+
+  useEffect(() => {
+    // Initial check
+    checkRunnerStatus();
+
+    // Subscribe to realtime updates on runner_heartbeats
+    const channel = supabase
+      .channel('runner-heartbeats-live')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'runner_heartbeats'
+        },
+        () => {
+          // On any change, re-check status
+          checkRunnerStatus();
+        }
+      )
+      .subscribe();
+
+    // Also check every 5 seconds to update "offline" status when heartbeats stop
+    const interval = setInterval(checkRunnerStatus, 5000);
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(interval);
+    };
+  }, [checkRunnerStatus]);
 
   const anyOffline = runners.some(r => !r.isOnline);
   const allOnline = runners.every(r => r.isOnline);
