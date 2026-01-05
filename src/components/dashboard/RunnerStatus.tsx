@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Send, MessageSquare, UserCog, Flame, Ban, CheckCircle2, XCircle, Activity } from 'lucide-react';
+import { Send, MessageSquare, UserCog, Flame, Ban, CheckCircle2, XCircle, Activity, MessagesSquare } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRunnerStatus } from '@/hooks/useRunnerStatus';
 
@@ -25,6 +25,11 @@ const runnerIcons: Record<string, { icon: React.ReactNode; color: string; functi
     color: 'text-orange-500',
     functions: ['Join channels', 'View content', 'Reactions'],
   },
+  warmup_chat: {
+    icon: <MessagesSquare className="h-4 w-4" />,
+    color: 'text-amber-500',
+    functions: ['Pair messaging', 'Warmup conversations'],
+  },
   block: {
     icon: <Ban className="h-4 w-4" />,
     color: 'text-red-500',
@@ -47,7 +52,7 @@ export const RunnerStatusCard: React.FC = () => {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
           {runners.map((runner) => {
             const config = runnerIcons[runner.runnerKey];
             return (
