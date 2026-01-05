@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -508,6 +508,22 @@ export default function Warmup() {
     return index >= 0 ? index + 1 : null;
   };
 
+  // Compute combined messages for Sent tab (only 100 most recent)
+  const displayedSentActivity = useMemo(() => {
+    const combined = [...recentErrors, ...sentMessages]
+      .sort((a, b) => {
+        const dateA = new Date(a.sent_at || a.scheduled_at).getTime();
+        const dateB = new Date(b.sent_at || b.scheduled_at).getTime();
+        return dateB - dateA;
+      })
+      .slice(0, 100);
+    
+    const sentCount = combined.filter(m => m.status === 'sent').length;
+    const failedCount = combined.filter(m => m.status === 'failed').length;
+    
+    return { messages: combined, sentCount, failedCount };
+  }, [recentErrors, sentMessages]);
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "sent": return "bg-green-500";
@@ -957,16 +973,16 @@ export default function Warmup() {
                   <TabsTrigger value="sent" className="flex items-center gap-1">
                     <MessageCircle className="h-3 w-3" />
                     Sent
-                    {(sentMessages.length > 0 || recentErrors.length > 0) && (
+                    {displayedSentActivity.messages.length > 0 && (
                       <div className="flex items-center gap-1 ml-1">
-                        {sentMessages.length > 0 && (
+                        {displayedSentActivity.sentCount > 0 && (
                           <Badge variant="secondary" className="h-5 px-1.5 text-xs bg-green-500/20 text-green-600">
-                            {sentMessages.length}
+                            {displayedSentActivity.sentCount}
                           </Badge>
                         )}
-                        {recentErrors.length > 0 && (
+                        {displayedSentActivity.failedCount > 0 && (
                           <Badge variant="destructive" className="h-5 px-1.5 text-xs">
-                            {recentErrors.length}
+                            {displayedSentActivity.failedCount}
                           </Badge>
                         )}
                       </div>
@@ -995,70 +1011,57 @@ export default function Warmup() {
                 <TabsContent value="sent" className="mt-0">
                   <ScrollArea className="h-[300px]">
                     <div className="space-y-2">
-                      {sentMessages.length === 0 && recentErrors.length === 0 ? (
+                      {displayedSentActivity.messages.length === 0 ? (
                         <p className="text-muted-foreground text-center py-8">
                           No sent messages yet.
                         </p>
                       ) : (
-                        <>
-                          {/* Combine and sort all messages by date (latest first) */}
-                          {(() => {
-                            const combinedMessages = [...recentErrors, ...sentMessages]
-                              .sort((a, b) => {
-                                const dateA = new Date(a.sent_at || a.scheduled_at).getTime();
-                                const dateB = new Date(b.sent_at || b.scheduled_at).getTime();
-                                return dateB - dateA;
-                              })
-                              .slice(0, 100); // Show only 100 most recent
-                            const totalCount = combinedMessages.length; // Only count what's displayed
-                            return combinedMessages.map((msg, index) => {
-                              const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
-                              const isFailed = msg.status === 'failed';
-                              return (
-                                <div
-                                  key={msg.id}
-                                  className={`p-3 rounded-lg space-y-1 ${
-                                    isFailed 
-                                      ? "bg-red-500/10 border border-red-500/30" 
-                                      : "bg-green-500/5 border border-green-500/20"
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-2 text-sm">
-                                      <Badge variant="outline" className={`h-5 px-1.5 font-semibold shrink-0 ${isFailed ? 'bg-red-500/10 text-red-500 border-red-500/30' : 'bg-green-500/10 text-green-600 border-green-500/30'}`}>
-                                        {index + 1}/{totalCount}
-                                      </Badge>
-                                      {pairNum && (
-                                        <Badge variant="outline" className="h-5 px-1.5 font-semibold shrink-0">
-                                          P#{pairNum}
-                                        </Badge>
-                                      )}
-                                      <span className="font-mono">
-                                        {formatPhone(msg.sender?.phone_number || "Unknown")}
-                                      </span>
-                                      <span className="text-muted-foreground">→</span>
-                                      <span className="font-mono">
-                                        {formatPhone(msg.receiver?.phone_number || "Unknown")}
-                                      </span>
-                                    </div>
-                                    {isFailed ? (
-                                      <Badge variant="destructive">Failed</Badge>
-                                    ) : (
-                                      <Badge variant="secondary" className="bg-green-500/20 text-green-600">Sent</Badge>
-                                    )}
-                                  </div>
-                                  <p className="text-sm truncate">{msg.message_content}</p>
-                                  {isFailed && msg.error_message && (
-                                    <p className="text-xs text-red-400 truncate">Reason: {msg.error_message}</p>
+                        displayedSentActivity.messages.map((msg, index) => {
+                          const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
+                          const isFailed = msg.status === 'failed';
+                          return (
+                            <div
+                              key={msg.id}
+                              className={`p-3 rounded-lg space-y-1 ${
+                                isFailed 
+                                  ? "bg-red-500/10 border border-red-500/30" 
+                                  : "bg-green-500/5 border border-green-500/20"
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm">
+                                  <Badge variant="outline" className={`h-5 px-1.5 font-semibold shrink-0 ${isFailed ? 'bg-red-500/10 text-red-500 border-red-500/30' : 'bg-green-500/10 text-green-600 border-green-500/30'}`}>
+                                    {index + 1}/{displayedSentActivity.messages.length}
+                                  </Badge>
+                                  {pairNum && (
+                                    <Badge variant="outline" className="h-5 px-1.5 font-semibold shrink-0">
+                                      P#{pairNum}
+                                    </Badge>
                                   )}
-                                  <p className="text-xs text-muted-foreground">
-                                    {format(new Date(msg.sent_at || msg.scheduled_at), "MMM d, HH:mm")}
-                                  </p>
+                                  <span className="font-mono">
+                                    {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                  </span>
+                                  <span className="text-muted-foreground">→</span>
+                                  <span className="font-mono">
+                                    {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                  </span>
                                 </div>
-                              );
-                            });
-                          })()}
-                        </>
+                                {isFailed ? (
+                                  <Badge variant="destructive">Failed</Badge>
+                                ) : (
+                                  <Badge variant="secondary" className="bg-green-500/20 text-green-600">Sent</Badge>
+                                )}
+                              </div>
+                              <p className="text-sm truncate">{msg.message_content}</p>
+                              {isFailed && msg.error_message && (
+                                <p className="text-xs text-red-400 truncate">Reason: {msg.error_message}</p>
+                              )}
+                              <p className="text-xs text-muted-foreground">
+                                {format(new Date(msg.sent_at || msg.scheduled_at), "MMM d, HH:mm")}
+                              </p>
+                            </div>
+                          );
+                        })
                       )}
                     </div>
                   </ScrollArea>
