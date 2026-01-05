@@ -27,7 +27,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-PARALLEL_BATCH_SIZE = 10  # Process up to 10 pairs simultaneously
+PARALLEL_BATCH_SIZE = 100  # Process up to 100 pairs simultaneously (no limit)
 
 # Warmup channels (safe public channels for building history)
 WARMUP_CHANNELS = [
