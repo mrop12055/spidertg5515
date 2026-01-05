@@ -292,7 +292,7 @@ serve(async (req) => {
             'account was banned'
           ];
           
-          // Errors that should RESTRICT account (24h cooldown for new messages, but can still chat)
+          // Errors that should RESTRICT account (12h cooldown for new messages, but can still chat)
           const temporaryRestrictionErrors = [
             'restricted',
             'flood',
@@ -300,8 +300,13 @@ serve(async (req) => {
             'user_is_blocked',
             'frozen',            // Frozen accounts get restricted status
             'frozen accounts',   // ImportContactsRequest errors on frozen accounts
-            'too many requests', // Rate limit - account needs 12h cooldown
             'floodwaiterror'     // Telegram flood wait error
+          ];
+          
+          // CRITICAL: "Too many requests" = IMMEDIATE 12h restriction + FAIL recipient (no retries)
+          // This is a severe rate limit - must not retry
+          const immediateRestrictionErrors = [
+            'too many requests'  // Rate limit - immediate 12h cooldown, NO retries
           ];
           
           // Errors that should just SKIP the recipient (don't affect account status)
@@ -326,6 +331,7 @@ serve(async (req) => {
           const errorLower = (error || '').toLowerCase();
           const isPermanentBan = permanentBanErrors.some(r => errorLower.includes(r));
           const isTemporaryRestriction = temporaryRestrictionErrors.some(r => errorLower.includes(r));
+          const isImmediateRestriction = immediateRestrictionErrors.some(r => errorLower.includes(r));
           const isSkipOnly = skipRecipientErrors.some(r => errorLower.includes(r));
           // Also check for explicit skip_account flag from Python runner
           const isRetryable = retryWithDifferentAccountErrors.some(r => errorLower.includes(r)) || (skip_account && retry_with_different_account);
@@ -372,6 +378,44 @@ serve(async (req) => {
                 ban_reason: error,
               })
               .eq("id", account_id);
+          } else if (isImmediateRestriction && account_id) {
+            // IMMEDIATE RESTRICTION (Too many requests) - NO RETRIES, fail recipient immediately
+            // Restrict account for 12h and mark recipient as failed
+            console.log(`[report-task-result] Account ${account_id} IMMEDIATELY RESTRICTED for 12h (Too many requests): ${error}`);
+            
+            await supabase
+              .from("telegram_accounts")
+              .update({
+                status: "restricted",
+                ban_reason: error,
+                restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+              })
+              .eq("id", account_id);
+            
+            // FAIL the recipient immediately - NO RETRIES
+            if (campaign_recipient_id) {
+              const { data: recipientData } = await supabase
+                .from("campaign_recipients")
+                .select("campaign_id")
+                .eq("id", campaign_recipient_id)
+                .single();
+              
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "failed",
+                  failed_reason: `Failed after 1 attempt: ${error}`,
+                  sent_at: new Date().toISOString(),
+                })
+                .eq("id", campaign_recipient_id);
+              
+              // Increment campaign failed count
+              if (recipientData?.campaign_id) {
+                await supabase.rpc("increment_campaign_failed_count", { cid: recipientData.campaign_id });
+              }
+              
+              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED immediately (no retries) - account restricted for 12h`);
+            }
           } else if (isRetryable && campaign_recipient_id && account_id) {
             // PRIVACY ERROR - try with a different account (up to 5 attempts)
             // Takes priority over temporary restriction since "privacy restricted" contains "restricted"
@@ -529,8 +573,8 @@ serve(async (req) => {
             console.log(`[report-task-result] Recipient-side issue (no recipient_id): ${error}`);
           }
           
-          // Reassign recipients if account was banned OR temporarily restricted (but NOT skip-only errors)
-          if ((isPermanentBan || (isTemporaryRestriction && !isSkipOnly)) && account_id) {
+          // Reassign recipients if account was banned, immediately restricted, OR temporarily restricted (but NOT skip-only errors)
+          if ((isPermanentBan || isImmediateRestriction || (isTemporaryRestriction && !isSkipOnly)) && account_id) {
             
             // Get pending recipients from this account
             const { data: pendingRecipients } = await supabase
