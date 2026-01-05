@@ -31,8 +31,10 @@ Deno.serve(async (req) => {
     console.log(`Deleting conversations older than: ${conversationCutoffDate}`);
     console.log(`Deleting warmup messages older than: ${warmupCutoffDate}`);
 
-    // ========== WARMUP CLEANUP (30 minutes) ==========
-    // First, save failed warmup messages to warmup_errors before deleting
+    // ========== WARMUP CLEANUP ==========
+    // Strategy: Keep latest 100 sent messages, delete older ones. NEVER delete failed messages.
+    
+    // First, save failed warmup messages to warmup_errors before any cleanup
     const { data: failedWarmupMessages, error: fetchFailedError } = await supabase
       .from('warmup_messages')
       .select('id, sender_account_id, receiver_account_id, pair_id, error_message, created_at')
@@ -62,16 +64,65 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Delete warmup messages older than 30 minutes (all statuses)
-    const { error: warmupDeleteError, count: warmupDeleteCount } = await supabase
+    // Get the IDs of the latest 100 sent messages (to keep them)
+    const { data: latestSentMessages, error: latestError } = await supabase
+      .from('warmup_messages')
+      .select('id')
+      .eq('status', 'sent')
+      .order('sent_at', { ascending: false })
+      .limit(100);
+
+    if (latestError) {
+      console.error('Error fetching latest sent messages:', latestError);
+    }
+
+    const keepIds = latestSentMessages?.map(m => m.id) || [];
+    console.log(`Keeping ${keepIds.length} latest sent messages`);
+
+    // Delete sent messages that are NOT in the latest 100
+    let warmupDeleteCount = 0;
+    if (keepIds.length > 0) {
+      // Delete sent messages older than 30 min AND not in keep list
+      const { error: warmupDeleteError, count } = await supabase
+        .from('warmup_messages')
+        .delete()
+        .eq('status', 'sent')
+        .lt('created_at', warmupCutoffDate)
+        .not('id', 'in', `(${keepIds.join(',')})`);
+
+      if (warmupDeleteError) {
+        console.error('Error deleting old sent warmup messages:', warmupDeleteError);
+      } else {
+        warmupDeleteCount = count || 0;
+        console.log(`Deleted ${warmupDeleteCount} old sent warmup messages (kept latest 100)`);
+      }
+    } else {
+      // No sent messages to keep, delete all sent messages older than 30 min
+      const { error: warmupDeleteError, count } = await supabase
+        .from('warmup_messages')
+        .delete()
+        .eq('status', 'sent')
+        .lt('created_at', warmupCutoffDate);
+
+      if (warmupDeleteError) {
+        console.error('Error deleting old sent warmup messages:', warmupDeleteError);
+      } else {
+        warmupDeleteCount = count || 0;
+        console.log(`Deleted ${warmupDeleteCount} old sent warmup messages`);
+      }
+    }
+
+    // Also clean up pending messages older than 30 minutes (stuck/orphaned)
+    const { error: pendingDeleteError, count: pendingDeleteCount } = await supabase
       .from('warmup_messages')
       .delete()
+      .eq('status', 'pending')
       .lt('created_at', warmupCutoffDate);
 
-    if (warmupDeleteError) {
-      console.error('Error deleting old warmup messages:', warmupDeleteError);
+    if (pendingDeleteError) {
+      console.error('Error deleting pending warmup messages:', pendingDeleteError);
     } else {
-      console.log(`Deleted ${warmupDeleteCount || 0} warmup messages older than 30 minutes`);
+      console.log(`Deleted ${pendingDeleteCount || 0} pending warmup messages older than 30 minutes`);
     }
 
     // ========== CONVERSATION CLEANUP (3 days) ==========
