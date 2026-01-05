@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -280,63 +280,76 @@ const Seats: React.FC = () => {
 
         {/* Seats Table */}
         <Card className="border-border/50 shadow-sm animate-fade-in overflow-hidden" style={{ animationDelay: '200ms' }}>
-          <CardHeader className="flex flex-row items-center justify-between pb-4 bg-gradient-to-r from-primary/5 via-muted/30 to-transparent border-b border-border/50">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-xl bg-gradient-to-br from-primary/20 to-primary/5 ring-1 ring-primary/20 shadow-sm">
-                <Users className="w-6 h-6 text-primary" />
-              </div>
-              <div>
-                <CardTitle className="text-xl font-semibold tracking-tight">Worker Seats</CardTitle>
-                <CardDescription className="text-sm text-muted-foreground/80">Share seat links with your workers for chat operations</CardDescription>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={fetchSeats} 
-                className="hover:bg-muted/80 transition-all border-border/60 shadow-sm hover:shadow group"
-              >
-                <RefreshCw className="w-4 h-4 mr-2 group-hover:rotate-180 transition-transform duration-500" />
-                Refresh
-              </Button>
-              <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" className="shadow-md hover:shadow-lg transition-all bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary">
-                    <Plus className="w-4 h-4 mr-2" />
-                    Create Seat
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-md">
-                  <DialogHeader>
-                    <DialogTitle>Create New Seat</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="seatName">Seat Name</Label>
-                      <Input
-                        id="seatName"
-                        placeholder="e.g., Worker 1, Sales Team, Support"
-                        value={newSeatName}
-                        onChange={(e) => setNewSeatName(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleCreateSeat()}
-                        className="focus-visible:ring-primary"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        A unique link will be generated for this seat
-                      </p>
-                    </div>
+          <CardHeader className="pb-4 border-b border-border/50">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="relative">
+                  <div className="absolute inset-0 bg-gradient-to-br from-primary/30 to-primary/10 rounded-2xl blur-md" />
+                  <div className="relative p-3.5 rounded-2xl bg-gradient-to-br from-primary/20 via-primary/10 to-transparent ring-1 ring-primary/30 shadow-lg">
+                    <Users className="w-7 h-7 text-primary" />
                   </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
-                      Cancel
+                </div>
+                <div className="space-y-1">
+                  <CardTitle className="text-2xl font-bold bg-gradient-to-r from-foreground via-foreground/90 to-foreground/70 bg-clip-text">
+                    Worker Seats
+                  </CardTitle>
+                  <CardDescription className="text-sm text-muted-foreground/80 flex items-center gap-2">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary/60 animate-pulse" />
+                    Share seat links with your workers for chat operations
+                  </CardDescription>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 sm:gap-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={fetchSeats}
+                  className="gap-2 border-border/50 hover:bg-muted/50"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span className="hidden sm:inline">Refresh</span>
+                </Button>
+                <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" className="gap-2 shadow-md bg-gradient-to-r from-primary to-primary/90 hover:from-primary/90 hover:to-primary/80">
+                      <Plus className="w-4 h-4" />
+                      <span>Create Seat</span>
                     </Button>
-                    <Button onClick={handleCreateSeat}>
-                      Create Seat
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+                  </DialogTrigger>
+                  <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                      <DialogTitle className="text-xl">Create New Seat</DialogTitle>
+                      <DialogDescription>
+                        Create a new seat with a unique shareable link
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 py-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="seatName">Seat Name</Label>
+                        <Input
+                          id="seatName"
+                          placeholder="e.g., Worker 1, Sales Team, Support"
+                          value={newSeatName}
+                          onChange={(e) => setNewSeatName(e.target.value)}
+                          onKeyDown={(e) => e.key === 'Enter' && handleCreateSeat()}
+                          className="focus-visible:ring-primary"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          A unique link will be generated for this seat
+                        </p>
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
+                        Cancel
+                      </Button>
+                      <Button onClick={handleCreateSeat} className="bg-gradient-to-r from-primary to-primary/90">
+                        Create Seat
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
