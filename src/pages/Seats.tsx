@@ -416,7 +416,14 @@ const Seats: React.FC = () => {
                           className="group hover:bg-muted/50 transition-colors animate-fade-in border-b border-border/30"
                           style={{ animationDelay: `${index * 30}ms` }}
                         >
-                          <TableCell className="font-medium py-4">{seat.name}</TableCell>
+                          <TableCell className="py-4">
+                            <div className="flex items-center gap-2">
+                              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center ring-1 ring-primary/20">
+                                <User className="w-4 h-4 text-primary" />
+                              </div>
+                              <span className="font-semibold text-foreground">{seat.name}</span>
+                            </div>
+                          </TableCell>
                           <TableCell className="py-4">
                             <div className="flex items-center gap-2.5">
                               <Switch
@@ -425,12 +432,13 @@ const Seats: React.FC = () => {
                                 className="data-[state=checked]:bg-primary"
                               />
                               <Badge 
-                                variant={seat.is_active ? "default" : "secondary"}
+                                variant="outline"
                                 className={seat.is_active 
-                                  ? "bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-sm" 
-                                  : "bg-muted text-muted-foreground"
+                                  ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 font-medium shadow-sm" 
+                                  : "bg-slate-500/10 text-slate-500 dark:text-slate-400 border-slate-500/30 font-medium"
                                 }
                               >
+                                <span className={`w-1.5 h-1.5 rounded-full mr-1.5 ${seat.is_active ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'}`} />
                                 {seat.is_active ? 'Active' : 'Inactive'}
                               </Badge>
                             </div>
