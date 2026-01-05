@@ -40,7 +40,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def check_spambot(client):
-    """Check SpamBot for account status - detects banned, frozen, restricted"""
+    """Check SpamBot for account status - detects banned, restricted"""
     try:
         spambot = await client.get_entity("@SpamBot")
         await client.send_message(spambot, "/start")
@@ -50,16 +50,12 @@ async def check_spambot(client):
         
         response_lower = response.lower()
         
-        # Check for FROZEN state (temporary restriction)
-        if "frozen" in response_lower or "заморожен" in response_lower:
-            return "restricted", "Account frozen", response
-        
         # Check for BANNED/DELETED state  
         if "banned" in response_lower or "deleted" in response_lower or "заблокирован" in response_lower:
             return "banned", response[:200], response
         
-        # Check for LIMITED/RESTRICTED state
-        if "limited" in response_lower or "restricted" in response_lower or "ограничен" in response_lower:
+        # Check for LIMITED/RESTRICTED state (including frozen)
+        if "limited" in response_lower or "restricted" in response_lower or "ограничен" in response_lower or "frozen" in response_lower or "заморожен" in response_lower:
             return "restricted", "Limited by Telegram", response
             
         # Check for CLEAN state
@@ -69,7 +65,7 @@ async def check_spambot(client):
         return "active", None, response
     except Exception as e:
         error_str = str(e).lower()
-        # Detect ban/freeze from connection errors
+        # Detect ban from connection errors
         if "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
             return "banned", str(e), f"Connection error: {e}"
         if "auth" in error_str or "session" in error_str or "revoked" in error_str:
@@ -181,7 +177,7 @@ async def verify_session(client, account_id: str):
         if not me:
             return "disconnected", "Could not get user info", None
         
-        # Try to get dialogs - this fails for deleted/frozen accounts
+        # Try to get dialogs - this fails for deleted accounts
         try:
             dialogs = await asyncio.wait_for(client.get_dialogs(limit=1), timeout=10)
         except Exception as dialog_err:
@@ -189,16 +185,16 @@ async def verify_session(client, account_id: str):
             if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated", "auth_key"]):
                 return "banned", f"Account deleted: {dialog_err}", None
             if "frozen" in error_str:
-                return "frozen", f"Account frozen: {dialog_err}", None
+                return "restricted", f"Account restricted: {dialog_err}", None
         
-        # Try to get contacts - frozen accounts often fail this
+        # Try to get contacts - restricted accounts often fail this
         try:
             from telethon.tl.functions.contacts import GetContactsRequest
             await asyncio.wait_for(client(GetContactsRequest(hash=0)), timeout=10)
         except Exception as contacts_err:
             error_str = str(contacts_err).lower()
             if "frozen" in error_str:
-                return "frozen", f"Account frozen: {contacts_err}", None
+                return "restricted", f"Account restricted: {contacts_err}", None
             if any(x in error_str for x in ["deleted", "deactivated", "banned"]):
                 return "banned", f"Account banned: {contacts_err}", None
         
@@ -217,7 +213,7 @@ async def verify_session(client, account_id: str):
         elif "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
             return "banned", str(e), None
         elif "frozen" in error_str:
-            return "frozen", str(e), None
+            return "restricted", str(e), None
         return "disconnected", str(e), None
 
 

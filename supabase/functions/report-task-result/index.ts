@@ -298,6 +298,7 @@ serve(async (req) => {
             'flood',
             'spam',
             'user_is_blocked',
+            'frozen',            // Frozen accounts get restricted status
             'frozen accounts',   // ImportContactsRequest errors on frozen accounts
             'too many requests', // Rate limit - account needs 12h cooldown
             'floodwaiterror'     // Telegram flood wait error

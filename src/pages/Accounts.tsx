@@ -19,7 +19,7 @@ import {
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
   Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock, 
   LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone, 
-  Flame, Bot, MapPin, Key, Tag, X, History, ClipboardList, Snowflake
+  Flame, Bot, MapPin, Key, Tag, X, History, ClipboardList
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
@@ -51,7 +51,6 @@ const statusOptions: { value: AccountStatus; label: string; color: string; icon:
   { value: 'restricted', label: 'Restricted', color: 'bg-status-restricted/15 text-status-restricted border-status-restricted/30', icon: <AlertTriangle className="w-3 h-3" /> },
   { value: 'disconnected', label: 'Disconnected', color: 'bg-status-disconnected/15 text-status-disconnected border-status-disconnected/30', icon: <WifiOff className="w-3 h-3" /> },
   { value: 'cooldown', label: 'Cooldown', color: 'bg-status-cooldown/15 text-status-cooldown border-status-cooldown/30', icon: <Clock className="w-3 h-3" /> },
-  { value: 'frozen', label: 'Frozen', color: 'bg-cyan-500/15 text-cyan-500 border-cyan-500/30', icon: <Snowflake className="w-3 h-3" /> },
 ];
 
 interface SessionFile {
@@ -1161,7 +1160,7 @@ const Accounts: React.FC = () => {
     return matchesSearch && matchesStatus && matchesTag;
   });
 
-  // Split accounts by status - frozen WITH timer goes to restricted, frozen WITHOUT timer goes to inactive
+  // Split accounts by status
   // Helper to check if account is spambot limited (should be in restricted)
   const isSpambotLimited = (a: TelegramAccount) => 
     a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
@@ -1176,21 +1175,19 @@ const Accounts: React.FC = () => {
   };
 
   const accountsByStatus = {
-    // Active: accounts with status 'active' that are not temporarily restricted (spambot status doesn't affect tab placement)
+    // Active: accounts with status 'active' that are not temporarily restricted
     active: filteredAccounts.filter(a => 
       a.status === 'active' && !isTemporarilyRestricted(a)
     ),
-    // Restricted: includes status restricted/cooldown, frozen with timer, AND temporarily restricted (NOT spambot limited)
+    // Restricted: includes status restricted/cooldown AND temporarily restricted
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' || 
-      (a.status === 'frozen' && a.restrictedUntil) || // Only frozen WITH countdown timer
       (a.status === 'active' && isTemporarilyRestricted(a)) // Active but has countdown timer
     ),
     inactive: filteredAccounts.filter(a => 
       a.status === 'banned' || 
-      a.status === 'disconnected' ||
-      (a.status === 'frozen' && !a.restrictedUntil) // Frozen WITHOUT countdown = permanent
+      a.status === 'disconnected'
     ),
   };
 
@@ -1278,7 +1275,6 @@ const Accounts: React.FC = () => {
     ).length,
     inactive: accounts.filter(a => 
       a.status === 'banned' || 
-      a.status === 'frozen' || 
       a.status === 'disconnected'
     ).length,
   };
@@ -1330,7 +1326,6 @@ const Accounts: React.FC = () => {
               account.status === 'restricted' && "bg-status-restricted/15 text-status-restricted",
               account.status === 'cooldown' && "bg-status-cooldown/15 text-status-cooldown",
               account.status === 'disconnected' && "bg-status-disconnected/15 text-status-disconnected",
-              account.status === 'frozen' && "bg-cyan-500/15 text-cyan-500",
             )}>
               {verifyResult?.status === 'checking' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -1350,12 +1345,10 @@ const Accounts: React.FC = () => {
             account.status === 'restricted' && "bg-status-restricted",
             account.status === 'cooldown' && "bg-status-cooldown",
             account.status === 'disconnected' && "bg-status-disconnected",
-            account.status === 'frozen' && "bg-cyan-500",
           )}>
             {account.status === 'active' && <Check className="w-2 h-2 text-white" />}
             {account.status === 'banned' && <XCircle className="w-2 h-2 text-white" />}
             {account.status === 'restricted' && <AlertTriangle className="w-2 h-2 text-white" />}
-            {account.status === 'frozen' && <Snowflake className="w-2 h-2 text-white" />}
           </div>
         </div>
         
@@ -1375,14 +1368,6 @@ const Accounts: React.FC = () => {
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-banned text-white text-[10px] font-semibold animate-pulse">
                 <XCircle className="w-3 h-3" />
                 BANNED
-              </span>
-            )}
-            
-            {/* Frozen Badge - Permanently frozen by Telegram */}
-            {account.status === 'frozen' && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-cyan-500 text-white text-[10px] font-semibold">
-                <Snowflake className="w-3 h-3" />
-                FROZEN
               </span>
             )}
             

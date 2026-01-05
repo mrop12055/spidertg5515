@@ -8,7 +8,7 @@ export interface DbTelegramAccount {
   username: string | null;
   first_name: string | null;
   last_name: string | null;
-  status: 'active' | 'banned' | 'restricted' | 'disconnected' | 'cooldown' | 'frozen';
+  status: 'active' | 'banned' | 'restricted' | 'disconnected' | 'cooldown';
   proxy_id: string | null;
   session_data: string | null;
   api_id: string | null;
