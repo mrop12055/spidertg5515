@@ -153,7 +153,16 @@ async def setup_message_handler(client, account_id: str):
     @client.on(events.NewMessage(incoming=True))
     async def handler(event):
         try:
-            sender = await event.get_sender()
+            # Get sender with error handling for forwarded messages from private channels
+            try:
+                sender = await event.get_sender()
+            except Exception as sender_error:
+                error_str = str(sender_error).lower()
+                # Skip forwarded messages from private channels/groups we can't access
+                if any(x in error_str for x in ["private", "banned", "channel", "permission"]):
+                    return  # Silently skip - this is a forwarded message from inaccessible source
+                raise  # Re-raise other errors
+            
             if not sender:
                 return
             
