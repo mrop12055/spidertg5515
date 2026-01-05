@@ -104,21 +104,41 @@ serve(async (req) => {
       const contactsAlreadyExchanged = previousPairWithContacts && previousPairWithContacts.length > 0;
       console.log(`Contacts already exchanged (from previous pair): ${contactsAlreadyExchanged}`);
 
-      // Create the pair with contacts_exchanged already set if they've exchanged before
-      const { data: createdPair, error: pairError } = await supabase
+      // Check if an active pair already exists for these accounts in THIS session
+      const { data: existingActivePair } = await supabase
         .from("warmup_pairs")
-        .insert({
-          account_a_id: accounts[0].id,
-          account_b_id: accounts[1].id,
-          session_id: session.id,
-          status: "active",
-          contacts_exchanged: contactsAlreadyExchanged, // Carry over from previous pair
-        })
-        .select()
-        .single();
+        .select("*")
+        .eq("session_id", session.id)
+        .eq("status", "active")
+        .or(`and(account_a_id.eq.${accounts[0].id},account_b_id.eq.${accounts[1].id}),and(account_a_id.eq.${accounts[1].id},account_b_id.eq.${accounts[0].id})`)
+        .limit(1)
+        .maybeSingle();
 
-      if (pairError) {
-        throw new Error(`Failed to create pair: ${pairError.message}`);
+      let createdPair;
+      
+      if (existingActivePair) {
+        // Reuse existing pair - just schedule new messages for it
+        console.log(`Reusing existing active pair: ${existingActivePair.id}`);
+        createdPair = existingActivePair;
+      } else {
+        // Create the pair with contacts_exchanged already set if they've exchanged before
+        const { data: newPair, error: pairError } = await supabase
+          .from("warmup_pairs")
+          .insert({
+            account_a_id: accounts[0].id,
+            account_b_id: accounts[1].id,
+            session_id: session.id,
+            status: "active",
+            contacts_exchanged: contactsAlreadyExchanged, // Carry over from previous pair
+          })
+          .select()
+          .single();
+
+        if (pairError) {
+          throw new Error(`Failed to create pair: ${pairError.message}`);
+        }
+        createdPair = newPair;
+        console.log(`Created new pair: ${createdPair.id}`);
       }
 
       // Get ALL message templates
