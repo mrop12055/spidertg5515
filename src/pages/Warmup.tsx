@@ -97,6 +97,7 @@ export default function Warmup() {
   const [messagesPerPair, setMessagesPerPair] = useState([20, 30]);
   const [isStarting, setIsStarting] = useState(false);
   const [startingPairId, setStartingPairId] = useState<string | null>(null);
+  const [stoppingPairId, setStoppingPairId] = useState<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
 
   const fetchData = async () => {
@@ -147,7 +148,7 @@ export default function Warmup() {
         `)
         .eq("status", "sent")
         .order("sent_at", { ascending: false })
-        .limit(20);
+        .limit(50);
 
       setSentMessages((sentData as unknown as WarmupMessage[]) || []);
 
@@ -166,7 +167,7 @@ export default function Warmup() {
         `)
         .eq("status", "pending")
         .order("scheduled_at", { ascending: true })
-        .limit(20);
+        .limit(50);
 
       setPendingMessages((pendingData as unknown as WarmupMessage[]) || []);
 
@@ -339,6 +340,25 @@ export default function Warmup() {
       toast.error(error.message || "Failed to stop warmup");
     } finally {
       setIsStopping(false);
+    }
+  };
+
+  const handleStopSinglePair = async (pairId: string) => {
+    setStoppingPairId(pairId);
+    try {
+      const { data, error } = await supabase.functions.invoke("stop-warmup-chat", {
+        body: { pairId },
+      });
+
+      if (error) throw error;
+
+      toast.success(`Pair stopped! Cancelled ${data.messages_cancelled} pending messages`);
+      fetchData();
+    } catch (error: any) {
+      console.error("Error stopping pair:", error);
+      toast.error(error.message || "Failed to stop this pair");
+    } finally {
+      setStoppingPairId(null);
     }
   };
 
@@ -616,6 +636,20 @@ export default function Warmup() {
                                 <Badge variant="secondary">
                                   {activePair?.messages_exchanged || 0} msgs
                                 </Badge>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => activePair && handleStopSinglePair(activePair.id)}
+                                  disabled={stoppingPairId === activePair?.id}
+                                  className="h-7 text-xs"
+                                >
+                                  {stoppingPairId === activePair?.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Square className="h-3 w-3 mr-1" />
+                                  )}
+                                  Stop
+                                </Button>
                                 <Badge className="bg-green-500">
                                   <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                                   Running
