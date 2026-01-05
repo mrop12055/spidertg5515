@@ -17,7 +17,10 @@ import {
   Clock,
   ArrowLeftRight,
   RefreshCw,
-  Loader2
+  Loader2,
+  AlertTriangle,
+  UserX,
+  Timer
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -26,6 +29,8 @@ interface WarmupSession {
   status: string;
   total_pairs: number;
   started_at: string;
+  messages_per_pair_min: number;
+  messages_per_pair_max: number;
 }
 
 interface WarmupPair {
@@ -42,22 +47,41 @@ interface WarmupMessage {
   status: string;
   scheduled_at: string;
   sent_at: string | null;
+  error_message: string | null;
   sender: { phone_number: string };
   receiver: { phone_number: string };
+}
+
+interface WarmupError {
+  id: string;
+  error_message: string;
+  error_type: string | null;
+  created_at: string;
+  account: { phone_number: string } | null;
+}
+
+interface UnpairedAccount {
+  id: string;
+  phone_number: string;
+  first_name: string | null;
 }
 
 export default function Warmup() {
   const [session, setSession] = useState<WarmupSession | null>(null);
   const [pairs, setPairs] = useState<WarmupPair[]>([]);
   const [recentMessages, setRecentMessages] = useState<WarmupMessage[]>([]);
+  const [recentErrors, setRecentErrors] = useState<WarmupMessage[]>([]);
+  const [unpairedAccounts, setUnpairedAccounts] = useState<UnpairedAccount[]>([]);
   const [stats, setStats] = useState({ 
     totalPairs: 0, 
     messagesScheduled: 0, 
     messagesSent: 0,
-    pendingMessages: 0 
+    pendingMessages: 0,
+    failedMessages: 0,
+    estimatedMinutesRemaining: 0
   });
   const [loading, setLoading] = useState(false);
-  const [messagesPerPair, setMessagesPerPair] = useState([5, 10]);
+  const [messagesPerPair, setMessagesPerPair] = useState([20, 30]);
   const [isStarting, setIsStarting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
 
@@ -94,7 +118,7 @@ export default function Warmup() {
         setPairs([]);
       }
 
-      // Fetch recent messages
+      // Fetch recent messages (sent + pending)
       const { data: messagesData } = await supabase
         .from("warmup_messages")
         .select(`
@@ -103,13 +127,43 @@ export default function Warmup() {
           status,
           scheduled_at,
           sent_at,
+          error_message,
           sender:telegram_accounts!warmup_messages_sender_account_id_fkey(phone_number),
           receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number)
         `)
+        .in("status", ["sent", "pending"])
         .order("scheduled_at", { ascending: false })
         .limit(20);
 
       setRecentMessages((messagesData as unknown as WarmupMessage[]) || []);
+
+      // Fetch failed messages (errors)
+      const { data: errorData } = await supabase
+        .from("warmup_messages")
+        .select(`
+          id,
+          message_content,
+          status,
+          scheduled_at,
+          sent_at,
+          error_message,
+          sender:telegram_accounts!warmup_messages_sender_account_id_fkey(phone_number),
+          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number)
+        `)
+        .eq("status", "failed")
+        .order("scheduled_at", { ascending: false })
+        .limit(10);
+
+      setRecentErrors((errorData as unknown as WarmupMessage[]) || []);
+
+      // Fetch unpaired accounts
+      const { data: unpairedData } = await supabase
+        .from("telegram_accounts")
+        .select("id, phone_number, first_name")
+        .eq("warmup_unpaired", true)
+        .eq("status", "active");
+
+      setUnpairedAccounts((unpairedData as UnpairedAccount[]) || []);
 
       // Calculate stats
       const { count: totalPairs } = await supabase
@@ -131,11 +185,21 @@ export default function Warmup() {
         .select("*", { count: "exact", head: true })
         .eq("status", "pending");
 
+      const { count: failedMessages } = await supabase
+        .from("warmup_messages")
+        .select("*", { count: "exact", head: true })
+        .eq("status", "failed");
+
+      // Estimate remaining time (avg 30 seconds per message)
+      const estimatedMinutesRemaining = Math.ceil((pendingMessages || 0) * 0.5);
+
       setStats({
         totalPairs: totalPairs || 0,
         messagesScheduled: messagesScheduled || 0,
         messagesSent: messagesSent || 0,
         pendingMessages: pendingMessages || 0,
+        failedMessages: failedMessages || 0,
+        estimatedMinutesRemaining,
       });
     } catch (error) {
       console.error("Error fetching warmup data:", error);
@@ -179,7 +243,11 @@ export default function Warmup() {
 
       if (error) throw error;
 
-      toast.success(`Warmup started! Created ${data.pairs_created} pairs with ${data.messages_scheduled} scheduled messages`);
+      if (data.unpaired_account) {
+        toast.success(`Warmup started! ${data.pairs_created} pairs, ${data.messages_scheduled} messages. Account ${data.unpaired_account} waiting for pair.`);
+      } else {
+        toast.success(`Warmup started! Created ${data.pairs_created} pairs with ${data.messages_scheduled} messages (~${data.estimated_duration_minutes || 10} min)`);
+      }
       fetchData();
     } catch (error: any) {
       console.error("Error starting warmup:", error);
@@ -207,6 +275,7 @@ export default function Warmup() {
   };
 
   const formatPhone = (phone: string) => {
+    if (!phone) return "Unknown";
     if (phone.length > 8) {
       return phone.slice(0, 4) + "..." + phone.slice(-4);
     }
@@ -234,7 +303,7 @@ export default function Warmup() {
             </div>
             <div>
               <h1 className="text-2xl font-bold">Account Warmup</h1>
-              <p className="text-muted-foreground">1-to-1 pair chat system</p>
+              <p className="text-muted-foreground">1-to-1 pair chat system (10-15 min conversations)</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -276,8 +345,25 @@ export default function Warmup() {
           </div>
         </div>
 
+        {/* Unpaired Accounts Warning */}
+        {unpairedAccounts.length > 0 && (
+          <Card className="border-yellow-500/50 bg-yellow-500/5">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <UserX className="h-5 w-5 text-yellow-500" />
+                <div>
+                  <p className="font-medium">Unpaired Accounts</p>
+                  <p className="text-sm text-muted-foreground">
+                    {unpairedAccounts.map(a => formatPhone(a.phone_number)).join(", ")} waiting for new accounts to pair with
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-4">
@@ -320,12 +406,25 @@ export default function Warmup() {
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-4">
-                <div className="p-3 bg-blue-500/10 rounded-full">
-                  <ArrowLeftRight className="h-5 w-5 text-blue-500" />
+                <div className="p-3 bg-red-500/10 rounded-full">
+                  <AlertTriangle className="h-5 w-5 text-red-500" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{stats.messagesScheduled}</p>
-                  <p className="text-sm text-muted-foreground">Total Scheduled</p>
+                  <p className="text-2xl font-bold">{stats.failedMessages}</p>
+                  <p className="text-sm text-muted-foreground">Failed</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-blue-500/10 rounded-full">
+                  <Timer className="h-5 w-5 text-blue-500" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">~{stats.estimatedMinutesRemaining}m</p>
+                  <p className="text-sm text-muted-foreground">Remaining</p>
                 </div>
               </div>
             </CardContent>
@@ -344,13 +443,13 @@ export default function Warmup() {
                 <Slider
                   value={messagesPerPair}
                   onValueChange={setMessagesPerPair}
-                  min={3}
-                  max={15}
+                  min={10}
+                  max={30}
                   step={1}
                   className="w-full max-w-md"
                 />
                 <p className="text-sm text-muted-foreground">
-                  Each pair will exchange between {messagesPerPair[0]} and {messagesPerPair[1]} messages
+                  Each pair will exchange {messagesPerPair[0]}-{messagesPerPair[1]} messages (~{Math.ceil(messagesPerPair[1] * 0.5)} min per conversation)
                 </p>
               </div>
             </CardContent>
@@ -367,7 +466,7 @@ export default function Warmup() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ScrollArea className="h-[400px]">
+              <ScrollArea className="h-[350px]">
                 <div className="space-y-2">
                   {pairs.length === 0 ? (
                     <p className="text-muted-foreground text-center py-8">
@@ -413,7 +512,7 @@ export default function Warmup() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ScrollArea className="h-[400px]">
+              <ScrollArea className="h-[350px]">
                 <div className="space-y-2">
                   {recentMessages.length === 0 ? (
                     <p className="text-muted-foreground text-center py-8">
@@ -442,7 +541,7 @@ export default function Warmup() {
                             </span>
                           </div>
                         </div>
-                        <p className="text-sm">{msg.message_content}</p>
+                        <p className="text-sm truncate">{msg.message_content}</p>
                         <p className="text-xs text-muted-foreground">
                           {msg.sent_at 
                             ? `Sent: ${format(new Date(msg.sent_at), "MMM d, HH:mm")}`
@@ -457,6 +556,47 @@ export default function Warmup() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Recent Errors */}
+        {recentErrors.length > 0 && (
+          <Card className="border-red-500/30">
+            <CardHeader>
+              <CardTitle className="text-lg flex items-center gap-2 text-red-500">
+                <AlertTriangle className="h-5 w-5" />
+                Recent Errors ({recentErrors.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <ScrollArea className="h-[200px]">
+                <div className="space-y-2">
+                  {recentErrors.map((msg) => (
+                    <div
+                      key={msg.id}
+                      className="p-3 bg-red-500/5 border border-red-500/20 rounded-lg space-y-1"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="font-mono">
+                            {formatPhone(msg.sender?.phone_number || "Unknown")}
+                          </span>
+                          <span className="text-muted-foreground">→</span>
+                          <span className="font-mono">
+                            {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                          </span>
+                        </div>
+                        <Badge variant="destructive">Failed</Badge>
+                      </div>
+                      <p className="text-sm text-red-400">{msg.error_message || "Unknown error"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </ScrollArea>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </DashboardLayout>
   );

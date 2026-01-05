@@ -1,0 +1,317 @@
+-- Add warmup pairing columns to telegram_accounts
+ALTER TABLE public.telegram_accounts 
+ADD COLUMN IF NOT EXISTS warmup_pair_id uuid REFERENCES public.telegram_accounts(id),
+ADD COLUMN IF NOT EXISTS warmup_unpaired boolean DEFAULT false;
+
+-- Add error_message column to warmup_messages
+ALTER TABLE public.warmup_messages 
+ADD COLUMN IF NOT EXISTS error_message text;
+
+-- Create warmup_errors table for tracking errors
+CREATE TABLE IF NOT EXISTS public.warmup_errors (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id uuid REFERENCES public.warmup_sessions(id) ON DELETE CASCADE,
+  account_id uuid REFERENCES public.telegram_accounts(id) ON DELETE CASCADE,
+  pair_id uuid REFERENCES public.warmup_pairs(id) ON DELETE CASCADE,
+  error_message text NOT NULL,
+  error_type text,
+  created_at timestamp with time zone DEFAULT now()
+);
+
+-- Enable RLS on warmup_errors
+ALTER TABLE public.warmup_errors ENABLE ROW LEVEL SECURITY;
+
+-- Create RLS policy for warmup_errors
+CREATE POLICY "Public access for admin tool" ON public.warmup_errors
+FOR ALL USING (true) WITH CHECK (true);
+
+-- Delete existing warmup_message_templates and insert new conversation scripts
+DELETE FROM public.warmup_message_templates;
+
+-- Script 1: Weekend Plans (25 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('weekend_plans', 1, 'A', 'Hey! Got any plans for the weekend?', true),
+('weekend_plans', 2, 'B', 'Not really, just thinking about relaxing at home', false),
+('weekend_plans', 3, 'A', 'Same here honestly. This week was exhausting', false),
+('weekend_plans', 4, 'B', 'Tell me about it! Work has been crazy lately', false),
+('weekend_plans', 5, 'A', 'Maybe I''ll catch up on some shows', false),
+('weekend_plans', 6, 'B', 'Oh nice, what are you watching?', true),
+('weekend_plans', 7, 'A', 'Started that new series everyone is talking about', false),
+('weekend_plans', 8, 'B', 'Is it any good?', true),
+('weekend_plans', 9, 'A', 'Yeah pretty decent so far, 3 episodes in', false),
+('weekend_plans', 10, 'B', 'Might give it a try then', false),
+('weekend_plans', 11, 'A', 'You should! Let me know what you think', false),
+('weekend_plans', 12, 'B', 'Will do. Also thinking of cooking something nice', false),
+('weekend_plans', 13, 'A', 'Ooh what are you making?', true),
+('weekend_plans', 14, 'B', 'Maybe some pasta, nothing too fancy', false),
+('weekend_plans', 15, 'A', 'Homemade pasta is the best', false),
+('weekend_plans', 16, 'B', 'Right? Store bought just doesn''t compare', false),
+('weekend_plans', 17, 'A', 'My mom used to make it from scratch', false),
+('weekend_plans', 18, 'B', 'That''s awesome, family recipes are special', false),
+('weekend_plans', 19, 'A', 'Yeah I should learn it properly someday', false),
+('weekend_plans', 20, 'B', 'Never too late to start!', false),
+('weekend_plans', 21, 'A', 'True. Maybe this weekend lol', false),
+('weekend_plans', 22, 'B', 'Haha that would be productive at least', false),
+('weekend_plans', 23, 'A', 'Better than just binge watching', false),
+('weekend_plans', 24, 'B', 'Exactly! Well enjoy your weekend', false),
+('weekend_plans', 25, 'A', 'You too! Talk soon', false);
+
+-- Script 2: Movie Recommendations (26 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('movies', 1, 'A', 'Watched any good movies lately?', true),
+('movies', 2, 'B', 'Actually yes! Saw one last night', false),
+('movies', 3, 'A', 'Oh which one?', true),
+('movies', 4, 'B', 'That new action film, forgot the exact name', false),
+('movies', 5, 'A', 'Was it good?', true),
+('movies', 6, 'B', 'Really fun actually, great action scenes', false),
+('movies', 7, 'A', 'Nice, I need something to watch tonight', false),
+('movies', 8, 'B', 'You should check it out then', false),
+('movies', 9, 'A', 'I''m more into comedies usually', false),
+('movies', 10, 'B', 'Oh have you seen that new comedy everyone''s talking about?', true),
+('movies', 11, 'A', 'Which one? There are so many now', false),
+('movies', 12, 'B', 'The one with the heist theme but funny', false),
+('movies', 13, 'A', 'Oh yeah I heard about that one!', false),
+('movies', 14, 'B', 'Super hilarious, definitely recommend', false),
+('movies', 15, 'A', 'Adding it to my list', false),
+('movies', 16, 'B', 'Your list must be huge by now haha', false),
+('movies', 17, 'A', 'You have no idea lol', false),
+('movies', 18, 'B', 'I have the same problem honestly', false),
+('movies', 19, 'A', 'Too many options these days', false),
+('movies', 20, 'B', 'Streaming has spoiled us', false),
+('movies', 21, 'A', 'Remember when we had to go to video stores?', true),
+('movies', 22, 'B', 'Haha yes! That was actually fun though', false),
+('movies', 23, 'A', 'The nostalgia is real', false),
+('movies', 24, 'B', 'Simpler times for sure', false),
+('movies', 25, 'A', 'Anyway let me know if you find more good ones', false),
+('movies', 26, 'B', 'Will do! Happy watching', false);
+
+-- Script 3: Work Chat (25 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('work', 1, 'A', 'How''s work going?', true),
+('work', 2, 'B', 'Busy as always. You?', true),
+('work', 3, 'A', 'Same, deadlines everywhere', false),
+('work', 4, 'B', 'I feel that. This month is intense', false),
+('work', 5, 'A', 'When isn''t it intense though lol', false),
+('work', 6, 'B', 'Fair point haha', false),
+('work', 7, 'A', 'At least Friday is coming', false),
+('work', 8, 'B', 'Can''t wait honestly', false),
+('work', 9, 'A', 'Any vacation planned soon?', true),
+('work', 10, 'B', 'Thinking about it, maybe next month', false),
+('work', 11, 'A', 'Nice! Where to?', true),
+('work', 12, 'B', 'Maybe somewhere warm, need some sun', false),
+('work', 13, 'A', 'Beach vacation sounds perfect', false),
+('work', 14, 'B', 'Right? Just relax and do nothing', false),
+('work', 15, 'A', 'That''s the dream', false),
+('work', 16, 'B', 'What about you, any plans?', true),
+('work', 17, 'A', 'Not yet, still figuring things out', false),
+('work', 18, 'B', 'Take your time, no rush', false),
+('work', 19, 'A', 'Yeah need to save up a bit first', false),
+('work', 20, 'B', 'Understandable, trips can be expensive', false),
+('work', 21, 'A', 'Especially with everything costing more now', false),
+('work', 22, 'B', 'Tell me about it!', false),
+('work', 23, 'A', 'Anyway back to the grind', false),
+('work', 24, 'B', 'Same here, good luck with those deadlines', false),
+('work', 25, 'A', 'Thanks, you too! Catch you later', false);
+
+-- Script 4: Food Talk (27 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('food', 1, 'A', 'What did you have for lunch?', true),
+('food', 2, 'B', 'Just a sandwich, nothing special', false),
+('food', 3, 'A', 'I''m so hungry right now', false),
+('food', 4, 'B', 'Haha go eat something then!', false),
+('food', 5, 'A', 'Can''t decide what to get', false),
+('food', 6, 'B', 'Pizza is always a safe choice', false),
+('food', 7, 'A', 'True but I had that yesterday', false),
+('food', 8, 'B', 'What about sushi?', true),
+('food', 9, 'A', 'Ooh that sounds good actually', false),
+('food', 10, 'B', 'There''s a good place near me', false),
+('food', 11, 'A', 'Is it expensive?', true),
+('food', 12, 'B', 'Reasonable for the quality', false),
+('food', 13, 'A', 'Nice, might try it sometime', false),
+('food', 14, 'B', 'The salmon rolls are amazing', false),
+('food', 15, 'A', 'You''re making me hungrier lol', false),
+('food', 16, 'B', 'Sorry not sorry haha', false),
+('food', 17, 'A', 'Do you cook often?', true),
+('food', 18, 'B', 'Try to, saves money', false),
+('food', 19, 'A', 'Same, but sometimes too tired', false),
+('food', 20, 'B', 'That''s when meal prep helps', false),
+('food', 21, 'A', 'Never been good at that', false),
+('food', 22, 'B', 'It takes practice for sure', false),
+('food', 23, 'A', 'Maybe I''ll start next week', false),
+('food', 24, 'B', 'That''s what I always say too lol', false),
+('food', 25, 'A', 'We''re both hopeless then', false),
+('food', 26, 'B', 'At least we''re honest about it', false),
+('food', 27, 'A', 'Haha true. Okay going to get that sushi', false);
+
+-- Script 5: Travel Stories (26 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('travel', 1, 'A', 'Have you traveled anywhere nice recently?', true),
+('travel', 2, 'B', 'Not recently, but planning to soon', false),
+('travel', 3, 'A', 'Where are you thinking?', true),
+('travel', 4, 'B', 'Maybe Europe, always wanted to go', false),
+('travel', 5, 'A', 'Oh nice! Which countries?', true),
+('travel', 6, 'B', 'Italy and Spain are on my list', false),
+('travel', 7, 'A', 'Both are amazing choices', false),
+('travel', 8, 'B', 'Have you been?', true),
+('travel', 9, 'A', 'Italy yes, Spain not yet', false),
+('travel', 10, 'B', 'How was Italy?', true),
+('travel', 11, 'A', 'Incredible, the food alone is worth it', false),
+('travel', 12, 'B', 'That''s what everyone says!', false),
+('travel', 13, 'A', 'Also the history is fascinating', false),
+('travel', 14, 'B', 'I want to see the Colosseum', false),
+('travel', 15, 'A', 'It''s impressive in person', false),
+('travel', 16, 'B', 'Can''t wait to experience it', false),
+('travel', 17, 'A', 'When are you planning to go?', true),
+('travel', 18, 'B', 'Maybe in spring, weather should be nice', false),
+('travel', 19, 'A', 'Good thinking, avoid the summer crowds', false),
+('travel', 20, 'B', 'Exactly what I was thinking', false),
+('travel', 21, 'A', 'Solo or with friends?', true),
+('travel', 22, 'B', 'Probably with a friend or two', false),
+('travel', 23, 'A', 'That''s fun, more memories that way', false),
+('travel', 24, 'B', 'Yeah and someone to share costs lol', false),
+('travel', 25, 'A', 'Smart! Well have an amazing trip', false),
+('travel', 26, 'B', 'Thanks! I''ll send photos for sure', false);
+
+-- Script 6: Sports Chat (25 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('sports', 1, 'A', 'Did you catch the game last night?', true),
+('sports', 2, 'B', 'Yeah! What a match', false),
+('sports', 3, 'A', 'That ending was crazy', false),
+('sports', 4, 'B', 'I didn''t expect that at all', false),
+('sports', 5, 'A', 'Me neither, total upset', false),
+('sports', 6, 'B', 'The underdog really came through', false),
+('sports', 7, 'A', 'Love when that happens', false),
+('sports', 8, 'B', 'Makes sports exciting', false),
+('sports', 9, 'A', 'Are you watching the next one?', true),
+('sports', 10, 'B', 'Definitely, wouldn''t miss it', false),
+('sports', 11, 'A', 'Who do you think will win?', true),
+('sports', 12, 'B', 'Hard to say, both teams are strong', false),
+('sports', 13, 'A', 'True, could go either way', false),
+('sports', 14, 'B', 'That''s what makes it fun', false),
+('sports', 15, 'A', 'Do you play any sports?', true),
+('sports', 16, 'B', 'Used to play more, now just casual stuff', false),
+('sports', 17, 'A', 'Same here, time is the issue', false),
+('sports', 18, 'B', 'We should get back into it', false),
+('sports', 19, 'A', 'Yeah it''s good exercise too', false),
+('sports', 20, 'B', 'Better than the gym honestly', false),
+('sports', 21, 'A', 'Way more fun at least', false),
+('sports', 22, 'B', 'Maybe we can organize something', false),
+('sports', 23, 'A', 'That would be cool!', false),
+('sports', 24, 'B', 'Let me know when you''re free', false),
+('sports', 25, 'A', 'Will do! Talk soon', false);
+
+-- Script 7: Tech Gadgets (26 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('tech', 1, 'A', 'Did you get that new phone?', true),
+('tech', 2, 'B', 'Thinking about it, is it worth it?', true),
+('tech', 3, 'A', 'The camera is really good', false),
+('tech', 4, 'B', 'That''s what I keep hearing', false),
+('tech', 5, 'A', 'Battery life is decent too', false),
+('tech', 6, 'B', 'How long does it last?', true),
+('tech', 7, 'A', 'A full day easily, sometimes more', false),
+('tech', 8, 'B', 'That''s better than my current one', false),
+('tech', 9, 'A', 'The screen is also amazing', false),
+('tech', 10, 'B', 'Okay you''re convincing me now', false),
+('tech', 11, 'A', 'Haha just being honest', false),
+('tech', 12, 'B', 'Is it too big though?', true),
+('tech', 13, 'A', 'It''s manageable, you get used to it', false),
+('tech', 14, 'B', 'I have small hands so that worries me', false),
+('tech', 15, 'A', 'There''s a smaller version too', false),
+('tech', 16, 'B', 'Oh really? Same features?', true),
+('tech', 17, 'A', 'Mostly yes, just smaller screen', false),
+('tech', 18, 'B', 'Might look into that one then', false),
+('tech', 19, 'A', 'Smart move, try it in store first', false),
+('tech', 20, 'B', 'Good idea, will do that', false),
+('tech', 21, 'A', 'What else are you looking at?', true),
+('tech', 22, 'B', 'Maybe new headphones too', false),
+('tech', 23, 'A', 'Wireless?', true),
+('tech', 24, 'B', 'Yeah, tired of tangled wires', false),
+('tech', 25, 'A', 'Makes life so much easier', false),
+('tech', 26, 'B', 'Alright going to do some research. Thanks!', false);
+
+-- Script 8: Music Talk (25 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('music', 1, 'A', 'What are you listening to lately?', true),
+('music', 2, 'B', 'A bit of everything honestly', false),
+('music', 3, 'A', 'Any favorites right now?', true),
+('music', 4, 'B', 'There''s this new album I really like', false),
+('music', 5, 'A', 'What genre?', true),
+('music', 6, 'B', 'Kind of indie pop, very chill', false),
+('music', 7, 'A', 'Sounds like my vibe', false),
+('music', 8, 'B', 'You might like it then', false),
+('music', 9, 'A', 'I''ll check it out', false),
+('music', 10, 'B', 'What about you, what''s on repeat?', true),
+('music', 11, 'A', 'Been into older stuff lately', false),
+('music', 12, 'B', 'Like classics?', true),
+('music', 13, 'A', 'Yeah, 80s and 90s mostly', false),
+('music', 14, 'B', 'Nice! That era had great music', false),
+('music', 15, 'A', 'They don''t make them like that anymore', false),
+('music', 16, 'B', 'Some new artists are good too though', false),
+('music', 17, 'A', 'True, just have to find them', false),
+('music', 18, 'B', 'Playlists help with that', false),
+('music', 19, 'A', 'Got any recommendations?', true),
+('music', 20, 'B', 'I can send you one I made', false),
+('music', 21, 'A', 'That would be great!', false),
+('music', 22, 'B', 'Cool, will share it later', false),
+('music', 23, 'A', 'Looking forward to it', false),
+('music', 24, 'B', 'Always nice sharing music with people', false),
+('music', 25, 'A', 'Agreed! Talk to you later', false);
+
+-- Script 9: Pet Stories (27 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('pets', 1, 'A', 'How''s your pet doing?', true),
+('pets', 2, 'B', 'Being adorable as always!', false),
+('pets', 3, 'A', 'Aww that''s nice to hear', false),
+('pets', 4, 'B', 'Do you have any pets?', true),
+('pets', 5, 'A', 'A cat, she''s very independent', false),
+('pets', 6, 'B', 'Cats are like that haha', false),
+('pets', 7, 'A', 'Only wants attention on her terms', false),
+('pets', 8, 'B', 'Classic cat behavior', false),
+('pets', 9, 'A', 'Still love her though', false),
+('pets', 10, 'B', 'Of course! They''re family', false),
+('pets', 11, 'A', 'Exactly. What pet do you have?', true),
+('pets', 12, 'B', 'A dog, very energetic', false),
+('pets', 13, 'A', 'Dogs are the best', false),
+('pets', 14, 'B', 'So loyal and loving', false),
+('pets', 15, 'A', 'Do you take lots of walks?', true),
+('pets', 16, 'B', 'Every day, good exercise for both of us', false),
+('pets', 17, 'A', 'That''s a nice routine', false),
+('pets', 18, 'B', 'Keeps us both healthy', false),
+('pets', 19, 'A', 'My cat just sleeps all day lol', false),
+('pets', 20, 'B', 'The dream life honestly', false),
+('pets', 21, 'A', 'She has it figured out', false),
+('pets', 22, 'B', 'We should learn from them', false),
+('pets', 23, 'A', 'More naps, less stress', false),
+('pets', 24, 'B', 'Sounds perfect to me', false),
+('pets', 25, 'A', 'Anyway give your pet some pets from me', false),
+('pets', 26, 'B', 'Will do! Same to yours', false),
+('pets', 27, 'A', 'Haha she probably won''t care but okay!', false);
+
+-- Script 10: General Catch-up (26 messages)
+INSERT INTO public.warmup_message_templates (category, sequence_order, sender_position, message_text, is_question) VALUES
+('catchup', 1, 'A', 'Hey, how have you been?', true),
+('catchup', 2, 'B', 'Pretty good! Been busy but good', false),
+('catchup', 3, 'A', 'Glad to hear it', false),
+('catchup', 4, 'B', 'How about you?', true),
+('catchup', 5, 'A', 'Can''t complain, same old same old', false),
+('catchup', 6, 'B', 'Sometimes that''s a good thing', false),
+('catchup', 7, 'A', 'True, boring is stable lol', false),
+('catchup', 8, 'B', 'Haha exactly', false),
+('catchup', 9, 'A', 'Anything new happening?', true),
+('catchup', 10, 'B', 'Not much, just the usual routine', false),
+('catchup', 11, 'A', 'Routines are underrated', false),
+('catchup', 12, 'B', 'They really are', false),
+('catchup', 13, 'A', 'Helps keep things organized', false),
+('catchup', 14, 'B', 'Without them I''d be lost', false),
+('catchup', 15, 'A', 'Same here honestly', false),
+('catchup', 16, 'B', 'What have you been up to today?', true),
+('catchup', 17, 'A', 'Just errands and stuff', false),
+('catchup', 18, 'B', 'The never ending errands', false),
+('catchup', 19, 'A', 'Always something to do', false),
+('catchup', 20, 'B', 'Adult life in a nutshell', false),
+('catchup', 21, 'A', 'Nobody warned us about this haha', false),
+('catchup', 22, 'B', 'They definitely didn''t', false),
+('catchup', 23, 'A', 'Well at least we have each other to complain to', false),
+('catchup', 24, 'B', 'That''s what friends are for!', false),
+('catchup', 25, 'A', 'Haha true. Well talk soon!', false),
+('catchup', 26, 'B', 'Sounds good, take care!', false);
