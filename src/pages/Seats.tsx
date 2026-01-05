@@ -278,20 +278,25 @@ const Seats: React.FC = () => {
         </div>
 
         {/* Seats Table */}
-        <Card className="border-border/50 shadow-sm animate-fade-in" style={{ animationDelay: '200ms' }}>
-          <CardHeader className="flex flex-row items-center justify-between border-b border-border/50 bg-muted/30">
-            <div>
-              <CardTitle className="text-lg">Worker Seats</CardTitle>
-              <CardDescription>Share seat links with your workers for chat operations</CardDescription>
+        <Card className="border-border/50 shadow-sm animate-fade-in overflow-hidden" style={{ animationDelay: '200ms' }}>
+          <CardHeader className="flex flex-row items-center justify-between pb-4 bg-gradient-to-r from-muted/50 to-transparent border-b border-border/50">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 rounded-xl bg-primary/10 ring-1 ring-primary/20">
+                <Users className="w-5 h-5 text-primary" />
+              </div>
+              <div>
+                <CardTitle className="text-lg font-semibold">Worker Seats</CardTitle>
+                <CardDescription className="text-sm">Share seat links with your workers for chat operations</CardDescription>
+              </div>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={fetchSeats} className="hover:bg-muted transition-colors">
+              <Button variant="outline" size="sm" onClick={fetchSeats} className="hover:bg-muted/80 transition-colors border-border/60">
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>
               <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
                 <DialogTrigger asChild>
-                  <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow">
+                  <Button size="sm" className="shadow-sm hover:shadow-md transition-all bg-primary hover:bg-primary/90">
                     <Plus className="w-4 h-4 mr-2" />
                     Create Seat
                   </Button>
