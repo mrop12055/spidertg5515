@@ -264,29 +264,40 @@ async def _report(task_type: str, result: dict):
         pass
 
 
-async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
+async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
+    """Send message - recipient can be telegram_id (int), username (@xxx), or phone number"""
     try:
         entity = None
-        if recipient.startswith("@"):
-            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=15)
+        
+        # Handle integer telegram IDs (fastest path)
+        if isinstance(recipient, (int, float)):
+            entity = await asyncio.wait_for(client.get_entity(int(recipient)), timeout=10)
         else:
-            from telethon.tl.functions.contacts import ImportContactsRequest
-            from telethon.tl.types import InputPhoneContact
-            import random
+            recipient_str = str(recipient or "").strip()
             
-            phone = recipient if recipient.startswith("+") else "+" + recipient
-            try:
-                entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
-            except:
-                pass
-            
-            if not entity:
-                contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
-                if result.users:
-                    entity = result.users[0]
-                elif result.retry_contacts:
-                    return False, "Privacy restricted"
+            # Numeric string = telegram ID
+            if recipient_str.isdigit() or (recipient_str.startswith('-') and recipient_str[1:].isdigit()):
+                entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=10)
+            elif recipient_str.startswith("@"):
+                entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=15)
+            else:
+                from telethon.tl.functions.contacts import ImportContactsRequest
+                from telethon.tl.types import InputPhoneContact
+                import random
+                
+                phone = recipient_str if recipient_str.startswith("+") else "+" + recipient_str
+                try:
+                    entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+                except:
+                    pass
+                
+                if not entity:
+                    contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
+                    result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+                    if result.users:
+                        entity = result.users[0]
+                    elif result.retry_contacts:
+                        return False, "Privacy restricted"
         
         if not entity:
             return False, "User not found on Telegram"
