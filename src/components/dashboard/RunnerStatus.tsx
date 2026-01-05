@@ -92,15 +92,10 @@ export const RunnerStatusCard: React.FC = () => {
             
             // Show persistent toast when runner goes offline (but not on first load)
             if (!isFirstCheck.current && wasOnline && !isOnline) {
-              const toastId = toast.error(`${runner.name} is offline`, {
+              const toastId = toast(`${runner.name} is offline`, {
                 description: 'Please start the Python script to continue',
-                duration: Infinity, // Keep showing until dismissed
-                icon: <AlertTriangle className="h-5 w-5 text-red-500" />,
-                style: {
-                  background: 'hsl(var(--destructive))',
-                  color: 'hsl(var(--destructive-foreground))',
-                  border: '1px solid hsl(var(--destructive))',
-                },
+                duration: Infinity,
+                icon: <XCircle className="h-5 w-5 text-red-500" />,
               });
               activeToasts.set(runner.runnerKey, toastId);
             }
