@@ -43,8 +43,11 @@ export const useRunnerStatus = () => {
       const runnerMap = new Map<string, Date>();
       if (heartbeats) {
         for (const hb of heartbeats) {
-          // Map warmup_chat to warmup (same runner)
-          const runnerKey = hb.runner_name === 'warmup_chat' ? 'warmup' : hb.runner_name;
+          // Map warmup variants to warmup (same runner)
+          let runnerKey = hb.runner_name;
+          if (runnerKey === 'warmup_chat' || runnerKey === 'warmup_chat_batch') {
+            runnerKey = 'warmup';
+          }
           const lastSeen = new Date(hb.last_seen);
           // Keep the most recent timestamp for each runner
           if (!runnerMap.has(runnerKey) || lastSeen > runnerMap.get(runnerKey)!) {
