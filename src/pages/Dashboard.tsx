@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useTelegram } from '@/context/TelegramContext';
 import { supabase } from '@/integrations/supabase/client';
+import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
 import { 
   LayoutDashboard, 
   Phone, 
@@ -19,7 +20,6 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
-
 const Dashboard: React.FC = () => {
   const { campaigns, accounts, proxies, refreshData } = useTelegram();
   const navigate = useNavigate();
@@ -116,6 +116,11 @@ const Dashboard: React.FC = () => {
           icon={MessageSquare}
           variant="default"
         />
+      </div>
+
+      {/* Runner Status */}
+      <div className="mb-8">
+        <RunnerStatusCard />
       </div>
 
       {/* Running Campaigns */}
