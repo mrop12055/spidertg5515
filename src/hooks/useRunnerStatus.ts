@@ -41,11 +41,11 @@ export const useRunnerStatus = () => {
         }
       }
       
-      const fifteenSecondsAgo = new Date(Date.now() - 15000);
+      const thirtySecondsAgo = new Date(Date.now() - 30000);
 
       setRunners(prev => prev.map(runner => ({
         ...runner,
-        isOnline: runnerMap.has(runner.runnerKey) && runnerMap.get(runner.runnerKey)! > fifteenSecondsAgo,
+        isOnline: runnerMap.has(runner.runnerKey) && runnerMap.get(runner.runnerKey)! > thirtySecondsAgo,
         lastSeen: runnerMap.get(runner.runnerKey) || runner.lastSeen,
       })));
     } catch (error) {
