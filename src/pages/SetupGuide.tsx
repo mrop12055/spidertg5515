@@ -1436,13 +1436,17 @@ async def main_loop():
                 elif consecutive_empty % 12 == 0:
                     print("  ⏳ Still waiting for warmup tasks...")
                 
-                # Also check for regular warmup tasks
-                regular_task = await get_next_task(runner="warmup")
-                if regular_task.get("task") != "wait":
-                    await process_regular_warmup_task(regular_task)
-                    consecutive_empty = 0
-                else:
-                    await asyncio.sleep(delay_after)
+                # Also check for regular warmup tasks (with error handling)
+                try:
+                    regular_task = await get_next_task(runner="warmup")
+                    if regular_task and regular_task.get("task") != "wait":
+                        await process_regular_warmup_task(regular_task)
+                        consecutive_empty = 0
+                    else:
+                        await asyncio.sleep(max(1, delay_after))
+                except Exception as e:
+                    print(f"  ⚠ Error checking regular tasks: {e}")
+                    await asyncio.sleep(2)
                 continue
             
             consecutive_empty = 0
