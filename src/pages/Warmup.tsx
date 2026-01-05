@@ -85,6 +85,7 @@ interface OrphanedAccount {
   phone_number: string;
   first_name: string | null;
   inactive_pair_phone: string;
+  inactive_pair_reason: string | null; // "Connection timeout" or "Session expired"
 }
 
 export default function Warmup() {
@@ -213,7 +214,7 @@ export default function Warmup() {
       // Fetch ALL accounts with pairs (to detect orphaned ones)
       const { data: allPairedData } = await supabase
         .from("telegram_accounts")
-        .select("id, phone_number, first_name, status, warmup_pair_id")
+        .select("id, phone_number, first_name, status, warmup_pair_id, ban_reason")
         .not("warmup_pair_id", "is", null);
 
       // Create unique pairs and detect orphaned accounts
@@ -254,6 +255,7 @@ export default function Warmup() {
               phone_number: account.phone_number,
               first_name: account.first_name,
               inactive_pair_phone: pairedAccount?.phone_number || "Unknown",
+              inactive_pair_reason: (pairedAccount as any)?.ban_reason || null,
             });
           }
         }
@@ -535,48 +537,127 @@ export default function Warmup() {
         </div>
 
         {/* Orphaned Accounts - Active accounts paired with inactive accounts */}
-        {orphanedAccounts.length > 0 && (
-          <Card className="border-orange-500/50 bg-orange-500/5">
-            <CardContent className="pt-6">
-              <div className="flex items-start gap-3">
-                <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5" />
-                <div className="flex-1">
-                  <p className="font-medium">Accounts Need Re-pairing ({orphanedAccounts.length})</p>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    These active accounts are paired with inactive accounts and need to be re-paired.
-                  </p>
-                  <div className="space-y-2">
-                    {orphanedAccounts.map((account) => (
-                      <div key={account.id} className="flex items-center justify-between bg-background/50 p-2 rounded">
-                        <div className="text-sm">
-                          <span className="font-mono">{formatPhone(account.phone_number)}</span>
-                          {account.first_name && <span className="text-muted-foreground ml-2">({account.first_name})</span>}
-                          <span className="text-muted-foreground mx-2">↔</span>
-                          <span className="font-mono text-red-400 line-through">{formatPhone(account.inactive_pair_phone)}</span>
-                          <span className="text-xs text-red-400 ml-1">(inactive)</span>
+        {orphanedAccounts.length > 0 && (() => {
+          // Separate by reason: session expired needs repairing, connection timeout just shows status
+          const sessionExpiredAccounts = orphanedAccounts.filter(a => 
+            a.inactive_pair_reason?.toLowerCase().includes('session')
+          );
+          const connectionTimeoutAccounts = orphanedAccounts.filter(a => 
+            a.inactive_pair_reason?.toLowerCase().includes('timeout')
+          );
+          const otherInactiveAccounts = orphanedAccounts.filter(a => 
+            !a.inactive_pair_reason?.toLowerCase().includes('session') && 
+            !a.inactive_pair_reason?.toLowerCase().includes('timeout')
+          );
+          
+          return (
+            <>
+              {/* Connection Timeout - Just informational */}
+              {connectionTimeoutAccounts.length > 0 && (
+                <Card className="border-blue-500/50 bg-blue-500/5">
+                  <CardContent className="pt-6">
+                    <div className="flex items-start gap-3">
+                      <Clock className="h-5 w-5 text-blue-500 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-medium">Connection Timeout ({connectionTimeoutAccounts.length})</p>
+                        <p className="text-sm text-muted-foreground mb-3">
+                          These accounts' partners have connection timeouts. The connection may recover automatically.
+                        </p>
+                        <div className="space-y-2">
+                          {connectionTimeoutAccounts.map((account) => (
+                            <div key={account.id} className="flex items-center justify-between bg-background/50 p-2 rounded">
+                              <div className="text-sm">
+                                <span className="font-mono">{formatPhone(account.phone_number)}</span>
+                                {account.first_name && <span className="text-muted-foreground ml-2">({account.first_name})</span>}
+                                <span className="text-muted-foreground mx-2">↔</span>
+                                <span className="font-mono text-blue-400">{formatPhone(account.inactive_pair_phone)}</span>
+                                <span className="text-xs text-blue-400 ml-1">(connection timeout)</span>
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       </div>
-                    ))}
-                  </div>
-                  {orphanedAccounts.length >= 2 && (
-                    <Button 
-                      size="sm" 
-                      className="mt-3"
-                      onClick={handleRepairOrphanedAccounts}
-                    >
-                      Re-pair All ({Math.floor(orphanedAccounts.length / 2)} pairs)
-                    </Button>
-                  )}
-                  {orphanedAccounts.length === 1 && (
-                    <p className="text-xs text-muted-foreground mt-2">
-                      Waiting for another orphaned account to pair with
-                    </p>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              
+              {/* Session Expired - Needs re-pairing */}
+              {sessionExpiredAccounts.length > 0 && (
+                <Card className="border-orange-500/50 bg-orange-500/5">
+                  <CardContent className="pt-6">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-medium">Accounts Need Re-pairing ({sessionExpiredAccounts.length})</p>
+                        <p className="text-sm text-muted-foreground mb-3">
+                          These accounts are paired with accounts that have expired sessions and need to be re-paired.
+                        </p>
+                        <div className="space-y-2">
+                          {sessionExpiredAccounts.map((account) => (
+                            <div key={account.id} className="flex items-center justify-between bg-background/50 p-2 rounded">
+                              <div className="text-sm">
+                                <span className="font-mono">{formatPhone(account.phone_number)}</span>
+                                {account.first_name && <span className="text-muted-foreground ml-2">({account.first_name})</span>}
+                                <span className="text-muted-foreground mx-2">↔</span>
+                                <span className="font-mono text-red-400 line-through">{formatPhone(account.inactive_pair_phone)}</span>
+                                <span className="text-xs text-red-400 ml-1">(session expired)</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        {sessionExpiredAccounts.length >= 2 && (
+                          <Button 
+                            size="sm" 
+                            className="mt-3"
+                            onClick={handleRepairOrphanedAccounts}
+                          >
+                            Re-pair All ({Math.floor(sessionExpiredAccounts.length / 2)} pairs)
+                          </Button>
+                        )}
+                        {sessionExpiredAccounts.length === 1 && (
+                          <p className="text-xs text-muted-foreground mt-2">
+                            Waiting for another orphaned account to pair with
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+              
+              {/* Other inactive accounts */}
+              {otherInactiveAccounts.length > 0 && (
+                <Card className="border-gray-500/50 bg-gray-500/5">
+                  <CardContent className="pt-6">
+                    <div className="flex items-start gap-3">
+                      <XCircle className="h-5 w-5 text-gray-500 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="font-medium">Inactive Partners ({otherInactiveAccounts.length})</p>
+                        <p className="text-sm text-muted-foreground mb-3">
+                          These accounts have inactive partners.
+                        </p>
+                        <div className="space-y-2">
+                          {otherInactiveAccounts.map((account) => (
+                            <div key={account.id} className="flex items-center justify-between bg-background/50 p-2 rounded">
+                              <div className="text-sm">
+                                <span className="font-mono">{formatPhone(account.phone_number)}</span>
+                                {account.first_name && <span className="text-muted-foreground ml-2">({account.first_name})</span>}
+                                <span className="text-muted-foreground mx-2">↔</span>
+                                <span className="font-mono text-gray-400 line-through">{formatPhone(account.inactive_pair_phone)}</span>
+                                <span className="text-xs text-gray-400 ml-1">(inactive)</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          );
+        })()}
 
         {/* Unpaired Accounts Warning */}
         {unpairedAccounts.length > 0 && (
