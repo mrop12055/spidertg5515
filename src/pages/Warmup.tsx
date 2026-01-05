@@ -630,51 +630,44 @@ export default function Warmup() {
                               </div>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-1.5 shrink-0">
                             {isRunning ? (
                               <>
-                                <Badge variant="secondary" className="shrink-0">
-                                  {activePair?.messages_exchanged || 0} msgs
+                                <Badge variant="secondary" className="shrink-0 text-xs px-1.5">
+                                  {activePair?.messages_exchanged || 0}
                                 </Badge>
                                 <Button
-                                  size="sm"
+                                  size="icon"
                                   variant="destructive"
                                   onClick={() => activePair && handleStopSinglePair(activePair.id)}
                                   disabled={stoppingPairId === activePair?.id}
-                                  className="h-7 text-xs shrink-0"
+                                  className="h-7 w-7 shrink-0"
                                 >
                                   {stoppingPairId === activePair?.id ? (
                                     <Loader2 className="h-3 w-3 animate-spin" />
                                   ) : (
-                                    <Square className="h-3 w-3 mr-1" />
+                                    <Square className="h-3 w-3" />
                                   )}
-                                  Stop
                                 </Button>
-                                <Badge className="bg-green-500 shrink-0 whitespace-nowrap">
-                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                  Running
-                                </Badge>
+                                <div className="flex items-center gap-1 bg-green-500 text-white px-2 py-1 rounded-md text-xs shrink-0">
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                </div>
                               </>
                             ) : (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleStartSinglePairWarmup(account.id, account.warmup_pair_id)}
-                                  disabled={startingPairId === account.id}
-                                  className="h-7 text-xs"
-                                >
-                                  {startingPairId === account.id ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
-                                  ) : (
-                                    <Play className="h-3 w-3 mr-1" />
-                                  )}
-                                  Warmup
-                                </Button>
-                                <Badge variant="outline" className="text-green-600 border-green-600">
-                                  Ready
-                                </Badge>
-                              </>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleStartSinglePairWarmup(account.id, account.warmup_pair_id)}
+                                disabled={startingPairId === account.id}
+                                className="h-7 text-xs"
+                              >
+                                {startingPairId === account.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Play className="h-3 w-3 mr-1" />
+                                )}
+                                Warmup
+                              </Button>
                             )}
                           </div>
                         </div>
