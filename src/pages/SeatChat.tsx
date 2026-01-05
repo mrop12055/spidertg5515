@@ -33,7 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type TimeFilter = '24h' | '3d' | '5d' | '7d';
+type TimeFilter = 'today' | '3d' | '5d' | '7d';
 type SeatView = 'chats' | 'reports';
 type ChatTab = 'all' | 'pinned' | 'hidden';
 
@@ -176,7 +176,11 @@ const SeatChat: React.FC = () => {
   const timeFilterCutoff = React.useMemo(() => {
     const now = new Date();
     switch (timeFilter) {
-      case '24h': return subDays(now, 1);
+      case 'today': {
+        // Start of today (midnight)
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        return startOfToday;
+      }
       case '3d': return subDays(now, 3);
       case '5d': return subDays(now, 5);
       case '7d': return subDays(now, 7);
@@ -985,7 +989,7 @@ const SeatChat: React.FC = () => {
               <div className="p-2.5 space-y-2">
                 {/* Time Filters */}
                 <div className="flex gap-0.5 p-0.5 bg-muted/40 rounded-lg border border-border/30">
-                  {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
+                  {(['today', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
                     <button
                       key={filter}
                       onClick={() => setTimeFilter(filter)}
@@ -996,7 +1000,7 @@ const SeatChat: React.FC = () => {
                           : "text-muted-foreground hover:text-foreground"
                       )}
                     >
-                      {filter}
+                      {filter === 'today' ? 'Today' : filter}
                     </button>
                   ))}
                 </div>
