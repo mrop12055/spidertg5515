@@ -1379,11 +1379,25 @@ const Accounts: React.FC = () => {
               </span>
             )}
             
-            {/* Disconnected Badge */}
+            {/* Disconnected Badge - different labels based on reason */}
             {account.status === 'disconnected' && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-disconnected text-white text-[10px] font-semibold">
-                <WifiOff className="w-3 h-3" />
-                OFFLINE
+                {account.banReason?.toLowerCase().includes('timeout') ? (
+                  <>
+                    <Clock className="w-3 h-3" />
+                    CONNECTION EXPIRED
+                  </>
+                ) : account.banReason?.toLowerCase().includes('session') ? (
+                  <>
+                    <AlertTriangle className="w-3 h-3" />
+                    SESSION EXPIRED
+                  </>
+                ) : (
+                  <>
+                    <WifiOff className="w-3 h-3" />
+                    OFFLINE
+                  </>
+                )}
               </span>
             )}
             
