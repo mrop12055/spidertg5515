@@ -41,6 +41,15 @@ interface WarmupPair {
   status: string;
 }
 
+interface PrePairedAccount {
+  id: string;
+  phone_number: string;
+  first_name: string | null;
+  warmup_pair_id: string;
+  pair_phone: string;
+  pair_first_name: string | null;
+}
+
 interface WarmupMessage {
   id: string;
   message_content: string;
@@ -69,6 +78,7 @@ interface UnpairedAccount {
 export default function Warmup() {
   const [session, setSession] = useState<WarmupSession | null>(null);
   const [pairs, setPairs] = useState<WarmupPair[]>([]);
+  const [prePairedAccounts, setPrePairedAccounts] = useState<PrePairedAccount[]>([]);
   const [recentMessages, setRecentMessages] = useState<WarmupMessage[]>([]);
   const [recentErrors, setRecentErrors] = useState<WarmupMessage[]>([]);
   const [unpairedAccounts, setUnpairedAccounts] = useState<UnpairedAccount[]>([]);
@@ -165,8 +175,43 @@ export default function Warmup() {
 
       setUnpairedAccounts((unpairedData as UnpairedAccount[]) || []);
 
-      // Calculate stats
-      const { count: totalPairs } = await supabase
+      // Fetch pre-paired accounts (from telegram_accounts.warmup_pair_id)
+      const { data: prePairedData } = await supabase
+        .from("telegram_accounts")
+        .select("id, phone_number, first_name, warmup_pair_id")
+        .not("warmup_pair_id", "is", null)
+        .eq("status", "active");
+
+      // Create unique pairs (avoid duplicates since A->B and B->A both exist)
+      const seenPairs = new Set<string>();
+      const uniquePairs: PrePairedAccount[] = [];
+      
+      if (prePairedData) {
+        for (const account of prePairedData) {
+          const pairKey = [account.id, account.warmup_pair_id].sort().join("-");
+          if (!seenPairs.has(pairKey)) {
+            seenPairs.add(pairKey);
+            // Find the paired account
+            const pairedAccount = prePairedData.find(a => a.id === account.warmup_pair_id);
+            if (pairedAccount) {
+              uniquePairs.push({
+                id: account.id,
+                phone_number: account.phone_number,
+                first_name: account.first_name,
+                warmup_pair_id: account.warmup_pair_id,
+                pair_phone: pairedAccount.phone_number,
+                pair_first_name: pairedAccount.first_name,
+              });
+            }
+          }
+        }
+      }
+      setPrePairedAccounts(uniquePairs);
+
+      // Calculate stats - count pre-paired accounts as pairs
+      const prePairedCount = uniquePairs.length;
+      
+      const { count: activePairsInSession } = await supabase
         .from("warmup_pairs")
         .select("*", { count: "exact", head: true })
         .eq("status", "active");
@@ -194,7 +239,7 @@ export default function Warmup() {
       const estimatedMinutesRemaining = Math.ceil((pendingMessages || 0) * 0.5);
 
       setStats({
-        totalPairs: totalPairs || 0,
+        totalPairs: session ? (activePairsInSession || 0) : prePairedCount,
         messagesScheduled: messagesScheduled || 0,
         messagesSent: messagesSent || 0,
         pendingMessages: pendingMessages || 0,
@@ -457,46 +502,86 @@ export default function Warmup() {
         ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Active Pairs */}
+          {/* Active/Pre-Paired Pairs */}
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Users className="h-5 w-5" />
-                Active Pairs ({pairs.length})
+                {session?.status === "active" ? `Active Pairs (${pairs.length})` : `Paired Accounts (${prePairedAccounts.length})`}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[350px]">
                 <div className="space-y-2">
-                  {pairs.length === 0 ? (
-                    <p className="text-muted-foreground text-center py-8">
-                      No active pairs. Start warmup to create pairs.
-                    </p>
+                  {session?.status === "active" ? (
+                    // Show warmup session pairs
+                    pairs.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">
+                        No active pairs in session.
+                      </p>
+                    ) : (
+                      pairs.map((pair) => (
+                        <div
+                          key={pair.id}
+                          className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-sm">
+                              {formatPhone(pair.account_a?.phone_number || "Unknown")}
+                            </span>
+                            <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+                            <span className="font-mono text-sm">
+                              {formatPhone(pair.account_b?.phone_number || "Unknown")}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Badge variant="secondary">
+                              {pair.messages_exchanged} msgs
+                            </Badge>
+                            <Badge variant={pair.status === "active" ? "default" : "secondary"}>
+                              {pair.status}
+                            </Badge>
+                          </div>
+                        </div>
+                      ))
+                    )
                   ) : (
-                    pairs.map((pair) => (
-                      <div
-                        key={pair.id}
-                        className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-sm">
-                            {formatPhone(pair.account_a?.phone_number || "Unknown")}
-                          </span>
-                          <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
-                          <span className="font-mono text-sm">
-                            {formatPhone(pair.account_b?.phone_number || "Unknown")}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary">
-                            {pair.messages_exchanged} msgs
+                    // Show pre-paired accounts from telegram_accounts.warmup_pair_id
+                    prePairedAccounts.length === 0 ? (
+                      <p className="text-muted-foreground text-center py-8">
+                        No paired accounts yet. Pairs are created when accounts become active.
+                      </p>
+                    ) : (
+                      prePairedAccounts.map((account) => (
+                        <div
+                          key={account.id}
+                          className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className="text-left">
+                              <span className="font-mono text-sm block">
+                                {formatPhone(account.phone_number)}
+                              </span>
+                              {account.first_name && (
+                                <span className="text-xs text-muted-foreground">{account.first_name}</span>
+                              )}
+                            </div>
+                            <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+                            <div className="text-left">
+                              <span className="font-mono text-sm block">
+                                {formatPhone(account.pair_phone)}
+                              </span>
+                              {account.pair_first_name && (
+                                <span className="text-xs text-muted-foreground">{account.pair_first_name}</span>
+                              )}
+                            </div>
+                          </div>
+                          <Badge variant="outline" className="text-green-600 border-green-600">
+                            Ready
                           </Badge>
-                          <Badge variant={pair.status === "active" ? "default" : "secondary"}>
-                            {pair.status}
-                          </Badge>
                         </div>
-                      </div>
-                    ))
+                      ))
+                    )
                   )}
                 </div>
               </ScrollArea>
