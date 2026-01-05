@@ -1111,7 +1111,7 @@ serve(async (req) => {
         .select(`
           *,
           warmup_pairs(*),
-          sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, telegram_api_credentials(*)),
+          sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)),
           receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number, telegram_id, username)
         `)
         .eq("status", "pending")
@@ -1123,8 +1123,10 @@ serve(async (req) => {
         const msg = warmupMessages[0] as any;
         const senderAccount = msg.sender;
         const receiverAccount = msg.receiver;
+        const proxy = Array.isArray(senderAccount?.proxies) ? senderAccount.proxies[0] : senderAccount?.proxies;
 
-        if (senderAccount && senderAccount.status === "active" && receiverAccount) {
+        // Check account is active and has active proxy
+        if (senderAccount && senderAccount.status === "active" && receiverAccount && proxy?.status === "active") {
           const apiCred = senderAccount.telegram_api_credentials;
 
           // Mark as in_progress
@@ -1156,16 +1158,25 @@ serve(async (req) => {
               system_lang_code: senderAccount.system_lang_code,
               api_id: apiCred?.api_id || senderAccount.api_id,
               api_hash: apiCred?.api_hash || senderAccount.api_hash,
+              proxy: proxy,
             },
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
         } else {
-          // Account not usable, cancel this message
+          // Account not usable (inactive or no proxy), mark message as failed with reason
+          const reason = !senderAccount ? "Sender account not found" :
+                         senderAccount.status !== "active" ? `Sender status: ${senderAccount.status}` :
+                         !proxy ? "No proxy assigned" :
+                         proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
+                         "Unknown reason";
+          
           await supabase
             .from("warmup_messages")
-            .update({ status: "cancelled" })
+            .update({ status: "failed", error_message: reason })
             .eq("id", msg.id);
+          
+          console.log(`[get-next-task] Warmup chat skipped: ${reason}`);
         }
       }
 

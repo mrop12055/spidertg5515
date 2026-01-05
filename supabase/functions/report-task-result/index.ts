@@ -1731,7 +1731,7 @@ serve(async (req) => {
           if (pair_id) {
             const { data: pairData } = await supabase
               .from("warmup_pairs")
-              .select("messages_exchanged")
+              .select("messages_exchanged, session_id")
               .eq("id", pair_id)
               .single();
 
@@ -1756,13 +1756,35 @@ serve(async (req) => {
 
           console.log(`[report-task-result] Warmup chat sent successfully: ${task_id}`);
         } else {
-          // Mark message as failed
+          // Mark message as failed with error message
           await supabase
             .from("warmup_messages")
             .update({
               status: "failed",
+              error_message: error || "Unknown error",
             })
             .eq("id", task_id);
+
+          // Also log to warmup_errors table if we have session info
+          if (pair_id) {
+            const { data: pairData } = await supabase
+              .from("warmup_pairs")
+              .select("session_id")
+              .eq("id", pair_id)
+              .single();
+
+            if (pairData?.session_id) {
+              await supabase
+                .from("warmup_errors")
+                .insert({
+                  session_id: pairData.session_id,
+                  account_id: account_id,
+                  pair_id: pair_id,
+                  error_message: error || "Unknown error",
+                  error_type: "warmup_chat",
+                });
+            }
+          }
 
           console.log(`[report-task-result] Warmup chat failed: ${task_id} - ${error}`);
         }

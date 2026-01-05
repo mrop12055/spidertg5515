@@ -8,6 +8,7 @@ Handles 14-day account warm-up tasks:
 - Send reactions
 - Profile updates
 - Build activity history
+- 1-to-1 warmup chat between paired accounts
 
 Run: python warmup_runner.py
 Stop: Ctrl+C
@@ -212,7 +213,7 @@ async def send_interaction_message(client, recipient_phone: str, message: str):
 
 
 async def send_warmup_chat(client, recipient_phone: str, message: str, recipient_telegram_id: int = None, recipient_username: str = None):
-    """Send warmup chat message with typing simulation for human-like behavior"""
+    """Send warmup chat message with human-like typing simulation"""
     try:
         from telethon.tl.functions.contacts import ImportContactsRequest
         from telethon.tl.types import InputPhoneContact
@@ -248,15 +249,23 @@ async def send_warmup_chat(client, recipient_phone: str, message: str, recipient
         if not user:
             return False, "Could not find user"
         
-        # Simulate typing (30 chars per 3 seconds)
-        typing_time = max(1, len(message) / 30 * 3) + random.uniform(0.5, 2)
+        # Human-like typing simulation
+        # Base: 2-4 seconds minimum
+        # Plus: ~100ms per character (avg typing speed)
+        # Plus: random thinking pause (0-2 seconds)
+        base_delay = random.uniform(2, 4)
+        typing_delay = len(message) * random.uniform(0.08, 0.15)  # 80-150ms per char
+        thinking_pause = random.uniform(0, 2)
+        total_typing_time = min(base_delay + typing_delay + thinking_pause, 15)  # Cap at 15s
+        
+        # Show typing indicator
         async with client.action(user, 'typing'):
-            await asyncio.sleep(typing_time)
+            await asyncio.sleep(total_typing_time)
         
         # Send message
         await client.send_message(user, message)
         
-        # Small random delay after sending
+        # Small random delay after sending (reading response, etc.)
         await asyncio.sleep(random.uniform(0.5, 2))
         
         return True, None
@@ -273,6 +282,7 @@ async def main_loop():
     print("=" * 60)
     print("  🔥 14-Day Account Warm-Up System")
     print("  📌 Tasks: Join channels, View content, React, Profile updates")
+    print("  💬 Warmup Chat: 1-to-1 pair conversations")
     print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
     print("\n✓ Starting warmup runner...\n")
@@ -393,13 +403,16 @@ async def main_loop():
                 print(f"    {'✓' if success else '✗'} {error or 'Sent'}")
             
             elif task_type == "warmup_chat":
-                # 1-to-1 pair warmup chat with typing simulation
+                # 1-to-1 pair warmup chat with human-like timing
                 recipient_phone = task_data.get("recipient_phone")
                 recipient_telegram_id = task_data.get("recipient_telegram_id")
                 recipient_username = task_data.get("recipient_username")
                 message = task_data.get("message", "Hey! 👋")
                 pair_id = task.get("pair_id")
-                print(f"  🔥 Warmup chat from {phone} to {recipient_phone[:8]}...")
+                
+                display_phone = recipient_phone[:8] + "..." if recipient_phone and len(recipient_phone) > 8 else recipient_phone
+                print(f"  🔥 Warmup chat from {phone} to {display_phone}...")
+                
                 success, error = await send_warmup_chat(
                     client, 
                     recipient_phone, 
@@ -414,7 +427,11 @@ async def main_loop():
                     "success": success,
                     "error": error
                 })
-                print(f"    {'✓' if success else '✗'} {message[:30]}{'...' if len(message) > 30 else ''}")
+                
+                msg_preview = message[:30] + "..." if len(message) > 30 else message
+                print(f"    {'✓' if success else '✗'} {msg_preview}")
+                
+                # Don't add extra delay - the timing is already handled by scheduled_at
             
             else:
                 print(f"  ❓ Unknown warmup task: {task_type}")

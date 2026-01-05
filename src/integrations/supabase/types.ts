@@ -933,8 +933,10 @@ export type Database = {
           tags: string[] | null
           telegram_id: number | null
           username: string | null
+          warmup_pair_id: string | null
           warmup_phase: number | null
           warmup_started_at: string | null
+          warmup_unpaired: boolean | null
         }
         Insert: {
           api_credential_id?: string | null
@@ -975,8 +977,10 @@ export type Database = {
           tags?: string[] | null
           telegram_id?: number | null
           username?: string | null
+          warmup_pair_id?: string | null
           warmup_phase?: number | null
           warmup_started_at?: string | null
+          warmup_unpaired?: boolean | null
         }
         Update: {
           api_credential_id?: string | null
@@ -1017,8 +1021,10 @@ export type Database = {
           tags?: string[] | null
           telegram_id?: number | null
           username?: string | null
+          warmup_pair_id?: string | null
           warmup_phase?: number | null
           warmup_started_at?: string | null
+          warmup_unpaired?: boolean | null
         }
         Relationships: [
           {
@@ -1033,6 +1039,13 @@ export type Database = {
             columns: ["api_credential_id"]
             isOneToOne: false
             referencedRelation: "telegram_api_credentials"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_accounts_warmup_pair_id_fkey"
+            columns: ["warmup_pair_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
             referencedColumns: ["id"]
           },
         ]
@@ -1127,6 +1140,58 @@ export type Database = {
         }
         Relationships: []
       }
+      warmup_errors: {
+        Row: {
+          account_id: string | null
+          created_at: string | null
+          error_message: string
+          error_type: string | null
+          id: string
+          pair_id: string | null
+          session_id: string | null
+        }
+        Insert: {
+          account_id?: string | null
+          created_at?: string | null
+          error_message: string
+          error_type?: string | null
+          id?: string
+          pair_id?: string | null
+          session_id?: string | null
+        }
+        Update: {
+          account_id?: string | null
+          created_at?: string | null
+          error_message?: string
+          error_type?: string | null
+          id?: string
+          pair_id?: string | null
+          session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_errors_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_errors_pair_id_fkey"
+            columns: ["pair_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_pairs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_errors_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       warmup_message_templates: {
         Row: {
           category: string | null
@@ -1160,6 +1225,7 @@ export type Database = {
       warmup_messages: {
         Row: {
           created_at: string | null
+          error_message: string | null
           id: string
           message_content: string
           message_type: string | null
@@ -1173,6 +1239,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          error_message?: string | null
           id?: string
           message_content: string
           message_type?: string | null
@@ -1186,6 +1253,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          error_message?: string | null
           id?: string
           message_content?: string
           message_type?: string | null
