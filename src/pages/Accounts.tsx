@@ -1176,16 +1176,15 @@ const Accounts: React.FC = () => {
   };
 
   const accountsByStatus = {
-    // Active: only truly active accounts (not spambot limited, not temporarily restricted)
+    // Active: accounts with status 'active' that are not temporarily restricted (spambot status doesn't affect tab placement)
     active: filteredAccounts.filter(a => 
-      a.status === 'active' && !isSpambotLimited(a) && !isTemporarilyRestricted(a)
+      a.status === 'active' && !isTemporarilyRestricted(a)
     ),
-    // Restricted: includes status restricted/cooldown, frozen with timer, spambot limited, AND temporarily restricted
+    // Restricted: includes status restricted/cooldown, frozen with timer, AND temporarily restricted (NOT spambot limited)
     restricted: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' || 
       (a.status === 'frozen' && a.restrictedUntil) || // Only frozen WITH countdown timer
-      (a.status === 'active' && isSpambotLimited(a)) || // Active but spambot limited
       (a.status === 'active' && isTemporarilyRestricted(a)) // Active but has countdown timer
     ),
     inactive: filteredAccounts.filter(a => 
@@ -1270,13 +1269,11 @@ const Accounts: React.FC = () => {
     total: accounts.length,
     active: accounts.filter(a => 
       a.status === 'active' && 
-      !isAccountSpambotLimited(a) && 
       !isAccountTemporarilyRestricted(a)
     ).length,
     restricted: accounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' ||
-      (a.status === 'active' && isAccountSpambotLimited(a)) ||
       (a.status === 'active' && isAccountTemporarilyRestricted(a))
     ).length,
     inactive: accounts.filter(a => 
