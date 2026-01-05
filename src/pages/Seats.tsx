@@ -372,9 +372,9 @@ const Seats: React.FC = () => {
                 </Button>
               </div>
             ) : (
-              <ScrollArea className="h-[450px]">
-                <div className="overflow-x-auto">
-                  <div className="min-w-[1050px] pr-4">
+              <div className="overflow-x-auto">
+                <ScrollArea className="h-[450px]">
+                  <div className="min-w-[1150px]">
                     <Table>
                   <TableHeader>
                     <TableRow className="bg-gradient-to-r from-muted/50 to-muted/20 hover:bg-muted/50 border-b border-border/50">
@@ -414,8 +414,8 @@ const Seats: React.FC = () => {
                           Created
                         </div>
                       </TableHead>
-                      <TableHead className="text-right font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
-                        <div className="flex items-center justify-end gap-2">
+                      <TableHead className="text-right font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4 w-[180px] min-w-[180px]">
+                        <div className="flex items-center justify-end gap-2 pr-4">
                           <Zap className="w-3.5 h-3.5 text-yellow-500/70" />
                           Actions
                         </div>
@@ -478,8 +478,8 @@ const Seats: React.FC = () => {
                               {format(new Date(seat.created_at), 'MMM d, yyyy')}
                             </span>
                           </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity">
+                          <TableCell className="text-right w-[180px] min-w-[180px]">
+                            <div className="flex items-center justify-end gap-1 pr-2">
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <Button
@@ -544,8 +544,8 @@ const Seats: React.FC = () => {
                   </TableBody>
                     </Table>
                   </div>
-                </div>
-              </ScrollArea>
+                </ScrollArea>
+              </div>
             )}
           </CardContent>
         </Card>
