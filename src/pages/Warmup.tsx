@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   Flame, 
   Play, 
@@ -20,7 +21,8 @@ import {
   Loader2,
   AlertTriangle,
   UserX,
-  Timer
+  Timer,
+  XCircle
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -526,60 +528,43 @@ export default function Warmup() {
         ) : null}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Active/Pre-Paired Pairs */}
+          {/* Paired Accounts - Always show all pairs */}
           <Card>
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Users className="h-5 w-5" />
-                {session?.status === "active" ? `Active Pairs (${pairs.length})` : `Paired Accounts (${prePairedAccounts.length})`}
+                Paired Accounts ({prePairedAccounts.length})
+                {session?.status === "active" && pairs.length > 0 && (
+                  <Badge className="ml-2 bg-green-500">{pairs.length} running</Badge>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent>
               <ScrollArea className="h-[350px]">
                 <div className="space-y-2">
-                  {session?.status === "active" ? (
-                    // Show warmup session pairs
-                    pairs.length === 0 ? (
-                      <p className="text-muted-foreground text-center py-8">
-                        No active pairs in session.
-                      </p>
-                    ) : (
-                      pairs.map((pair) => (
-                        <div
-                          key={pair.id}
-                          className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="font-mono text-sm">
-                              {formatPhone(pair.account_a?.phone_number || "Unknown")}
-                            </span>
-                            <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
-                            <span className="font-mono text-sm">
-                              {formatPhone(pair.account_b?.phone_number || "Unknown")}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary">
-                              {pair.messages_exchanged} msgs
-                            </Badge>
-                            <Badge variant={pair.status === "active" ? "default" : "secondary"}>
-                              {pair.status}
-                            </Badge>
-                          </div>
-                        </div>
-                      ))
-                    )
+                  {prePairedAccounts.length === 0 ? (
+                    <p className="text-muted-foreground text-center py-8">
+                      No paired accounts yet. Pairs are created when accounts become active.
+                    </p>
                   ) : (
-                    // Show pre-paired accounts from telegram_accounts.warmup_pair_id
-                    prePairedAccounts.length === 0 ? (
-                      <p className="text-muted-foreground text-center py-8">
-                        No paired accounts yet. Pairs are created when accounts become active.
-                      </p>
-                    ) : (
-                      prePairedAccounts.map((account) => (
+                    prePairedAccounts.map((account) => {
+                      // Check if this pair is currently running in active session
+                      const isRunning = pairs.some(
+                        p => (p.account_a?.phone_number === account.phone_number || 
+                              p.account_b?.phone_number === account.phone_number) &&
+                             p.status === "active"
+                      );
+                      const activePair = pairs.find(
+                        p => p.account_a?.phone_number === account.phone_number || 
+                             p.account_b?.phone_number === account.phone_number
+                      );
+                      
+                      return (
                         <div
                           key={account.id}
-                          className="flex items-center justify-between p-3 bg-muted/50 rounded-lg"
+                          className={`flex items-center justify-between p-3 rounded-lg ${
+                            isRunning ? "bg-green-500/10 border border-green-500/30" : "bg-muted/50"
+                          }`}
                         >
                           <div className="flex items-center gap-2">
                             <div className="text-left">
@@ -601,127 +586,161 @@ export default function Warmup() {
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleStartSinglePairWarmup(account.id, account.warmup_pair_id)}
-                              disabled={startingPairId === account.id || session?.status === "active"}
-                              className="h-7 text-xs"
-                            >
-                              {startingPairId === account.id ? (
-                                <Loader2 className="h-3 w-3 animate-spin" />
-                              ) : (
-                                <Play className="h-3 w-3 mr-1" />
-                              )}
-                              Warmup
-                            </Button>
-                            <Badge variant="outline" className="text-green-600 border-green-600">
-                              Ready
-                            </Badge>
+                            {isRunning ? (
+                              <>
+                                <Badge variant="secondary">
+                                  {activePair?.messages_exchanged || 0} msgs
+                                </Badge>
+                                <Badge className="bg-green-500">
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                  Running
+                                </Badge>
+                              </>
+                            ) : (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleStartSinglePairWarmup(account.id, account.warmup_pair_id)}
+                                  disabled={startingPairId === account.id}
+                                  className="h-7 text-xs"
+                                >
+                                  {startingPairId === account.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Play className="h-3 w-3 mr-1" />
+                                  )}
+                                  Warmup
+                                </Button>
+                                <Badge variant="outline" className="text-green-600 border-green-600">
+                                  Ready
+                                </Badge>
+                              </>
+                            )}
                           </div>
                         </div>
-                      ))
-                    )
+                      );
+                    })
                   )}
                 </div>
               </ScrollArea>
             </CardContent>
           </Card>
 
-          {/* Recent Activity */}
+          {/* Recent Activity with Tabs */}
           <Card>
-            <CardHeader>
+            <CardHeader className="pb-2">
               <CardTitle className="text-lg flex items-center gap-2">
                 <MessageCircle className="h-5 w-5" />
                 Recent Activity
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <ScrollArea className="h-[350px]">
-                <div className="space-y-2">
-                  {recentMessages.length === 0 ? (
-                    <p className="text-muted-foreground text-center py-8">
-                      No messages yet.
-                    </p>
-                  ) : (
-                    recentMessages.map((msg) => (
-                      <div
-                        key={msg.id}
-                        className="p-3 bg-muted/50 rounded-lg space-y-1"
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2 text-sm">
-                            <span className="font-mono">
-                              {formatPhone(msg.sender?.phone_number || "Unknown")}
-                            </span>
-                            <span className="text-muted-foreground">→</span>
-                            <span className="font-mono">
-                              {formatPhone(msg.receiver?.phone_number || "Unknown")}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${getStatusColor(msg.status)}`} />
-                            <span className="text-xs text-muted-foreground">
-                              {msg.status}
-                            </span>
-                          </div>
-                        </div>
-                        <p className="text-sm truncate">{msg.message_content}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {msg.sent_at 
-                            ? `Sent: ${format(new Date(msg.sent_at), "MMM d, HH:mm")}`
-                            : `Scheduled: ${format(new Date(msg.scheduled_at), "MMM d, HH:mm")}`
-                          }
+              <Tabs defaultValue="messages" className="w-full">
+                <TabsList className="grid w-full grid-cols-2 mb-3">
+                  <TabsTrigger value="messages" className="flex items-center gap-1">
+                    <MessageCircle className="h-3 w-3" />
+                    Messages
+                    {stats.pendingMessages > 0 && (
+                      <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
+                        {stats.pendingMessages}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="failed" className="flex items-center gap-1">
+                    <XCircle className="h-3 w-3" />
+                    Failed
+                    {recentErrors.length > 0 && (
+                      <Badge variant="destructive" className="ml-1 h-5 px-1.5 text-xs">
+                        {recentErrors.length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="messages" className="mt-0">
+                  <ScrollArea className="h-[300px]">
+                    <div className="space-y-2">
+                      {recentMessages.length === 0 ? (
+                        <p className="text-muted-foreground text-center py-8">
+                          No messages yet.
                         </p>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </ScrollArea>
+                      ) : (
+                        recentMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className="p-3 bg-muted/50 rounded-lg space-y-1"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="font-mono">
+                                  {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                </span>
+                                <span className="text-muted-foreground">→</span>
+                                <span className="font-mono">
+                                  {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full ${getStatusColor(msg.status)}`} />
+                                <span className="text-xs text-muted-foreground">
+                                  {msg.status}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-sm truncate">{msg.message_content}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {msg.sent_at 
+                                ? `Sent: ${format(new Date(msg.sent_at), "MMM d, HH:mm")}`
+                                : `Scheduled: ${format(new Date(msg.scheduled_at), "MMM d, HH:mm")}`
+                              }
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                
+                <TabsContent value="failed" className="mt-0">
+                  <ScrollArea className="h-[300px]">
+                    <div className="space-y-2">
+                      {recentErrors.length === 0 ? (
+                        <p className="text-muted-foreground text-center py-8">
+                          No failed messages.
+                        </p>
+                      ) : (
+                        recentErrors.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className="p-3 bg-red-500/5 border border-red-500/20 rounded-lg space-y-1"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="font-mono">
+                                  {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                </span>
+                                <span className="text-muted-foreground">→</span>
+                                <span className="font-mono">
+                                  {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                </span>
+                              </div>
+                              <Badge variant="destructive">Failed</Badge>
+                            </div>
+                            <p className="text-sm text-red-400 truncate">{msg.error_message || "Unknown error"}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
         </div>
-
-        {/* Recent Errors */}
-        {recentErrors.length > 0 && (
-          <Card className="border-red-500/30">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2 text-red-500">
-                <AlertTriangle className="h-5 w-5" />
-                Recent Errors ({recentErrors.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-[200px]">
-                <div className="space-y-2">
-                  {recentErrors.map((msg) => (
-                    <div
-                      key={msg.id}
-                      className="p-3 bg-red-500/5 border border-red-500/20 rounded-lg space-y-1"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-sm">
-                          <span className="font-mono">
-                            {formatPhone(msg.sender?.phone_number || "Unknown")}
-                          </span>
-                          <span className="text-muted-foreground">→</span>
-                          <span className="font-mono">
-                            {formatPhone(msg.receiver?.phone_number || "Unknown")}
-                          </span>
-                        </div>
-                        <Badge variant="destructive">Failed</Badge>
-                      </div>
-                      <p className="text-sm text-red-400">{msg.error_message || "Unknown error"}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </ScrollArea>
-            </CardContent>
-          </Card>
-        )}
       </div>
     </DashboardLayout>
   );
