@@ -12,7 +12,8 @@ interface RunnerInfo {
 // warmup_runner.py reports both 'warmup' and 'warmup_chat' - we track both but show as single card
 const runnerNames: Record<string, string> = {
   campaign: 'Campaign Runner',
-  livechat: 'LiveChat Runner',
+  livechat_receiver: 'LiveChat Receiver',
+  livechat_sender: 'LiveChat Sender',
   account: 'Account Runner',
   warmup: 'Warmup Runner',  // warmup_runner.py
   block: 'Block Runner',

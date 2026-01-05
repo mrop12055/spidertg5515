@@ -510,29 +510,198 @@ if __name__ == "__main__":
         print("\\nStopped.")
 `;
 
-  // ========== 5. LIVECHAT_RUNNER.PY ==========
-  const livechatRunnerPy = `#!/usr/bin/env python3
+  // ========== 5. LIVECHAT_RECEIVER.PY ==========
+  const livechatReceiverPy = `#!/usr/bin/env python3
 """
-LiveChat Runner - Handles incoming messages and live chat replies
+LiveChat Receiver - Dedicated to receiving incoming messages
+Handles: Receive messages, photos, documents, links
 """
 import asyncio
 import signal
 import base64
 import time
+import re
 
 import httpx
 from telethon import events
+from telethon.tl.types import User
+
+from client_manager import (
+    get_or_create_client, get_next_task, report_result, shutdown_all
+)
+from config import SUPABASE_URL, SUPABASE_KEY
+from urllib.parse import urlparse
+
+_u = urlparse(SUPABASE_URL)
+SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
+
+RUNNING = True
+NEGATIVE_CACHE_TTL = 365 * 24 * 60 * 60
+POSITIVE_CACHE_TTL = 6 * 60 * 60
+_conversation_cache = {}
+
+def signal_handler(sig, frame):
+    global RUNNING
+    print("\\n[STOP] Shutting down...")
+    RUNNING = False
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+
+def _cache_get(account_id, sender_id):
+    key = (account_id, int(sender_id))
+    val = _conversation_cache.get(key)
+    if not val:
+        return None
+    exists, ts = val
+    ttl = POSITIVE_CACHE_TTL if exists else NEGATIVE_CACHE_TTL
+    if (time.time() - ts) > ttl:
+        _conversation_cache.pop(key, None)
+        return None
+    return exists
+
+
+def _cache_set(account_id, sender_id, exists):
+    _conversation_cache[(account_id, int(sender_id))] = (bool(exists), time.time())
+
+
+async def check_conversation_exists(account_id, sender_id, sender_username=None, sender_phone=None):
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            response = await http.get(
+                f"{SUPABASE_URL_BASE}/rest/v1/conversations",
+                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+                params={"account_id": f"eq.{account_id}", "recipient_telegram_id": f"eq.{sender_id}", "first_message_sent": "eq.true", "select": "id"}
+            )
+            if response.status_code == 200 and response.json():
+                return True
+            if sender_username:
+                for variant in [f"@{sender_username.lstrip('@').lower()}", sender_username.lstrip('@').lower()]:
+                    response = await http.get(f"{SUPABASE_URL_BASE}/rest/v1/conversations", headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, params={"account_id": f"eq.{account_id}", "recipient_username": f"ilike.{variant}", "first_message_sent": "eq.true", "select": "id"})
+                    if response.status_code == 200 and response.json():
+                        return True
+            if sender_phone:
+                digits = re.sub(r'\\D', '', sender_phone)
+                for pv in [f"+{digits}", digits, sender_phone]:
+                    response = await http.get(f"{SUPABASE_URL_BASE}/rest/v1/conversations", headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, params={"account_id": f"eq.{account_id}", "recipient_phone": f"eq.{pv}", "first_message_sent": "eq.true", "select": "id"})
+                    if response.status_code == 200 and response.json():
+                        return True
+            return False
+    except Exception as e:
+        print(f"    [WARN] Check error: {e}")
+        return False
+
+
+async def setup_message_handler(client, account_id):
+    _ignored_log = {}
+    
+    @client.on(events.NewMessage(incoming=True))
+    async def handler(event):
+        try:
+            sender = await event.get_sender()
+            if not sender or not isinstance(sender, User) or getattr(sender, 'bot', False):
+                return
+            
+            sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
+            sender_username = getattr(sender, 'username', None)
+            sender_phone = f"+{sender.phone}" if hasattr(sender, 'phone') and sender.phone and not sender.phone.startswith('+') else getattr(sender, 'phone', None)
+            
+            cached = _cache_get(account_id, sender.id)
+            if cached is None:
+                exists = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
+                _cache_set(account_id, sender.id, exists)
+                cached = exists
+            
+            if not cached:
+                now = time.time()
+                if sender.id not in _ignored_log or (now - _ignored_log[sender.id]) > 60:
+                    _ignored_log[sender.id] = now
+                    print(f"    [IGNORED] {sender_name}: no campaign conversation")
+                return
+            
+            content = event.message.text or "[Media]"
+            media_url = None
+            media_type = None
+            
+            if event.message.photo:
+                print(f"    [PHOTO] From {sender_name}...")
+                content = "[Photo] " + (event.message.text or "")
+                media_type = "image"
+                try:
+                    photo_bytes = await client.download_media(event.message.photo, bytes)
+                    if photo_bytes:
+                        file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.jpg"
+                        async with httpx.AsyncClient(timeout=30.0) as http:
+                            resp = await http.put(f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{account_id}/{file_name}", headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "image/jpeg", "x-upsert": "true"}, content=photo_bytes)
+                            if resp.status_code in (200, 201):
+                                media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{account_id}/{file_name}"
+                except Exception as e:
+                    print(f"    [WARN] Photo upload: {e}")
+            
+            avatar_base64 = None
+            try:
+                photo = await client.download_profile_photo(sender, bytes)
+                if photo:
+                    avatar_base64 = base64.b64encode(photo).decode('utf-8')
+            except:
+                pass
+            
+            print(f"  [IN] From {sender_name}: {content[:40]}...")
+            await report_result("incoming_message", {"account_id": account_id, "sender_id": sender.id, "sender_name": sender_name, "sender_username": sender_username, "sender_phone": sender_phone, "sender_avatar": avatar_base64, "content": content, "media_url": media_url, "media_type": media_type})
+        except Exception as e:
+            print(f"  [WARN] Handler error: {e}")
+
+
+async def main_loop():
+    print("=" * 50)
+    print("  LiveChat Receiver")
+    print("  [Incoming messages, photos, links]")
+    print("=" * 50)
+    
+    connected_ids = set()
+    
+    while RUNNING:
+        try:
+            task = await get_next_task(runner="livechat_receiver")
+            if task.get("task") == "wait":
+                accounts = task.get("accounts", [])
+                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
+                if new_accounts:
+                    print(f"  [CONNECT] {len(new_accounts)} accounts...")
+                    await asyncio.gather(*[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts], return_exceptions=True)
+                    for acc in new_accounts:
+                        if acc.get("id"):
+                            connected_ids.add(acc["id"])
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            print(f"  [ERROR] {e}")
+            await asyncio.sleep(0.5)
+    
+    await shutdown_all()
+
+
+if __name__ == "__main__":
+    print("\\nInstall: pip install telethon httpx pysocks\\n")
+    try:
+        asyncio.run(main_loop())
+    except KeyboardInterrupt:
+        print("\\nStopped.")
+`;
+
+  // ========== 6. LIVECHAT_SENDER.PY ==========
+  const livechatSenderPy = `#!/usr/bin/env python3
+"""
+LiveChat Sender - Dedicated to sending outgoing messages
+Handles: Send replies, photos, documents, links
+"""
+import asyncio
+import signal
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all
 )
-from config import SUPABASE_URL, SUPABASE_KEY
-from urllib.parse import urlparse
-
-# Ensure we always get the *origin* (e.g. https://xxxx.supabase.co)
-_u = urlparse(SUPABASE_URL)
-SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
 RUNNING = True
 
@@ -545,202 +714,40 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def check_conversation_exists(account_id: str, sender_id: int, sender_username: str = None, sender_phone: str = None) -> bool:
-    """Multi-strategy matching: telegram_id -> username -> phone"""
-    import re
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as http:
-            # Strategy 1: Match by telegram_id
-            response = await http.get(
-                f"{SUPABASE_URL_BASE}/rest/v1/conversations",
-                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-                params={
-                    "account_id": f"eq.{account_id}",
-                    "recipient_telegram_id": f"eq.{sender_id}",
-                    "first_message_sent": "eq.true",
-                    "select": "id"
-                }
-            )
-            if response.status_code == 200 and response.json():
-                return True
-            
-            # Strategy 2: Match by username
-            if sender_username:
-                username_clean = sender_username.lstrip("@").lower()
-                for variant in [f"@{username_clean}", username_clean]:
-                    response = await http.get(
-                        f"{SUPABASE_URL_BASE}/rest/v1/conversations",
-                        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-                        params={
-                            "account_id": f"eq.{account_id}",
-                            "recipient_username": f"ilike.{variant}",
-                            "first_message_sent": "eq.true",
-                            "select": "id"
-                        }
-                    )
-                    if response.status_code == 200 and response.json():
-                        return True
-            
-            # Strategy 3: Match by phone
-            if sender_phone:
-                digits = re.sub(r'\\D', '', sender_phone)
-                for pv in [f"+{digits}", digits, sender_phone]:
-                    response = await http.get(
-                        f"{SUPABASE_URL_BASE}/rest/v1/conversations",
-                        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-                        params={
-                            "account_id": f"eq.{account_id}",
-                            "recipient_phone": f"eq.{pv}",
-                            "first_message_sent": "eq.true",
-                            "select": "id"
-                        }
-                    )
-                    if response.status_code == 200 and response.json():
-                        return True
-            
-            return False
-    except Exception as e:
-        print(f"    [WARN] Check conversation error: {e}")
-        return False
-
-
-async def setup_message_handler(client, account_id: str):
-    @client.on(events.NewMessage(incoming=True))
-    async def handler(event):
-        try:
-            sender = await event.get_sender()
-            if not sender:
-                return
-            
-            from telethon.tl.types import User
-            if not isinstance(sender, User):
-                return
-            if getattr(sender, 'bot', False):
-                return
-            
-            # Get sender info for matching
-            sender_username = getattr(sender, 'username', None)
-            sender_phone = None
-            if hasattr(sender, 'phone') and sender.phone:
-                sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
-            sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
-            
-            # Multi-strategy conversation check
-            conversation_exists = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
-            if not conversation_exists:
-                # Rate-limited logging for ignored messages
-                if not hasattr(handler, '_ignored_log') or time.time() - handler._ignored_log.get(sender.id, 0) > 60:
-                    if not hasattr(handler, '_ignored_log'):
-                        handler._ignored_log = {}
-                    handler._ignored_log[sender.id] = time.time()
-                    print(f"    [IGNORED] {sender_name} (id={sender.id}): no campaign conversation")
-                return
-            
-            content = event.message.text or "[Media]"
-            media_url = None
-            media_type = None
-            
-            if event.message.photo:
-                print(f"    [PHOTO] Receiving...")
-                content = "[Photo] " + (event.message.text or "")
-                media_type = "image"
-                try:
-                    photo_bytes = await client.download_media(event.message.photo, bytes)
-                    if photo_bytes:
-                        file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.jpg"
-                        file_path = f"{account_id}/{file_name}"
-                        
-                        mime_type = "image/jpeg"
-                        if hasattr(event.message, 'file') and event.message.file:
-                            mime_type = getattr(event.message.file, 'mime_type', None) or "image/jpeg"
-                        
-                        async with httpx.AsyncClient(timeout=30.0) as http:
-                            upload_response = await http.put(
-                                f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{file_path}",
-                                headers={
-                                    "apikey": SUPABASE_KEY,
-                                    "Authorization": f"Bearer {SUPABASE_KEY}",
-                                    "Content-Type": mime_type,
-                                    "x-upsert": "true"
-                                },
-                                content=photo_bytes
-                            )
-                            if upload_response.status_code in (200, 201):
-                                media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
-                                print(f"    [OK] Photo uploaded: {file_name}")
-                            else:
-                                error_text = upload_response.text[:300] if upload_response.text else "No details"
-                                print(f"    [WARN] Photo upload failed: {upload_response.status_code} - {error_text}")
-                except Exception as e:
-                    print(f"    [WARN] Could not upload photo: {e}")
-            
-            avatar_base64 = None
-            try:
-                photo = await client.download_profile_photo(sender, bytes)
-                if photo:
-                    avatar_base64 = base64.b64encode(photo).decode('utf-8')
-            except:
-                pass
-            
-            print(f"  [IN] From {sender_name}: {content[:40]}...")
-            await report_result("incoming_message", {
-                "account_id": account_id,
-                "sender_id": sender.id,
-                "sender_name": sender_name,
-                "sender_username": sender_username,
-                "sender_phone": sender_phone,
-                "sender_avatar": avatar_base64,
-                "content": content,
-                "media_url": media_url,
-                "media_type": media_type
-            })
-        except Exception as e:
-            print(f"  [WARN] Handler error: {e}")
-
-
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner")
-    print("  [Incoming + Replies]")
+    print("  LiveChat Sender")
+    print("  [Send replies, photos, links]")
     print("=" * 50)
-    
-    connected_ids = set()  # Track connected accounts to avoid redundant work
     
     while RUNNING:
         try:
-            task = await get_next_task(runner="livechat")
+            task = await get_next_task(runner="livechat_sender")
             task_type = task.get("task", "wait")
             
-            if task_type == "wait":
-                accounts = task.get("accounts", [])
-                # Only connect NEW accounts (skip already connected)
-                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
-                if new_accounts:
-                    # Connect in parallel for speed
-                    results = await asyncio.gather(
-                        *[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts],
-                        return_exceptions=True
-                    )
-                    for acc in new_accounts:
-                        if acc.get("id"):
-                            connected_ids.add(acc["id"])
-                # No artificial delay - server returns seconds=0 for instant polling
-            
-            elif task_type == "send":
+            if task_type == "send":
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
+                recipient_tid = task.get("recipient_telegram_id")
                 account = task.get("account", {})
-                client = await get_or_create_client(account, setup_handler=setup_message_handler)
-                if client and recipient:
-                    print(f"  [REPLY] To {recipient}...")
-                    success, error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
-                    await report_result("send", {
-                        "message_id": msg.get("id"),
-                        "success": success,
-                        "error": error,
-                        "account_id": account.get("id")
-                    })
-        
+                
+                client = await get_or_create_client(account)
+                target = recipient_tid if recipient_tid else recipient
+                
+                if client and target:
+                    content = msg.get("content", "")
+                    media_url = msg.get("media_url")
+                    
+                    if media_url:
+                        print(f"  [SEND] To {recipient} (with media)...")
+                    else:
+                        print(f"  [SEND] To {recipient}...")
+                    
+                    success, error = await send_message(client, target, content, media_url)
+                    await report_result("send", {"message_id": msg.get("id"), "success": success, "error": error, "account_id": account.get("id")})
+                    print(f"    {'[OK]' if success else '[FAIL] ' + str(error)}")
+            
+            await asyncio.sleep(0.05)
         except Exception as e:
             print(f"  [ERROR] {e}")
             await asyncio.sleep(0.5)
@@ -749,7 +756,7 @@ async def main_loop():
 
 
 if __name__ == "__main__":
-    print("\\nInstall: pip install telethon httpx\\n")
+    print("\\nInstall: pip install telethon httpx pysocks\\n")
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
@@ -1457,14 +1464,17 @@ if errorlevel 1 (
 echo        Done!
 echo.
 
-echo  [2/2] Starting 5 runners in parallel...
+echo  [2/2] Starting 6 runners in parallel...
 echo.
 
 :: Start each runner in a new window
 start "Campaign Runner" cmd /k "title Campaign Runner && color 0B && py campaign_runner.py"
 timeout /t 1 /nobreak >nul
 
-start "LiveChat Runner" cmd /k "title LiveChat Runner && color 0D && py livechat_runner.py"
+start "LiveChat Receiver" cmd /k "title LiveChat Receiver && color 0D && py live_chat_receiver.py"
+timeout /t 1 /nobreak >nul
+
+start "LiveChat Sender" cmd /k "title LiveChat Sender && color 05 && py live_chat_sender.py"
 timeout /t 1 /nobreak >nul
 
 start "Account Runner" cmd /k "title Account Runner && color 0E && py account_runner.py"
@@ -1477,14 +1487,15 @@ start "Block Runner" cmd /k "title Block Runner && color 0C && py block_runner.p
 
 echo.
 echo  ================================================
-echo     All 5 runners started!
+echo     All 6 runners started!
 echo  ================================================
 echo.
-echo     Blue   = Campaign Runner
-echo     Purple = LiveChat Runner  
-echo     Yellow = Account Runner
-echo     Green  = Warmup Runner
-echo     Red    = Block Runner
+echo     Blue    = Campaign Runner
+echo     Purple  = LiveChat Receiver (incoming)
+echo     Magenta = LiveChat Sender (outgoing)
+echo     Yellow  = Account Runner
+echo     Green   = Warmup Runner
+echo     Red     = Block Runner
 echo.
 echo     To STOP: Close all windows or press Ctrl+C
 echo  ================================================
@@ -1510,7 +1521,8 @@ pysocks>=1.7.1
     
     // Individual runners
     folder?.file("campaign_runner.py", campaignRunnerPy);
-    folder?.file("livechat_runner.py", livechatRunnerPy);
+    folder?.file("live_chat_receiver.py", livechatReceiverPy);
+    folder?.file("live_chat_sender.py", livechatSenderPy);
     folder?.file("account_runner.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
     folder?.file("block_runner.py", blockRunnerPy);
@@ -1526,7 +1538,7 @@ pysocks>=1.7.1
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded! 10 files included.");
+    toast.success("ZIP downloaded! 11 files included.");
   };
 
   return (
@@ -1542,7 +1554,7 @@ pysocks>=1.7.1
             <div className="space-y-2">
               <h2 className="text-2xl font-bold">Download Python Files</h2>
               <p className="text-muted-foreground">
-                5 separate runners + 1 BAT file to run them all
+                6 separate runners + 1 BAT file to run them all
               </p>
             </div>
 
@@ -1552,11 +1564,12 @@ pysocks>=1.7.1
             </Button>
 
             <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-              <p className="font-medium">📁 Files included (10 total):</p>
+              <p className="font-medium">📁 Files included (11 total):</p>
               <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 5 runners</strong></li>
+                <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 6 runners</strong></li>
                 <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + validation</li>
-                <li><code className="text-purple-500">livechat_runner.py</code> - Incoming messages + replies</li>
+                <li><code className="text-purple-500">live_chat_receiver.py</code> - Receive messages, photos, links</li>
+                <li><code className="text-indigo-500">live_chat_sender.py</code> - Send replies, photos, links</li>
                 <li><code className="text-yellow-500">account_runner.py</code> - SpamBot, name, photo, privacy, import</li>
                 <li><code className="text-orange-500">warmup_runner.py</code> - Join channels, view, react, bio</li>
                 <li><code className="text-red-500">block_runner.py</code> - Block/unblock contacts</li>
@@ -1572,7 +1585,7 @@ pysocks>=1.7.1
               <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
                 <li>Extract ZIP folder</li>
                 <li>Double-click <code className="bg-green-100 dark:bg-green-900 px-2 py-0.5 rounded">RUN.bat</code></li>
-                <li>5 colored windows will open (one for each runner)</li>
+                <li>6 colored windows will open (one for each runner)</li>
                 <li>To stop: Close all windows or press <kbd className="bg-background px-2 py-0.5 rounded border">Ctrl+C</kbd></li>
               </ol>
             </div>
