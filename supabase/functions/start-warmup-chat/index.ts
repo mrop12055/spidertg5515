@@ -84,33 +84,27 @@ serve(async (req) => {
       const contactsAlreadyExchanged = previousContactExchange && previousContactExchange.length > 0;
       console.log(`Contacts already exchanged: ${contactsAlreadyExchanged}`);
 
-      // Get message templates
+      // Get ALL message templates
       const { data: templates } = await supabase
         .from("warmup_message_templates")
-        .select("*")
-        .order("category")
-        .order("sequence_order");
+        .select("*");
 
       if (!templates?.length) {
         throw new Error("No message templates found");
       }
 
-      // Group by category and pick random flow
-      const conversationsByCategory = new Map<string, typeof templates>();
-      for (const template of templates) {
-        const category = template.category || 'default';
-        if (!conversationsByCategory.has(category)) {
-          conversationsByCategory.set(category, []);
-        }
-        conversationsByCategory.get(category)!.push(template);
-      }
-      const conversationFlows = Array.from(conversationsByCategory.values());
-      const flow = conversationFlows[Math.floor(Math.random() * conversationFlows.length)];
-
+      // Shuffle all templates and pick random ones
+      const shuffledTemplates = [...templates].sort(() => Math.random() - 0.5);
+      
       const messageCount = Math.floor(
         Math.random() * (messagesPerPairMax - messagesPerPairMin + 1) + messagesPerPairMin
       );
-      const selectedTemplates = flow.slice(0, Math.min(messageCount, flow.length));
+      
+      // Pick random templates and alternate sender positions
+      const selectedTemplates = shuffledTemplates.slice(0, messageCount).map((t, i) => ({
+        ...t,
+        sender_position: i % 2 === 0 ? "A" : "B" // Alternate A and B
+      }));
 
       // Schedule tasks
       const now = new Date();
@@ -152,14 +146,35 @@ serve(async (req) => {
         console.log("Contacts already exchanged - skipping contact tasks");
       }
 
-      // Schedule chat messages
-      for (const template of selectedTemplates) {
-        const baseDelay = 15 + Math.random() * 15;
-        const typingTime = Math.max(2, (template.message_text.length / 30) * 3);
-        const jitter = 5 + Math.random() * 10;
-        const occasionalPause = Math.random() < 0.1 ? (45 + Math.random() * 45) : 0;
+      // Schedule chat messages with human-like timing
+      for (let i = 0; i < selectedTemplates.length; i++) {
+        const template = selectedTemplates[i];
         
-        const delaySeconds = baseDelay + typingTime + jitter + occasionalPause;
+        // Human-like timing variations
+        const isQuickReply = Math.random() < 0.3; // 30% quick replies
+        const isSlowThinking = Math.random() < 0.15; // 15% slow thinking
+        const isTypingLong = template.message_text.length > 50;
+        
+        let baseDelay: number;
+        if (isQuickReply) {
+          baseDelay = 3 + Math.random() * 8; // 3-11 seconds quick
+        } else if (isSlowThinking) {
+          baseDelay = 30 + Math.random() * 60; // 30-90 seconds slow
+        } else {
+          baseDelay = 8 + Math.random() * 25; // 8-33 seconds normal
+        }
+        
+        // Typing simulation based on message length (40-60 chars per minute)
+        const typingSpeed = 40 + Math.random() * 20;
+        const typingTime = (template.message_text.length / typingSpeed) * 60;
+        
+        // Random jitter
+        const jitter = Math.random() * 5;
+        
+        // Occasional long pause (distraction)
+        const distractionPause = Math.random() < 0.08 ? (60 + Math.random() * 120) : 0;
+        
+        const delaySeconds = baseDelay + typingTime + jitter + distractionPause;
         currentTime = new Date(currentTime.getTime() + delaySeconds * 1000);
 
         const senderId = template.sender_position === "A" ? createdPair.account_a_id : createdPair.account_b_id;
@@ -327,29 +342,16 @@ serve(async (req) => {
 
     console.log(`Created ${createdPairs.length} pairs`);
 
-    // 7. Get message templates grouped by category
+    // 7. Get ALL message templates for random selection
     const { data: templates, error: templatesError } = await supabase
       .from("warmup_message_templates")
-      .select("*")
-      .order("category")
-      .order("sequence_order");
+      .select("*");
 
     if (templatesError || !templates?.length) {
       throw new Error("No message templates found");
     }
 
-    // Group templates by category (each category is a complete conversation)
-    const conversationsByCategory = new Map<string, typeof templates>();
-    for (const template of templates) {
-      const category = template.category || 'default';
-      if (!conversationsByCategory.has(category)) {
-        conversationsByCategory.set(category, []);
-      }
-      conversationsByCategory.get(category)!.push(template);
-    }
-    
-    const conversationFlows = Array.from(conversationsByCategory.values());
-    console.log(`Found ${conversationFlows.length} conversation scripts`);
+    console.log(`Found ${templates.length} message templates`);
 
     // 8. Create account lookup map
     const accountMap = new Map(accounts.map(a => [a.id, a]));
@@ -421,26 +423,48 @@ serve(async (req) => {
         currentTime = new Date(currentTime.getTime() + (3000 + Math.random() * 2000));
       }
 
-      // Pick a random conversation flow
-      const flow = conversationFlows[Math.floor(Math.random() * conversationFlows.length)];
+      // Shuffle all templates and pick random ones for this pair
+      const shuffledTemplates = [...templates].sort(() => Math.random() - 0.5);
       
       // Random number of messages between min and max
       const messageCount = Math.floor(
         Math.random() * (messagesPerPairMax - messagesPerPairMin + 1) + messagesPerPairMin
       );
-      const selectedTemplates = flow.slice(0, Math.min(messageCount, flow.length));
+      
+      // Pick random templates and alternate sender positions
+      const selectedTemplates = shuffledTemplates.slice(0, messageCount).map((t, i) => ({
+        ...t,
+        sender_position: i % 2 === 0 ? "A" : "B" // Alternate A and B
+      }));
 
-      // Schedule chat messages
+      // Schedule chat messages with human-like timing
       for (let i = 0; i < selectedTemplates.length; i++) {
         const template = selectedTemplates[i];
         
-        // Human-like timing
-        const baseDelay = 15 + Math.random() * 15;
-        const typingTime = Math.max(2, (template.message_text.length / 30) * 3);
-        const jitter = 5 + Math.random() * 10;
-        const occasionalPause = Math.random() < 0.1 ? (45 + Math.random() * 45) : 0;
+        // Human-like timing variations
+        const isQuickReply = Math.random() < 0.3; // 30% quick replies
+        const isSlowThinking = Math.random() < 0.15; // 15% slow thinking
         
-        const delaySeconds = baseDelay + typingTime + jitter + occasionalPause;
+        let baseDelay: number;
+        if (isQuickReply) {
+          baseDelay = 3 + Math.random() * 8; // 3-11 seconds quick
+        } else if (isSlowThinking) {
+          baseDelay = 30 + Math.random() * 60; // 30-90 seconds slow
+        } else {
+          baseDelay = 8 + Math.random() * 25; // 8-33 seconds normal
+        }
+        
+        // Typing simulation based on message length (40-60 chars per minute)
+        const typingSpeed = 40 + Math.random() * 20;
+        const typingTime = (template.message_text.length / typingSpeed) * 60;
+        
+        // Random jitter
+        const jitter = Math.random() * 5;
+        
+        // Occasional long pause (distraction)
+        const distractionPause = Math.random() < 0.08 ? (60 + Math.random() * 120) : 0;
+        
+        const delaySeconds = baseDelay + typingTime + jitter + distractionPause;
         currentTime = new Date(currentTime.getTime() + delaySeconds * 1000);
 
         const senderId = template.sender_position === "A" ? pair.account_a_id : pair.account_b_id;
