@@ -947,10 +947,19 @@ export default function Warmup() {
                   <TabsTrigger value="sent" className="flex items-center gap-1">
                     <MessageCircle className="h-3 w-3" />
                     Sent
-                    {sentMessages.length > 0 && (
-                      <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs bg-green-500/20 text-green-600">
-                        {sentMessages.length}
-                      </Badge>
+                    {(sentMessages.length > 0 || recentErrors.length > 0) && (
+                      <div className="flex items-center gap-1 ml-1">
+                        {sentMessages.length > 0 && (
+                          <Badge variant="secondary" className="h-5 px-1.5 text-xs bg-green-500/20 text-green-600">
+                            {sentMessages.length}
+                          </Badge>
+                        )}
+                        {recentErrors.length > 0 && (
+                          <Badge variant="destructive" className="h-5 px-1.5 text-xs">
+                            {recentErrors.length}
+                          </Badge>
+                        )}
+                      </div>
                     )}
                   </TabsTrigger>
                   <TabsTrigger value="pending" className="flex items-center gap-1">
@@ -976,34 +985,61 @@ export default function Warmup() {
                 <TabsContent value="sent" className="mt-0">
                   <ScrollArea className="h-[300px]">
                     <div className="space-y-2">
-                      {sentMessages.length === 0 ? (
+                      {sentMessages.length === 0 && recentErrors.length === 0 ? (
                         <p className="text-muted-foreground text-center py-8">
                           No sent messages yet.
                         </p>
                       ) : (
-                        sentMessages.map((msg) => (
-                          <div
-                            key={msg.id}
-                            className="p-3 bg-green-500/5 border border-green-500/20 rounded-lg space-y-1"
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2 text-sm">
-                                <span className="font-mono">
-                                  {formatPhone(msg.sender?.phone_number || "Unknown")}
-                                </span>
-                                <span className="text-muted-foreground">→</span>
-                                <span className="font-mono">
-                                  {formatPhone(msg.receiver?.phone_number || "Unknown")}
-                                </span>
+                        <>
+                          {/* Show failed messages first */}
+                          {recentErrors.map((msg) => (
+                            <div
+                              key={msg.id}
+                              className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg space-y-1"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm">
+                                  <span className="font-mono">
+                                    {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                  </span>
+                                  <span className="text-muted-foreground">→</span>
+                                  <span className="font-mono">
+                                    {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                  </span>
+                                </div>
+                                <Badge variant="destructive">Failed</Badge>
                               </div>
-                              <Badge variant="secondary" className="bg-green-500/20 text-green-600">Sent</Badge>
+                              <p className="text-sm text-red-400 truncate">{msg.error_message || "Unknown error"}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
+                              </p>
                             </div>
-                            <p className="text-sm truncate">{msg.message_content}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {msg.sent_at && format(new Date(msg.sent_at), "MMM d, HH:mm")}
-                            </p>
-                          </div>
-                        ))
+                          ))}
+                          {/* Then show sent messages */}
+                          {sentMessages.map((msg) => (
+                            <div
+                              key={msg.id}
+                              className="p-3 bg-green-500/5 border border-green-500/20 rounded-lg space-y-1"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm">
+                                  <span className="font-mono">
+                                    {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                  </span>
+                                  <span className="text-muted-foreground">→</span>
+                                  <span className="font-mono">
+                                    {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                  </span>
+                                </div>
+                                <Badge variant="secondary" className="bg-green-500/20 text-green-600">Sent</Badge>
+                              </div>
+                              <p className="text-sm truncate">{msg.message_content}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {msg.sent_at && format(new Date(msg.sent_at), "MMM d, HH:mm")}
+                              </p>
+                            </div>
+                          ))}
+                        </>
                       )}
                     </div>
                   </ScrollArea>
