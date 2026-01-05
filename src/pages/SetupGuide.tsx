@@ -1525,9 +1525,7 @@ pysocks>=1.7.1
     const folder = zip.folder("telegram_crm");
     
     // Core files
-    folder?.file("config.py", configPy);
     folder?.file("client_manager.py", clientManagerPy);
-    folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
     folder?.file("requirements.txt", requirementsTxt);
     
     // Individual runners
@@ -1549,7 +1547,7 @@ pysocks>=1.7.1
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded! 11 files included.");
+    toast.success("ZIP downloaded! 9 files included.");
   };
 
   return (
