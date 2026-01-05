@@ -33,7 +33,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-type TimeFilter = 'today' | '3d' | '5d' | '7d';
+type TimeFilter = 'today' | '3d' | '5d';
 type SeatView = 'chats' | 'reports';
 type ChatTab = 'all' | 'pinned' | 'hidden';
 
@@ -115,7 +115,7 @@ const SeatChat: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('7d');
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   const [showRepliedOnly, setShowRepliedOnly] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
@@ -183,8 +183,11 @@ const SeatChat: React.FC = () => {
       }
       case '3d': return subDays(now, 3);
       case '5d': return subDays(now, 5);
-      case '7d': return subDays(now, 7);
-      default: return subDays(now, 7);
+      default: {
+        // Start of today as default
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        return startOfToday;
+      }
     }
   }, [timeFilter]);
 
@@ -989,7 +992,7 @@ const SeatChat: React.FC = () => {
               <div className="p-2.5 space-y-2">
                 {/* Time Filters */}
                 <div className="flex gap-0.5 p-0.5 bg-muted/40 rounded-lg border border-border/30">
-                  {(['today', '3d', '5d', '7d'] as TimeFilter[]).map((filter) => (
+                  {(['today', '3d', '5d'] as TimeFilter[]).map((filter) => (
                     <button
                       key={filter}
                       onClick={() => setTimeFilter(filter)}
