@@ -10,10 +10,15 @@ const runnerIcons: Record<string, { icon: React.ReactNode; color: string; functi
     color: 'text-blue-500',
     functions: ['Send messages', 'Validate recipients'],
   },
-  livechat: {
+  livechat_receiver: {
     icon: <MessageSquare className="h-4 w-4" />,
     color: 'text-purple-500',
-    functions: ['Incoming messages', 'Send replies'],
+    functions: ['Receive messages', 'Receive images', 'Receive links'],
+  },
+  livechat_sender: {
+    icon: <Send className="h-4 w-4" />,
+    color: 'text-indigo-500',
+    functions: ['Send replies', 'Send images', 'Send links'],
   },
   account: {
     icon: <UserCog className="h-4 w-4" />,
@@ -47,7 +52,7 @@ export const RunnerStatusCard: React.FC = () => {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
           {runners.map((runner) => {
             const config = runnerIcons[runner.runnerKey];
             return (
