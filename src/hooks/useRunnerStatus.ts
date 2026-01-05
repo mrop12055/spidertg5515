@@ -12,14 +12,13 @@ interface RunnerInfo {
 // warmup_runner.py reports both 'warmup' and 'warmup_chat' - we track both but show as single card
 const runnerNames: Record<string, string> = {
   campaign: 'Campaign Runner',
-  livechat_receiver: 'LiveChat Receiver',
-  livechat_sender: 'LiveChat Sender',
+  livechat: 'LiveChat Runner',
   account: 'Account Runner',
   warmup: 'Warmup Runner',  // warmup_runner.py
   block: 'Block Runner',
 };
 
-const OFFLINE_GRACE_PERIOD_MS = 15000; // 15 seconds grace period before showing error banner
+const OFFLINE_GRACE_PERIOD_MS = 10000; // 10 seconds grace period before showing red dot
 
 export const useRunnerStatus = () => {
   const [runners, setRunners] = useState<RunnerInfo[]>(

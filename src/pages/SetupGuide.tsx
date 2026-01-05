@@ -25,8 +25,8 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 
   // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed) ==========
   const clientManagerPy = `"""
-TelegramCRM - Client Manager (Ultra Fast)
-Persistent connections, cached clients, minimal latency
+TelegramCRM - Client Manager (Optimized)
+Fast connections with retry logic, timeouts, and proxy support
 """
 
 import os
@@ -35,7 +35,7 @@ import tempfile
 import asyncio
 import httpx
 import socks
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
@@ -45,35 +45,18 @@ from fingerprint_generator import generate_fingerprint
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
-client_metadata: Dict[str, dict] = {}  # Store proxy/fingerprint per account
 
-# Speed settings - reduced for faster connections
-CONNECTION_TIMEOUT = 15
-CONNECTION_RETRIES = 2
-RETRY_DELAY = 1
-
-# Reusable HTTP client for faster API calls
-_http_client: Optional[httpx.AsyncClient] = None
-
-
-async def get_http_client() -> httpx.AsyncClient:
-    global _http_client
-    if _http_client is None or _http_client.is_closed:
-        _http_client = httpx.AsyncClient(timeout=10)
-    return _http_client
+# Speed settings
+CONNECTION_TIMEOUT = 30
+CONNECTION_RETRIES = 3
+RETRY_DELAY = 2
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
     session_path = os.path.join(SESSION_FOLDER, phone_number.replace("+", ""))
-    session_file = session_path + ".session"
-    
-    # Skip if session already exists and is recent
-    if os.path.exists(session_file):
-        return session_path
-    
     try:
         session_bytes = base64.b64decode(base64_data)
-        with open(session_file, "wb") as f:
+        with open(session_path + ".session", "wb") as f:
             f.write(session_bytes)
         return session_path
     except Exception as e:
@@ -113,23 +96,19 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
             await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
             return True
         except asyncio.TimeoutError:
+            print(f"    [TIMEOUT] Attempt {attempt}/{max_retries}")
             if attempt < max_retries:
-                await asyncio.sleep(RETRY_DELAY)
+                await asyncio.sleep(RETRY_DELAY * attempt)
         except Exception as e:
+            print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
             if attempt < max_retries:
-                await asyncio.sleep(RETRY_DELAY)
+                await asyncio.sleep(RETRY_DELAY * attempt)
     return False
 
 
-async def get_or_create_client(account: dict, setup_handler=None, fast_mode: bool = False) -> Optional[TelegramClient]:
-    """
-    Get or create a Telegram client for an account.
-    fast_mode=True skips profile checks for faster sends.
-    Always uses fingerprint and proxy from account data.
-    """
+async def get_or_create_client(account: dict, setup_handler=None) -> Optional[TelegramClient]:
     account_id = account["id"]
     
-    # Check if we have a cached, connected client
     if account_id in active_clients:
         client = active_clients[account_id]
         try:
@@ -139,15 +118,7 @@ async def get_or_create_client(account: dict, setup_handler=None, fast_mode: boo
                     setattr(client, "_handler", True)
                 return client
         except:
-            pass
-        # Client disconnected, remove from cache
-        try:
-            await client.disconnect()
-        except:
-            pass
-        del active_clients[account_id]
-        if account_id in client_metadata:
-            del client_metadata[account_id]
+            del active_clients[account_id]
     
     session_data = account.get("session_data")
     if not session_data:
@@ -157,14 +128,12 @@ async def get_or_create_client(account: dict, setup_handler=None, fast_mode: boo
     if not session_path:
         return None
     
-    # Use fingerprint from account (database) - NEVER generate new for existing accounts
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     app_version = account.get("app_version") or "10.14.2"
     lang_code = account.get("lang_code") or "en"
     system_lang_code = account.get("system_lang_code") or "en-US"
     
-    # Only generate fingerprint if account has NONE stored
     if not device_model or not system_version:
         fp = generate_fingerprint()
         device_model = fp["device_model"]
@@ -173,19 +142,15 @@ async def get_or_create_client(account: dict, setup_handler=None, fast_mode: boo
         lang_code = fp["lang_code"]
         system_lang_code = fp["system_lang_code"]
         print(f"  [FP] Generated: {device_model} ({system_version})")
-        # Report to save in DB for future consistency
-        asyncio.create_task(report_result("fingerprint_generated", {
+        await report_result("fingerprint_generated", {
             "account_id": account_id,
             "device_model": device_model,
             "system_version": system_version,
             "app_version": app_version,
             "lang_code": lang_code,
             "system_lang_code": system_lang_code
-        }))
-    else:
-        print(f"  [FP] Using stored: {device_model} ({system_version})")
+        })
     
-    # Use proxy from account (database)
     proxy = get_proxy_settings(account)
     if proxy:
         print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
@@ -206,54 +171,56 @@ async def get_or_create_client(account: dict, setup_handler=None, fast_mode: boo
             connection_retries=CONNECTION_RETRIES,
             retry_delay=RETRY_DELAY,
             auto_reconnect=True,
-            request_retries=2
+            request_retries=3
         )
         
         print(f"  [CONNECT] {account['phone_number']}...")
         if not await connect_with_retry(client):
             print(f"  [FAIL] Timeout: {account['phone_number']}")
-            if not fast_mode:
-                asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": "Connection timeout"}))
+            await report_result("account_disconnected", {"account_id": account_id, "reason": "Connection timeout"})
             return None
         
         if not await client.is_user_authorized():
-            if not fast_mode:
-                asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"}))
+            await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
             return None
         
-        # Fast mode: skip profile verification for speed
-        if not fast_mode:
-            try:
-                me = await asyncio.wait_for(client.get_me(), timeout=10)
-                if not me:
-                    print(f"  [BANNED] Account deleted: {account['phone_number']}")
-                    asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"}))
-                    return None
-            except Exception as me_err:
-                err_str = str(me_err).lower()
-                if any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
-                    print(f"  [BANNED] {account['phone_number']}: {me_err}")
-                    asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": str(me_err)}))
-                    return None
-                elif any(x in err_str for x in ["session", "revoked", "auth"]):
-                    print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
-                    asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)}))
-                    return None
+        # Check if account is deleted/banned
+        try:
+            me = await asyncio.wait_for(client.get_me(), timeout=15)
+            if not me:
+                print(f"  [BANNED] Account deleted: {account['phone_number']}")
+                await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"})
+                return None
+        except Exception as me_err:
+            err_str = str(me_err).lower()
+            if any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
+                print(f"  [BANNED] {account['phone_number']}: {me_err}")
+                await report_result("account_banned", {"account_id": account_id, "reason": str(me_err)})
+                return None
+            elif any(x in err_str for x in ["session", "revoked", "auth"]):
+                print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)})
+                return None
         
         if setup_handler:
             await setup_handler(client, account_id)
             setattr(client, "_handler", True)
         
-        # Cache client and metadata
         active_clients[account_id] = client
-        client_metadata[account_id] = {
-            "device_model": device_model,
-            "system_version": system_version,
-            "proxy": proxy
-        }
         
-        if not fast_mode:
-            asyncio.create_task(report_result("account_connected", {"account_id": account_id, "skip_profile_update": True}))
+        # Fast mode: skip profile if cached
+        if account.get("first_name") or account.get("username"):
+            await report_result("account_connected", {"account_id": account_id, "skip_profile_update": True})
+        else:
+            if me:
+                await report_result("account_connected", {
+                    "account_id": account_id,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                    "username": me.username,
+                    "telegram_id": me.id,
+                    "phone": me.phone
+                })
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
@@ -261,7 +228,7 @@ async def get_or_create_client(account: dict, setup_handler=None, fast_mode: boo
         err_str = str(e).lower()
         if any(x in err_str for x in ["deleted", "deactivated", "banned"]):
             print(f"  [BANNED] {account['phone_number']}: {e}")
-            asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": str(e)}))
+            await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
         else:
             print(f"  [FAIL] {account['phone_number']}: {e}")
         return None
@@ -270,68 +237,61 @@ async def get_or_create_client(account: dict, setup_handler=None, fast_mode: boo
 async def get_next_task(runner: str = None) -> dict:
     try:
         body = {"runner": runner} if runner else {}
-        http = await get_http_client()
-        resp = await http.post(
-            f"{BACKEND_URL}/get-next-task",
-            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json=body
-        )
-        return resp.json()
+        async with httpx.AsyncClient(timeout=15) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}/get-next-task",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json=body
+            )
+            return resp.json()
     except:
-        return {"task": "wait", "seconds": 0}
+        return {"task": "wait", "seconds": 1}
 
 
 async def report_result(task_type: str, result: dict):
+    asyncio.create_task(_report(task_type, result))
+
+
+async def _report(task_type: str, result: dict):
     try:
-        http = await get_http_client()
-        await http.post(
-            f"{BACKEND_URL}/report-task-result",
-            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json={"task_type": task_type, "result": result}
-        )
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"{BACKEND_URL}/report-task-result",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json={"task_type": task_type, "result": result}
+            )
     except:
         pass
 
 
-async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None) -> Tuple[bool, Optional[str]]:
-    """Send message - recipient can be telegram_id (int), username (@xxx), or phone number"""
+async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
     try:
         entity = None
-        
-        # Handle integer telegram IDs (fastest path)
-        if isinstance(recipient, (int, float)):
-            entity = await asyncio.wait_for(client.get_entity(int(recipient)), timeout=8)
+        if recipient.startswith("@"):
+            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=15)
         else:
-            recipient_str = str(recipient or "").strip()
+            from telethon.tl.functions.contacts import ImportContactsRequest
+            from telethon.tl.types import InputPhoneContact
+            import random
             
-            # Numeric string = telegram ID
-            if recipient_str.isdigit() or (recipient_str.startswith('-') and recipient_str[1:].isdigit()):
-                entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=8)
-            elif recipient_str.startswith("@"):
-                entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=10)
-            else:
-                from telethon.tl.functions.contacts import ImportContactsRequest
-                from telethon.tl.types import InputPhoneContact
-                import random
-                
-                phone = recipient_str if recipient_str.startswith("+") else "+" + recipient_str
-                try:
-                    entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)
-                except:
-                    pass
-                
-                if not entity:
-                    contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                    result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
-                    if result.users:
-                        entity = result.users[0]
-                    elif result.retry_contacts:
-                        return False, "Privacy restricted"
+            phone = recipient if recipient.startswith("+") else "+" + recipient
+            try:
+                entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+            except:
+                pass
+            
+            if not entity:
+                contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+                if result.users:
+                    entity = result.users[0]
+                elif result.retry_contacts:
+                    return False, "Privacy restricted"
         
         if not entity:
             return False, "User not found on Telegram"
         
-        # Ensure URLs are clickable
+        # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected
         formatted_content = content
         parse_mode = None
         try:
@@ -339,39 +299,52 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
             url_re = re.compile(r'(https?://[^\\s<>"\\']+)')
             if content and url_re.search(content):
                 parse_mode = 'md'
+
                 def _to_md_link(m):
                     url = m.group(1)
                     return f"[{url}]({url})"
+
                 formatted_content = url_re.sub(_to_md_link, content)
-        except:
+                print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
+        except Exception as e:
+            print(f"  [LINK ERROR] {e}")
             formatted_content = content
             parse_mode = None
 
         if media_url:
             try:
                 import io
-                http = await get_http_client()
-                resp = await http.get(media_url, timeout=20)
-                if resp.status_code == 200:
-                    from urllib.parse import urlparse, unquote
-                    url_path = urlparse(media_url).path
-                    filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
-                    content_type = resp.headers.get("content-type", "").lower()
-                    ext = filename.split(".")[-1].lower() if "." in filename else ""
-                    is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
-                    file_bytes = io.BytesIO(resp.content)
-                    file_bytes.name = filename if "." in filename else "photo.jpg"
-                    await asyncio.wait_for(
-                        client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                        timeout=20
-                    )
-                else:
-                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
+                async with httpx.AsyncClient(timeout=30) as http:
+                    resp = await http.get(media_url)
+                    if resp.status_code == 200:
+                        # Determine filename from URL to help Telethon classify the file
+                        from urllib.parse import urlparse, unquote
+                        url_path = urlparse(media_url).path
+                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+                        
+                        # Check if it's an image based on extension or content-type
+                        content_type = resp.headers.get("content-type", "").lower()
+                        ext = filename.split(".")[-1].lower() if "." in filename else ""
+                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+                        
+                        # Wrap bytes in BytesIO with a name so Telethon knows the file type
+                        file_bytes = io.BytesIO(resp.content)
+                        file_bytes.name = filename if "." in filename else f"photo.jpg"
+                        
+                        print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
+                        
+                        # For images, use force_document=False to send as photo preview
+                        await asyncio.wait_for(
+                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
+                            timeout=30
+                        )
+                    else:
+                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
-                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
+                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
         else:
-            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
         
         return True, None
     except asyncio.TimeoutError:
@@ -390,7 +363,7 @@ async def validate_contact(client: TelegramClient, phone: str):
         from telethon.tl.types import InputPhoneContact
         import random
         contact = InputPhoneContact(client_id=random.randint(0, 2**31 - 1), phone=phone, first_name="V", last_name="")
-        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
         if result.users:
             user = result.users[0]
             return True, f"{user.first_name or ''} {user.last_name or ''}".strip(), user.id
@@ -400,18 +373,13 @@ async def validate_contact(client: TelegramClient, phone: str):
 
 
 async def shutdown_all():
-    global _http_client
     print("\\n[SHUTDOWN] Disconnecting...")
     for account_id, client in list(active_clients.items()):
         try:
-            await asyncio.wait_for(client.disconnect(), timeout=3)
+            await asyncio.wait_for(client.disconnect(), timeout=5)
         except:
             pass
     active_clients.clear()
-    client_metadata.clear()
-    if _http_client:
-        await _http_client.aclose()
-        _http_client = None
     print("[OK] Done.")
 `;
 
@@ -542,37 +510,31 @@ if __name__ == "__main__":
         print("\\nStopped.")
 `;
 
-  // ========== 5. LIVECHAT_RECEIVER.PY ==========
-  const livechatReceiverPy = `#!/usr/bin/env python3
+  // ========== 5. LIVECHAT_RUNNER.PY ==========
+  const livechatRunnerPy = `#!/usr/bin/env python3
 """
-LiveChat Receiver - Incoming messages handler
-Handles: Incoming DMs, photos, documents
-Only processes PRIVATE chats (not groups/channels)
+LiveChat Runner - Handles incoming messages and live chat replies
 """
 import asyncio
 import signal
 import base64
 import time
-import re
-import io
 
 import httpx
 from telethon import events
-from telethon.tl.types import User, PeerUser
 
 from client_manager import (
-    get_or_create_client, get_next_task, report_result, shutdown_all, get_http_client
+    get_or_create_client, get_next_task, report_result,
+    send_message, shutdown_all
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
 
+# Ensure we always get the *origin* (e.g. https://xxxx.supabase.co)
 _u = urlparse(SUPABASE_URL)
 SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
 RUNNING = True
-NEGATIVE_CACHE_TTL = 365 * 24 * 60 * 60
-POSITIVE_CACHE_TTL = 6 * 60 * 60
-_conversation_cache = {}
 
 def signal_handler(sig, frame):
     global RUNNING
@@ -583,184 +545,145 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-def _cache_get(account_id, sender_id):
-    key = (account_id, int(sender_id))
-    val = _conversation_cache.get(key)
-    if not val:
-        return None
-    exists, ts = val
-    ttl = POSITIVE_CACHE_TTL if exists else NEGATIVE_CACHE_TTL
-    if (time.time() - ts) > ttl:
-        _conversation_cache.pop(key, None)
-        return None
-    return exists
-
-
-def _cache_set(account_id, sender_id, exists):
-    _conversation_cache[(account_id, int(sender_id))] = (bool(exists), time.time())
-
-
-async def check_conversation_exists(account_id, sender_id, sender_username=None, sender_phone=None):
+async def check_conversation_exists(account_id: str, sender_id: int, sender_username: str = None, sender_phone: str = None) -> bool:
+    """Multi-strategy matching: telegram_id -> username -> phone"""
+    import re
     try:
-        http = await get_http_client()
-        response = await http.get(
-            f"{SUPABASE_URL_BASE}/rest/v1/conversations",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-            params={"account_id": f"eq.{account_id}", "recipient_telegram_id": f"eq.{sender_id}", "first_message_sent": "eq.true", "select": "id"}
-        )
-        if response.status_code == 200 and response.json():
-            return True
-        if sender_username:
-            for variant in [f"@{sender_username.lstrip('@').lower()}", sender_username.lstrip('@').lower()]:
-                response = await http.get(f"{SUPABASE_URL_BASE}/rest/v1/conversations", headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, params={"account_id": f"eq.{account_id}", "recipient_username": f"ilike.{variant}", "first_message_sent": "eq.true", "select": "id"})
-                if response.status_code == 200 and response.json():
-                    return True
-        if sender_phone:
-            digits = re.sub(r'\\D', '', sender_phone)
-            for pv in [f"+{digits}", digits, sender_phone]:
-                response = await http.get(f"{SUPABASE_URL_BASE}/rest/v1/conversations", headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, params={"account_id": f"eq.{account_id}", "recipient_phone": f"eq.{pv}", "first_message_sent": "eq.true", "select": "id"})
-                if response.status_code == 200 and response.json():
-                    return True
-        return False
+        async with httpx.AsyncClient(timeout=5.0) as http:
+            # Strategy 1: Match by telegram_id
+            response = await http.get(
+                f"{SUPABASE_URL_BASE}/rest/v1/conversations",
+                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+                params={
+                    "account_id": f"eq.{account_id}",
+                    "recipient_telegram_id": f"eq.{sender_id}",
+                    "first_message_sent": "eq.true",
+                    "select": "id"
+                }
+            )
+            if response.status_code == 200 and response.json():
+                return True
+            
+            # Strategy 2: Match by username
+            if sender_username:
+                username_clean = sender_username.lstrip("@").lower()
+                for variant in [f"@{username_clean}", username_clean]:
+                    response = await http.get(
+                        f"{SUPABASE_URL_BASE}/rest/v1/conversations",
+                        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+                        params={
+                            "account_id": f"eq.{account_id}",
+                            "recipient_username": f"ilike.{variant}",
+                            "first_message_sent": "eq.true",
+                            "select": "id"
+                        }
+                    )
+                    if response.status_code == 200 and response.json():
+                        return True
+            
+            # Strategy 3: Match by phone
+            if sender_phone:
+                digits = re.sub(r'\\D', '', sender_phone)
+                for pv in [f"+{digits}", digits, sender_phone]:
+                    response = await http.get(
+                        f"{SUPABASE_URL_BASE}/rest/v1/conversations",
+                        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+                        params={
+                            "account_id": f"eq.{account_id}",
+                            "recipient_phone": f"eq.{pv}",
+                            "first_message_sent": "eq.true",
+                            "select": "id"
+                        }
+                    )
+                    if response.status_code == 200 and response.json():
+                        return True
+            
+            return False
     except Exception as e:
-        print(f"    [WARN] Check error: {e}")
+        print(f"    [WARN] Check conversation error: {e}")
         return False
 
 
-async def setup_message_handler(client, account_id):
-    _ignored_log = {}
-    
+async def setup_message_handler(client, account_id: str):
     @client.on(events.NewMessage(incoming=True))
     async def handler(event):
         try:
-            # IMPORTANT: Only process PRIVATE chats (DMs), skip channels and groups
-            if not event.is_private:
-                return
-            
-            # Double-check it's a user message, not from a channel/bot
             sender = await event.get_sender()
             if not sender:
                 return
             
-            # Must be a User type (not Channel, Chat, etc.)
+            from telethon.tl.types import User
             if not isinstance(sender, User):
                 return
-            
-            # Skip bots
             if getattr(sender, 'bot', False):
                 return
             
-            sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
+            # Get sender info for matching
             sender_username = getattr(sender, 'username', None)
-            sender_phone = f"+{sender.phone}" if hasattr(sender, 'phone') and sender.phone and not sender.phone.startswith('+') else getattr(sender, 'phone', None)
+            sender_phone = None
+            if hasattr(sender, 'phone') and sender.phone:
+                sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+            sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
             
-            cached = _cache_get(account_id, sender.id)
-            if cached is None:
-                exists = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
-                _cache_set(account_id, sender.id, exists)
-                cached = exists
-            
-            if not cached:
-                now = time.time()
-                if sender.id not in _ignored_log or (now - _ignored_log[sender.id]) > 60:
-                    _ignored_log[sender.id] = now
-                    print(f"    [IGNORED] {sender_name}: no campaign conversation")
+            # Multi-strategy conversation check
+            conversation_exists = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
+            if not conversation_exists:
+                # Rate-limited logging for ignored messages
+                if not hasattr(handler, '_ignored_log') or time.time() - handler._ignored_log.get(sender.id, 0) > 60:
+                    if not hasattr(handler, '_ignored_log'):
+                        handler._ignored_log = {}
+                    handler._ignored_log[sender.id] = time.time()
+                    print(f"    [IGNORED] {sender_name} (id={sender.id}): no campaign conversation")
                 return
             
             content = event.message.text or "[Media]"
             media_url = None
             media_type = None
             
-            # Handle photos with proper BytesIO download
             if event.message.photo:
-                print(f"    [PHOTO] From {sender_name}...")
+                print(f"    [PHOTO] Receiving...")
                 content = "[Photo] " + (event.message.text or "")
                 media_type = "image"
                 try:
-                    # Download to BytesIO buffer (more reliable than bytes param)
-                    buffer = io.BytesIO()
-                    await client.download_media(event.message.photo, buffer)
-                    photo_bytes = buffer.getvalue()
-                    
-                    if photo_bytes and len(photo_bytes) > 0:
+                    photo_bytes = await client.download_media(event.message.photo, bytes)
+                    if photo_bytes:
                         file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.jpg"
-                        http = await get_http_client()
-                        resp = await http.put(
-                            f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{account_id}/{file_name}",
-                            headers={
-                                "apikey": SUPABASE_KEY,
-                                "Authorization": f"Bearer {SUPABASE_KEY}",
-                                "Content-Type": "image/jpeg",
-                                "x-upsert": "true"
-                            },
-                            content=photo_bytes,
-                            timeout=30.0
-                        )
-                        if resp.status_code in (200, 201):
-                            media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{account_id}/{file_name}"
-                            print(f"    [PHOTO OK] Uploaded: {file_name}")
-                        else:
-                            print(f"    [PHOTO FAIL] Upload status: {resp.status_code}")
-                    else:
-                        print(f"    [PHOTO FAIL] Empty download")
+                        file_path = f"{account_id}/{file_name}"
+                        
+                        mime_type = "image/jpeg"
+                        if hasattr(event.message, 'file') and event.message.file:
+                            mime_type = getattr(event.message.file, 'mime_type', None) or "image/jpeg"
+                        
+                        async with httpx.AsyncClient(timeout=30.0) as http:
+                            upload_response = await http.put(
+                                f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{file_path}",
+                                headers={
+                                    "apikey": SUPABASE_KEY,
+                                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                                    "Content-Type": mime_type,
+                                    "x-upsert": "true"
+                                },
+                                content=photo_bytes
+                            )
+                            if upload_response.status_code in (200, 201):
+                                media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
+                                print(f"    [OK] Photo uploaded: {file_name}")
+                            else:
+                                error_text = upload_response.text[:300] if upload_response.text else "No details"
+                                print(f"    [WARN] Photo upload failed: {upload_response.status_code} - {error_text}")
                 except Exception as e:
-                    print(f"    [PHOTO ERROR] {e}")
+                    print(f"    [WARN] Could not upload photo: {e}")
             
-            # Handle documents/files
-            elif event.message.document:
-                print(f"    [DOCUMENT] From {sender_name}...")
-                content = "[Document] " + (event.message.text or "")
-                media_type = "document"
-                try:
-                    buffer = io.BytesIO()
-                    await client.download_media(event.message.document, buffer)
-                    doc_bytes = buffer.getvalue()
-                    
-                    if doc_bytes and len(doc_bytes) > 0:
-                        # Get original filename if available
-                        orig_name = None
-                        for attr in event.message.document.attributes:
-                            if hasattr(attr, 'file_name'):
-                                orig_name = attr.file_name
-                                break
-                        
-                        ext = orig_name.split('.')[-1] if orig_name and '.' in orig_name else 'bin'
-                        file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.{ext}"
-                        
-                        # Determine content type
-                        content_type = event.message.document.mime_type or 'application/octet-stream'
-                        
-                        http = await get_http_client()
-                        resp = await http.put(
-                            f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{account_id}/{file_name}",
-                            headers={
-                                "apikey": SUPABASE_KEY,
-                                "Authorization": f"Bearer {SUPABASE_KEY}",
-                                "Content-Type": content_type,
-                                "x-upsert": "true"
-                            },
-                            content=doc_bytes,
-                            timeout=60.0
-                        )
-                        if resp.status_code in (200, 201):
-                            media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{account_id}/{file_name}"
-                            print(f"    [DOC OK] Uploaded: {file_name}")
-                except Exception as e:
-                    print(f"    [DOC ERROR] {e}")
-            
-            # Download avatar (skip errors silently)
             avatar_base64 = None
             try:
-                buffer = io.BytesIO()
-                await client.download_profile_photo(sender, buffer)
-                photo_data = buffer.getvalue()
-                if photo_data:
-                    avatar_base64 = base64.b64encode(photo_data).decode('utf-8')
+                photo = await client.download_profile_photo(sender, bytes)
+                if photo:
+                    avatar_base64 = base64.b64encode(photo).decode('utf-8')
             except:
                 pass
             
             print(f"  [IN] From {sender_name}: {content[:40]}...")
-            asyncio.create_task(report_result("incoming_message", {
+            await report_result("incoming_message", {
                 "account_id": account_id,
                 "sender_id": sender.id,
                 "sender_name": sender_name,
@@ -770,36 +693,54 @@ async def setup_message_handler(client, account_id):
                 "content": content,
                 "media_url": media_url,
                 "media_type": media_type
-            }))
+            })
         except Exception as e:
-            err_str = str(e).lower()
-            # Ignore channel/permission errors silently
-            if "private" in err_str or "permission" in err_str or "banned" in err_str:
-                return
             print(f"  [WARN] Handler error: {e}")
 
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Receiver")
-    print("  [Private DMs only, photos, documents]")
+    print("  LiveChat Runner")
+    print("  [Incoming + Replies]")
     print("=" * 50)
     
-    connected_ids = set()
+    connected_ids = set()  # Track connected accounts to avoid redundant work
     
     while RUNNING:
         try:
-            task = await get_next_task(runner="livechat_receiver")
-            if task.get("task") == "wait":
+            task = await get_next_task(runner="livechat")
+            task_type = task.get("task", "wait")
+            
+            if task_type == "wait":
                 accounts = task.get("accounts", [])
+                # Only connect NEW accounts (skip already connected)
                 new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
                 if new_accounts:
-                    print(f"  [CONNECT] {len(new_accounts)} accounts...")
-                    await asyncio.gather(*[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts], return_exceptions=True)
+                    # Connect in parallel for speed
+                    results = await asyncio.gather(
+                        *[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts],
+                        return_exceptions=True
+                    )
                     for acc in new_accounts:
                         if acc.get("id"):
                             connected_ids.add(acc["id"])
-            await asyncio.sleep(0.05)
+                # No artificial delay - server returns seconds=0 for instant polling
+            
+            elif task_type == "send":
+                msg = task.get("message", {})
+                recipient = task.get("recipient")
+                account = task.get("account", {})
+                client = await get_or_create_client(account, setup_handler=setup_message_handler)
+                if client and recipient:
+                    print(f"  [REPLY] To {recipient}...")
+                    success, error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+                    await report_result("send", {
+                        "message_id": msg.get("id"),
+                        "success": success,
+                        "error": error,
+                        "account_id": account.get("id")
+                    })
+        
         except Exception as e:
             print(f"  [ERROR] {e}")
             await asyncio.sleep(0.5)
@@ -808,100 +749,7 @@ async def main_loop():
 
 
 if __name__ == "__main__":
-    print("\\nInstall: pip install telethon httpx pysocks\\n")
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("\\nStopped.")
-`;
-
-  // ========== 6. LIVECHAT_SENDER.PY (Ultra Fast) ==========
-  const livechatSenderPy = `#!/usr/bin/env python3
-"""
-LiveChat Sender - Ultra Fast Message Sending
-Uses persistent connections, fast_mode, and minimal latency
-"""
-import asyncio
-import signal
-
-from client_manager import (
-    get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, active_clients
-)
-
-RUNNING = True
-
-def signal_handler(sig, frame):
-    global RUNNING
-    print("\\n[STOP] Shutting down...")
-    RUNNING = False
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-
-async def main_loop():
-    print("=" * 50)
-    print("  LiveChat Sender (Ultra Fast)")
-    print("  [Persistent connections, fast_mode]")
-    print("=" * 50)
-    
-    while RUNNING:
-        try:
-            task = await get_next_task(runner="livechat_sender")
-            task_type = task.get("task", "wait")
-            
-            if task_type == "send":
-                msg = task.get("message", {})
-                recipient = task.get("recipient")
-                recipient_tid = task.get("recipient_telegram_id")
-                account = task.get("account", {})
-                account_id = account.get("id")
-                
-                # Use fast_mode=True for speed - skips profile checks
-                # Client is cached after first connection
-                client = await get_or_create_client(account, fast_mode=True)
-                target = recipient_tid if recipient_tid else recipient
-                
-                if client and target:
-                    content = msg.get("content", "")
-                    media_url = msg.get("media_url")
-                    
-                    # Minimal logging for speed
-                    print(f"  [SEND] {recipient}{'...' if media_url else ''}")
-                    
-                    success, error = await send_message(client, target, content, media_url)
-                    
-                    # Non-blocking report
-                    asyncio.create_task(report_result("send", {
-                        "message_id": msg.get("id"), 
-                        "success": success, 
-                        "error": error, 
-                        "account_id": account_id
-                    }))
-                    
-                    print(f"    {'[OK]' if success else '[FAIL] ' + str(error)}")
-                else:
-                    # Report failure if no client
-                    if not client:
-                        asyncio.create_task(report_result("send", {
-                            "message_id": msg.get("id"),
-                            "success": False,
-                            "error": "Could not connect account",
-                            "account_id": account_id
-                        }))
-            
-            # No delay needed - get_next_task returns immediately if no tasks
-            await asyncio.sleep(0.02)
-        except Exception as e:
-            print(f"  [ERROR] {e}")
-            await asyncio.sleep(0.3)
-    
-    await shutdown_all()
-
-
-if __name__ == "__main__":
-    print("\\nInstall: pip install telethon httpx pysocks\\n")
+    print("\\nInstall: pip install telethon httpx\\n")
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
@@ -1609,17 +1457,14 @@ if errorlevel 1 (
 echo        Done!
 echo.
 
-echo  [2/2] Starting 6 runners in parallel...
+echo  [2/2] Starting 5 runners in parallel...
 echo.
 
 :: Start each runner in a new window
 start "Campaign Runner" cmd /k "title Campaign Runner && color 0B && py campaign_runner.py"
 timeout /t 1 /nobreak >nul
 
-start "LiveChat Receiver" cmd /k "title LiveChat Receiver && color 0D && py live_chat_receiver.py"
-timeout /t 1 /nobreak >nul
-
-start "LiveChat Sender" cmd /k "title LiveChat Sender && color 05 && py live_chat_sender.py"
+start "LiveChat Runner" cmd /k "title LiveChat Runner && color 0D && py livechat_runner.py"
 timeout /t 1 /nobreak >nul
 
 start "Account Runner" cmd /k "title Account Runner && color 0E && py account_runner.py"
@@ -1632,15 +1477,14 @@ start "Block Runner" cmd /k "title Block Runner && color 0C && py block_runner.p
 
 echo.
 echo  ================================================
-echo     All 6 runners started!
+echo     All 5 runners started!
 echo  ================================================
 echo.
-echo     Blue    = Campaign Runner
-echo     Purple  = LiveChat Receiver (incoming)
-echo     Magenta = LiveChat Sender (outgoing)
-echo     Yellow  = Account Runner
-echo     Green   = Warmup Runner
-echo     Red     = Block Runner
+echo     Blue   = Campaign Runner
+echo     Purple = LiveChat Runner  
+echo     Yellow = Account Runner
+echo     Green  = Warmup Runner
+echo     Red    = Block Runner
 echo.
 echo     To STOP: Close all windows or press Ctrl+C
 echo  ================================================
@@ -1666,8 +1510,7 @@ pysocks>=1.7.1
     
     // Individual runners
     folder?.file("campaign_runner.py", campaignRunnerPy);
-    folder?.file("live_chat_receiver.py", livechatReceiverPy);
-    folder?.file("live_chat_sender.py", livechatSenderPy);
+    folder?.file("livechat_runner.py", livechatRunnerPy);
     folder?.file("account_runner.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
     folder?.file("block_runner.py", blockRunnerPy);
@@ -1683,7 +1526,7 @@ pysocks>=1.7.1
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded! 11 files included.");
+    toast.success("ZIP downloaded! 10 files included.");
   };
 
   return (
@@ -1699,7 +1542,7 @@ pysocks>=1.7.1
             <div className="space-y-2">
               <h2 className="text-2xl font-bold">Download Python Files</h2>
               <p className="text-muted-foreground">
-                6 separate runners + 1 BAT file to run them all
+                5 separate runners + 1 BAT file to run them all
               </p>
             </div>
 
@@ -1709,12 +1552,11 @@ pysocks>=1.7.1
             </Button>
 
             <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-              <p className="font-medium">📁 Files included (11 total):</p>
+              <p className="font-medium">📁 Files included (10 total):</p>
               <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 6 runners</strong></li>
+                <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 5 runners</strong></li>
                 <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + validation</li>
-                <li><code className="text-purple-500">live_chat_receiver.py</code> - Receive messages, photos, links</li>
-                <li><code className="text-indigo-500">live_chat_sender.py</code> - Send replies, photos, links</li>
+                <li><code className="text-purple-500">livechat_runner.py</code> - Incoming messages + replies</li>
                 <li><code className="text-yellow-500">account_runner.py</code> - SpamBot, name, photo, privacy, import</li>
                 <li><code className="text-orange-500">warmup_runner.py</code> - Join channels, view, react, bio</li>
                 <li><code className="text-red-500">block_runner.py</code> - Block/unblock contacts</li>
@@ -1730,7 +1572,7 @@ pysocks>=1.7.1
               <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
                 <li>Extract ZIP folder</li>
                 <li>Double-click <code className="bg-green-100 dark:bg-green-900 px-2 py-0.5 rounded">RUN.bat</code></li>
-                <li>6 colored windows will open (one for each runner)</li>
+                <li>5 colored windows will open (one for each runner)</li>
                 <li>To stop: Close all windows or press <kbd className="bg-background px-2 py-0.5 rounded border">Ctrl+C</kbd></li>
               </ol>
             </div>
