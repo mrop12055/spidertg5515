@@ -127,6 +127,61 @@ serve(async (req) => {
 
     // WARMUP_CHAT RUNNER: Get pending warmup messages (PARALLEL BATCH)
     if (runner === "warmup_chat") {
+      // First: Auto-fail stuck tasks (claimed > 1 minute ago but still "sending")
+      const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
+      const { data: stuckMessages } = await supabase
+        .from("warmup_messages")
+        .select("id, pair_id, sender_account_id")
+        .eq("status", "sending")
+        .lt("claimed_at", oneMinuteAgo);
+
+      if (stuckMessages && stuckMessages.length > 0) {
+        console.log(`[get-batch-tasks] Found ${stuckMessages.length} stuck warmup messages, marking as failed`);
+        
+        // Mark stuck messages as failed
+        const stuckIds = stuckMessages.map(m => m.id);
+        await supabase
+          .from("warmup_messages")
+          .update({ status: "failed", error_message: "Runner crash - task stuck" })
+          .in("id", stuckIds);
+
+        // Get unique pair IDs that need to be marked failed
+        const stuckPairIds = [...new Set(stuckMessages.map(m => m.pair_id).filter(Boolean))];
+        
+        for (const pairId of stuckPairIds) {
+          // Cancel pending messages for this pair
+          await supabase
+            .from("warmup_messages")
+            .update({ status: "cancelled", error_message: "Pair stopped due to runner crash" })
+            .eq("pair_id", pairId)
+            .eq("status", "pending");
+          
+          // Mark pair as failed with reason
+          await supabase
+            .from("warmup_pairs")
+            .update({ status: "failed", failed_reason: "Runner crash" })
+            .eq("id", pairId);
+          
+          // Log error
+          const { data: pairData } = await supabase
+            .from("warmup_pairs")
+            .select("session_id")
+            .eq("id", pairId)
+            .single();
+          
+          if (pairData?.session_id) {
+            await supabase
+              .from("warmup_errors")
+              .insert({
+                session_id: pairData.session_id,
+                pair_id: pairId,
+                error_message: "Runner crash - warmup task stuck for over 1 minute",
+                error_type: "runner_crash",
+              });
+          }
+        }
+      }
+
       // Get pending warmup messages that are due, one per SENDER ACCOUNT to avoid conflicts
       const { data: warmupMessages } = await supabase
         .from("warmup_messages")
@@ -159,10 +214,14 @@ serve(async (req) => {
           if (isUsableStatus && receiverAccount && proxy?.status === "active") {
             const apiCred = senderAccount.telegram_api_credentials;
 
-            // Mark as in_progress
+            // Mark as "sending" with claim info (task leasing)
             await supabase
               .from("warmup_messages")
-              .update({ status: "in_progress" })
+              .update({ 
+                status: "sending",
+                claimed_at: new Date().toISOString(),
+                claimed_by: "warmup_chat_runner"
+              })
               .eq("id", msg.id);
 
             // Determine task type based on message_type
@@ -172,6 +231,7 @@ serve(async (req) => {
               task: taskType,
               task_id: msg.id,
               pair_id: msg.pair_id,
+              is_cycle_last: msg.is_cycle_last || false,
               task_data: {
                 recipient_phone: receiverAccount.phone_number,
                 recipient_telegram_id: receiverAccount.telegram_id,
@@ -210,6 +270,21 @@ serve(async (req) => {
               .from("warmup_messages")
               .update({ status: "failed", error_message: reason })
               .eq("id", msg.id);
+
+            // If proxy error, mark the pair as failed
+            if (reason.includes("Proxy") || reason.includes("proxy")) {
+              await supabase
+                .from("warmup_pairs")
+                .update({ status: "failed", failed_reason: "Proxy error" })
+                .eq("id", msg.pair_id);
+              
+              // Cancel other pending messages for this pair
+              await supabase
+                .from("warmup_messages")
+                .update({ status: "cancelled", error_message: "Pair stopped due to proxy error" })
+                .eq("pair_id", msg.pair_id)
+                .eq("status", "pending");
+            }
             
             console.log(`[get-batch-tasks] Warmup task skipped: ${reason}`);
           }

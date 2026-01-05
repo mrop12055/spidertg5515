@@ -277,12 +277,17 @@ async def send_warmup_chat(client, recipient_phone: str, message: str, recipient
 
 
 async def process_single_task(task: dict) -> dict:
-    """Process a single warmup task with full human-like timing"""
+    """Process a single warmup task with full human-like timing.
+    
+    IMPORTANT: This function is fully isolated - any exception here
+    only affects this task, never crashes the whole runner.
+    """
     task_type = task.get("task", "unknown")
     task_id = task.get("task_id")
     account = task.get("account", {})
     task_data = task.get("task_data", {})
     pair_id = task.get("pair_id")
+    is_cycle_last = task.get("is_cycle_last", False)
     
     phone = account.get("phone_number", "Unknown")
     
@@ -300,7 +305,8 @@ async def process_single_task(task: dict) -> dict:
                 "account_id": account.get("id"),
                 "success": False,
                 "error": error_msg,
-                "error_type": "proxy_error"
+                "error_type": "proxy_error",
+                "is_cycle_last": is_cycle_last,
             })
             return {"task_id": task_id, "success": False, "error": error_msg}
         
@@ -318,7 +324,8 @@ async def process_single_task(task: dict) -> dict:
                 "account_id": account.get("id"),
                 "success": success,
                 "error": error,
-                "message_type": "add_contact"  # Important: tells backend to mark contacts_exchanged=true
+                "message_type": "add_contact",  # Important: tells backend to mark contacts_exchanged=true
+                "is_cycle_last": is_cycle_last,
             })
             print(f"    {'✓' if success else '✗'} Contact saved")
             return {"task_id": task_id, "success": success, "error": error}
@@ -331,7 +338,8 @@ async def process_single_task(task: dict) -> dict:
             message = task_data.get("message", "Hey! 👋")
             
             display_phone = recipient_phone[:8] + "..." if recipient_phone and len(recipient_phone) > 8 else recipient_phone
-            print(f"  🔥 [{phone}] Warmup chat to {display_phone}...")
+            cycle_indicator = " [LAST]" if is_cycle_last else ""
+            print(f"  🔥 [{phone}] Warmup chat to {display_phone}{cycle_indicator}...")
             
             success, error = await send_warmup_chat(
                 client, 
@@ -347,7 +355,8 @@ async def process_single_task(task: dict) -> dict:
                 "account_id": account.get("id"),
                 "success": success,
                 "error": error,
-                "message_type": "text"  # Regular chat message
+                "message_type": "text",  # Regular chat message
+                "is_cycle_last": is_cycle_last,
             })
             
             msg_preview = message[:30] + "..." if len(message) > 30 else message
@@ -359,15 +368,33 @@ async def process_single_task(task: dict) -> dict:
             return {"task_id": task_id, "success": False, "error": f"Unknown task type: {task_type}"}
     
     except Exception as e:
+        error_str = str(e)
+        error_type = "unknown"
+        
+        # Detect error type for better reporting
+        error_lower = error_str.lower()
+        if any(x in error_lower for x in ["proxy", "socks", "connection refused", "unreachable"]):
+            error_type = "proxy_error"
+        elif any(x in error_lower for x in ["timeout", "timed out"]):
+            error_type = "connection_error"
+        
         print(f"  ⚠ Task error [{phone}]: {e}")
-        await report_result("warmup_chat", {
-            "task_id": task_id,
-            "pair_id": pair_id,
-            "account_id": account.get("id"),
-            "success": False,
-            "error": str(e)
-        })
-        return {"task_id": task_id, "success": False, "error": str(e)}
+        
+        # Always report result, even on exception
+        try:
+            await report_result("warmup_chat", {
+                "task_id": task_id,
+                "pair_id": pair_id,
+                "account_id": account.get("id"),
+                "success": False,
+                "error": error_str,
+                "error_type": error_type,
+                "is_cycle_last": is_cycle_last,
+            })
+        except Exception as report_error:
+            print(f"  ⚠ Failed to report error: {report_error}")
+        
+        return {"task_id": task_id, "success": False, "error": error_str}
 
 
 async def main_loop():

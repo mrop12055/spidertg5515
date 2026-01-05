@@ -1224,9 +1224,12 @@ export type Database = {
       }
       warmup_messages: {
         Row: {
+          claimed_at: string | null
+          claimed_by: string | null
           created_at: string | null
           error_message: string | null
           id: string
+          is_cycle_last: boolean | null
           message_content: string
           message_type: string | null
           pair_id: string
@@ -1236,11 +1239,15 @@ export type Database = {
           sender_account_id: string
           sent_at: string | null
           status: string | null
+          template_id: string | null
         }
         Insert: {
+          claimed_at?: string | null
+          claimed_by?: string | null
           created_at?: string | null
           error_message?: string | null
           id?: string
+          is_cycle_last?: boolean | null
           message_content: string
           message_type?: string | null
           pair_id: string
@@ -1250,11 +1257,15 @@ export type Database = {
           sender_account_id: string
           sent_at?: string | null
           status?: string | null
+          template_id?: string | null
         }
         Update: {
+          claimed_at?: string | null
+          claimed_by?: string | null
           created_at?: string | null
           error_message?: string | null
           id?: string
+          is_cycle_last?: boolean | null
           message_content?: string
           message_type?: string | null
           pair_id?: string
@@ -1264,6 +1275,7 @@ export type Database = {
           sender_account_id?: string
           sent_at?: string | null
           status?: string | null
+          template_id?: string | null
         }
         Relationships: [
           {
@@ -1287,6 +1299,13 @@ export type Database = {
             referencedRelation: "telegram_accounts"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "warmup_messages_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_message_templates"
+            referencedColumns: ["id"]
+          },
         ]
       }
       warmup_pairs: {
@@ -1295,8 +1314,12 @@ export type Database = {
           account_b_id: string
           contacts_exchanged: boolean | null
           created_at: string | null
+          cycles_completed_today: number | null
+          failed_reason: string | null
           id: string
+          last_cycle_date: string | null
           last_message_at: string | null
+          last_template_id: string | null
           messages_exchanged: number | null
           session_id: string
           status: string | null
@@ -1306,8 +1329,12 @@ export type Database = {
           account_b_id: string
           contacts_exchanged?: boolean | null
           created_at?: string | null
+          cycles_completed_today?: number | null
+          failed_reason?: string | null
           id?: string
+          last_cycle_date?: string | null
           last_message_at?: string | null
+          last_template_id?: string | null
           messages_exchanged?: number | null
           session_id: string
           status?: string | null
@@ -1317,8 +1344,12 @@ export type Database = {
           account_b_id?: string
           contacts_exchanged?: boolean | null
           created_at?: string | null
+          cycles_completed_today?: number | null
+          failed_reason?: string | null
           id?: string
+          last_cycle_date?: string | null
           last_message_at?: string | null
+          last_template_id?: string | null
           messages_exchanged?: number | null
           session_id?: string
           status?: string | null

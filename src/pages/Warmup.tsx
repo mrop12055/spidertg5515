@@ -41,6 +41,9 @@ interface WarmupPair {
   account_b: { phone_number: string; first_name: string | null };
   messages_exchanged: number;
   status: string;
+  cycles_completed_today: number;
+  last_cycle_date: string | null;
+  failed_reason: string | null;
 }
 
 interface PrePairedAccount {
@@ -136,6 +139,9 @@ export default function Warmup() {
             id,
             messages_exchanged,
             status,
+            cycles_completed_today,
+            last_cycle_date,
+            failed_reason,
             account_a:telegram_accounts!warmup_pairs_account_a_id_fkey(phone_number, first_name),
             account_b:telegram_accounts!warmup_pairs_account_b_id_fkey(phone_number, first_name)
           `)
@@ -828,10 +834,23 @@ export default function Warmup() {
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
+                            {/* Show cycle count (today's completed warmup rounds) */}
+                            {(() => {
+                              const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
+                              const pairCycles = activePair?.last_cycle_date === today 
+                                ? (activePair?.cycles_completed_today || 0) 
+                                : 0;
+                              return pairCycles > 0 ? (
+                                <Badge variant="outline" className="shrink-0 text-xs px-1.5 bg-blue-500/10 text-blue-600 border-blue-500/30">
+                                  {pairCycles} cycle{pairCycles !== 1 ? 's' : ''}
+                                </Badge>
+                              ) : null;
+                            })()}
+                            
                             {isRunning ? (
                               <>
                                 <Badge variant="secondary" className="shrink-0 text-xs px-1.5">
-                                  {activePair?.messages_exchanged || 0}
+                                  {activePair?.messages_exchanged || 0} msgs
                                 </Badge>
                                 <Button
                                   size="icon"
@@ -848,7 +867,48 @@ export default function Warmup() {
                                 </Button>
                                 <div className="flex items-center gap-1 bg-green-500 text-white px-2 py-1 rounded-md text-xs shrink-0">
                                   <Loader2 className="h-3 w-3 animate-spin" />
+                                  Running
                                 </div>
+                              </>
+                            ) : activePair?.status === "failed" ? (
+                              <>
+                                <Badge variant="destructive" className="shrink-0 text-xs px-1.5">
+                                  {activePair.failed_reason || "Failed"}
+                                </Badge>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleStartSinglePairWarmup(account.id, account.warmup_pair_id)}
+                                  disabled={startingPairId === account.id}
+                                  className="h-7 text-xs"
+                                >
+                                  {startingPairId === account.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <RefreshCw className="h-3 w-3 mr-1" />
+                                  )}
+                                  Retry
+                                </Button>
+                              </>
+                            ) : activePair?.status === "completed" ? (
+                              <>
+                                <Badge className="shrink-0 text-xs px-1.5 bg-green-500 text-white">
+                                  Done
+                                </Badge>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleStartSinglePairWarmup(account.id, account.warmup_pair_id)}
+                                  disabled={startingPairId === account.id}
+                                  className="h-7 text-xs"
+                                >
+                                  {startingPairId === account.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    <Play className="h-3 w-3 mr-1" />
+                                  )}
+                                  Again
+                                </Button>
                               </>
                             ) : (
                               <Button
