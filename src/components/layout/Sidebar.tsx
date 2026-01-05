@@ -20,7 +20,6 @@ import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useTelegram } from '@/context/TelegramContext';
-import { useRunnerStatus } from '@/hooks/useRunnerStatus';
 
 interface NavItem {
   icon: React.ElementType;
@@ -48,7 +47,6 @@ export const Sidebar: React.FC = () => {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const { conversations } = useTelegram();
-  const { anyOfflineConfirmed } = useRunnerStatus();
 
   // Calculate count of unread *visible* chats (campaign/user-initiated only)
   const totalUnread = conversations.filter(c => (c.firstMessageSent ?? false) && (c.unreadCount || 0) > 0).length;
@@ -69,18 +67,10 @@ export const Sidebar: React.FC = () => {
             <Send className="w-5 h-5 text-primary-foreground" />
           </div>
         {!collapsed && (
-            <div className="animate-fade-in flex items-center gap-2">
-              <div>
-                <h1 className="font-bold text-lg text-sidebar-foreground">TGxOP</h1>
-                <p className="text-xs text-muted-foreground">Dashboard</p>
-              </div>
-              {anyOfflineConfirmed && (
-                <span className="w-2.5 h-2.5 rounded-full bg-destructive animate-pulse" title="Some runners are offline" />
-              )}
+            <div className="animate-fade-in">
+              <h1 className="font-bold text-lg text-sidebar-foreground">TGxOP</h1>
+              <p className="text-xs text-muted-foreground">Dashboard</p>
             </div>
-          )}
-          {collapsed && anyOfflineConfirmed && (
-            <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-destructive animate-pulse" title="Some runners are offline" />
           )}
         </div>
       </div>

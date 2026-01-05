@@ -19,7 +19,7 @@ const runnerNames: Record<string, string> = {
   block: 'Block Runner',
 };
 
-const OFFLINE_GRACE_PERIOD_MS = 10000; // 10 seconds grace period before showing red dot
+const OFFLINE_GRACE_PERIOD_MS = 15000; // 15 seconds grace period before showing error banner
 
 export const useRunnerStatus = () => {
   const [runners, setRunners] = useState<RunnerInfo[]>(
