@@ -25,17 +25,32 @@ serve(async (req) => {
     if (specificPairAccountIds && specificPairAccountIds.length === 2) {
       console.log("Starting warmup for specific pair:", specificPairAccountIds);
       
-      // Get the two specific accounts
+      // Get the two specific accounts - allow active OR restricted for warmup
       const { data: accounts, error: accountsError } = await supabase
         .from("telegram_accounts")
-        .select("id, phone_number, first_name, telegram_id, username")
+        .select("id, phone_number, first_name, telegram_id, username, status")
         .in("id", specificPairAccountIds)
-        .eq("status", "active")
+        .in("status", ["active", "restricted"])
         .not("session_data", "is", null);
 
       if (accountsError || !accounts || accounts.length !== 2) {
+        // Get more details about what's wrong
+        const { data: allAccounts } = await supabase
+          .from("telegram_accounts")
+          .select("id, phone_number, status, session_data")
+          .in("id", specificPairAccountIds);
+        
+        const details = (allAccounts || []).map((a: any) => 
+          `${a.phone_number}: status=${a.status}, session=${a.session_data ? 'yes' : 'no'}`
+        ).join(', ');
+        
+        console.log(`[start-warmup-chat] Accounts not usable: ${details}`);
+        
         return new Response(
-          JSON.stringify({ error: "Both accounts must be active with valid sessions" }),
+          JSON.stringify({ 
+            error: "Both accounts must be active/restricted with valid sessions",
+            details: details
+          }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
