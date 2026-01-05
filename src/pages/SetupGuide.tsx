@@ -1185,7 +1185,7 @@ async def add_contact(client, phone, first_name, last_name=""):
         return False, phone, str(e)
 
 
-async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_id=None, recipient_username=None):
+async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_id=None, recipient_username=None, recipient_first_name=None):
     """Send warmup chat message with human-like typing simulation"""
     try:
         from telethon.tl.functions.contacts import ImportContactsRequest
@@ -1207,12 +1207,12 @@ async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_
             except:
                 pass
         
-        # Fallback to phone number
+        # Fallback to phone number - use actual name
         if not user:
             contact = InputPhoneContact(
                 client_id=random.randint(0, 999999),
                 phone=recipient_phone,
-                first_name="WarmupFriend",
+                first_name=recipient_first_name or "Friend",
                 last_name=""
             )
             result = await client(ImportContactsRequest([contact]))
@@ -1364,13 +1364,14 @@ async def main_loop():
                 recipient_phone = task_data.get("recipient_phone")
                 recipient_telegram_id = task_data.get("recipient_telegram_id")
                 recipient_username = task_data.get("recipient_username")
+                recipient_first_name = task_data.get("first_name")
                 message = task_data.get("message", "Hey! 👋")
                 
                 display_phone = recipient_phone[:8] + "..." if recipient_phone and len(recipient_phone) > 8 else recipient_phone
                 print(f"  [CHAT] {phone} -> {display_phone}...")
                 
                 success, error = await send_warmup_chat(
-                    client, recipient_phone, message, recipient_telegram_id, recipient_username
+                    client, recipient_phone, message, recipient_telegram_id, recipient_username, recipient_first_name
                 )
                 await report_result("warmup_chat", {
                     "task_id": task_id,
