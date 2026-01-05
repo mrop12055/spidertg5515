@@ -27,7 +27,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-PARALLEL_BATCH_SIZE = 100  # Process up to 100 pairs simultaneously (no limit)
+PARALLEL_BATCH_SIZE = 200  # Process up to 200 pairs simultaneously (no limit)
 
 # Warmup channels (safe public channels for building history)
 WARMUP_CHANNELS = [
@@ -450,8 +450,9 @@ async def main_loop():
             fail_count = len(results) - success_count
             print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
             
-            # Short delay before next batch (tasks have their own timing)
-            await asyncio.sleep(delay_after)
+            # FAST MODE: Immediately fetch next batch, no waiting (tasks have their own timing)
+            # Only add minimal delay to prevent API rate limits
+            await asyncio.sleep(max(0.3, delay_after))
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
