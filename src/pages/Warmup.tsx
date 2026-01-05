@@ -495,9 +495,6 @@ export default function Warmup() {
 
   const formatPhone = (phone: string) => {
     if (!phone) return "Unknown";
-    if (phone.length > 8) {
-      return phone.slice(0, 4) + "..." + phone.slice(-4);
-    }
     return phone;
   };
 
