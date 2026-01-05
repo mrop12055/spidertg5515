@@ -72,6 +72,18 @@ serve(async (req) => {
         throw new Error(`Failed to create pair: ${pairError.message}`);
       }
 
+      // Check if these accounts have already exchanged contacts in a previous warmup
+      const { data: previousContactExchange } = await supabase
+        .from("warmup_messages")
+        .select("id")
+        .eq("message_type", "add_contact")
+        .eq("status", "sent")
+        .or(`and(sender_account_id.eq.${accounts[0].id},receiver_account_id.eq.${accounts[1].id}),and(sender_account_id.eq.${accounts[1].id},receiver_account_id.eq.${accounts[0].id})`)
+        .limit(1);
+
+      const contactsAlreadyExchanged = previousContactExchange && previousContactExchange.length > 0;
+      console.log(`Contacts already exchanged: ${contactsAlreadyExchanged}`);
+
       // Get message templates
       const { data: templates } = await supabase
         .from("warmup_message_templates")
@@ -100,38 +112,45 @@ serve(async (req) => {
       );
       const selectedTemplates = flow.slice(0, Math.min(messageCount, flow.length));
 
-      // Schedule contact tasks first (both accounts save each other)
+      // Schedule tasks
       const now = new Date();
-      let currentTime = new Date(now.getTime() + (10 + Math.random() * 20) * 1000); // Start in 10-30 seconds
+      let currentTime = new Date(now.getTime() + (10 + Math.random() * 20) * 1000);
       const allMessages: any[] = [];
 
-      // Account A saves Account B as contact
-      allMessages.push({
-        pair_id: createdPair.id,
-        sender_account_id: accounts[0].id,
-        receiver_account_id: accounts[1].id,
-        message_content: accounts[1].first_name || "Friend",
-        message_type: "add_contact",
-        scheduled_at: currentTime.toISOString(),
-        reply_delay_seconds: 5,
-        status: "pending",
-      });
+      // Only add contact tasks if this is the first time these accounts interact
+      if (!contactsAlreadyExchanged) {
+        console.log("First warmup for this pair - scheduling contact exchange");
+        
+        // Account A saves Account B as contact
+        allMessages.push({
+          pair_id: createdPair.id,
+          sender_account_id: accounts[0].id,
+          receiver_account_id: accounts[1].id,
+          message_content: accounts[1].first_name || "Friend",
+          message_type: "add_contact",
+          scheduled_at: currentTime.toISOString(),
+          reply_delay_seconds: 5,
+          status: "pending",
+        });
 
-      // Account B saves Account A as contact (2-5 seconds later)
-      currentTime = new Date(currentTime.getTime() + (2000 + Math.random() * 3000));
-      allMessages.push({
-        pair_id: createdPair.id,
-        sender_account_id: accounts[1].id,
-        receiver_account_id: accounts[0].id,
-        message_content: accounts[0].first_name || "Friend",
-        message_type: "add_contact",
-        scheduled_at: currentTime.toISOString(),
-        reply_delay_seconds: 5,
-        status: "pending",
-      });
+        // Account B saves Account A as contact (2-5 seconds later)
+        currentTime = new Date(currentTime.getTime() + (2000 + Math.random() * 3000));
+        allMessages.push({
+          pair_id: createdPair.id,
+          sender_account_id: accounts[1].id,
+          receiver_account_id: accounts[0].id,
+          message_content: accounts[0].first_name || "Friend",
+          message_type: "add_contact",
+          scheduled_at: currentTime.toISOString(),
+          reply_delay_seconds: 5,
+          status: "pending",
+        });
 
-      // Wait 3-5 seconds after contacts are saved before starting chat
-      currentTime = new Date(currentTime.getTime() + (3000 + Math.random() * 2000));
+        // Wait 3-5 seconds after contacts saved before starting chat
+        currentTime = new Date(currentTime.getTime() + (3000 + Math.random() * 2000));
+      } else {
+        console.log("Contacts already exchanged - skipping contact tasks");
+      }
 
       // Schedule chat messages
       for (const template of selectedTemplates) {
@@ -335,7 +354,23 @@ serve(async (req) => {
     // 8. Create account lookup map
     const accountMap = new Map(accounts.map(a => [a.id, a]));
 
-    // 9. Schedule contact tasks + messages for each pair - ALL at once with human-like timing
+    // 9. Check which pairs already have contacts exchanged
+    const pairAccountIds = createdPairs.flatMap(p => [p.account_a_id, p.account_b_id]);
+    const { data: previousContacts } = await supabase
+      .from("warmup_messages")
+      .select("sender_account_id, receiver_account_id")
+      .eq("message_type", "add_contact")
+      .eq("status", "sent")
+      .in("sender_account_id", pairAccountIds);
+
+    // Create a set of account pairs that have already exchanged contacts
+    const contactsExchangedSet = new Set<string>();
+    for (const msg of (previousContacts || [])) {
+      // Store both directions
+      contactsExchangedSet.add(`${msg.sender_account_id}-${msg.receiver_account_id}`);
+    }
+
+    // 10. Schedule contact tasks + messages for each pair
     const now = new Date();
     const allMessages: any[] = [];
 
@@ -346,37 +381,45 @@ serve(async (req) => {
       
       if (!accountA || !accountB) continue;
 
+      // Check if this pair already exchanged contacts
+      const aToB = contactsExchangedSet.has(`${pair.account_a_id}-${pair.account_b_id}`);
+      const bToA = contactsExchangedSet.has(`${pair.account_b_id}-${pair.account_a_id}`);
+      const contactsAlreadyExchanged = aToB && bToA;
+
       // Stagger pair start times (each pair starts 5-15 seconds after previous)
       const pairStartOffset = pairIndex * (5000 + Math.random() * 10000);
-      let currentTime = new Date(now.getTime() + 10000 + pairStartOffset); // Start 10s + stagger
+      let currentTime = new Date(now.getTime() + 10000 + pairStartOffset);
 
-      // First: Account A saves Account B as contact
-      allMessages.push({
-        pair_id: pair.id,
-        sender_account_id: pair.account_a_id,
-        receiver_account_id: pair.account_b_id,
-        message_content: accountB.first_name || "Friend",
-        message_type: "add_contact",
-        scheduled_at: currentTime.toISOString(),
-        reply_delay_seconds: 3,
-        status: "pending",
-      });
+      // Only add contact tasks if first warmup for this pair
+      if (!contactsAlreadyExchanged) {
+        // Account A saves Account B as contact
+        allMessages.push({
+          pair_id: pair.id,
+          sender_account_id: pair.account_a_id,
+          receiver_account_id: pair.account_b_id,
+          message_content: accountB.first_name || "Friend",
+          message_type: "add_contact",
+          scheduled_at: currentTime.toISOString(),
+          reply_delay_seconds: 3,
+          status: "pending",
+        });
 
-      // Account B saves Account A as contact (2-4 seconds later)
-      currentTime = new Date(currentTime.getTime() + (2000 + Math.random() * 2000));
-      allMessages.push({
-        pair_id: pair.id,
-        sender_account_id: pair.account_b_id,
-        receiver_account_id: pair.account_a_id,
-        message_content: accountA.first_name || "Friend",
-        message_type: "add_contact",
-        scheduled_at: currentTime.toISOString(),
-        reply_delay_seconds: 3,
-        status: "pending",
-      });
+        // Account B saves Account A as contact (2-4 seconds later)
+        currentTime = new Date(currentTime.getTime() + (2000 + Math.random() * 2000));
+        allMessages.push({
+          pair_id: pair.id,
+          sender_account_id: pair.account_b_id,
+          receiver_account_id: pair.account_a_id,
+          message_content: accountA.first_name || "Friend",
+          message_type: "add_contact",
+          scheduled_at: currentTime.toISOString(),
+          reply_delay_seconds: 3,
+          status: "pending",
+        });
 
-      // Wait 3-5 seconds after contacts saved before starting chat
-      currentTime = new Date(currentTime.getTime() + (3000 + Math.random() * 2000));
+        // Wait 3-5 seconds after contacts saved before starting chat
+        currentTime = new Date(currentTime.getTime() + (3000 + Math.random() * 2000));
+      }
 
       // Pick a random conversation flow
       const flow = conversationFlows[Math.floor(Math.random() * conversationFlows.length)];
