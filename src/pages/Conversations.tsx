@@ -39,7 +39,7 @@ import { format, isToday, isYesterday, isSameDay, subDays } from 'date-fns';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 
-type TimeFilter = '24h' | '3d' | '5d' | '7d';
+type TimeFilter = 'today' | '3d' | '5d';
 
 interface BlockedContact {
   id: string;
@@ -89,7 +89,7 @@ const Chat: React.FC = () => {
   const [singleActionConvId, setSingleActionConvId] = useState<string | null>(null);
   
   // Time filter state
-  const [timeFilter, setTimeFilter] = useState<TimeFilter>('24h');
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
   
   // Block list state
   const [isBlockListOpen, setIsBlockListOpen] = useState(false);
@@ -162,11 +162,18 @@ const Chat: React.FC = () => {
   const getTimeFilterCutoff = () => {
     const now = new Date();
     switch (timeFilter) {
-      case '24h': return subDays(now, 1);
+      case 'today': {
+        // Start of today (midnight)
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        return startOfToday;
+      }
       case '3d': return subDays(now, 3);
       case '5d': return subDays(now, 5);
-      case '7d': return subDays(now, 7);
-      default: return subDays(now, 1);
+      default: {
+        // Start of today as default
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+        return startOfToday;
+      }
     }
   };
 
@@ -710,7 +717,7 @@ const Chat: React.FC = () => {
                 
                 {/* Time Filter Tabs */}
                 <div className="flex gap-1 mb-3 p-1 bg-secondary/30 rounded-lg">
-                  {(['24h', '3d', '5d', '7d'] as TimeFilter[]).map((filter, idx) => (
+                  {(['today', '3d', '5d'] as TimeFilter[]).map((filter) => (
                     <button
                       key={filter}
                       onClick={() => setTimeFilter(filter)}
@@ -721,7 +728,7 @@ const Chat: React.FC = () => {
                           : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                       )}
                     >
-                      {filter}
+                      {filter === 'today' ? 'Today' : filter}
                     </button>
                   ))}
                 </div>
