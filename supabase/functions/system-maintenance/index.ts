@@ -150,12 +150,13 @@ Deno.serve(async (req) => {
 
     // 10. Auto-recover frozen/restricted accounts with expired restriction timers
     // These are accounts that got temporary FloodWait errors and should be back to active
+    const nowIso = new Date().toISOString();
     const { data: expiredRestrictions, error: expiredError } = await supabase
       .from('telegram_accounts')
       .update({ status: 'active', restricted_until: null, ban_reason: null })
       .in('status', ['restricted', 'cooldown', 'frozen'])
       .not('restricted_until', 'is', null)
-      .lte('restricted_until', now.toISOString())
+      .lte('restricted_until', nowIso)
       .select('id, phone_number');
     
     if (expiredError) {
@@ -173,7 +174,7 @@ Deno.serve(async (req) => {
       .eq('status', 'active')
       .not('ban_reason', 'is', null)
       .neq('ban_reason', '')
-      .or('restricted_until.is.null,restricted_until.lte.' + now.toISOString())
+      .or('restricted_until.is.null,restricted_until.lte.' + nowIso)
       .select('id, phone_number, ban_reason');
     
     if (staleError) {
