@@ -18,7 +18,7 @@ const runnerNames: Record<string, string> = {
   block: 'Block Runner',
 };
 
-const OFFLINE_GRACE_PERIOD_MS = 10000; // 10 seconds grace period before showing red dot
+const OFFLINE_GRACE_PERIOD_MS = 15000; // 15 seconds grace period before showing red dot
 
 export const useRunnerStatus = () => {
   const [runners, setRunners] = useState<RunnerInfo[]>(
@@ -43,7 +43,13 @@ export const useRunnerStatus = () => {
       const runnerMap = new Map<string, Date>();
       if (heartbeats) {
         for (const hb of heartbeats) {
-          runnerMap.set(hb.runner_name, new Date(hb.last_seen));
+          // Map warmup_chat to warmup (same runner)
+          const runnerKey = hb.runner_name === 'warmup_chat' ? 'warmup' : hb.runner_name;
+          const lastSeen = new Date(hb.last_seen);
+          // Keep the most recent timestamp for each runner
+          if (!runnerMap.has(runnerKey) || lastSeen > runnerMap.get(runnerKey)!) {
+            runnerMap.set(runnerKey, lastSeen);
+          }
         }
       }
       
