@@ -181,6 +181,18 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         api_id = account.get("api_id") or TELEGRAM_API_ID
         api_hash = account.get("api_hash") or TELEGRAM_API_HASH
         
+        # Enable WAL mode for SQLite to avoid "database is locked" errors
+        import sqlite3
+        session_db = session_path + ".session"
+        if os.path.exists(session_db):
+            try:
+                conn = sqlite3.connect(session_db, timeout=30.0)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")
+                conn.close()
+            except:
+                pass
+        
         client = TelegramClient(
             session_path, int(api_id), api_hash,
             device_model=device_model,
