@@ -169,14 +169,18 @@ async def setup_message_handler(client, account_id: str):
             # Skip channel/group messages - only handle private chats
             from telethon.tl.types import User
             if not isinstance(sender, User):
-                # It's a Channel, Chat, or other non-user entity - skip
                 return
 
-            # Skip bots (often spam / auto messages)
+            # Skip bots
             if getattr(sender, 'bot', False):
                 return
-
-            # Get sender info for matching
+            
+            # FILTER: Only process messages from contacts (people in contact list)
+            # This is faster than database checks and ensures we only handle known contacts
+            if not getattr(sender, 'contact', False):
+                return  # Skip - sender is not in contact list
+            
+            # Get sender info
             first_name = getattr(sender, 'first_name', None) or ''
             last_name = getattr(sender, 'last_name', None) or ''
             sender_name = f"{first_name} {last_name}".strip() or str(sender.id)
@@ -184,22 +188,6 @@ async def setup_message_handler(client, account_id: str):
             sender_phone = None
             if hasattr(sender, 'phone') and sender.phone:
                 sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
-
-            # FILTER: Only process messages from conversations WE initiated
-            # Uses multi-strategy matching: telegram_id -> username -> phone
-            cached_exists = _cache_get(account_id, sender.id)
-            if cached_exists is None:
-                conversation_exists = await check_conversation_exists(
-                    account_id, sender.id, sender_username, sender_phone
-                )
-                _cache_set(account_id, sender.id, conversation_exists)
-                cached_exists = conversation_exists
-
-            if not cached_exists:
-                # Permanently skip (cached) non-campaign senders to keep loop fast
-                if LOG_IGNORED_NON_CAMPAIGN:
-                    print(f"    [IGNORED] {sender_name} (id={sender.id}, @{sender_username}, phone={sender_phone}): no campaign conversation")
-                return
             
             content = event.message.text or "[Media message]"
             media_url = None
