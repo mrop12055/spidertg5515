@@ -123,7 +123,9 @@ async def main_loop():
             skip_delay = False  # Flag to skip delay when account needs rotation
             
             try:
-                client = await get_or_create_client(account)
+                # Pass task-level proxy to ensure consistent proxy usage
+                task_proxy = task_response.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if not client or not recipient:
                     result = {
                         "success": False,

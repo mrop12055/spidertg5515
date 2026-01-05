@@ -323,8 +323,9 @@ async def _process_livechat_once() -> bool:
         recipient = task.get("recipient")
         account = task.get("account", {})
         account_id = account.get("id")
+        task_proxy = task.get("proxy")
 
-        client = await get_or_create_client(account, setup_handler=setup_message_handler)
+        client = await get_or_create_client(account, setup_handler=setup_message_handler, task_proxy=task_proxy)
         if not client or not recipient:
             return False
 
@@ -393,7 +394,8 @@ async def main_loop():
             if task_type == "wait":
                 accounts = task.get("accounts", [])
                 for acc in accounts:
-                    await get_or_create_client(acc, setup_handler=setup_message_handler)
+                    # Each account carries its own proxy data from the edge function
+                    await get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy"))
                 # IMPORTANT: Respect backend wait time - don't poll faster than the server allows
                 wait_seconds = task.get("seconds", 5)
                 reason = task.get("reason", "")
@@ -408,6 +410,7 @@ async def main_loop():
                 mode = task.get("mode", "campaign")
                 settings = task.get("settings", {}) if isinstance(task.get("settings"), dict) else {}
                 delay_after = task.get("delay_after")
+                task_proxy = task.get("proxy")  # Task-level proxy for consistency
 
                 account_id = account.get("id")
 
@@ -423,7 +426,7 @@ async def main_loop():
                         print(f"  🔄 Switching campaign accounts... waiting {account_switch_delay:.1f}s")
                         await _sleep_with_livechat(account_switch_delay)
 
-                client = await get_or_create_client(account, setup_handler=setup_message_handler)
+                client = await get_or_create_client(account, setup_handler=setup_message_handler, task_proxy=task_proxy)
                 if client and recipient:
                     icon = "⚡" if mode == "live" else "📨"
                     print(f"  {icon} Sending to {recipient}...")
@@ -468,7 +471,8 @@ async def main_loop():
             elif task_type == "validate":
                 recipients = task.get("recipients", [])
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  📋 Validating {len(recipients)} recipients...")
                     for r in recipients:
@@ -486,10 +490,11 @@ async def main_loop():
                 invalid_numbers = list(task.get("invalid_numbers", []))
                 failed_account_ids = list(task.get("failed_account_ids", []))
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")
                 
                 print(f"  📋 Contact import: {len(phone_numbers)} numbers with {account.get('phone_number')}")
                 
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if not client:
                     # Can't connect - mark account as failed
                     await report_result("contact_import", {
@@ -554,7 +559,8 @@ async def main_loop():
             
             elif task_type == "spambot_check":
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🤖 SpamBot check for {account.get('phone_number')}...")
                     status, ban_reason, response = await check_spambot(client)
@@ -564,7 +570,8 @@ async def main_loop():
             elif task_type == "change_name":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  ✏️ Changing name...")
                     success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
@@ -574,7 +581,8 @@ async def main_loop():
             elif task_type == "change_photo":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  📷 Changing photo...")
                     success, error = await change_profile_photo(client, task_data.get("photo_base64", ""))
@@ -584,7 +592,8 @@ async def main_loop():
             elif task_type == "privacy_settings":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🔒 Updating privacy...")
                     success, error = await update_privacy(client, task_data.get("hidePhone", False), task_data.get("hideLastSeen", False), task_data.get("disableCalls", False))
@@ -594,7 +603,8 @@ async def main_loop():
             elif task_type == "change_password":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🔐 Changing password...")
                     success, error = await change_password(client, task_data.get("existing_password", ""), task_data.get("new_password", ""))
@@ -603,7 +613,8 @@ async def main_loop():
             
             elif task_type == "logout_sessions":
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🚪 Logging out other sessions...")
                     success, error = await logout_other_sessions(client)
@@ -615,7 +626,8 @@ async def main_loop():
                 account = task.get("account", {})
                 target = task.get("target", {})
                 action = task.get("action", "block")
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🚫 {action.capitalize()} contact...")
                     try:
@@ -645,7 +657,8 @@ async def main_loop():
             elif task_type.startswith("warmup_"):
                 account = task.get("account", {})
                 warmup_type = task_type.replace("warmup_", "")
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🔥 Warmup {warmup_type}...")
                     if warmup_type == "join_channel":

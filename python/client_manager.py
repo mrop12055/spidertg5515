@@ -44,9 +44,14 @@ def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
         return None
 
 
-def get_proxy_settings(account: dict) -> Optional[tuple]:
-    """Extract proxy settings from account data"""
-    proxy = account.get("proxy")
+def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple]:
+    """Extract proxy settings from account data or task-level proxy.
+    
+    Priority: task_proxy (from get-next-task/get-batch-tasks) > account.proxy
+    This ensures consistency: each account always uses its assigned proxy.
+    """
+    # Task-level proxy takes priority (sent by edge functions)
+    proxy = task_proxy or account.get("proxy")
     if not proxy:
         return None
     
@@ -92,10 +97,17 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
     return False
 
 
-async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False) -> Optional[TelegramClient]:
+async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False, task_proxy: dict = None) -> Optional[TelegramClient]:
     """
     Get existing client or create new one with unique device fingerprint.
     Optimized for fast connection with retry logic and proxy support.
+    
+    Args:
+        account: Account data from edge function (must include fingerprint fields)
+        setup_handler: Optional async function to set up message handlers
+        skip_avatar: Skip avatar download during profile sync
+        force_profile_sync: Force a full profile sync
+        task_proxy: Proxy data from task-level (priority over account.proxy)
     """
     account_id = account["id"]
     
@@ -147,10 +159,12 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             "system_lang_code": system_lang_code
         })
     
-    # Get proxy settings
-    proxy = get_proxy_settings(account)
+    # Get proxy settings - task_proxy takes priority for consistency
+    proxy = get_proxy_settings(account, task_proxy)
     if proxy:
         print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
+    else:
+        print(f"  [WARN] No proxy configured for {account.get('phone_number', 'unknown')}")
     
     try:
         # Get API credentials from joined telegram_api_credentials (priority) or fallback to account/config

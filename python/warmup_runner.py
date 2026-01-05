@@ -316,8 +316,9 @@ async def main_loop():
             task_id = task.get("task_id")
             account = task.get("account", {})
             task_data = task.get("task_data", {})
-            
-            client = await get_or_create_client(account)
+            task_proxy = task.get("proxy")  # Task-level proxy for consistency
+
+            client = await get_or_create_client(account, task_proxy=task_proxy)
             if not client:
                 result_type = "warmup_chat" if task_type in ["warmup_chat", "warmup_add_contact"] else "warmup"
                 await report_result(result_type, {
