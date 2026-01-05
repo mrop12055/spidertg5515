@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Send, MessageSquare, UserCog, Flame, Ban, CheckCircle2, XCircle, Activity } from 'lucide-react';
+import { Send, MessageSquare, UserCog, Flame, Ban, CheckCircle2, XCircle, Activity, AlertTriangle } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -53,6 +53,9 @@ const initialRunners: Omit<RunnerStatus, 'lastSeen' | 'isOnline'>[] = [
   }
 ];
 
+// Track active toast IDs for each runner
+const activeToasts = new Map<string, string | number>();
+
 export const RunnerStatusCard: React.FC = () => {
   const [runnerStatuses, setRunnerStatuses] = useState<RunnerStatus[]>(
     initialRunners.map(r => ({ ...r, lastSeen: null, isOnline: false }))
@@ -87,12 +90,31 @@ export const RunnerStatusCard: React.FC = () => {
             const isOnline = heartbeat ? heartbeat.lastSeen > fifteenSecondsAgo : false;
             const wasOnline = prevOnlineStates.current.get(runner.runnerKey) ?? false;
             
-            // Show toast when runner goes offline (but not on first load)
+            // Show persistent toast when runner goes offline (but not on first load)
             if (!isFirstCheck.current && wasOnline && !isOnline) {
-              toast.error(`${runner.name} went offline`, {
-                description: 'Please check if the Python script is running',
-                duration: 5000,
+              const toastId = toast.error(`${runner.name} is offline`, {
+                description: 'Please start the Python script to continue',
+                duration: Infinity, // Keep showing until dismissed
+                icon: <AlertTriangle className="h-5 w-5 text-red-500" />,
+                style: {
+                  background: 'hsl(var(--destructive))',
+                  color: 'hsl(var(--destructive-foreground))',
+                  border: '1px solid hsl(var(--destructive))',
+                },
               });
+              activeToasts.set(runner.runnerKey, toastId);
+            }
+            
+            // Dismiss toast when runner comes back online
+            if (!isFirstCheck.current && !wasOnline && isOnline) {
+              const existingToast = activeToasts.get(runner.runnerKey);
+              if (existingToast) {
+                toast.dismiss(existingToast);
+                activeToasts.delete(runner.runnerKey);
+                toast.success(`${runner.name} is back online`, {
+                  duration: 3000,
+                });
+              }
             }
             
             // Update tracking
