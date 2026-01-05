@@ -23,7 +23,7 @@ serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({}));
-    const { runner, batch_size = 100 } = body;
+    const { runner, batch_size = 200 } = body;
 
     console.log(`[get-batch-tasks] Request for runner: ${runner}, batch_size: ${batch_size}`);
 
@@ -193,7 +193,7 @@ serve(async (req) => {
         .eq("status", "pending")
         .lte("scheduled_at", new Date().toISOString())
         .order("scheduled_at", { ascending: true })
-        .limit(actualBatchSize * 3); // Fetch extra to find unique senders
+        .limit(500); // Fetch plenty to maximize parallel processing
 
       if (warmupMessages && warmupMessages.length > 0) {
         console.log(`[get-batch-tasks] Found ${warmupMessages.length} pending warmup messages`);
@@ -291,8 +291,9 @@ serve(async (req) => {
       }
       
       // Return warmup batch result
-      const delaySeconds = tasks.length > 0 ? 3 : 5; // Short delay if we got tasks
-      console.log(`[get-batch-tasks] Returning ${tasks.length} warmup tasks`);
+      // FAST MODE: Minimal delay when tasks are available, process as fast as possible
+      const delaySeconds = tasks.length > 0 ? 0.5 : 3; // Near-instant if we got tasks
+      console.log(`[get-batch-tasks] Returning ${tasks.length} warmup tasks (delay: ${delaySeconds}s)`);
       
       return new Response(JSON.stringify({
         tasks,
