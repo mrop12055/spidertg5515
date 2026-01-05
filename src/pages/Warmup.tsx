@@ -498,6 +498,16 @@ export default function Warmup() {
     return phone;
   };
 
+  // Find pair number for a message based on sender/receiver phones
+  const getPairNumber = (senderPhone: string, receiverPhone: string): number | null => {
+    const index = prePairedAccounts.findIndex(
+      (p) =>
+        (p.phone_number === senderPhone && p.pair_phone === receiverPhone) ||
+        (p.phone_number === receiverPhone && p.pair_phone === senderPhone)
+    );
+    return index >= 0 ? index + 1 : null;
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case "sent": return "bg-green-500";
@@ -992,53 +1002,70 @@ export default function Warmup() {
                       ) : (
                         <>
                           {/* Show failed messages first */}
-                          {recentErrors.map((msg) => (
-                            <div
-                              key={msg.id}
-                              className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg space-y-1"
-                            >
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-sm">
-                                  <span className="font-mono">
-                                    {formatPhone(msg.sender?.phone_number || "Unknown")}
-                                  </span>
-                                  <span className="text-muted-foreground">→</span>
-                                  <span className="font-mono">
-                                    {formatPhone(msg.receiver?.phone_number || "Unknown")}
-                                  </span>
+                          {recentErrors.map((msg) => {
+                            const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
+                            return (
+                              <div
+                                key={msg.id}
+                                className="p-3 bg-red-500/10 border border-red-500/30 rounded-lg space-y-1"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2 text-sm">
+                                    {pairNum && (
+                                      <Badge variant="outline" className="h-5 px-1.5 font-semibold shrink-0">
+                                        #{pairNum}
+                                      </Badge>
+                                    )}
+                                    <span className="font-mono">
+                                      {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                    </span>
+                                    <span className="text-muted-foreground">→</span>
+                                    <span className="font-mono">
+                                      {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                    </span>
+                                  </div>
+                                  <Badge variant="destructive">Failed</Badge>
                                 </div>
-                                <Badge variant="destructive">Failed</Badge>
+                                <p className="text-sm truncate">{msg.message_content}</p>
+                                <p className="text-xs text-red-400 truncate">{msg.error_message || "Unknown error"}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
+                                </p>
                               </div>
-                              <p className="text-sm text-red-400 truncate">{msg.error_message || "Unknown error"}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
-                              </p>
-                            </div>
-                          ))}
+                            );
+                          })}
                           {/* Then show sent messages */}
-                          {sentMessages.map((msg) => (
-                            <div
-                              key={msg.id}
-                              className="p-3 bg-green-500/5 border border-green-500/20 rounded-lg space-y-1"
-                            >
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-2 text-sm">
-                                  <span className="font-mono">
-                                    {formatPhone(msg.sender?.phone_number || "Unknown")}
-                                  </span>
-                                  <span className="text-muted-foreground">→</span>
-                                  <span className="font-mono">
-                                    {formatPhone(msg.receiver?.phone_number || "Unknown")}
-                                  </span>
+                          {sentMessages.map((msg) => {
+                            const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
+                            return (
+                              <div
+                                key={msg.id}
+                                className="p-3 bg-green-500/5 border border-green-500/20 rounded-lg space-y-1"
+                              >
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2 text-sm">
+                                    {pairNum && (
+                                      <Badge variant="outline" className="h-5 px-1.5 font-semibold shrink-0">
+                                        #{pairNum}
+                                      </Badge>
+                                    )}
+                                    <span className="font-mono">
+                                      {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                    </span>
+                                    <span className="text-muted-foreground">→</span>
+                                    <span className="font-mono">
+                                      {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                    </span>
+                                  </div>
+                                  <Badge variant="secondary" className="bg-green-500/20 text-green-600">Sent</Badge>
                                 </div>
-                                <Badge variant="secondary" className="bg-green-500/20 text-green-600">Sent</Badge>
+                                <p className="text-sm truncate">{msg.message_content}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {msg.sent_at && format(new Date(msg.sent_at), "MMM d, HH:mm")}
+                                </p>
                               </div>
-                              <p className="text-sm truncate">{msg.message_content}</p>
-                              <p className="text-xs text-muted-foreground">
-                                {msg.sent_at && format(new Date(msg.sent_at), "MMM d, HH:mm")}
-                              </p>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </>
                       )}
                     </div>
@@ -1053,29 +1080,37 @@ export default function Warmup() {
                           No pending messages.
                         </p>
                       ) : (
-                        pendingMessages.map((msg) => (
-                          <div
-                            key={msg.id}
-                            className="p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg space-y-1"
-                          >
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2 text-sm">
-                                <span className="font-mono">
-                                  {formatPhone(msg.sender?.phone_number || "Unknown")}
-                                </span>
-                                <span className="text-muted-foreground">→</span>
-                                <span className="font-mono">
-                                  {formatPhone(msg.receiver?.phone_number || "Unknown")}
-                                </span>
+                        pendingMessages.map((msg) => {
+                          const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
+                          return (
+                            <div
+                              key={msg.id}
+                              className="p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg space-y-1"
+                            >
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-sm">
+                                  {pairNum && (
+                                    <Badge variant="outline" className="h-5 px-1.5 font-semibold shrink-0">
+                                      #{pairNum}
+                                    </Badge>
+                                  )}
+                                  <span className="font-mono">
+                                    {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                  </span>
+                                  <span className="text-muted-foreground">→</span>
+                                  <span className="font-mono">
+                                    {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                  </span>
+                                </div>
+                                <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-600">Pending</Badge>
                               </div>
-                              <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-600">Pending</Badge>
+                              <p className="text-sm truncate">{msg.message_content}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Scheduled: {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
+                              </p>
                             </div>
-                            <p className="text-sm truncate">{msg.message_content}</p>
-                            <p className="text-xs text-muted-foreground">
-                              Scheduled: {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
-                            </p>
-                          </div>
-                        ))
+                          );
+                        })
                       )}
                     </div>
                   </ScrollArea>
