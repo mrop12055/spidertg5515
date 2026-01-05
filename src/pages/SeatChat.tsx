@@ -1457,7 +1457,7 @@ const SeatChat: React.FC = () => {
                               }
                             }}
                             disabled={isSending}
-                            className="w-full bg-muted/40 border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 min-h-[48px] max-h-[120px] rounded-2xl text-[15px] pl-5 pr-5 py-3 transition-all shadow-inner resize-none"
+                            className="w-full bg-muted/40 border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 min-h-[48px] max-h-[140px] rounded-2xl text-[15px] leading-6 px-5 py-3 transition-all shadow-inner resize-none"
                             rows={1}
                           />
                         </div>
