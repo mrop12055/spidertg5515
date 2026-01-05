@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
-import { ScrollArea } from '@/components/ui/scroll-area';
+
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { 
   Plus, Copy, Trash2, Users, MessageSquare, Send, 
@@ -372,10 +372,9 @@ const Seats: React.FC = () => {
                 </Button>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <ScrollArea className="h-[450px]">
-                  <div className="min-w-[1150px]">
-                    <Table>
+              <div className="max-h-[450px] overflow-auto">
+                <div className="min-w-[1150px]">
+                  <Table>
                   <TableHeader>
                     <TableRow className="bg-gradient-to-r from-muted/50 to-muted/20 hover:bg-muted/50 border-b border-border/50">
                       <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
@@ -414,7 +413,7 @@ const Seats: React.FC = () => {
                           Created
                         </div>
                       </TableHead>
-                      <TableHead className="text-right font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4 w-[180px] min-w-[180px]">
+                      <TableHead className="sticky right-0 z-10 bg-background/90 backdrop-blur border-l border-border/50 text-right font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4 w-[180px] min-w-[180px]">
                         <div className="flex items-center justify-end gap-2 pr-4">
                           <Zap className="w-3.5 h-3.5 text-yellow-500/70" />
                           Actions
@@ -478,7 +477,7 @@ const Seats: React.FC = () => {
                               {format(new Date(seat.created_at), 'MMM d, yyyy')}
                             </span>
                           </TableCell>
-                          <TableCell className="text-right w-[180px] min-w-[180px]">
+                          <TableCell className="sticky right-0 z-10 bg-background/80 backdrop-blur border-l border-border/40 group-hover:bg-muted/40 text-right w-[180px] min-w-[180px]">
                             <div className="flex items-center justify-end gap-1 pr-2">
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -542,9 +541,8 @@ const Seats: React.FC = () => {
                       );
                     })}
                   </TableBody>
-                    </Table>
-                  </div>
-                </ScrollArea>
+                  </Table>
+                </div>
               </div>
             )}
           </CardContent>
