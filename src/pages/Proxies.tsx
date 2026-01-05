@@ -1053,15 +1053,23 @@ const Proxies: React.FC = () => {
 
                     {/* Country Flag Avatar */}
                     <div className={cn(
-                      "w-10 h-10 rounded-full flex items-center justify-center text-2xl overflow-hidden border-2",
-                      proxy.status === 'active' && "border-green-500/50 bg-green-500/10",
-                      proxy.status === 'error' && "border-destructive/50 bg-destructive/10",
-                      proxy.status === 'inactive' && "border-muted bg-muted"
+                      "w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden border-2",
+                      proxy.status === 'active' && "border-green-500/50",
+                      proxy.status === 'error' && "border-destructive/50",
+                      proxy.status === 'inactive' && "border-muted"
                     )}>
                       {testResult?.status === 'testing' ? (
                         <Loader2 className="w-5 h-5 text-primary animate-spin" />
                       ) : proxyCountry ? (
-                        <span className="leading-none">{getCountryFlag(proxyCountry)}</span>
+                        <img 
+                          src={`https://flagcdn.com/w80/${proxyCountry.toLowerCase()}.png`}
+                          alt={countryNames[proxyCountry] || proxyCountry}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            e.currentTarget.style.display = 'none';
+                            e.currentTarget.parentElement?.classList.add('bg-muted');
+                          }}
+                        />
                       ) : proxy.status === 'active' ? (
                         <Wifi className="w-5 h-5 text-green-500" />
                       ) : proxy.status === 'error' ? (
