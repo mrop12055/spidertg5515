@@ -1112,7 +1112,7 @@ serve(async (req) => {
           *,
           warmup_pairs(*),
           sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)),
-          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number, telegram_id, username)
+          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number, telegram_id, username, first_name)
         `)
         .eq("status", "pending")
         .lte("scheduled_at", new Date().toISOString())
@@ -1135,9 +1135,13 @@ serve(async (req) => {
             .update({ status: "in_progress" })
             .eq("id", msg.id);
 
-          console.log(`[get-next-task] Warmup chat: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
+          // Determine task type based on message_type
+          const taskType = msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat";
+          
+          console.log(`[get-next-task] ${taskType}: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
+          
           return new Response(JSON.stringify({
-            task: "warmup_chat",
+            task: taskType,
             task_id: msg.id,
             pair_id: msg.pair_id,
             task_data: {
@@ -1146,6 +1150,8 @@ serve(async (req) => {
               recipient_username: receiverAccount.username,
               message: msg.message_content,
               message_type: msg.message_type,
+              first_name: msg.message_type === "add_contact" ? msg.message_content : receiverAccount.first_name,
+              phone: receiverAccount.phone_number,
             },
             account: {
               id: senderAccount.id,
@@ -1176,7 +1182,7 @@ serve(async (req) => {
             .update({ status: "failed", error_message: reason })
             .eq("id", msg.id);
           
-          console.log(`[get-next-task] Warmup chat skipped: ${reason}`);
+          console.log(`[get-next-task] Warmup task skipped: ${reason}`);
         }
       }
 
@@ -1184,7 +1190,7 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         task: "wait",
         seconds: 5,
-        reason: "No pending warmup chat messages",
+        reason: "No pending warmup tasks",
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
