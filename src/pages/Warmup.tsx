@@ -319,8 +319,24 @@ export default function Warmup() {
         .select("*", { count: "exact", head: true })
         .eq("status", "failed");
 
-      // Estimate remaining time (avg 30 seconds per message)
-      const estimatedMinutesRemaining = Math.ceil((pendingMessages || 0) * 0.5);
+      // Calculate remaining time based on the last scheduled pending message
+      let estimatedMinutesRemaining = 0;
+      if (pendingMessages && pendingMessages > 0) {
+        const { data: lastPendingMessage } = await supabase
+          .from("warmup_messages")
+          .select("scheduled_at")
+          .eq("status", "pending")
+          .order("scheduled_at", { ascending: false })
+          .limit(1)
+          .single();
+        
+        if (lastPendingMessage?.scheduled_at) {
+          const lastScheduledTime = new Date(lastPendingMessage.scheduled_at).getTime();
+          const now = Date.now();
+          const remainingMs = lastScheduledTime - now;
+          estimatedMinutesRemaining = remainingMs > 0 ? Math.ceil(remainingMs / 60000) : 0;
+        }
+      }
 
       setStats({
         totalPairs: session ? (activePairsInSession || 0) : prePairedCount,
