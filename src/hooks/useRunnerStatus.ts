@@ -8,12 +8,13 @@ interface RunnerInfo {
   lastSeen: Date | null;
 }
 
+// Maps Python runner script names to display names
+// warmup_runner.py reports both 'warmup' and 'warmup_chat' - we track both but show as single card
 const runnerNames: Record<string, string> = {
   campaign: 'Campaign Runner',
   livechat: 'LiveChat Runner',
   account: 'Account Runner',
-  warmup: 'Warmup Runner',
-  warmup_chat: 'Warmup Chat Runner',
+  warmup: 'Warmup Runner',  // warmup_runner.py
   block: 'Block Runner',
 };
 
