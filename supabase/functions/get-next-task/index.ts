@@ -1198,8 +1198,9 @@ serve(async (req) => {
         const receiverAccount = msg.receiver;
         const proxy = Array.isArray(senderAccount?.proxies) ? senderAccount.proxies[0] : senderAccount?.proxies;
 
-        // Check account is active and has active proxy
-        if (senderAccount && senderAccount.status === "active" && receiverAccount && proxy?.status === "active") {
+        // Check account is active/restricted and has active proxy (restricted accounts CAN do warmup)
+        const isUsableStatus = senderAccount && (senderAccount.status === "active" || senderAccount.status === "restricted");
+        if (isUsableStatus && receiverAccount && proxy?.status === "active") {
           const apiCred = senderAccount.telegram_api_credentials;
 
           // Mark as in_progress
@@ -1245,7 +1246,7 @@ serve(async (req) => {
         } else {
           // Account not usable (inactive or no proxy), mark message as failed with reason
           const reason = !senderAccount ? "Sender account not found" :
-                         senderAccount.status !== "active" ? `Sender status: ${senderAccount.status}` :
+                         (senderAccount.status !== "active" && senderAccount.status !== "restricted") ? `Sender status: ${senderAccount.status}` :
                          !proxy ? "No proxy assigned" :
                          proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
                          "Unknown reason";
