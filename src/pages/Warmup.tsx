@@ -1072,9 +1072,28 @@ export default function Warmup() {
                               {isFailed && msg.error_message && (
                                 <p className="text-xs text-red-400 truncate">Reason: {msg.error_message}</p>
                               )}
-                              <p className="text-xs text-muted-foreground">
-                                {format(new Date(msg.sent_at || msg.scheduled_at), "MMM d, HH:mm")}
-                              </p>
+                              {(() => {
+                                const scheduledAt = new Date(msg.scheduled_at);
+                                const sentAt = msg.sent_at ? new Date(msg.sent_at) : null;
+                                const delayMin = sentAt
+                                  ? Math.round((sentAt.getTime() - scheduledAt.getTime()) / 60000)
+                                  : null;
+
+                                return (
+                                  <div className="text-xs text-muted-foreground space-y-0.5">
+                                    <p>
+                                      {sentAt
+                                        ? `Sent: ${format(sentAt, "MMM d, HH:mm")}`
+                                        : `Scheduled: ${format(scheduledAt, "MMM d, HH:mm")}`}
+                                    </p>
+                                    {sentAt && delayMin !== null && delayMin >= 5 && (
+                                      <p>
+                                        Scheduled: {format(scheduledAt, "MMM d, HH:mm")} ({delayMin}m delay)
+                                      </p>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           );
                         })
@@ -1157,7 +1176,7 @@ export default function Warmup() {
                             </div>
                             <p className="text-sm text-red-400 truncate">{msg.error_message || "Unknown error"}</p>
                             <p className="text-xs text-muted-foreground">
-                              {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
+                              Scheduled: {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
                             </p>
                           </div>
                         ))
