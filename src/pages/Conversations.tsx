@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { useTelegram } from '@/context/TelegramContext';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -1174,12 +1175,18 @@ const Chat: React.FC = () => {
                   </Button>
                   
                   <div className="flex-1">
-                    <Input
+                    <Textarea
                       placeholder={selectedImage ? "Add a caption..." : "Type a message"}
                       value={messageInput}
                       onChange={(e) => setMessageInput(e.target.value)}
-                      onKeyDown={handleKeyPress}
-                      className="rounded-full bg-secondary/50 border-0 focus-visible:ring-1 focus-visible:ring-primary h-10"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendMessage();
+                        }
+                      }}
+                      className="rounded-2xl bg-secondary/50 border-0 focus-visible:ring-1 focus-visible:ring-primary min-h-[40px] max-h-[120px] py-2 resize-none"
+                      rows={1}
                     />
                   </div>
                   <Button 

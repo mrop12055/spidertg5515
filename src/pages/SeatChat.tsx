@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
@@ -1445,13 +1446,19 @@ const SeatChat: React.FC = () => {
 
                         {/* Input Container */}
                         <div className="flex-1 relative">
-                          <Input
+                          <Textarea
                             placeholder="Type your message..."
                             value={messageInput}
                             onChange={(e) => setMessageInput(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                handleSendMessage();
+                              }
+                            }}
                             disabled={isSending}
-                            className="w-full bg-muted/40 border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 h-12 rounded-2xl text-[15px] pl-5 pr-5 transition-all shadow-inner"
+                            className="w-full bg-muted/40 border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 min-h-[48px] max-h-[120px] rounded-2xl text-[15px] pl-5 pr-5 py-3 transition-all shadow-inner resize-none"
+                            rows={1}
                           />
                         </div>
 
