@@ -53,6 +53,8 @@ interface PrePairedAccount {
   pair_first_name: string | null;
   pair_status: string;
   pairIsInactive: boolean;
+  hasConnectionTimeout: boolean; // Either account has connection timeout
+  timeoutAccountPhone: string | null; // Which account has the timeout
 }
 
 interface WarmupMessage {
@@ -245,6 +247,15 @@ export default function Warmup() {
           const pairedAccount = allPairedData.find(a => a.id === account.warmup_pair_id);
           
           if (pairedAccount && isUsableForWarmup(pairedAccount)) {
+            // Check if either account has connection timeout
+            const accountHasTimeout = account.status === 'disconnected' && 
+              (account as any).ban_reason?.toLowerCase().includes('timeout');
+            const pairHasTimeout = pairedAccount.status === 'disconnected' && 
+              (pairedAccount as any).ban_reason?.toLowerCase().includes('timeout');
+            const hasTimeout = accountHasTimeout || pairHasTimeout;
+            const timeoutPhone = accountHasTimeout ? account.phone_number : 
+              (pairHasTimeout ? pairedAccount.phone_number : null);
+            
             // Both accounts are usable - valid pair
             uniquePairs.push({
               id: account.id,
@@ -256,6 +267,8 @@ export default function Warmup() {
               pair_first_name: pairedAccount.first_name,
               pair_status: pairedAccount.status,
               pairIsInactive: false,
+              hasConnectionTimeout: hasTimeout,
+              timeoutAccountPhone: timeoutPhone,
             });
           } else {
             // Partner is truly inactive (session expired, banned, etc.) - needs re-pairing
@@ -790,7 +803,7 @@ export default function Warmup() {
                             </Badge>
                             <div className="flex items-center gap-2 min-w-0">
                               <div className="text-left min-w-0">
-                                <span className="font-mono text-sm block truncate">
+                                <span className={`font-mono text-sm block truncate ${account.timeoutAccountPhone === account.phone_number ? 'text-blue-500' : ''}`}>
                                   {formatPhone(account.phone_number)}
                                 </span>
                                 {account.first_name && (
@@ -799,13 +812,19 @@ export default function Warmup() {
                               </div>
                               <ArrowLeftRight className="h-4 w-4 text-muted-foreground shrink-0" />
                               <div className="text-left min-w-0">
-                                <span className="font-mono text-sm block truncate">
+                                <span className={`font-mono text-sm block truncate ${account.timeoutAccountPhone === account.pair_phone ? 'text-blue-500' : ''}`}>
                                   {formatPhone(account.pair_phone)}
                                 </span>
                                 {account.pair_first_name && (
                                   <span className="text-xs text-muted-foreground truncate block">{account.pair_first_name}</span>
                                 )}
                               </div>
+                              {account.hasConnectionTimeout && (
+                                <Badge variant="outline" className="shrink-0 text-xs px-1.5 bg-blue-500/10 text-blue-500 border-blue-500/30">
+                                  <Clock className="h-3 w-3 mr-1" />
+                                  Timeout
+                                </Badge>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
