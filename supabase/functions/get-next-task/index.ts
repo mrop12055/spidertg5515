@@ -233,12 +233,22 @@ serve(async (req) => {
     const frozenAccounts = (frozenAccountsRaw as any[]) || [];
 
     // Auto-reactivate accounts after their cooldown/restriction window ends
+    // IMPORTANT: Also clear ban_reason to prevent system-maintenance from re-freezing them
+    // Include "frozen" accounts that have an expired restriction (temporary FloodWait, not permanent ban)
     const nowIso = now.toISOString();
-    await supabase
+    const { data: reactivatedAccounts, error: reactivateError } = await supabase
       .from("telegram_accounts")
-      .update({ status: "active", restricted_until: null })
-      .in("status", ["restricted", "cooldown"])
-      .lte("restricted_until", nowIso);
+      .update({ status: "active", restricted_until: null, ban_reason: null })
+      .in("status", ["restricted", "cooldown", "frozen"])
+      .not("restricted_until", "is", null)
+      .lte("restricted_until", nowIso)
+      .select("id, phone_number");
+    
+    if (reactivateError) {
+      console.log(`[get-next-task] Error reactivating accounts: ${reactivateError.message}`);
+    } else if (reactivatedAccounts && reactivatedAccounts.length > 0) {
+      console.log(`[get-next-task] Auto-reactivated ${reactivatedAccounts.length} expired accounts: ${reactivatedAccounts.map(a => a.phone_number).join(", ")}`);
+    }
 
     const isTimeRestricted = (a: any) => {
       if (!a?.restricted_until) return false;
