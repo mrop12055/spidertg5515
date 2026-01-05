@@ -1051,17 +1051,17 @@ const Proxies: React.FC = () => {
                       aria-label={`Select ${proxy.host}`}
                     />
 
-                    {/* Country Flag / Status Icon */}
+                    {/* Country Flag Avatar */}
                     <div className={cn(
-                      "w-10 h-10 rounded-lg flex items-center justify-center text-xl",
-                      proxy.status === 'active' && "bg-green-500/10",
-                      proxy.status === 'error' && "bg-destructive/10",
-                      proxy.status === 'inactive' && "bg-muted"
+                      "w-10 h-10 rounded-full flex items-center justify-center text-2xl overflow-hidden border-2",
+                      proxy.status === 'active' && "border-green-500/50 bg-green-500/10",
+                      proxy.status === 'error' && "border-destructive/50 bg-destructive/10",
+                      proxy.status === 'inactive' && "border-muted bg-muted"
                     )}>
                       {testResult?.status === 'testing' ? (
                         <Loader2 className="w-5 h-5 text-primary animate-spin" />
                       ) : proxyCountry ? (
-                        getCountryFlag(proxyCountry)
+                        <span className="leading-none">{getCountryFlag(proxyCountry)}</span>
                       ) : proxy.status === 'active' ? (
                         <Wifi className="w-5 h-5 text-green-500" />
                       ) : proxy.status === 'error' ? (
