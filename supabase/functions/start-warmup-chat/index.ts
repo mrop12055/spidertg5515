@@ -100,11 +100,40 @@ serve(async (req) => {
       );
       const selectedTemplates = flow.slice(0, Math.min(messageCount, flow.length));
 
-      // Schedule messages
+      // Schedule contact tasks first (both accounts save each other)
       const now = new Date();
-      let currentTime = new Date(now.getTime() + (30 + Math.random() * 60) * 1000); // Start in 30-90 seconds
+      let currentTime = new Date(now.getTime() + (10 + Math.random() * 20) * 1000); // Start in 10-30 seconds
       const allMessages: any[] = [];
 
+      // Account A saves Account B as contact
+      allMessages.push({
+        pair_id: createdPair.id,
+        sender_account_id: accounts[0].id,
+        receiver_account_id: accounts[1].id,
+        message_content: accounts[1].first_name || "Friend",
+        message_type: "add_contact",
+        scheduled_at: currentTime.toISOString(),
+        reply_delay_seconds: 5,
+        status: "pending",
+      });
+
+      // Account B saves Account A as contact (2-5 seconds later)
+      currentTime = new Date(currentTime.getTime() + (2000 + Math.random() * 3000));
+      allMessages.push({
+        pair_id: createdPair.id,
+        sender_account_id: accounts[1].id,
+        receiver_account_id: accounts[0].id,
+        message_content: accounts[0].first_name || "Friend",
+        message_type: "add_contact",
+        scheduled_at: currentTime.toISOString(),
+        reply_delay_seconds: 5,
+        status: "pending",
+      });
+
+      // Wait 3-5 seconds after contacts are saved before starting chat
+      currentTime = new Date(currentTime.getTime() + (3000 + Math.random() * 2000));
+
+      // Schedule chat messages
       for (const template of selectedTemplates) {
         const baseDelay = 15 + Math.random() * 15;
         const typingTime = Math.max(2, (template.message_text.length / 30) * 3);
@@ -306,16 +335,48 @@ serve(async (req) => {
     // 8. Create account lookup map
     const accountMap = new Map(accounts.map(a => [a.id, a]));
 
-    // 9. Schedule messages for each pair - ALL messages at once with human-like timing
+    // 9. Schedule contact tasks + messages for each pair - ALL at once with human-like timing
     const now = new Date();
     const allMessages: any[] = [];
-    const contactTasks: any[] = [];
 
-    for (const pair of createdPairs) {
+    for (let pairIndex = 0; pairIndex < createdPairs.length; pairIndex++) {
+      const pair = createdPairs[pairIndex];
       const accountA = accountMap.get(pair.account_a_id);
       const accountB = accountMap.get(pair.account_b_id);
       
       if (!accountA || !accountB) continue;
+
+      // Stagger pair start times (each pair starts 5-15 seconds after previous)
+      const pairStartOffset = pairIndex * (5000 + Math.random() * 10000);
+      let currentTime = new Date(now.getTime() + 10000 + pairStartOffset); // Start 10s + stagger
+
+      // First: Account A saves Account B as contact
+      allMessages.push({
+        pair_id: pair.id,
+        sender_account_id: pair.account_a_id,
+        receiver_account_id: pair.account_b_id,
+        message_content: accountB.first_name || "Friend",
+        message_type: "add_contact",
+        scheduled_at: currentTime.toISOString(),
+        reply_delay_seconds: 3,
+        status: "pending",
+      });
+
+      // Account B saves Account A as contact (2-4 seconds later)
+      currentTime = new Date(currentTime.getTime() + (2000 + Math.random() * 2000));
+      allMessages.push({
+        pair_id: pair.id,
+        sender_account_id: pair.account_b_id,
+        receiver_account_id: pair.account_a_id,
+        message_content: accountA.first_name || "Friend",
+        message_type: "add_contact",
+        scheduled_at: currentTime.toISOString(),
+        reply_delay_seconds: 3,
+        status: "pending",
+      });
+
+      // Wait 3-5 seconds after contacts saved before starting chat
+      currentTime = new Date(currentTime.getTime() + (3000 + Math.random() * 2000));
 
       // Pick a random conversation flow
       const flow = conversationFlows[Math.floor(Math.random() * conversationFlows.length)];
@@ -326,30 +387,21 @@ serve(async (req) => {
       );
       const selectedTemplates = flow.slice(0, Math.min(messageCount, flow.length));
 
-      // Start within 1-5 minutes
-      let currentTime = new Date(now.getTime() + (60 + Math.random() * 240) * 1000);
-
+      // Schedule chat messages
       for (let i = 0; i < selectedTemplates.length; i++) {
         const template = selectedTemplates[i];
         
-        // Human-like timing:
-        // - Base delay: 15-30 seconds
-        // - Typing time based on message length: ~3 seconds per 30 chars
-        // - Random jitter: 5-15 seconds
-        // - Occasional longer pause (10% chance): 45-90 seconds
-        const baseDelay = 15 + Math.random() * 15; // 15-30 seconds
-        const typingTime = Math.max(2, (template.message_text.length / 30) * 3); // ~3s per 30 chars
-        const jitter = 5 + Math.random() * 10; // 5-15 seconds
-        const occasionalPause = Math.random() < 0.1 ? (45 + Math.random() * 45) : 0; // 10% chance of 45-90s pause
+        // Human-like timing
+        const baseDelay = 15 + Math.random() * 15;
+        const typingTime = Math.max(2, (template.message_text.length / 30) * 3);
+        const jitter = 5 + Math.random() * 10;
+        const occasionalPause = Math.random() < 0.1 ? (45 + Math.random() * 45) : 0;
         
         const delaySeconds = baseDelay + typingTime + jitter + occasionalPause;
         currentTime = new Date(currentTime.getTime() + delaySeconds * 1000);
 
-        // Determine sender based on template position (A or B)
         const senderId = template.sender_position === "A" ? pair.account_a_id : pair.account_b_id;
         const receiverId = template.sender_position === "A" ? pair.account_b_id : pair.account_a_id;
-        const sender = template.sender_position === "A" ? accountA : accountB;
-        const receiver = template.sender_position === "A" ? accountB : accountA;
 
         allMessages.push({
           pair_id: pair.id,

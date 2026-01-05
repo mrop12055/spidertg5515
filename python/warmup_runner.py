@@ -287,16 +287,31 @@ async def main_loop():
     print("=" * 60)
     print("\n✓ Starting warmup runner...\n")
     
+    last_runner = "warmup_chat"  # Alternate between runners
+    
     while RUNNING:
         try:
-            # Get next task - ONLY warmup tasks
-            task = await get_next_task(runner="warmup")
+            # Alternate between warmup and warmup_chat tasks for fair processing
+            runner = "warmup_chat" if last_runner == "warmup" else "warmup_chat"
+            last_runner = runner
+            
+            # Get next task
+            task = await get_next_task(runner=runner)
             task_type = task.get("task", "wait")
             
             if task_type == "wait":
-                seconds = task.get("seconds", 30)
-                await asyncio.sleep(min(seconds, 30))
-                continue
+                # If warmup_chat has nothing, try regular warmup
+                if runner == "warmup_chat":
+                    task = await get_next_task(runner="warmup")
+                    task_type = task.get("task", "wait")
+                    if task_type == "wait":
+                        seconds = task.get("seconds", 5)
+                        await asyncio.sleep(min(seconds, 5))
+                        continue
+                else:
+                    seconds = task.get("seconds", 5)
+                    await asyncio.sleep(min(seconds, 5))
+                    continue
             
             task_id = task.get("task_id")
             account = task.get("account", {})
@@ -304,7 +319,8 @@ async def main_loop():
             
             client = await get_or_create_client(account)
             if not client:
-                await report_result("warmup", {
+                result_type = "warmup_chat" if task_type in ["warmup_chat", "warmup_add_contact"] else "warmup"
+                await report_result(result_type, {
                     "task_id": task_id,
                     "success": False,
                     "error": "Could not connect client"
@@ -401,6 +417,26 @@ async def main_loop():
                     "error": error
                 })
                 print(f"    {'✓' if success else '✗'} {error or 'Sent'}")
+            
+            elif task_type == "warmup_add_contact":
+                # Save contact before starting warmup chat
+                target_phone = task_data.get("phone") or task_data.get("recipient_phone")
+                first_name = task_data.get("first_name", "Friend")
+                pair_id = task.get("pair_id")
+                
+                display_phone = target_phone[:8] + "..." if target_phone and len(target_phone) > 8 else target_phone
+                print(f"  👤 Saving contact: {phone} adds {display_phone} ({first_name})...")
+                
+                success, added_phone, error = await add_contact(client, target_phone, first_name)
+                await report_result("warmup_chat", {
+                    "task_id": task_id,
+                    "pair_id": pair_id,
+                    "account_id": account.get("id"),
+                    "success": success,
+                    "error": error,
+                    "task_subtype": "add_contact"
+                })
+                print(f"    {'✓' if success else '✗'} Contact saved")
             
             elif task_type == "warmup_chat":
                 # 1-to-1 pair warmup chat with human-like timing
