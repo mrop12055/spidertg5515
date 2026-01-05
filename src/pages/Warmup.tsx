@@ -758,7 +758,7 @@ export default function Warmup() {
           </Card>
         ) : null}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="space-y-6">
           {/* Paired Accounts - Always show all pairs */}
           <Card>
             <CardHeader>
