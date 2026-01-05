@@ -551,6 +551,7 @@ if __name__ == "__main__":
   const livechatRunnerPy = `#!/usr/bin/env python3
 """
 LiveChat Runner - Handles incoming messages and live chat replies
+With keepalive to prevent idle disconnections
 """
 import asyncio
 import signal
@@ -562,7 +563,7 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all
+    send_message, shutdown_all, active_clients
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
@@ -655,23 +656,16 @@ async def setup_message_handler(client, account_id: str):
             if getattr(sender, 'bot', False):
                 return
             
+            # FILTER: Only process messages from contacts (people in contact list)
+            if not getattr(sender, 'contact', False):
+                return  # Skip - sender is not in contact list
+            
             # Get sender info for matching
             sender_username = getattr(sender, 'username', None)
             sender_phone = None
             if hasattr(sender, 'phone') and sender.phone:
                 sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
             sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
-            
-            # Multi-strategy conversation check
-            conversation_exists = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
-            if not conversation_exists:
-                # Rate-limited logging for ignored messages
-                if not hasattr(handler, '_ignored_log') or time.time() - handler._ignored_log.get(sender.id, 0) > 60:
-                    if not hasattr(handler, '_ignored_log'):
-                        handler._ignored_log = {}
-                    handler._ignored_log[sender.id] = time.time()
-                    print(f"    [IGNORED] {sender_name} (id={sender.id}): no campaign conversation")
-                return
             
             content = event.message.text or "[Media]"
             media_url = None
@@ -735,52 +729,115 @@ async def setup_message_handler(client, account_id: str):
             print(f"  [WARN] Handler error: {e}")
 
 
+async def keepalive_task():
+    """Periodically ping all connected clients to keep them alive"""
+    global RUNNING
+    KEEPALIVE_INTERVAL = 30  # Ping every 30 seconds
+    
+    while RUNNING:
+        await asyncio.sleep(KEEPALIVE_INTERVAL)
+        if not RUNNING:
+            break
+            
+        clients_to_check = list(active_clients.items())
+        if not clients_to_check:
+            continue
+            
+        for account_id, client in clients_to_check:
+            try:
+                if client.is_connected():
+                    # Ping the server to keep connection alive
+                    await asyncio.wait_for(client.get_me(), timeout=10)
+                else:
+                    # Client disconnected, remove from cache
+                    print(f"  [WARN] Client {account_id[:8]}... disconnected, will reconnect")
+                    if account_id in active_clients:
+                        del active_clients[account_id]
+            except asyncio.TimeoutError:
+                print(f"  [WARN] Keepalive timeout for {account_id[:8]}...")
+                if account_id in active_clients:
+                    try:
+                        await active_clients[account_id].disconnect()
+                    except:
+                        pass
+                    del active_clients[account_id]
+            except Exception as e:
+                error_str = str(e).lower()
+                if any(x in error_str for x in ["disconnect", "connection", "closed", "reset"]):
+                    print(f"  [WARN] Keepalive error for {account_id[:8]}...: {e}")
+                    if account_id in active_clients:
+                        del active_clients[account_id]
+
+
 async def main_loop():
+    global RUNNING
     print("=" * 50)
-    print("  LiveChat Runner")
+    print("  LiveChat Runner (with Keepalive)")
     print("  [Incoming + Replies]")
     print("=" * 50)
     
-    connected_ids = set()  # Track connected accounts to avoid redundant work
+    connected_ids = set()  # Track connected accounts
     
-    while RUNNING:
+    # Start keepalive task in background
+    keepalive = asyncio.create_task(keepalive_task())
+    
+    try:
+        while RUNNING:
+            try:
+                task = await get_next_task(runner="livechat")
+                task_type = task.get("task", "wait")
+                
+                if task_type == "wait":
+                    accounts = task.get("accounts", [])
+                    # Only connect NEW accounts (skip already connected)
+                    new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
+                    if new_accounts:
+                        # Connect in parallel for speed
+                        results = await asyncio.gather(
+                            *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")) for acc in new_accounts],
+                            return_exceptions=True
+                        )
+                        for acc in new_accounts:
+                            if acc.get("id"):
+                                connected_ids.add(acc["id"])
+                    
+                    # Check for disconnected clients and remove from connected_ids
+                    disconnected = [aid for aid in connected_ids if aid not in active_clients]
+                    for aid in disconnected:
+                        connected_ids.discard(aid)
+                    
+                    await asyncio.sleep(0.05)  # Tiny sleep to prevent CPU spin
+                
+                elif task_type == "send":
+                    msg = task.get("message", {})
+                    recipient = task.get("recipient")
+                    recipient_tid = task.get("recipient_telegram_id")
+                    account = task.get("account", {})
+                    task_proxy = task.get("proxy")
+                    
+                    client = await get_or_create_client(account, setup_handler=setup_message_handler, task_proxy=task_proxy)
+                    target = recipient_tid if recipient_tid else recipient
+                    
+                    if client and target:
+                        print(f"  [REPLY] To {recipient}...")
+                        success, error = await send_message(client, target, msg.get("content", ""), msg.get("media_url"))
+                        await report_result("send", {
+                            "message_id": msg.get("id"),
+                            "success": success,
+                            "error": error,
+                            "account_id": account.get("id")
+                        })
+            
+            except Exception as e:
+                print(f"  [ERROR] {e}")
+                await asyncio.sleep(0.5)
+    finally:
+        # Cancel keepalive task
+        keepalive.cancel()
         try:
-            task = await get_next_task(runner="livechat")
-            task_type = task.get("task", "wait")
-            
-            if task_type == "wait":
-                accounts = task.get("accounts", [])
-                # Only connect NEW accounts (skip already connected)
-                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
-                if new_accounts:
-                    # Connect in parallel for speed
-                    results = await asyncio.gather(
-                        *[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts],
-                        return_exceptions=True
-                    )
-                    for acc in new_accounts:
-                        if acc.get("id"):
-                            connected_ids.add(acc["id"])
-                # No artificial delay - server returns seconds=0 for instant polling
-            
-            elif task_type == "send":
-                msg = task.get("message", {})
-                recipient = task.get("recipient")
-                account = task.get("account", {})
-                client = await get_or_create_client(account, setup_handler=setup_message_handler)
-                if client and recipient:
-                    print(f"  [REPLY] To {recipient}...")
-                    success, error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
-                    await report_result("send", {
-                        "message_id": msg.get("id"),
-                        "success": success,
-                        "error": error,
-                        "account_id": account.get("id")
-                    })
-        
-        except Exception as e:
-            print(f"  [ERROR] {e}")
-            await asyncio.sleep(0.5)
+            await keepalive
+        except asyncio.CancelledError:
+            pass
     
     await shutdown_all()
 
