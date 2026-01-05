@@ -1381,24 +1381,24 @@ const Accounts: React.FC = () => {
             
             {/* Disconnected Badge - different labels based on reason */}
             {account.status === 'disconnected' && (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-disconnected text-white text-[10px] font-semibold">
+              <>
                 {account.banReason?.toLowerCase().includes('timeout') ? (
-                  <>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500 text-white text-[10px] font-semibold">
                     <Clock className="w-3 h-3" />
-                    CONNECTION EXPIRED
-                  </>
+                    CONNECTION TIMEOUT
+                  </span>
                 ) : account.banReason?.toLowerCase().includes('session') ? (
-                  <>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-orange-500 text-white text-[10px] font-semibold">
                     <AlertTriangle className="w-3 h-3" />
                     SESSION EXPIRED
-                  </>
+                  </span>
                 ) : (
-                  <>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-disconnected text-white text-[10px] font-semibold">
                     <WifiOff className="w-3 h-3" />
                     OFFLINE
-                  </>
+                  </span>
                 )}
-              </span>
+              </>
             )}
             
             {/* Potentially Blocked Warning - active accounts with no profile info */}
