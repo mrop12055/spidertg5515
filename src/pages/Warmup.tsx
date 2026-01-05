@@ -168,7 +168,7 @@ export default function Warmup() {
         `)
         .eq("status", "sent")
         .order("sent_at", { ascending: false })
-        .limit(50);
+        .limit(100);
 
       setSentMessages((sentData as unknown as WarmupMessage[]) || []);
 
@@ -1010,7 +1010,8 @@ export default function Warmup() {
                                 const dateA = new Date(a.sent_at || a.scheduled_at).getTime();
                                 const dateB = new Date(b.sent_at || b.scheduled_at).getTime();
                                 return dateB - dateA;
-                              });
+                              })
+                              .slice(0, 100); // Show only 100 most recent
                             const totalCount = stats.messagesSent + stats.failedMessages;
                             return combinedMessages.map((msg, index) => {
                               const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
