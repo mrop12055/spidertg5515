@@ -1,112 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Download, CheckCircle2, XCircle, Loader2, Send, MessageSquare, UserCog, Flame, Ban } from 'lucide-react';
+import { Download, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
-import { supabase } from '@/integrations/supabase/client';
-
-interface RunnerStatus {
-  name: string;
-  icon: React.ReactNode;
-  color: string;
-  functions: string[];
-  runnerKey: string;
-  lastSeen: Date | null;
-  isOnline: boolean;
-}
 
 const SetupGuide: React.FC = () => {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-
-  const [runnerStatuses, setRunnerStatuses] = useState<RunnerStatus[]>([
-    {
-      name: 'Campaign Runner',
-      icon: <Send className="h-5 w-5" />,
-      color: 'text-blue-500',
-      functions: ['Send messages', 'Validate recipients'],
-      runnerKey: 'campaign',
-      lastSeen: null,
-      isOnline: false
-    },
-    {
-      name: 'LiveChat Runner',
-      icon: <MessageSquare className="h-5 w-5" />,
-      color: 'text-purple-500',
-      functions: ['Incoming messages', 'Send replies'],
-      runnerKey: 'livechat',
-      lastSeen: null,
-      isOnline: false
-    },
-    {
-      name: 'Account Runner',
-      icon: <UserCog className="h-5 w-5" />,
-      color: 'text-yellow-500',
-      functions: ['SpamBot', 'Name/Photo', 'Privacy', 'Import', 'Check Ban'],
-      runnerKey: 'account',
-      lastSeen: null,
-      isOnline: false
-    },
-    {
-      name: 'Warmup Runner',
-      icon: <Flame className="h-5 w-5" />,
-      color: 'text-orange-500',
-      functions: ['Join channels', 'View content', 'Reactions'],
-      runnerKey: 'warmup',
-      lastSeen: null,
-      isOnline: false
-    },
-    {
-      name: 'Block Runner',
-      icon: <Ban className="h-5 w-5" />,
-      color: 'text-red-500',
-      functions: ['Block contacts', 'Unblock contacts'],
-      runnerKey: 'block',
-      lastSeen: null,
-      isOnline: false
-    }
-  ]);
-
-  useEffect(() => {
-    const checkRunnerStatus = async () => {
-      try {
-        const { data: heartbeats } = await supabase
-          .from('runner_heartbeats')
-          .select('runner_name, last_seen, status');
-        
-        const runnerMap = new Map<string, { lastSeen: Date; status: string }>();
-        if (heartbeats) {
-          for (const hb of heartbeats) {
-            runnerMap.set(hb.runner_name, {
-              lastSeen: new Date(hb.last_seen),
-              status: hb.status || 'online'
-            });
-          }
-        }
-        
-        const fifteenSecondsAgo = new Date(Date.now() - 15000);
-
-        setRunnerStatuses(prev => prev.map(runner => {
-          const heartbeat = runnerMap.get(runner.runnerKey);
-          const isOnline = heartbeat ? heartbeat.lastSeen > fifteenSecondsAgo : false;
-          return {
-            ...runner,
-            isOnline,
-            lastSeen: heartbeat?.lastSeen || runner.lastSeen
-          };
-        }));
-      } catch (error) {
-        console.error('Error checking runner status:', error);
-      }
-    };
-
-    checkRunnerStatus();
-    const interval = setInterval(checkRunnerStatus, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   // ========== 1. CONFIG.PY ==========
   const configPy = `"""
@@ -1676,82 +1579,6 @@ pysocks>=1.7.1
           </CardContent>
         </Card>
 
-        {/* Runner Status Section */}
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold">🖥️ Runner Status</h3>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Auto-refresh every 5s
-              </div>
-            </div>
-            
-            <div className="grid gap-3">
-              {runnerStatuses.map((runner, index) => (
-                <div 
-                  key={index}
-                  className={`border rounded-lg p-4 transition-all ${
-                    runner.isOnline 
-                      ? 'border-green-500/50 bg-green-500/5' 
-                      : 'border-border bg-muted/30'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={runner.color}>
-                        {runner.icon}
-                      </div>
-                      <div>
-                        <p className="font-medium">{runner.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {runner.lastSeen 
-                            ? `Last seen: ${runner.lastSeen.toLocaleTimeString()}`
-                            : 'Not connected yet'
-                          }
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {runner.isOnline ? (
-                        <>
-                          <span className="text-xs font-medium text-green-600 dark:text-green-400">LIVE</span>
-                          <CheckCircle2 className="h-5 w-5 text-green-500" />
-                        </>
-                      ) : (
-                        <>
-                          <span className="text-xs font-medium text-muted-foreground">OFFLINE</span>
-                          <XCircle className="h-5 w-5 text-muted-foreground" />
-                        </>
-                      )}
-                    </div>
-                  </div>
-                  
-                  <div className="flex flex-wrap gap-1.5 mt-3">
-                    {runner.functions.map((func, funcIndex) => (
-                      <span 
-                        key={funcIndex}
-                        className={`text-xs px-2 py-0.5 rounded-full ${
-                          runner.isOnline
-                            ? 'bg-green-500/20 text-green-700 dark:text-green-300'
-                            : 'bg-muted text-muted-foreground'
-                        }`}
-                      >
-                        {func}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="text-center pt-2">
-              <p className="text-xs text-muted-foreground">
-                💡 Run <code className="bg-muted px-1.5 py-0.5 rounded">RUN.bat</code> on your PC to connect all runners
-              </p>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </DashboardLayout>
   );
