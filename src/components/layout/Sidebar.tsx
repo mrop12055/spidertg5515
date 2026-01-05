@@ -48,7 +48,7 @@ export const Sidebar: React.FC = () => {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const { conversations } = useTelegram();
-  const { anyOffline } = useRunnerStatus();
+  const { anyOfflineConfirmed } = useRunnerStatus();
 
   // Calculate count of unread *visible* chats (campaign/user-initiated only)
   const totalUnread = conversations.filter(c => (c.firstMessageSent ?? false) && (c.unreadCount || 0) > 0).length;
@@ -74,12 +74,12 @@ export const Sidebar: React.FC = () => {
                 <h1 className="font-bold text-lg text-sidebar-foreground">TGxOP</h1>
                 <p className="text-xs text-muted-foreground">Dashboard</p>
               </div>
-              {anyOffline && (
+              {anyOfflineConfirmed && (
                 <span className="w-2.5 h-2.5 rounded-full bg-destructive animate-pulse" title="Some runners are offline" />
               )}
             </div>
           )}
-          {collapsed && anyOffline && (
+          {collapsed && anyOfflineConfirmed && (
             <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-destructive animate-pulse" title="Some runners are offline" />
           )}
         </div>

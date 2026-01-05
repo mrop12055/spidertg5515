@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 
 interface RunnerInfo {
@@ -18,6 +18,8 @@ const runnerNames: Record<string, string> = {
   block: 'Block Runner',
 };
 
+const OFFLINE_GRACE_PERIOD_MS = 10000; // 10 seconds grace period before showing red dot
+
 export const useRunnerStatus = () => {
   const [runners, setRunners] = useState<RunnerInfo[]>(
     Object.entries(runnerNames).map(([key, name]) => ({
@@ -27,6 +29,10 @@ export const useRunnerStatus = () => {
       lastSeen: null,
     }))
   );
+  
+  // Track when each runner first went offline (for grace period)
+  const offlineSinceRef = useRef<Map<string, Date>>(new Map());
+  const [anyOfflineConfirmed, setAnyOfflineConfirmed] = useState(false);
 
   const checkRunnerStatus = useCallback(async () => {
     try {
@@ -42,12 +48,39 @@ export const useRunnerStatus = () => {
       }
       
       const thirtySecondsAgo = new Date(Date.now() - 30000);
+      const now = new Date();
 
-      setRunners(prev => prev.map(runner => ({
-        ...runner,
-        isOnline: runnerMap.has(runner.runnerKey) && runnerMap.get(runner.runnerKey)! > thirtySecondsAgo,
-        lastSeen: runnerMap.get(runner.runnerKey) || runner.lastSeen,
-      })));
+      setRunners(prev => {
+        const newRunners = prev.map(runner => {
+          const isOnline = runnerMap.has(runner.runnerKey) && runnerMap.get(runner.runnerKey)! > thirtySecondsAgo;
+          
+          // Track offline transitions for grace period
+          if (!isOnline) {
+            // If not already tracked as offline, start tracking
+            if (!offlineSinceRef.current.has(runner.runnerKey)) {
+              offlineSinceRef.current.set(runner.runnerKey, now);
+            }
+          } else {
+            // Runner is online, remove from offline tracking
+            offlineSinceRef.current.delete(runner.runnerKey);
+          }
+          
+          return {
+            ...runner,
+            isOnline,
+            lastSeen: runnerMap.get(runner.runnerKey) || runner.lastSeen,
+          };
+        });
+        
+        return newRunners;
+      });
+      
+      // Check if any runner has been offline for longer than grace period
+      const hasConfirmedOffline = Array.from(offlineSinceRef.current.entries()).some(([_, offlineSince]) => {
+        return now.getTime() - offlineSince.getTime() >= OFFLINE_GRACE_PERIOD_MS;
+      });
+      setAnyOfflineConfirmed(hasConfirmedOffline);
+      
     } catch (error) {
       console.error('Error checking runner status:', error);
     }
@@ -87,5 +120,5 @@ export const useRunnerStatus = () => {
   const allOnline = runners.every(r => r.isOnline);
   const onlineCount = runners.filter(r => r.isOnline).length;
 
-  return { runners, anyOffline, allOnline, onlineCount, totalCount: runners.length };
+  return { runners, anyOffline, anyOfflineConfirmed, allOnline, onlineCount, totalCount: runners.length };
 };
