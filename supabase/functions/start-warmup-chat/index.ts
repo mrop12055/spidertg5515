@@ -130,8 +130,29 @@ serve(async (req) => {
         throw new Error("No message templates found");
       }
 
-      // Shuffle all templates and pick random ones
-      const shuffledTemplates = [...templates].sort(() => Math.random() - 0.5);
+      // Get last used template for this pair (to avoid repetition)
+      const { data: existingPairData } = await supabase
+        .from("warmup_pairs")
+        .select("last_template_id")
+        .or(`and(account_a_id.eq.${accounts[0].id},account_b_id.eq.${accounts[1].id}),and(account_a_id.eq.${accounts[1].id},account_b_id.eq.${accounts[0].id})`)
+        .not("last_template_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      const lastUsedTemplateId = existingPairData?.[0]?.last_template_id;
+      console.log(`Last used template for this pair: ${lastUsedTemplateId || 'none'}`);
+
+      // Filter out the last used template and shuffle remaining
+      const availableTemplates = lastUsedTemplateId 
+        ? templates.filter(t => t.id !== lastUsedTemplateId)
+        : templates;
+      
+      // If we filtered out the last template and have none left, use all templates
+      const templatesToUse = availableTemplates.length > 0 ? availableTemplates : templates;
+      const shuffledTemplates = [...templatesToUse].sort(() => Math.random() - 0.5);
+      
+      // Pick a "cycle template" (first template after shuffle) to track
+      const cycleTemplateId = shuffledTemplates[0]?.id;
       
       const messageCount = Math.floor(
         Math.random() * (messagesPerPairMax - messagesPerPairMin + 1) + messagesPerPairMin
@@ -142,6 +163,14 @@ serve(async (req) => {
         ...t,
         sender_position: i % 2 === 0 ? "A" : "B" // Alternate A and B
       }));
+      
+      // Update pair with the template we're using
+      if (cycleTemplateId) {
+        await supabase
+          .from("warmup_pairs")
+          .update({ last_template_id: cycleTemplateId })
+          .eq("id", createdPair.id);
+      }
 
       // Schedule tasks
       const now = new Date();
@@ -190,6 +219,7 @@ serve(async (req) => {
       // Schedule chat messages with human-like timing
       for (let i = 0; i < selectedTemplates.length; i++) {
         const template = selectedTemplates[i];
+        const isLastMessage = i === selectedTemplates.length - 1;
         
         // Human-like timing variations
         const isQuickReply = Math.random() < 0.3; // 30% quick replies
@@ -230,6 +260,8 @@ serve(async (req) => {
           scheduled_at: currentTime.toISOString(),
           reply_delay_seconds: Math.floor(delaySeconds),
           status: "pending",
+          template_id: template.id,
+          is_cycle_last: isLastMessage, // Mark last message of cycle
         });
       }
 
@@ -476,8 +508,29 @@ serve(async (req) => {
         console.log(`Pair ${pair.id}: skipping contact exchange (already done in previous session)`);
       }
 
-      // Shuffle all templates and pick random ones for this pair
-      const shuffledTemplates = [...templates].sort(() => Math.random() - 0.5);
+      // Get last used template for this specific pair (to avoid repetition)
+      const pairKey1 = `${pair.account_a_id}-${pair.account_b_id}`;
+      const pairKey2 = `${pair.account_b_id}-${pair.account_a_id}`;
+      const { data: pairHistory } = await supabase
+        .from("warmup_pairs")
+        .select("last_template_id")
+        .or(`and(account_a_id.eq.${pair.account_a_id},account_b_id.eq.${pair.account_b_id}),and(account_a_id.eq.${pair.account_b_id},account_b_id.eq.${pair.account_a_id})`)
+        .not("last_template_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      const lastUsedTemplateId = pairHistory?.[0]?.last_template_id;
+      
+      // Filter out the last used template and shuffle remaining
+      const availableTemplates = lastUsedTemplateId 
+        ? templates.filter(t => t.id !== lastUsedTemplateId)
+        : templates;
+      
+      const templatesToUse = availableTemplates.length > 0 ? availableTemplates : templates;
+      const shuffledTemplates = [...templatesToUse].sort(() => Math.random() - 0.5);
+      
+      // Pick a "cycle template" (first template after shuffle) to track
+      const cycleTemplateId = shuffledTemplates[0]?.id;
       
       // Random number of messages between min and max
       const messageCount = Math.floor(
@@ -489,10 +542,19 @@ serve(async (req) => {
         ...t,
         sender_position: i % 2 === 0 ? "A" : "B" // Alternate A and B
       }));
+      
+      // Update pair with the template we're using
+      if (cycleTemplateId) {
+        await supabase
+          .from("warmup_pairs")
+          .update({ last_template_id: cycleTemplateId })
+          .eq("id", pair.id);
+      }
 
       // Schedule chat messages with human-like timing
       for (let i = 0; i < selectedTemplates.length; i++) {
         const template = selectedTemplates[i];
+        const isLastMessage = i === selectedTemplates.length - 1;
         
         // Human-like timing variations
         const isQuickReply = Math.random() < 0.3; // 30% quick replies
@@ -532,6 +594,8 @@ serve(async (req) => {
           scheduled_at: currentTime.toISOString(),
           reply_delay_seconds: Math.floor(delaySeconds),
           status: "pending",
+          template_id: template.id,
+          is_cycle_last: isLastMessage, // Mark last message of cycle
         });
       }
     }

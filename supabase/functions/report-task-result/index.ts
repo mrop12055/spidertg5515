@@ -1803,7 +1803,7 @@ serve(async (req) => {
       case "warmup_chat": {
         // Handle warmup chat message results (includes both text messages and add_contact)
         // Support both message_type and task_subtype for backward compatibility
-        const { task_id, pair_id, account_id, success, error, message_type, task_subtype } = result;
+        const { task_id, pair_id, account_id, success, error, message_type, task_subtype, is_cycle_last, error_type } = result;
         const actualMessageType = message_type || task_subtype;
 
         if (success) {
@@ -1830,18 +1830,44 @@ serve(async (req) => {
           if (pair_id && actualMessageType !== "add_contact") {
             const { data: pairData } = await supabase
               .from("warmup_pairs")
-              .select("messages_exchanged, session_id")
+              .select("messages_exchanged, session_id, cycles_completed_today, last_cycle_date")
               .eq("id", pair_id)
               .single();
 
             if (pairData) {
-              await supabase
-                .from("warmup_pairs")
-                .update({
-                  messages_exchanged: (pairData.messages_exchanged || 0) + 1,
-                  last_message_at: new Date().toISOString(),
-                })
-                .eq("id", pair_id);
+              // Get today's date in local format (YYYY-MM-DD)
+              const today = new Date().toISOString().split('T')[0];
+              
+              // Check if we need to reset cycles_completed_today (new day)
+              const isNewDay = pairData.last_cycle_date !== today;
+              const currentCycles = isNewDay ? 0 : (pairData.cycles_completed_today || 0);
+              
+              // Check if this is the last message in the cycle
+              if (is_cycle_last) {
+                // Increment cycles_completed_today
+                await supabase
+                  .from("warmup_pairs")
+                  .update({
+                    messages_exchanged: (pairData.messages_exchanged || 0) + 1,
+                    last_message_at: new Date().toISOString(),
+                    cycles_completed_today: currentCycles + 1,
+                    last_cycle_date: today,
+                    status: "completed", // Mark pair as completed when cycle finishes
+                  })
+                  .eq("id", pair_id);
+                
+                console.log(`[report-task-result] Cycle completed for pair ${pair_id}, total cycles today: ${currentCycles + 1}`);
+              } else {
+                await supabase
+                  .from("warmup_pairs")
+                  .update({
+                    messages_exchanged: (pairData.messages_exchanged || 0) + 1,
+                    last_message_at: new Date().toISOString(),
+                    // Reset cycle count if new day, but don't increment yet
+                    ...(isNewDay ? { cycles_completed_today: 0, last_cycle_date: today } : {}),
+                  })
+                  .eq("id", pair_id);
+              }
             }
           }
 
@@ -1855,6 +1881,14 @@ serve(async (req) => {
 
           console.log(`[report-task-result] Warmup ${actualMessageType || 'chat'} sent successfully: ${task_id}`);
         } else {
+          // Determine the failure reason for the pair
+          let pairFailedReason = error || "Unknown error";
+          if (error_type === "proxy_error" || (error && error.toLowerCase().includes("proxy"))) {
+            pairFailedReason = "Proxy error";
+          } else if (error_type === "connection_error" || (error && (error.toLowerCase().includes("timeout") || error.toLowerCase().includes("connection")))) {
+            pairFailedReason = "Connection error";
+          }
+
           // Mark message as failed with error message
           await supabase
             .from("warmup_messages")
@@ -1880,12 +1914,12 @@ serve(async (req) => {
                   account_id: account_id,
                   pair_id: pair_id,
                   error_message: error || "Unknown error",
-                  error_type: "warmup_chat",
+                  error_type: error_type || "warmup_chat",
                 });
             }
 
-            // AUTO-STOP PAIR ON ERROR: Cancel pending messages and mark pair as stopped
-            console.log(`[report-task-result] Auto-stopping pair ${pair_id} due to error`);
+            // AUTO-STOP PAIR ON ERROR: Cancel pending messages and mark pair as failed with reason
+            console.log(`[report-task-result] Auto-stopping pair ${pair_id} due to error: ${pairFailedReason}`);
             
             // Cancel all pending messages for this pair
             const { data: cancelledMsgs } = await supabase
@@ -1897,13 +1931,31 @@ serve(async (req) => {
             
             console.log(`[report-task-result] Cancelled ${cancelledMsgs?.length || 0} pending messages for pair ${pair_id}`);
             
-            // Mark pair as stopped (not completed - indicates error)
+            // Mark pair as failed with reason (not just "stopped")
             await supabase
               .from("warmup_pairs")
-              .update({ status: "stopped" })
+              .update({ status: "failed", failed_reason: pairFailedReason })
               .eq("id", pair_id);
+
+            // If proxy error, also mark the proxy as error
+            if (pairFailedReason === "Proxy error" && account_id) {
+              const { data: accountData } = await supabase
+                .from("telegram_accounts")
+                .select("proxy_id")
+                .eq("id", account_id)
+                .single();
+              
+              if (accountData?.proxy_id) {
+                await supabase
+                  .from("proxies")
+                  .update({ status: "error", last_checked: new Date().toISOString() })
+                  .eq("id", accountData.proxy_id);
+                
+                console.log(`[report-task-result] Marked proxy ${accountData.proxy_id} as error`);
+              }
+            }
             
-            // Check if all pairs are now stopped/completed - if so, stop the session
+            // Check if all pairs are now stopped/completed/failed - if so, stop the session
             if (pairData?.session_id) {
               const { data: remainingActive } = await supabase
                 .from("warmup_pairs")
@@ -1912,7 +1964,7 @@ serve(async (req) => {
                 .eq("status", "active");
               
               if (!remainingActive || remainingActive.length === 0) {
-                console.log(`[report-task-result] All pairs stopped/completed, stopping session ${pairData.session_id}`);
+                console.log(`[report-task-result] All pairs stopped/completed/failed, stopping session ${pairData.session_id}`);
                 await supabase
                   .from("warmup_sessions")
                   .update({ status: "stopped", stopped_at: new Date().toISOString() })
