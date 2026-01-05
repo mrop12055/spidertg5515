@@ -712,52 +712,6 @@ const DatabaseHealth = () => {
       </div>
 
 
-      {/* Recent Errors Log */}
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-destructive" />
-            All Recent Errors
-            <Badge variant="outline" className="ml-2 bg-destructive/10 text-destructive border-destructive/30">
-              Live Feed
-            </Badge>
-            <Badge variant="outline" className="ml-1 bg-muted text-muted-foreground">
-              {recentErrors.length} errors
-            </Badge>
-          </CardTitle>
-          <CardDescription>Latest 300 errors from all sources (campaigns, messages, tasks, warmup, accounts)</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className="h-[500px]">
-            {recentErrors.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
-                <p>No recent errors</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {recentErrors.map((error) => (
-                  <div key={`${error.source}-${error.id}`} className="p-3 rounded-lg border bg-destructive/5 border-destructive/20">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs bg-muted/50">
-                          {error.source}
-                        </Badge>
-                        <Phone className="w-4 h-4 text-muted-foreground" />
-                        <span className="font-medium text-sm">{error.phone}</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {format(new Date(error.timestamp), 'MMM d, HH:mm:ss')}
-                      </span>
-                    </div>
-                    <p className="text-sm text-destructive">{error.reason}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
-        </CardContent>
-      </Card>
 
       {/* Task Tables */}
       <Card>
@@ -1123,6 +1077,53 @@ const DatabaseHealth = () => {
               </Tabs>
             </TabsContent>
           </Tabs>
+        </CardContent>
+      </Card>
+
+      {/* Recent Errors Log - At Bottom */}
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-destructive" />
+            All Recent Errors
+            <Badge variant="outline" className="ml-2 bg-destructive/10 text-destructive border-destructive/30">
+              Live Feed
+            </Badge>
+            <Badge variant="outline" className="ml-1 bg-muted text-muted-foreground">
+              {recentErrors.length} errors
+            </Badge>
+          </CardTitle>
+          <CardDescription>Latest 300 errors from all sources (campaigns, messages, tasks, warmup, accounts)</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <ScrollArea className="h-[500px]">
+            {recentErrors.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
+                <p>No recent errors</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {recentErrors.map((error) => (
+                  <div key={`${error.source}-${error.id}`} className="p-3 rounded-lg border bg-destructive/5 border-destructive/20">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className="text-xs bg-muted/50">
+                          {error.source}
+                        </Badge>
+                        <Phone className="w-4 h-4 text-muted-foreground" />
+                        <span className="font-medium text-sm">{error.phone}</span>
+                      </div>
+                      <span className="text-xs text-muted-foreground">
+                        {format(new Date(error.timestamp), 'MMM d, HH:mm:ss')}
+                      </span>
+                    </div>
+                    <p className="text-sm text-destructive">{error.reason}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </ScrollArea>
         </CardContent>
       </Card>
     </DashboardLayout>
