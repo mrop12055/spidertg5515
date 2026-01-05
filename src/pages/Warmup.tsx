@@ -81,7 +81,8 @@ export default function Warmup() {
   const [session, setSession] = useState<WarmupSession | null>(null);
   const [pairs, setPairs] = useState<WarmupPair[]>([]);
   const [prePairedAccounts, setPrePairedAccounts] = useState<PrePairedAccount[]>([]);
-  const [recentMessages, setRecentMessages] = useState<WarmupMessage[]>([]);
+  const [sentMessages, setSentMessages] = useState<WarmupMessage[]>([]);
+  const [pendingMessages, setPendingMessages] = useState<WarmupMessage[]>([]);
   const [recentErrors, setRecentErrors] = useState<WarmupMessage[]>([]);
   const [unpairedAccounts, setUnpairedAccounts] = useState<UnpairedAccount[]>([]);
   const [stats, setStats] = useState({ 
@@ -131,8 +132,8 @@ export default function Warmup() {
         setPairs([]);
       }
 
-      // Fetch recent messages (sent + pending)
-      const { data: messagesData } = await supabase
+      // Fetch sent messages
+      const { data: sentData } = await supabase
         .from("warmup_messages")
         .select(`
           id,
@@ -144,11 +145,30 @@ export default function Warmup() {
           sender:telegram_accounts!warmup_messages_sender_account_id_fkey(phone_number),
           receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number)
         `)
-        .in("status", ["sent", "pending"])
-        .order("scheduled_at", { ascending: false })
+        .eq("status", "sent")
+        .order("sent_at", { ascending: false })
         .limit(20);
 
-      setRecentMessages((messagesData as unknown as WarmupMessage[]) || []);
+      setSentMessages((sentData as unknown as WarmupMessage[]) || []);
+
+      // Fetch pending messages
+      const { data: pendingData } = await supabase
+        .from("warmup_messages")
+        .select(`
+          id,
+          message_content,
+          status,
+          scheduled_at,
+          sent_at,
+          error_message,
+          sender:telegram_accounts!warmup_messages_sender_account_id_fkey(phone_number),
+          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number)
+        `)
+        .eq("status", "pending")
+        .order("scheduled_at", { ascending: true })
+        .limit(20);
+
+      setPendingMessages((pendingData as unknown as WarmupMessage[]) || []);
 
       // Fetch failed messages (errors)
       const { data: errorData } = await supabase
@@ -547,7 +567,7 @@ export default function Warmup() {
                       No paired accounts yet. Pairs are created when accounts become active.
                     </p>
                   ) : (
-                    prePairedAccounts.map((account) => {
+                    prePairedAccounts.map((account, index) => {
                       // Check if this pair is currently running in active session
                       const isRunning = pairs.some(
                         p => (p.account_a?.phone_number === account.phone_number || 
@@ -566,23 +586,28 @@ export default function Warmup() {
                             isRunning ? "bg-green-500/10 border border-green-500/30" : "bg-muted/50"
                           }`}
                         >
-                          <div className="flex items-center gap-2">
-                            <div className="text-left">
-                              <span className="font-mono text-sm block">
-                                {formatPhone(account.phone_number)}
-                              </span>
-                              {account.first_name && (
-                                <span className="text-xs text-muted-foreground">{account.first_name}</span>
-                              )}
-                            </div>
-                            <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
-                            <div className="text-left">
-                              <span className="font-mono text-sm block">
-                                {formatPhone(account.pair_phone)}
-                              </span>
-                              {account.pair_first_name && (
-                                <span className="text-xs text-muted-foreground">{account.pair_first_name}</span>
-                              )}
+                          <div className="flex items-center gap-3">
+                            <Badge variant="outline" className="h-6 w-12 justify-center font-semibold">
+                              #{index + 1}
+                            </Badge>
+                            <div className="flex items-center gap-2">
+                              <div className="text-left">
+                                <span className="font-mono text-sm block">
+                                  {formatPhone(account.phone_number)}
+                                </span>
+                                {account.first_name && (
+                                  <span className="text-xs text-muted-foreground">{account.first_name}</span>
+                                )}
+                              </div>
+                              <ArrowLeftRight className="h-4 w-4 text-muted-foreground" />
+                              <div className="text-left">
+                                <span className="font-mono text-sm block">
+                                  {formatPhone(account.pair_phone)}
+                                </span>
+                                {account.pair_first_name && (
+                                  <span className="text-xs text-muted-foreground">{account.pair_first_name}</span>
+                                )}
+                              </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
@@ -636,14 +661,23 @@ export default function Warmup() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <Tabs defaultValue="messages" className="w-full">
-                <TabsList className="grid w-full grid-cols-2 mb-3">
-                  <TabsTrigger value="messages" className="flex items-center gap-1">
+              <Tabs defaultValue="sent" className="w-full">
+                <TabsList className="grid w-full grid-cols-3 mb-3">
+                  <TabsTrigger value="sent" className="flex items-center gap-1">
                     <MessageCircle className="h-3 w-3" />
-                    Messages
-                    {stats.pendingMessages > 0 && (
+                    Sent
+                    {sentMessages.length > 0 && (
+                      <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs bg-green-500/20 text-green-600">
+                        {sentMessages.length}
+                      </Badge>
+                    )}
+                  </TabsTrigger>
+                  <TabsTrigger value="pending" className="flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    Pending
+                    {pendingMessages.length > 0 && (
                       <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                        {stats.pendingMessages}
+                        {pendingMessages.length}
                       </Badge>
                     )}
                   </TabsTrigger>
@@ -658,18 +692,18 @@ export default function Warmup() {
                   </TabsTrigger>
                 </TabsList>
                 
-                <TabsContent value="messages" className="mt-0">
+                <TabsContent value="sent" className="mt-0">
                   <ScrollArea className="h-[300px]">
                     <div className="space-y-2">
-                      {recentMessages.length === 0 ? (
+                      {sentMessages.length === 0 ? (
                         <p className="text-muted-foreground text-center py-8">
-                          No messages yet.
+                          No sent messages yet.
                         </p>
                       ) : (
-                        recentMessages.map((msg) => (
+                        sentMessages.map((msg) => (
                           <div
                             key={msg.id}
-                            className="p-3 bg-muted/50 rounded-lg space-y-1"
+                            className="p-3 bg-green-500/5 border border-green-500/20 rounded-lg space-y-1"
                           >
                             <div className="flex items-center justify-between">
                               <div className="flex items-center gap-2 text-sm">
@@ -681,19 +715,47 @@ export default function Warmup() {
                                   {formatPhone(msg.receiver?.phone_number || "Unknown")}
                                 </span>
                               </div>
-                              <div className="flex items-center gap-2">
-                                <span className={`w-2 h-2 rounded-full ${getStatusColor(msg.status)}`} />
-                                <span className="text-xs text-muted-foreground">
-                                  {msg.status}
-                                </span>
-                              </div>
+                              <Badge variant="secondary" className="bg-green-500/20 text-green-600">Sent</Badge>
                             </div>
                             <p className="text-sm truncate">{msg.message_content}</p>
                             <p className="text-xs text-muted-foreground">
-                              {msg.sent_at 
-                                ? `Sent: ${format(new Date(msg.sent_at), "MMM d, HH:mm")}`
-                                : `Scheduled: ${format(new Date(msg.scheduled_at), "MMM d, HH:mm")}`
-                              }
+                              {msg.sent_at && format(new Date(msg.sent_at), "MMM d, HH:mm")}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                
+                <TabsContent value="pending" className="mt-0">
+                  <ScrollArea className="h-[300px]">
+                    <div className="space-y-2">
+                      {pendingMessages.length === 0 ? (
+                        <p className="text-muted-foreground text-center py-8">
+                          No pending messages.
+                        </p>
+                      ) : (
+                        pendingMessages.map((msg) => (
+                          <div
+                            key={msg.id}
+                            className="p-3 bg-yellow-500/5 border border-yellow-500/20 rounded-lg space-y-1"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="font-mono">
+                                  {formatPhone(msg.sender?.phone_number || "Unknown")}
+                                </span>
+                                <span className="text-muted-foreground">→</span>
+                                <span className="font-mono">
+                                  {formatPhone(msg.receiver?.phone_number || "Unknown")}
+                                </span>
+                              </div>
+                              <Badge variant="secondary" className="bg-yellow-500/20 text-yellow-600">Pending</Badge>
+                            </div>
+                            <p className="text-sm truncate">{msg.message_content}</p>
+                            <p className="text-xs text-muted-foreground">
+                              Scheduled: {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
                             </p>
                           </div>
                         ))
