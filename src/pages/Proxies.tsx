@@ -1130,39 +1130,39 @@ const Proxies: React.FC = () => {
                       <PopoverTrigger asChild>
                         <button 
                           className={cn(
-                            "flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer hover:bg-secondary",
+                            "flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer hover:bg-secondary min-w-[100px]",
                             accountsUsing.length > 0 ? "bg-secondary/50" : "bg-muted/30"
                           )}
                         >
-                          <div className="flex items-center gap-1">
+                          {/* Fixed-width avatar container */}
+                          <div className="w-[52px] flex items-center justify-start">
                             {accountsUsing.length > 0 ? (
-                              <>
-                                {/* Show live status indicators */}
-                                <div className="flex -space-x-1.5">
-                                  {accountsUsing.slice(0, 3).map((acc) => (
-                                    <div
-                                      key={acc.id}
-                                      className={cn(
-                                        "w-6 h-6 rounded-full border-2 border-background flex items-center justify-center text-xs font-medium",
-                                        acc.status === 'active' && "bg-green-500 text-white",
-                                        acc.status === 'cooldown' && "bg-amber-500 text-white",
-                                        acc.status === 'banned' && "bg-destructive text-white",
-                                        acc.status === 'restricted' && "bg-orange-500 text-white",
-                                        acc.status === 'disconnected' && "bg-muted text-muted-foreground"
-                                      )}
-                                    >
-                                      {acc.firstName?.[0] || acc.phoneNumber?.[1] || '?'}
-                                    </div>
-                                  ))}
-                                  {accountsUsing.length > 3 && (
-                                    <div className="w-6 h-6 rounded-full border-2 border-background bg-muted flex items-center justify-center text-xs font-medium text-muted-foreground">
-                                      +{accountsUsing.length - 3}
-                                    </div>
-                                  )}
-                                </div>
-                              </>
+                              <div className="flex -space-x-1.5">
+                                {accountsUsing.slice(0, 2).map((acc) => (
+                                  <div
+                                    key={acc.id}
+                                    className={cn(
+                                      "w-6 h-6 rounded-full border-2 border-background flex items-center justify-center text-xs font-medium",
+                                      acc.status === 'active' && "bg-green-500 text-white",
+                                      acc.status === 'cooldown' && "bg-amber-500 text-white",
+                                      acc.status === 'banned' && "bg-destructive text-white",
+                                      acc.status === 'restricted' && "bg-orange-500 text-white",
+                                      acc.status === 'disconnected' && "bg-muted text-muted-foreground"
+                                    )}
+                                  >
+                                    {acc.firstName?.[0] || acc.phoneNumber?.[1] || '?'}
+                                  </div>
+                                ))}
+                                {accountsUsing.length > 2 && (
+                                  <div className="w-6 h-6 rounded-full border-2 border-background bg-muted flex items-center justify-center text-[10px] font-medium text-muted-foreground">
+                                    +{accountsUsing.length - 2}
+                                  </div>
+                                )}
+                              </div>
                             ) : (
-                              <span className="text-xs text-muted-foreground">No accounts</span>
+                              <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center">
+                                <User className="w-3 h-3 text-muted-foreground" />
+                              </div>
                             )}
                           </div>
                           <div className="flex flex-col items-start">
