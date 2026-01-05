@@ -1759,7 +1759,9 @@ serve(async (req) => {
 
       case "warmup_chat": {
         // Handle warmup chat message results (includes both text messages and add_contact)
-        const { task_id, pair_id, account_id, success, error, message_type } = result;
+        // Support both message_type and task_subtype for backward compatibility
+        const { task_id, pair_id, account_id, success, error, message_type, task_subtype } = result;
+        const actualMessageType = message_type || task_subtype;
 
         if (success) {
           // Update message as sent
@@ -1773,7 +1775,7 @@ serve(async (req) => {
 
           // If this was an add_contact task, mark contacts_exchanged=true on the pair
           // This ensures contacts are saved permanently and never added again
-          if (message_type === "add_contact" && pair_id) {
+          if (actualMessageType === "add_contact" && pair_id) {
             await supabase
               .from("warmup_pairs")
               .update({ contacts_exchanged: true })
@@ -1782,7 +1784,7 @@ serve(async (req) => {
           }
 
           // Increment messages_exchanged on the pair (only for text messages, not contacts)
-          if (pair_id && message_type !== "add_contact") {
+          if (pair_id && actualMessageType !== "add_contact") {
             const { data: pairData } = await supabase
               .from("warmup_pairs")
               .select("messages_exchanged, session_id")
@@ -1808,7 +1810,7 @@ serve(async (req) => {
               .eq("id", account_id);
           }
 
-          console.log(`[report-task-result] Warmup ${message_type || 'chat'} sent successfully: ${task_id}`);
+          console.log(`[report-task-result] Warmup ${actualMessageType || 'chat'} sent successfully: ${task_id}`);
         } else {
           // Mark message as failed with error message
           await supabase
