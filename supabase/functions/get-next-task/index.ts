@@ -113,16 +113,50 @@ serve(async (req) => {
         }
       }
 
-      // No messages - return fast "wait" (no accounts list to avoid slow query)
-      // Heartbeat separately (fire and forget)
+      // No messages - but we need to return accounts for incoming message listening
+      // Heartbeat
       supabase
         .from("runner_heartbeats")
         .upsert({ runner_name: "livechat", last_seen: new Date().toISOString(), status: "online" }, { onConflict: "runner_name" })
         .then(() => {});
 
+      // Get accounts that have active conversations (campaign-initiated) for listening to replies
+      // This is essential - without accounts, the Python listener can't connect to Telegram
+      const { data: livechatAccounts } = await supabase
+        .from("telegram_accounts")
+        .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
+        .in("status", ["active", "restricted", "cooldown", "frozen"])
+        .not("session_data", "is", null)
+        .limit(50);
+
+      // Filter to accounts with active proxy
+      const validAccounts = (livechatAccounts || [])
+        .map(acc => {
+          const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
+          if (!proxy || proxy.status !== "active") return null;
+          const apiCred = acc.telegram_api_credentials as any;
+          return {
+            id: acc.id,
+            phone_number: acc.phone_number,
+            session_data: acc.session_data,
+            device_model: acc.device_model,
+            system_version: acc.system_version,
+            app_version: acc.app_version,
+            lang_code: acc.lang_code,
+            system_lang_code: acc.system_lang_code,
+            api_id: apiCred?.api_id || acc.api_id,
+            api_hash: apiCred?.api_hash || acc.api_hash,
+            proxy: proxy,
+          };
+        })
+        .filter(Boolean);
+
+      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening`);
+
       return new Response(JSON.stringify({
         task: "wait",
         seconds: 0,
+        accounts: validAccounts,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
