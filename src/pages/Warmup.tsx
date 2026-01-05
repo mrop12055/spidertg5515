@@ -1047,6 +1047,9 @@ export default function Warmup() {
                                     )}
                                   </div>
                                   <p className="text-sm truncate">{msg.message_content}</p>
+                                  {isFailed && msg.error_message && (
+                                    <p className="text-xs text-red-400 truncate">Reason: {msg.error_message}</p>
+                                  )}
                                   <p className="text-xs text-muted-foreground">
                                     {format(new Date(msg.sent_at || msg.scheduled_at), "MMM d, HH:mm")}
                                   </p>
