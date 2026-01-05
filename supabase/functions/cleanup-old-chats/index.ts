@@ -16,20 +16,70 @@ Deno.serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log('Starting cleanup of old chats...');
+    console.log('Starting cleanup of old chats and warmup messages...');
 
-    // Calculate 3 days ago
+    // Calculate cutoff dates
     const threeDaysAgo = new Date();
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    const cutoffDate = threeDaysAgo.toISOString();
+    const conversationCutoffDate = threeDaysAgo.toISOString();
 
-    console.log(`Deleting conversations and messages older than: ${cutoffDate}`);
+    // 30 minutes ago for warmup messages
+    const thirtyMinutesAgo = new Date();
+    thirtyMinutesAgo.setMinutes(thirtyMinutesAgo.getMinutes() - 30);
+    const warmupCutoffDate = thirtyMinutesAgo.toISOString();
 
-    // Get conversations older than 7 days
+    console.log(`Deleting conversations older than: ${conversationCutoffDate}`);
+    console.log(`Deleting warmup messages older than: ${warmupCutoffDate}`);
+
+    // ========== WARMUP CLEANUP (30 minutes) ==========
+    // First, save failed warmup messages to warmup_errors before deleting
+    const { data: failedWarmupMessages, error: fetchFailedError } = await supabase
+      .from('warmup_messages')
+      .select('id, sender_account_id, receiver_account_id, pair_id, error_message, created_at')
+      .eq('status', 'failed')
+      .lt('created_at', warmupCutoffDate)
+      .not('error_message', 'is', null);
+
+    if (fetchFailedError) {
+      console.error('Error fetching failed warmup messages:', fetchFailedError);
+    } else if (failedWarmupMessages && failedWarmupMessages.length > 0) {
+      // Insert failed reasons into warmup_errors (if not already there)
+      const errorInserts = failedWarmupMessages.map(msg => ({
+        account_id: msg.sender_account_id,
+        pair_id: msg.pair_id,
+        error_message: msg.error_message || 'Unknown error',
+        error_type: 'warmup_message_failed',
+      }));
+
+      const { error: insertError } = await supabase
+        .from('warmup_errors')
+        .insert(errorInserts);
+
+      if (insertError) {
+        console.error('Error saving failed warmup reasons:', insertError);
+      } else {
+        console.log(`Saved ${errorInserts.length} failed warmup reasons to warmup_errors`);
+      }
+    }
+
+    // Delete warmup messages older than 30 minutes (all statuses)
+    const { error: warmupDeleteError, count: warmupDeleteCount } = await supabase
+      .from('warmup_messages')
+      .delete()
+      .lt('created_at', warmupCutoffDate);
+
+    if (warmupDeleteError) {
+      console.error('Error deleting old warmup messages:', warmupDeleteError);
+    } else {
+      console.log(`Deleted ${warmupDeleteCount || 0} warmup messages older than 30 minutes`);
+    }
+
+    // ========== CONVERSATION CLEANUP (3 days) ==========
+    // Get conversations older than 3 days
     const { data: oldConversations, error: fetchError } = await supabase
       .from('conversations')
       .select('id')
-      .lt('updated_at', cutoffDate);
+      .lt('updated_at', conversationCutoffDate);
 
     if (fetchError) {
       console.error('Error fetching old conversations:', fetchError);
@@ -38,6 +88,9 @@ Deno.serve(async (req) => {
 
     const conversationIds = oldConversations?.map(c => c.id) || [];
     console.log(`Found ${conversationIds.length} old conversations to delete`);
+
+    let deletedConversations = 0;
+    let deletedMessages = 0;
 
     if (conversationIds.length > 0) {
       // Delete messages for old conversations
@@ -51,7 +104,8 @@ Deno.serve(async (req) => {
         throw messagesError;
       }
 
-      console.log(`Deleted ${messagesCount || 0} messages`);
+      deletedMessages = messagesCount || 0;
+      console.log(`Deleted ${deletedMessages} messages`);
 
       // Delete old conversations
       const { error: conversationsError, count: conversationsCount } = await supabase
@@ -64,32 +118,22 @@ Deno.serve(async (req) => {
         throw conversationsError;
       }
 
-      console.log(`Deleted ${conversationsCount || 0} conversations`);
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          deleted: {
-            conversations: conversationsCount || conversationIds.length,
-            messages: messagesCount || 0,
-          },
-          cutoffDate,
-        }),
-        {
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        }
-      );
+      deletedConversations = conversationsCount || conversationIds.length;
+      console.log(`Deleted ${deletedConversations} conversations`);
     }
 
     return new Response(
       JSON.stringify({
         success: true,
         deleted: {
-          conversations: 0,
-          messages: 0,
+          conversations: deletedConversations,
+          messages: deletedMessages,
+          warmupMessages: warmupDeleteCount || 0,
         },
-        cutoffDate,
-        message: 'No old conversations to delete',
+        cutoffDates: {
+          conversations: conversationCutoffDate,
+          warmupMessages: warmupCutoffDate,
+        },
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
