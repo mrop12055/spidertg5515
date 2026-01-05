@@ -1076,9 +1076,6 @@ const Proxies: React.FC = () => {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium font-mono">{proxy.host}:{proxy.port}</span>
                         {getStatusBadge(proxy.status)}
-                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-secondary border border-border uppercase">
-                          {proxy.type}
-                        </span>
                         {(proxy.responseTime || testResult?.responseTime) && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-600 border border-blue-500/30 flex items-center gap-1">
                             <Zap className="w-3 h-3" />
