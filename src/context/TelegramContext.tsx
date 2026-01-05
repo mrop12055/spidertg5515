@@ -525,6 +525,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                         ...conv,
                         unreadCount: c.unread_count || 0,
                         updatedAt: new Date(c.updated_at || c.last_message_at || conv.updatedAt),
+                        lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : conv.lastMessageAt,
                         recipientName: c.recipient_name || conv.recipientName,
                         recipientUsername: c.recipient_username || conv.recipientUsername,
                         isActive: c.is_active ?? conv.isActive,
@@ -533,7 +534,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                       }
                     : conv
                 )
-                .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+                .sort((a, b) => (b.lastMessageAt?.getTime() || b.updatedAt.getTime()) - (a.lastMessageAt?.getTime() || a.updatedAt.getTime()))
             );
           } else if (payload.eventType === 'DELETE') {
             const oldRow = payload.old as any;
