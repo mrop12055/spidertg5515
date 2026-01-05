@@ -359,10 +359,10 @@ const Seats: React.FC = () => {
                 </Button>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <ScrollArea className="h-[450px]">
-                  <div className="min-w-[950px]">
-                  <Table>
+              <ScrollArea className="h-[450px]">
+                <div className="overflow-x-auto">
+                  <div className="min-w-[1050px] pr-4">
+                    <Table>
                   <TableHeader>
                     <TableRow className="bg-gradient-to-r from-muted/50 to-muted/20 hover:bg-muted/50 border-b border-border/50">
                       <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
@@ -529,10 +529,10 @@ const Seats: React.FC = () => {
                       );
                     })}
                   </TableBody>
-                </Table>
+                    </Table>
                   </div>
-                </ScrollArea>
-              </div>
+                </div>
+              </ScrollArea>
             )}
           </CardContent>
         </Card>
