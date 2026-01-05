@@ -10,8 +10,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { 
-  Plus, Copy, Trash2, Users, MessageSquare, Send, Eye, 
+  Plus, Copy, Trash2, Users, MessageSquare, Send, 
   ExternalLink, RefreshCw, CheckCircle, RotateCcw 
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -140,7 +141,7 @@ const Seats: React.FC = () => {
     }
   };
 
-const handleDeleteSeat = async (seatId: string) => {
+  const handleDeleteSeat = async (seatId: string) => {
     if (!confirm('Are you sure you want to delete this seat? This cannot be undone.')) {
       return;
     }
@@ -215,10 +216,10 @@ const handleDeleteSeat = async (seatId: string) => {
       <div className="space-y-6">
         {/* Overview Stats */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="bg-gradient-to-br from-primary/10 to-primary/5">
+          <Card className="bg-gradient-to-br from-primary/10 to-primary/5 border-primary/20 hover:shadow-lg hover:shadow-primary/5 transition-all duration-300 animate-fade-in">
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-primary/20">
+                <div className="p-2.5 rounded-xl bg-primary/20 ring-2 ring-primary/10">
                   <Users className="w-5 h-5 text-primary" />
                 </div>
                 <div>
@@ -229,10 +230,10 @@ const handleDeleteSeat = async (seatId: string) => {
             </CardContent>
           </Card>
           
-          <Card className="bg-gradient-to-br from-green-500/10 to-green-500/5">
+          <Card className="bg-gradient-to-br from-green-500/10 to-green-500/5 border-green-500/20 hover:shadow-lg hover:shadow-green-500/5 transition-all duration-300 animate-fade-in" style={{ animationDelay: '50ms' }}>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-green-500/20">
+                <div className="p-2.5 rounded-xl bg-green-500/20 ring-2 ring-green-500/10">
                   <CheckCircle className="w-5 h-5 text-green-500" />
                 </div>
                 <div>
@@ -243,10 +244,10 @@ const handleDeleteSeat = async (seatId: string) => {
             </CardContent>
           </Card>
           
-          <Card className="bg-gradient-to-br from-blue-500/10 to-blue-500/5">
+          <Card className="bg-gradient-to-br from-blue-500/10 to-blue-500/5 border-blue-500/20 hover:shadow-lg hover:shadow-blue-500/5 transition-all duration-300 animate-fade-in" style={{ animationDelay: '100ms' }}>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/20">
+                <div className="p-2.5 rounded-xl bg-blue-500/20 ring-2 ring-blue-500/10">
                   <MessageSquare className="w-5 h-5 text-blue-500" />
                 </div>
                 <div>
@@ -259,10 +260,10 @@ const handleDeleteSeat = async (seatId: string) => {
             </CardContent>
           </Card>
           
-          <Card className="bg-gradient-to-br from-orange-500/10 to-orange-500/5">
+          <Card className="bg-gradient-to-br from-orange-500/10 to-orange-500/5 border-orange-500/20 hover:shadow-lg hover:shadow-orange-500/5 transition-all duration-300 animate-fade-in" style={{ animationDelay: '150ms' }}>
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-orange-500/20">
+                <div className="p-2.5 rounded-xl bg-orange-500/20 ring-2 ring-orange-500/10">
                   <Send className="w-5 h-5 text-orange-500" />
                 </div>
                 <div>
@@ -277,25 +278,25 @@ const handleDeleteSeat = async (seatId: string) => {
         </div>
 
         {/* Seats Table */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
+        <Card className="border-border/50 shadow-sm animate-fade-in" style={{ animationDelay: '200ms' }}>
+          <CardHeader className="flex flex-row items-center justify-between border-b border-border/50 bg-muted/30">
             <div>
-              <CardTitle>Worker Seats</CardTitle>
+              <CardTitle className="text-lg">Worker Seats</CardTitle>
               <CardDescription>Share seat links with your workers for chat operations</CardDescription>
             </div>
             <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={fetchSeats}>
+              <Button variant="outline" size="sm" onClick={fetchSeats} className="hover:bg-muted transition-colors">
                 <RefreshCw className="w-4 h-4 mr-2" />
                 Refresh
               </Button>
               <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
                 <DialogTrigger asChild>
-                  <Button size="sm">
+                  <Button size="sm" className="shadow-sm hover:shadow-md transition-shadow">
                     <Plus className="w-4 h-4 mr-2" />
                     Create Seat
                   </Button>
                 </DialogTrigger>
-                <DialogContent>
+                <DialogContent className="sm:max-w-md">
                   <DialogHeader>
                     <DialogTitle>Create New Seat</DialogTitle>
                   </DialogHeader>
@@ -308,6 +309,7 @@ const handleDeleteSeat = async (seatId: string) => {
                         value={newSeatName}
                         onChange={(e) => setNewSeatName(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleCreateSeat()}
+                        className="focus-visible:ring-primary"
                       />
                       <p className="text-xs text-muted-foreground">
                         A unique link will be generated for this seat
@@ -326,100 +328,128 @@ const handleDeleteSeat = async (seatId: string) => {
               </Dialog>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="p-0">
             {isLoading ? (
-              <div className="flex items-center justify-center py-8">
+              <div className="flex items-center justify-center py-16">
                 <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
               </div>
             ) : seats.length === 0 ? (
-              <div className="text-center py-8">
-                <Users className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
+              <div className="text-center py-16 px-4">
+                <div className="w-16 h-16 mx-auto rounded-full bg-muted/50 flex items-center justify-center mb-4">
+                  <Users className="w-8 h-8 text-muted-foreground/50" />
+                </div>
                 <p className="text-lg font-medium">No seats created yet</p>
-                <p className="text-sm text-muted-foreground mb-4">
+                <p className="text-sm text-muted-foreground mb-6">
                   Create your first seat to share with workers
                 </p>
-                <Button onClick={() => setIsCreateOpen(true)}>
+                <Button onClick={() => setIsCreateOpen(true)} className="shadow-sm">
                   <Plus className="w-4 h-4 mr-2" />
                   Create First Seat
                 </Button>
               </div>
             ) : (
-              <ScrollArea className="h-[400px]">
+              <ScrollArea className="h-[450px]">
                 <Table>
                   <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Conversations</TableHead>
-                      <TableHead>Sent Today</TableHead>
-                      <TableHead>Responses</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
+                    <TableRow className="bg-muted/30 hover:bg-muted/30">
+                      <TableHead className="font-semibold">Name</TableHead>
+                      <TableHead className="font-semibold">Status</TableHead>
+                      <TableHead className="font-semibold">Conversations</TableHead>
+                      <TableHead className="font-semibold">Sent Today</TableHead>
+                      <TableHead className="font-semibold">Responses</TableHead>
+                      <TableHead className="font-semibold">Created</TableHead>
+                      <TableHead className="text-right font-semibold">Actions</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {seats.map((seat) => {
+                    {seats.map((seat, index) => {
                       const stats = seatStats.get(seat.id);
                       return (
-                        <TableRow key={seat.id}>
+                        <TableRow 
+                          key={seat.id} 
+                          className="group hover:bg-muted/50 transition-colors animate-fade-in"
+                          style={{ animationDelay: `${index * 30}ms` }}
+                        >
                           <TableCell className="font-medium">{seat.name}</TableCell>
                           <TableCell>
                             <div className="flex items-center gap-2">
                               <Switch
                                 checked={seat.is_active}
                                 onCheckedChange={() => handleToggleActive(seat)}
+                                className="data-[state=checked]:bg-primary"
                               />
-                              <Badge variant={seat.is_active ? "default" : "secondary"}>
+                              <Badge 
+                                variant={seat.is_active ? "default" : "secondary"}
+                                className={seat.is_active ? "bg-primary/90 hover:bg-primary" : ""}
+                              >
                                 {seat.is_active ? 'Active' : 'Inactive'}
                               </Badge>
                             </div>
                           </TableCell>
-                          <TableCell>{stats?.total_conversations || 0}</TableCell>
-                          <TableCell>{stats?.messages_sent_today || 0}</TableCell>
-                          <TableCell>{stats?.responses_received || 0}</TableCell>
+                          <TableCell className="tabular-nums">{stats?.total_conversations || 0}</TableCell>
+                          <TableCell className="tabular-nums">{stats?.messages_sent_today || 0}</TableCell>
+                          <TableCell className="tabular-nums">{stats?.responses_received || 0}</TableCell>
                           <TableCell className="text-muted-foreground text-sm">
                             {format(new Date(seat.created_at), 'MMM d, yyyy')}
                           </TableCell>
                           <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => copyToClipboard(getSeatLink(seat), seat.id)}
-                                title="Copy link"
-                              >
-                                {copiedToken === seat.id ? (
-                                  <CheckCircle className="w-4 h-4 text-green-500" />
-                                ) : (
-                                  <Copy className="w-4 h-4" />
-                                )}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openSeatPreview(seat)}
-                                title="Open in new tab"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleResetLink(seat)}
-                                className="text-orange-500 hover:text-orange-600"
-                                title="Reset link"
-                              >
-                                <RotateCcw className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDeleteSeat(seat.id)}
-                                className="text-destructive hover:text-destructive"
-                                title="Delete seat"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
+                            <div className="flex items-center justify-end gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity">
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => copyToClipboard(getSeatLink(seat), seat.id)}
+                                    className="h-8 w-8 hover:bg-muted"
+                                  >
+                                    {copiedToken === seat.id ? (
+                                      <CheckCircle className="w-4 h-4 text-green-500" />
+                                    ) : (
+                                      <Copy className="w-4 h-4" />
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Copy link</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => openSeatPreview(seat)}
+                                    className="h-8 w-8 hover:bg-muted"
+                                  >
+                                    <ExternalLink className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Open in new tab</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleResetLink(seat)}
+                                    className="h-8 w-8 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
+                                  >
+                                    <RotateCcw className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Reset link</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => handleDeleteSeat(seat.id)}
+                                    className="h-8 w-8 text-destructive hover:text-destructive hover:bg-destructive/10"
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Delete seat</TooltipContent>
+                              </Tooltip>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -429,44 +459,6 @@ const handleDeleteSeat = async (seatId: string) => {
                 </Table>
               </ScrollArea>
             )}
-          </CardContent>
-        </Card>
-
-        {/* How it works */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">How Seats Work</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-3 gap-4 text-sm">
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  1
-                </div>
-                <div>
-                  <p className="font-medium">Create a Seat</p>
-                  <p className="text-muted-foreground">Give it a name for your worker or team</p>
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  2
-                </div>
-                <div>
-                  <p className="font-medium">Share the Link</p>
-                  <p className="text-muted-foreground">Copy and share the unique link with your worker</p>
-                </div>
-              </div>
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  3
-                </div>
-                <div>
-                  <p className="font-medium">Workers Chat</p>
-                  <p className="text-muted-foreground">Workers only see chats & stats for their seat</p>
-                </div>
-              </div>
-            </div>
           </CardContent>
         </Card>
       </div>
