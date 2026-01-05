@@ -1370,24 +1370,6 @@ serve(async (req) => {
         console.log(`[report-task-result] Session verification for ${account_id}: ${status}${error ? ` (${error})` : ''}`);
         break;
       }
-
-      case "account_restricted": {
-        const { account_id, reason, restricted_until } = result;
-
-        // Set campaign restriction timer but keep account active (can still chat)
-        await supabase
-          .from("telegram_accounts")
-          .update({
-            // status stays 'active' - account can still chat with existing contacts
-            ban_reason: reason,
-            restricted_until: restricted_until || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-          })
-          .eq("id", account_id);
-
-        console.log(`[report-task-result] Account ${account_id} campaign-restricted: ${reason}`);
-        break;
-      }
-
       case "fingerprint_generated": {
         const { account_id, device_model, system_version, app_version, lang_code, system_lang_code } = result;
 
