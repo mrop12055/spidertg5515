@@ -280,20 +280,36 @@ export default function Warmup() {
   useEffect(() => {
     fetchData();
 
-    // Subscribe to realtime updates
+    // Subscribe to realtime updates for all warmup tables
     const channel = supabase
       .channel("warmup-updates")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "warmup_messages" },
-        () => fetchData()
+        (payload) => {
+          console.log("Warmup message change:", payload);
+          fetchData();
+        }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "warmup_pairs" },
-        () => fetchData()
+        (payload) => {
+          console.log("Warmup pair change:", payload);
+          fetchData();
+        }
       )
-      .subscribe();
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "warmup_sessions" },
+        (payload) => {
+          console.log("Warmup session change:", payload);
+          fetchData();
+        }
+      )
+      .subscribe((status) => {
+        console.log("Warmup realtime subscription status:", status);
+      });
 
     return () => {
       supabase.removeChannel(channel);
