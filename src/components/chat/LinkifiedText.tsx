@@ -15,6 +15,21 @@ function splitTrailingPunctuation(url: string) {
   return { url: match[1], trailing: match[2] };
 }
 
+// Helper to convert newlines to <br/> elements in a string
+function textWithLineBreaks(str: string, keyPrefix: string): React.ReactNode[] {
+  const lines = str.split('\n');
+  const result: React.ReactNode[] = [];
+  lines.forEach((line, i) => {
+    if (i > 0) {
+      result.push(<br key={`${keyPrefix}-br-${i}`} />);
+    }
+    if (line) {
+      result.push(line);
+    }
+  });
+  return result;
+}
+
 export function LinkifiedText({
   text,
   linkClassName,
@@ -26,13 +41,15 @@ export function LinkifiedText({
 
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
+  let partIndex = 0;
 
   for (const match of text.matchAll(URL_REGEX)) {
     const raw = match[0];
     const index = match.index ?? 0;
 
     if (index > lastIndex) {
-      parts.push(text.slice(lastIndex, index));
+      const textBefore = text.slice(lastIndex, index);
+      parts.push(...textWithLineBreaks(textBefore, `text-${partIndex++}`));
     }
 
     const { url, trailing } = splitTrailingPunctuation(raw);
@@ -40,7 +57,7 @@ export function LinkifiedText({
 
     parts.push(
       <a
-        key={`${index}-${raw}`}
+        key={`link-${partIndex++}-${index}`}
         href={href}
         target="_blank"
         rel="noopener noreferrer"
@@ -53,13 +70,16 @@ export function LinkifiedText({
       </a>
     );
 
-    if (trailing) parts.push(trailing);
+    if (trailing) {
+      parts.push(...textWithLineBreaks(trailing, `trailing-${partIndex++}`));
+    }
 
     lastIndex = index + raw.length;
   }
 
   if (lastIndex < text.length) {
-    parts.push(text.slice(lastIndex));
+    const remaining = text.slice(lastIndex);
+    parts.push(...textWithLineBreaks(remaining, `end-${partIndex}`));
   }
 
   return <>{parts}</>;
