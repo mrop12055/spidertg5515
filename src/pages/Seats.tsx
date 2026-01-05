@@ -435,11 +435,25 @@ const Seats: React.FC = () => {
                               </Badge>
                             </div>
                           </TableCell>
-                          <TableCell className="tabular-nums">{stats?.total_conversations || 0}</TableCell>
-                          <TableCell className="tabular-nums">{stats?.messages_sent_today || 0}</TableCell>
-                          <TableCell className="tabular-nums">{stats?.responses_received || 0}</TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {format(new Date(seat.created_at), 'MMM d, yyyy')}
+                          <TableCell className="py-4">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium tabular-nums text-sm">
+                              {stats?.total_conversations || 0}
+                            </span>
+                          </TableCell>
+                          <TableCell className="py-4">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-orange-500/10 text-orange-600 dark:text-orange-400 font-medium tabular-nums text-sm">
+                              {stats?.messages_sent_today || 0}
+                            </span>
+                          </TableCell>
+                          <TableCell className="py-4">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-purple-500/10 text-purple-600 dark:text-purple-400 font-medium tabular-nums text-sm">
+                              {stats?.responses_received || 0}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-muted-foreground text-sm py-4">
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-muted/50">
+                              {format(new Date(seat.created_at), 'MMM d, yyyy')}
+                            </span>
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex items-center justify-end gap-0.5 opacity-70 group-hover:opacity-100 transition-opacity">
