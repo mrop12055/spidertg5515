@@ -7,12 +7,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { 
-  Plus, Copy, Trash2, Users, MessageSquare, Send, Eye, 
-  ExternalLink, RefreshCw, CheckCircle, RotateCcw 
+  Plus, Copy, Trash2, Users, MessageSquare, Send, 
+  ExternalLink, RefreshCw, CheckCircle, RotateCcw,
+  Link2, MessageCircle, Clock, TrendingUp, Zap
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -140,7 +140,7 @@ const Seats: React.FC = () => {
     }
   };
 
-const handleDeleteSeat = async (seatId: string) => {
+  const handleDeleteSeat = async (seatId: string) => {
     if (!confirm('Are you sure you want to delete this seat? This cannot be undone.')) {
       return;
     }
@@ -205,188 +205,227 @@ const handleDeleteSeat = async (seatId: string) => {
     window.open(getSeatLink(seat), '_blank');
   };
 
+  // Calculate totals
+  const totalConversations = Array.from(seatStats.values()).reduce((sum, s) => sum + (s.total_conversations || 0), 0);
+  const totalSentToday = Array.from(seatStats.values()).reduce((sum, s) => sum + (s.messages_sent_today || 0), 0);
+  const totalResponses = Array.from(seatStats.values()).reduce((sum, s) => sum + (s.responses_received || 0), 0);
+
   return (
     <DashboardLayout>
       <PageHeader 
-        title="Seats Management" 
+        title="Worker Seats" 
         description="Create and manage worker seats for chat operations"
       />
 
       <div className="space-y-6">
-        {/* Overview Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card className="bg-gradient-to-br from-primary/10 to-primary/5">
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-primary/20">
-                  <Users className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{seats.length}</p>
-                  <p className="text-sm text-muted-foreground">Total Seats</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card className="bg-gradient-to-br from-green-500/10 to-green-500/5">
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-green-500/20">
-                  <CheckCircle className="w-5 h-5 text-green-500" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">{seats.filter(s => s.is_active).length}</p>
-                  <p className="text-sm text-muted-foreground">Active Seats</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card className="bg-gradient-to-br from-blue-500/10 to-blue-500/5">
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-blue-500/20">
-                  <MessageSquare className="w-5 h-5 text-blue-500" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">
-                    {Array.from(seatStats.values()).reduce((sum, s) => sum + s.total_conversations, 0)}
-                  </p>
-                  <p className="text-sm text-muted-foreground">Total Conversations</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          
-          <Card className="bg-gradient-to-br from-orange-500/10 to-orange-500/5">
-            <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-orange-500/20">
-                  <Send className="w-5 h-5 text-orange-500" />
-                </div>
-                <div>
-                  <p className="text-2xl font-bold">
-                    {Array.from(seatStats.values()).reduce((sum, s) => sum + s.messages_sent_today, 0)}
-                  </p>
-                  <p className="text-sm text-muted-foreground">Sent Today</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Seats Table */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>Worker Seats</CardTitle>
-              <CardDescription>Share seat links with your workers for chat operations</CardDescription>
+        {/* Quick Stats Bar */}
+        <div className="flex items-center gap-6 p-4 rounded-xl bg-gradient-to-r from-primary/5 via-primary/10 to-primary/5 border border-primary/20">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-primary/20">
+              <Users className="w-5 h-5 text-primary" />
             </div>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={fetchSeats}>
-                <RefreshCw className="w-4 h-4 mr-2" />
-                Refresh
-              </Button>
-              <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm">
-                    <Plus className="w-4 h-4 mr-2" />
+            <div>
+              <p className="text-2xl font-bold">{seats.length}</p>
+              <p className="text-xs text-muted-foreground">Total Seats</p>
+            </div>
+          </div>
+          <div className="w-px h-10 bg-border" />
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-green-500/20">
+              <Zap className="w-5 h-5 text-green-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{seats.filter(s => s.is_active).length}</p>
+              <p className="text-xs text-muted-foreground">Active</p>
+            </div>
+          </div>
+          <div className="w-px h-10 bg-border" />
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-blue-500/20">
+              <MessageCircle className="w-5 h-5 text-blue-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{totalConversations}</p>
+              <p className="text-xs text-muted-foreground">Conversations</p>
+            </div>
+          </div>
+          <div className="w-px h-10 bg-border" />
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-orange-500/20">
+              <Send className="w-5 h-5 text-orange-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{totalSentToday}</p>
+              <p className="text-xs text-muted-foreground">Sent Today</p>
+            </div>
+          </div>
+          <div className="w-px h-10 bg-border" />
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-lg bg-purple-500/20">
+              <TrendingUp className="w-5 h-5 text-purple-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{totalResponses}</p>
+              <p className="text-xs text-muted-foreground">Responses</p>
+            </div>
+          </div>
+          
+          <div className="ml-auto flex gap-2">
+            <Button variant="outline" size="sm" onClick={fetchSeats}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Refresh
+            </Button>
+            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+              <DialogTrigger asChild>
+                <Button size="sm" className="gap-2">
+                  <Plus className="w-4 h-4" />
+                  New Seat
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create New Worker Seat</DialogTitle>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="seatName">Seat Name</Label>
+                    <Input
+                      id="seatName"
+                      placeholder="e.g., Worker 1, Sales Team, Support"
+                      value={newSeatName}
+                      onChange={(e) => setNewSeatName(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleCreateSeat()}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      A unique access link will be generated for this seat
+                    </p>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={handleCreateSeat}>
                     Create Seat
                   </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Create New Seat</DialogTitle>
-                  </DialogHeader>
-                  <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="seatName">Seat Name</Label>
-                      <Input
-                        id="seatName"
-                        placeholder="e.g., Worker 1, Sales Team, Support"
-                        value={newSeatName}
-                        onChange={(e) => setNewSeatName(e.target.value)}
-                        onKeyDown={(e) => e.key === 'Enter' && handleCreateSeat()}
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        A unique link will be generated for this seat
-                      </p>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+          </div>
+        </div>
+
+        {/* Worker Seats Grid */}
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16">
+            <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : seats.length === 0 ? (
+          <Card className="border-dashed">
+            <CardContent className="flex flex-col items-center justify-center py-16">
+              <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
+                <Users className="w-8 h-8 text-muted-foreground" />
+              </div>
+              <h3 className="text-lg font-semibold mb-1">No Worker Seats Yet</h3>
+              <p className="text-sm text-muted-foreground text-center max-w-sm mb-6">
+                Create your first seat to generate a unique link for your workers to access the chat interface
+              </p>
+              <Button onClick={() => setIsCreateOpen(true)} className="gap-2">
+                <Plus className="w-4 h-4" />
+                Create First Seat
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+            {seats.map((seat) => {
+              const stats = seatStats.get(seat.id);
+              const isActive = seat.is_active;
+              
+              return (
+                <Card 
+                  key={seat.id} 
+                  className={`relative overflow-hidden transition-all hover:shadow-lg ${
+                    isActive 
+                      ? 'border-primary/30 bg-gradient-to-br from-card to-primary/5' 
+                      : 'opacity-60 border-muted'
+                  }`}
+                >
+                  {/* Status indicator bar */}
+                  <div className={`absolute top-0 left-0 right-0 h-1 ${isActive ? 'bg-green-500' : 'bg-muted-foreground/30'}`} />
+                  
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-lg font-bold ${
+                          isActive 
+                            ? 'bg-primary text-primary-foreground' 
+                            : 'bg-muted text-muted-foreground'
+                        }`}>
+                          {seat.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                          <CardTitle className="text-base">{seat.name}</CardTitle>
+                          <CardDescription className="flex items-center gap-1 text-xs">
+                            <Clock className="w-3 h-3" />
+                            Created {format(new Date(seat.created_at), 'MMM d, yyyy')}
+                          </CardDescription>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={seat.is_active}
+                          onCheckedChange={() => handleToggleActive(seat)}
+                        />
+                        <Badge 
+                          variant={isActive ? "default" : "secondary"}
+                          className={isActive ? 'bg-green-500/20 text-green-600 border-green-500/30' : ''}
+                        >
+                          {isActive ? 'Active' : 'Inactive'}
+                        </Badge>
+                      </div>
                     </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
-                      Cancel
-                    </Button>
-                    <Button onClick={handleCreateSeat}>
-                      Create Seat
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : seats.length === 0 ? (
-              <div className="text-center py-8">
-                <Users className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-                <p className="text-lg font-medium">No seats created yet</p>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Create your first seat to share with workers
-                </p>
-                <Button onClick={() => setIsCreateOpen(true)}>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create First Seat
-                </Button>
-              </div>
-            ) : (
-              <ScrollArea className="h-[400px]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Conversations</TableHead>
-                      <TableHead>Sent Today</TableHead>
-                      <TableHead>Responses</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {seats.map((seat) => {
-                      const stats = seatStats.get(seat.id);
-                      return (
-                        <TableRow key={seat.id}>
-                          <TableCell className="font-medium">{seat.name}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Switch
-                                checked={seat.is_active}
-                                onCheckedChange={() => handleToggleActive(seat)}
-                              />
-                              <Badge variant={seat.is_active ? "default" : "secondary"}>
-                                {seat.is_active ? 'Active' : 'Inactive'}
-                              </Badge>
-                            </div>
-                          </TableCell>
-                          <TableCell>{stats?.total_conversations || 0}</TableCell>
-                          <TableCell>{stats?.messages_sent_today || 0}</TableCell>
-                          <TableCell>{stats?.responses_received || 0}</TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {format(new Date(seat.created_at), 'MMM d, yyyy')}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
+                  </CardHeader>
+                  
+                  <CardContent className="space-y-4">
+                    {/* Stats Grid */}
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="text-center p-3 rounded-lg bg-muted/50">
+                        <MessageSquare className="w-4 h-4 mx-auto mb-1 text-blue-500" />
+                        <p className="text-lg font-bold">{stats?.total_conversations || 0}</p>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Chats</p>
+                      </div>
+                      <div className="text-center p-3 rounded-lg bg-muted/50">
+                        <Send className="w-4 h-4 mx-auto mb-1 text-orange-500" />
+                        <p className="text-lg font-bold">{stats?.messages_sent_today || 0}</p>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Sent</p>
+                      </div>
+                      <div className="text-center p-3 rounded-lg bg-muted/50">
+                        <TrendingUp className="w-4 h-4 mx-auto mb-1 text-purple-500" />
+                        <p className="text-lg font-bold">{stats?.responses_received || 0}</p>
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Replies</p>
+                      </div>
+                    </div>
+                    
+                    {/* Link Section */}
+                    <div className="p-3 rounded-lg bg-muted/30 border border-border/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Link2 className="w-4 h-4 text-primary" />
+                        <span className="text-xs font-medium">Access Link</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Input 
+                          value={getSeatLink(seat)} 
+                          readOnly 
+                          className="text-xs h-8 bg-background/50 font-mono"
+                        />
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
                               <Button
-                                variant="ghost"
+                                variant="outline"
                                 size="icon"
+                                className="h-8 w-8 shrink-0"
                                 onClick={() => copyToClipboard(getSeatLink(seat), seat.id)}
-                                title="Copy link"
                               >
                                 {copiedToken === seat.id ? (
                                   <CheckCircle className="w-4 h-4 text-green-500" />
@@ -394,76 +433,87 @@ const handleDeleteSeat = async (seatId: string) => {
                                   <Copy className="w-4 h-4" />
                                 )}
                               </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openSeatPreview(seat)}
-                                title="Open in new tab"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleResetLink(seat)}
-                                className="text-orange-500 hover:text-orange-600"
-                                title="Reset link"
-                              >
-                                <RotateCcw className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDeleteSeat(seat.id)}
-                                className="text-destructive hover:text-destructive"
-                                title="Delete seat"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
-            )}
-          </CardContent>
-        </Card>
+                            </TooltipTrigger>
+                            <TooltipContent>Copy Link</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </div>
+                    </div>
+                    
+                    {/* Actions */}
+                    <div className="flex items-center gap-2 pt-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        className="flex-1 gap-2"
+                        onClick={() => openSeatPreview(seat)}
+                      >
+                        <ExternalLink className="w-4 h-4" />
+                        Open Chat
+                      </Button>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8 text-orange-500 hover:text-orange-600 hover:border-orange-500/50"
+                              onClick={() => handleResetLink(seat)}
+                            >
+                              <RotateCcw className="w-4 h-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Reset Link</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive hover:border-destructive/50"
+                              onClick={() => handleDeleteSeat(seat.id)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>Delete Seat</TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
 
-        {/* How it works */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">How Seats Work</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid md:grid-cols-3 gap-4 text-sm">
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  1
-                </div>
-                <div>
-                  <p className="font-medium">Create a Seat</p>
-                  <p className="text-muted-foreground">Give it a name for your worker or team</p>
+        {/* How it works - Compact */}
+        <Card className="bg-muted/30">
+          <CardContent className="py-4">
+            <div className="flex items-center gap-8">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">1</div>
+                <div className="text-sm">
+                  <span className="font-medium">Create</span>
+                  <span className="text-muted-foreground ml-1">a seat for your worker</span>
                 </div>
               </div>
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  2
-                </div>
-                <div>
-                  <p className="font-medium">Share the Link</p>
-                  <p className="text-muted-foreground">Copy and share the unique link with your worker</p>
+              <div className="text-muted-foreground">→</div>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">2</div>
+                <div className="text-sm">
+                  <span className="font-medium">Share</span>
+                  <span className="text-muted-foreground ml-1">the unique link</span>
                 </div>
               </div>
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold flex-shrink-0">
-                  3
-                </div>
-                <div>
-                  <p className="font-medium">Workers Chat</p>
-                  <p className="text-muted-foreground">Workers only see chats & stats for their seat</p>
+              <div className="text-muted-foreground">→</div>
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-primary text-primary-foreground flex items-center justify-center text-sm font-bold">3</div>
+                <div className="text-sm">
+                  <span className="font-medium">Workers chat</span>
+                  <span className="text-muted-foreground ml-1">with assigned conversations</span>
                 </div>
               </div>
             </div>
