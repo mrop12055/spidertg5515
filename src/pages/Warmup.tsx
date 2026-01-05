@@ -1062,7 +1062,7 @@ export default function Warmup() {
                           No pending messages.
                         </p>
                       ) : (
-                        pendingMessages.map((msg) => {
+                        pendingMessages.map((msg, index) => {
                           const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
                           return (
                             <div
@@ -1071,9 +1071,12 @@ export default function Warmup() {
                             >
                               <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-sm">
+                                  <Badge variant="outline" className="h-5 px-1.5 font-semibold shrink-0 bg-yellow-500/10 text-yellow-600 border-yellow-500/30">
+                                    {index + 1}/{stats.pendingMessages}
+                                  </Badge>
                                   {pairNum && (
                                     <Badge variant="outline" className="h-5 px-1.5 font-semibold shrink-0">
-                                      #{pairNum}
+                                      P#{pairNum}
                                     </Badge>
                                   )}
                                   <span className="font-mono">
