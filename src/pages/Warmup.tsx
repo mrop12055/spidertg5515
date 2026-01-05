@@ -93,6 +93,7 @@ export default function Warmup() {
   const [loading, setLoading] = useState(false);
   const [messagesPerPair, setMessagesPerPair] = useState([20, 30]);
   const [isStarting, setIsStarting] = useState(false);
+  const [startingPairId, setStartingPairId] = useState<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
 
   const fetchData = async () => {
@@ -316,6 +317,29 @@ export default function Warmup() {
       toast.error(error.message || "Failed to stop warmup");
     } finally {
       setIsStopping(false);
+    }
+  };
+
+  const handleStartSinglePairWarmup = async (accountId: string, pairAccountId: string) => {
+    setStartingPairId(accountId);
+    try {
+      const { data, error } = await supabase.functions.invoke("start-warmup-chat", {
+        body: {
+          messagesPerPairMin: messagesPerPair[0],
+          messagesPerPairMax: messagesPerPair[1],
+          specificPairAccountIds: [accountId, pairAccountId],
+        },
+      });
+
+      if (error) throw error;
+
+      toast.success(`Warmup started for pair! ${data.messages_scheduled} messages scheduled (~${data.estimated_duration_minutes} min)`);
+      fetchData();
+    } catch (error: any) {
+      console.error("Error starting single pair warmup:", error);
+      toast.error(error.message || "Failed to start warmup for this pair");
+    } finally {
+      setStartingPairId(null);
     }
   };
 
@@ -576,9 +600,25 @@ export default function Warmup() {
                               )}
                             </div>
                           </div>
-                          <Badge variant="outline" className="text-green-600 border-green-600">
-                            Ready
-                          </Badge>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleStartSinglePairWarmup(account.id, account.warmup_pair_id)}
+                              disabled={startingPairId === account.id || session?.status === "active"}
+                              className="h-7 text-xs"
+                            >
+                              {startingPairId === account.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin" />
+                              ) : (
+                                <Play className="h-3 w-3 mr-1" />
+                              )}
+                              Warmup
+                            </Button>
+                            <Badge variant="outline" className="text-green-600 border-green-600">
+                              Ready
+                            </Badge>
+                          </div>
                         </div>
                       ))
                     )

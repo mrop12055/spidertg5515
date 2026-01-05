@@ -17,9 +17,145 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    const { messagesPerPairMin = 20, messagesPerPairMax = 30 } = await req.json();
+    const { messagesPerPairMin = 20, messagesPerPairMax = 30, specificPairAccountIds } = await req.json();
 
-    console.log("Starting warmup chat with settings:", { messagesPerPairMin, messagesPerPairMax });
+    console.log("Starting warmup chat with settings:", { messagesPerPairMin, messagesPerPairMax, specificPairAccountIds });
+
+    // If specific pair is requested, only warmup those 2 accounts
+    if (specificPairAccountIds && specificPairAccountIds.length === 2) {
+      console.log("Starting warmup for specific pair:", specificPairAccountIds);
+      
+      // Get the two specific accounts
+      const { data: accounts, error: accountsError } = await supabase
+        .from("telegram_accounts")
+        .select("id, phone_number, first_name, telegram_id, username")
+        .in("id", specificPairAccountIds)
+        .eq("status", "active")
+        .not("session_data", "is", null);
+
+      if (accountsError || !accounts || accounts.length !== 2) {
+        return new Response(
+          JSON.stringify({ error: "Both accounts must be active with valid sessions" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Create a new session for this specific pair
+      const { data: session, error: sessionError } = await supabase
+        .from("warmup_sessions")
+        .insert({
+          status: "active",
+          total_pairs: 1,
+          messages_per_pair_min: messagesPerPairMin,
+          messages_per_pair_max: messagesPerPairMax,
+        })
+        .select()
+        .single();
+
+      if (sessionError) {
+        throw new Error(`Failed to create session: ${sessionError.message}`);
+      }
+
+      // Create the pair
+      const { data: createdPair, error: pairError } = await supabase
+        .from("warmup_pairs")
+        .insert({
+          account_a_id: accounts[0].id,
+          account_b_id: accounts[1].id,
+          session_id: session.id,
+          status: "active",
+        })
+        .select()
+        .single();
+
+      if (pairError) {
+        throw new Error(`Failed to create pair: ${pairError.message}`);
+      }
+
+      // Get message templates
+      const { data: templates } = await supabase
+        .from("warmup_message_templates")
+        .select("*")
+        .order("category")
+        .order("sequence_order");
+
+      if (!templates?.length) {
+        throw new Error("No message templates found");
+      }
+
+      // Group by category and pick random flow
+      const conversationsByCategory = new Map<string, typeof templates>();
+      for (const template of templates) {
+        const category = template.category || 'default';
+        if (!conversationsByCategory.has(category)) {
+          conversationsByCategory.set(category, []);
+        }
+        conversationsByCategory.get(category)!.push(template);
+      }
+      const conversationFlows = Array.from(conversationsByCategory.values());
+      const flow = conversationFlows[Math.floor(Math.random() * conversationFlows.length)];
+
+      const messageCount = Math.floor(
+        Math.random() * (messagesPerPairMax - messagesPerPairMin + 1) + messagesPerPairMin
+      );
+      const selectedTemplates = flow.slice(0, Math.min(messageCount, flow.length));
+
+      // Schedule messages
+      const now = new Date();
+      let currentTime = new Date(now.getTime() + (30 + Math.random() * 60) * 1000); // Start in 30-90 seconds
+      const allMessages: any[] = [];
+
+      for (const template of selectedTemplates) {
+        const baseDelay = 15 + Math.random() * 15;
+        const typingTime = Math.max(2, (template.message_text.length / 30) * 3);
+        const jitter = 5 + Math.random() * 10;
+        const occasionalPause = Math.random() < 0.1 ? (45 + Math.random() * 45) : 0;
+        
+        const delaySeconds = baseDelay + typingTime + jitter + occasionalPause;
+        currentTime = new Date(currentTime.getTime() + delaySeconds * 1000);
+
+        const senderId = template.sender_position === "A" ? createdPair.account_a_id : createdPair.account_b_id;
+        const receiverId = template.sender_position === "A" ? createdPair.account_b_id : createdPair.account_a_id;
+
+        allMessages.push({
+          pair_id: createdPair.id,
+          sender_account_id: senderId,
+          receiver_account_id: receiverId,
+          message_content: template.message_text,
+          message_type: "text",
+          scheduled_at: currentTime.toISOString(),
+          reply_delay_seconds: Math.floor(delaySeconds),
+          status: "pending",
+        });
+      }
+
+      if (allMessages.length > 0) {
+        const { error: messagesError } = await supabase
+          .from("warmup_messages")
+          .insert(allMessages);
+
+        if (messagesError) {
+          throw new Error(`Failed to create messages: ${messagesError.message}`);
+        }
+      }
+
+      const estimatedDurationMinutes = Math.ceil((allMessages.length * 30) / 60);
+
+      console.log(`Single pair warmup: ${allMessages.length} messages scheduled`);
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          session_id: session.id,
+          pairs_created: 1,
+          messages_scheduled: allMessages.length,
+          estimated_duration_minutes: estimatedDurationMinutes,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // --- FULL WARMUP FOR ALL ACCOUNTS ---
 
     // 1. Stop any existing active sessions
     await supabase
@@ -46,7 +182,6 @@ serve(async (req) => {
     }
 
     if (!accounts || accounts.length < 2) {
-      // Check if there's an unpaired account waiting
       const unpairedAccount = accounts?.find(a => a.warmup_unpaired);
       if (unpairedAccount) {
         return new Response(
