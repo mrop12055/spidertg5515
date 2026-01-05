@@ -1002,13 +1002,15 @@ export default function Warmup() {
                       ) : (
                         <>
                           {/* Combine and sort all messages by date (latest first) */}
-                          {[...recentErrors, ...sentMessages]
-                            .sort((a, b) => {
-                              const dateA = new Date(a.sent_at || a.scheduled_at).getTime();
-                              const dateB = new Date(b.sent_at || b.scheduled_at).getTime();
-                              return dateB - dateA;
-                            })
-                            .map((msg) => {
+                          {(() => {
+                            const combinedMessages = [...recentErrors, ...sentMessages]
+                              .sort((a, b) => {
+                                const dateA = new Date(a.sent_at || a.scheduled_at).getTime();
+                                const dateB = new Date(b.sent_at || b.scheduled_at).getTime();
+                                return dateB - dateA;
+                              });
+                            const totalCount = stats.messagesSent + stats.failedMessages;
+                            return combinedMessages.map((msg, index) => {
                               const pairNum = getPairNumber(msg.sender?.phone_number || '', msg.receiver?.phone_number || '');
                               const isFailed = msg.status === 'failed';
                               return (
@@ -1022,9 +1024,12 @@ export default function Warmup() {
                                 >
                                   <div className="flex items-center justify-between">
                                     <div className="flex items-center gap-2 text-sm">
+                                      <Badge variant="outline" className={`h-5 px-1.5 font-semibold shrink-0 ${isFailed ? 'bg-red-500/10 text-red-500 border-red-500/30' : 'bg-green-500/10 text-green-600 border-green-500/30'}`}>
+                                        {index + 1}/{totalCount}
+                                      </Badge>
                                       {pairNum && (
                                         <Badge variant="outline" className="h-5 px-1.5 font-semibold shrink-0">
-                                          #{pairNum}
+                                          P#{pairNum}
                                         </Badge>
                                       )}
                                       <span className="font-mono">
@@ -1047,7 +1052,8 @@ export default function Warmup() {
                                   </p>
                                 </div>
                               );
-                            })}
+                            });
+                          })()}
                         </>
                       )}
                     </div>
