@@ -300,8 +300,9 @@ async def main_loop():
                 new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
                 if new_accounts:
                     # Connect in parallel for faster startup
+                    # Each account carries its own proxy data from the edge function
                     results = await asyncio.gather(
-                        *[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts],
+                        *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")) for acc in new_accounts],
                         return_exceptions=True
                     )
                     for acc in new_accounts:
@@ -314,9 +315,10 @@ async def main_loop():
                 recipient = task.get("recipient")
                 recipient_tid = task.get("recipient_telegram_id")
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")  # Task-level proxy for consistency
 
                 # Skip profile sync for speed - just get/reuse client connection
-                client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True)
+                client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True, task_proxy=task_proxy)
                 target = recipient_tid if recipient_tid else recipient
 
                 if client and target:

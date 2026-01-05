@@ -1102,7 +1102,8 @@ serve(async (req) => {
               port: account.proxies.port,
               username: account.proxies.username,
               password: account.proxies.password,
-              type: account.proxies.proxy_type,
+              proxy_type: account.proxies.proxy_type,
+              type: account.proxies.proxy_type,  // Backwards compatible
             } : null,
             mode: "campaign",
             delay_after: delaySeconds,

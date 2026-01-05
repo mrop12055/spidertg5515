@@ -242,8 +242,9 @@ async def main_loop():
             elif task_type == "spambot_check":
                 task_id = task.get("task_id")
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")  # Task-level proxy for consistency
                 
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🤖 SpamBot check for {account.get('phone_number')}...")
                     status, ban_reason, response = await check_spambot(client)
@@ -260,8 +261,9 @@ async def main_loop():
                 task_id = task.get("task_id")
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")
                 
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  ✏️ Changing name for {account.get('phone_number')}...")
                     success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
@@ -279,8 +281,9 @@ async def main_loop():
                 task_id = task.get("task_id")
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")
                 
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  📷 Changing photo for {account.get('phone_number')}...")
                     success, error = await change_profile_photo(client, task_data.get("photo_base64", ""))
@@ -296,8 +299,9 @@ async def main_loop():
                 task_id = task.get("task_id")
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")
                 
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🔒 Updating privacy for {account.get('phone_number')}...")
                     success, error = await update_privacy(
@@ -318,8 +322,9 @@ async def main_loop():
                 task_id = task.get("task_id")
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")
                 
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🔐 Changing password for {account.get('phone_number')}...")
                     success, error = await change_password(
@@ -338,8 +343,9 @@ async def main_loop():
             elif task_type == "logout_sessions":
                 task_id = task.get("task_id")
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")
                 
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🚪 Logging out other sessions for {account.get('phone_number')}...")
                     success, error = await logout_other_sessions(client)
@@ -354,10 +360,11 @@ async def main_loop():
             elif task_type == "sync_profile":
                 task_id = task.get("task_id")
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")
                 
                 print(f"  🔄 Syncing profile for {account.get('phone_number')}...")
                 # Force full profile sync including avatar
-                client = await get_or_create_client(account, skip_avatar=False, force_profile_sync=True)
+                client = await get_or_create_client(account, skip_avatar=False, force_profile_sync=True, task_proxy=task_proxy)
                 if client:
                     await report_result("sync_profile", {
                         "task_id": task_id,
@@ -377,10 +384,11 @@ async def main_loop():
             elif task_type == "verify_session":
                 task_id = task.get("task_id")
                 account = task.get("account", {})
+                task_proxy = task.get("proxy")
                 
                 print(f"  🔍 Verifying session for {account.get('phone_number')}...")
                 try:
-                    client = await get_or_create_client(account)
+                    client = await get_or_create_client(account, task_proxy=task_proxy)
                     if client:
                         status, error, user_data = await verify_session(client, account.get("id"))
                         await report_result("verify_session", {
