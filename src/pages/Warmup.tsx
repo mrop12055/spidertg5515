@@ -47,9 +47,12 @@ interface PrePairedAccount {
   id: string;
   phone_number: string;
   first_name: string | null;
+  status: string;
   warmup_pair_id: string;
   pair_phone: string;
   pair_first_name: string | null;
+  pair_status: string;
+  pairIsInactive: boolean;
 }
 
 interface WarmupMessage {
@@ -77,10 +80,18 @@ interface UnpairedAccount {
   first_name: string | null;
 }
 
+interface OrphanedAccount {
+  id: string;
+  phone_number: string;
+  first_name: string | null;
+  inactive_pair_phone: string;
+}
+
 export default function Warmup() {
   const [session, setSession] = useState<WarmupSession | null>(null);
   const [pairs, setPairs] = useState<WarmupPair[]>([]);
   const [prePairedAccounts, setPrePairedAccounts] = useState<PrePairedAccount[]>([]);
+  const [orphanedAccounts, setOrphanedAccounts] = useState<OrphanedAccount[]>([]);
   const [sentMessages, setSentMessages] = useState<WarmupMessage[]>([]);
   const [pendingMessages, setPendingMessages] = useState<WarmupMessage[]>([]);
   const [recentErrors, setRecentErrors] = useState<WarmupMessage[]>([]);
@@ -199,40 +210,57 @@ export default function Warmup() {
 
       setUnpairedAccounts((unpairedData as UnpairedAccount[]) || []);
 
-      // Fetch pre-paired accounts (from telegram_accounts.warmup_pair_id)
-      // Include active AND restricted (restricted = campaign-restricted only, can still warmup)
-      // Exclude: banned, disconnected, cooldown, frozen
-      const { data: prePairedData } = await supabase
+      // Fetch ALL accounts with pairs (to detect orphaned ones)
+      const { data: allPairedData } = await supabase
         .from("telegram_accounts")
-        .select("id, phone_number, first_name, warmup_pair_id")
-        .not("warmup_pair_id", "is", null)
-        .in("status", ["active", "restricted"]);
+        .select("id, phone_number, first_name, status, warmup_pair_id")
+        .not("warmup_pair_id", "is", null);
 
-      // Create unique pairs (avoid duplicates since A->B and B->A both exist)
+      // Create unique pairs and detect orphaned accounts
       const seenPairs = new Set<string>();
       const uniquePairs: PrePairedAccount[] = [];
+      const orphaned: OrphanedAccount[] = [];
+      const usableStatuses = ["active", "restricted"];
       
-      if (prePairedData) {
-        for (const account of prePairedData) {
+      if (allPairedData) {
+        for (const account of allPairedData) {
+          // Skip if this account is not usable
+          if (!usableStatuses.includes(account.status)) continue;
+          
           const pairKey = [account.id, account.warmup_pair_id].sort().join("-");
-          if (!seenPairs.has(pairKey)) {
-            seenPairs.add(pairKey);
-            // Find the paired account
-            const pairedAccount = prePairedData.find(a => a.id === account.warmup_pair_id);
-            if (pairedAccount) {
-              uniquePairs.push({
-                id: account.id,
-                phone_number: account.phone_number,
-                first_name: account.first_name,
-                warmup_pair_id: account.warmup_pair_id,
-                pair_phone: pairedAccount.phone_number,
-                pair_first_name: pairedAccount.first_name,
-              });
-            }
+          if (seenPairs.has(pairKey)) continue;
+          seenPairs.add(pairKey);
+          
+          // Find the paired account
+          const pairedAccount = allPairedData.find(a => a.id === account.warmup_pair_id);
+          
+          if (pairedAccount && usableStatuses.includes(pairedAccount.status)) {
+            // Both accounts are usable - valid pair
+            uniquePairs.push({
+              id: account.id,
+              phone_number: account.phone_number,
+              first_name: account.first_name,
+              status: account.status,
+              warmup_pair_id: account.warmup_pair_id,
+              pair_phone: pairedAccount.phone_number,
+              pair_first_name: pairedAccount.first_name,
+              pair_status: pairedAccount.status,
+              pairIsInactive: false,
+            });
+          } else {
+            // Partner is inactive - orphaned account needs re-pairing
+            orphaned.push({
+              id: account.id,
+              phone_number: account.phone_number,
+              first_name: account.first_name,
+              inactive_pair_phone: pairedAccount?.phone_number || "Unknown",
+            });
           }
         }
       }
+      
       setPrePairedAccounts(uniquePairs);
+      setOrphanedAccounts(orphaned);
 
       // Calculate stats - count pre-paired accounts as pairs
       const prePairedCount = uniquePairs.length;
@@ -380,6 +408,38 @@ export default function Warmup() {
     }
   };
 
+  const handleRepairOrphanedAccounts = async () => {
+    if (orphanedAccounts.length < 2) {
+      toast.error("Need at least 2 orphaned accounts to re-pair");
+      return;
+    }
+
+    try {
+      // Pair orphaned accounts with each other
+      for (let i = 0; i < orphanedAccounts.length - 1; i += 2) {
+        const account1 = orphanedAccounts[i];
+        const account2 = orphanedAccounts[i + 1];
+
+        // Update both accounts to point to each other
+        await supabase
+          .from("telegram_accounts")
+          .update({ warmup_pair_id: account2.id })
+          .eq("id", account1.id);
+
+        await supabase
+          .from("telegram_accounts")
+          .update({ warmup_pair_id: account1.id })
+          .eq("id", account2.id);
+      }
+
+      toast.success(`Re-paired ${Math.floor(orphanedAccounts.length / 2)} pairs!`);
+      fetchData();
+    } catch (error: any) {
+      console.error("Error re-pairing accounts:", error);
+      toast.error(error.message || "Failed to re-pair accounts");
+    }
+  };
+
   const handleStartSinglePairWarmup = async (accountId: string, pairAccountId: string) => {
     setStartingPairId(accountId);
     try {
@@ -473,6 +533,50 @@ export default function Warmup() {
             )}
           </div>
         </div>
+
+        {/* Orphaned Accounts - Active accounts paired with inactive accounts */}
+        {orphanedAccounts.length > 0 && (
+          <Card className="border-orange-500/50 bg-orange-500/5">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-medium">Accounts Need Re-pairing ({orphanedAccounts.length})</p>
+                  <p className="text-sm text-muted-foreground mb-3">
+                    These active accounts are paired with inactive accounts and need to be re-paired.
+                  </p>
+                  <div className="space-y-2">
+                    {orphanedAccounts.map((account) => (
+                      <div key={account.id} className="flex items-center justify-between bg-background/50 p-2 rounded">
+                        <div className="text-sm">
+                          <span className="font-mono">{formatPhone(account.phone_number)}</span>
+                          {account.first_name && <span className="text-muted-foreground ml-2">({account.first_name})</span>}
+                          <span className="text-muted-foreground mx-2">↔</span>
+                          <span className="font-mono text-red-400 line-through">{formatPhone(account.inactive_pair_phone)}</span>
+                          <span className="text-xs text-red-400 ml-1">(inactive)</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {orphanedAccounts.length >= 2 && (
+                    <Button 
+                      size="sm" 
+                      className="mt-3"
+                      onClick={handleRepairOrphanedAccounts}
+                    >
+                      Re-pair All ({Math.floor(orphanedAccounts.length / 2)} pairs)
+                    </Button>
+                  )}
+                  {orphanedAccounts.length === 1 && (
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Waiting for another orphaned account to pair with
+                    </p>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Unpaired Accounts Warning */}
         {unpairedAccounts.length > 0 && (
