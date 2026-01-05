@@ -1293,6 +1293,7 @@ export type Database = {
         Row: {
           account_a_id: string
           account_b_id: string
+          contacts_exchanged: boolean | null
           created_at: string | null
           id: string
           last_message_at: string | null
@@ -1303,6 +1304,7 @@ export type Database = {
         Insert: {
           account_a_id: string
           account_b_id: string
+          contacts_exchanged?: boolean | null
           created_at?: string | null
           id?: string
           last_message_at?: string | null
@@ -1313,6 +1315,7 @@ export type Database = {
         Update: {
           account_a_id?: string
           account_b_id?: string
+          contacts_exchanged?: boolean | null
           created_at?: string | null
           id?: string
           last_message_at?: string | null
