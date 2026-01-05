@@ -139,7 +139,9 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     lang_code = account.get("lang_code") or "en"
     system_lang_code = account.get("system_lang_code") or "en-US"
     
-    if not device_model or not system_version:
+    if device_model and system_version:
+        print(f"  [FP] Using saved: {device_model} ({system_version})")
+    else:
         fp = generate_fingerprint()
         device_model = fp["device_model"]
         system_version = fp["system_version"]
