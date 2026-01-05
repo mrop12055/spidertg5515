@@ -106,11 +106,16 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
     return False
 
 
-async def get_or_create_client(account: dict, setup_handler=None) -> Optional[TelegramClient]:
+async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None) -> Optional[TelegramClient]:
+    """Create or retrieve a Telegram client. Supports optional task-level proxy override."""
     account_id = account["id"]
     
-    if account_id in active_clients:
-        client = active_clients[account_id]
+    # Check if we need a fresh client due to proxy change
+    use_task_proxy = task_proxy and task_proxy.get("host")
+    cache_key = f"{account_id}_{task_proxy.get('id') if use_task_proxy else 'default'}"
+    
+    if cache_key in active_clients:
+        client = active_clients[cache_key]
         try:
             if client.is_connected():
                 if setup_handler and not getattr(client, "_handler", False):
@@ -118,7 +123,7 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
                     setattr(client, "_handler", True)
                 return client
         except:
-            del active_clients[account_id]
+            del active_clients[cache_key]
     
     session_data = account.get("session_data")
     if not session_data:
@@ -151,9 +156,24 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
             "system_lang_code": system_lang_code
         })
     
-    proxy = get_proxy_settings(account)
-    if proxy:
-        print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
+    # Priority: task_proxy > account.proxy
+    proxy = None
+    if use_task_proxy:
+        ptype = (task_proxy.get("proxy_type") or "socks5").lower()
+        proxy_types = {"http": 1, "https": 1, "socks4": 2, "socks5": 3}
+        proxy = (
+            proxy_types.get(ptype, 3),
+            task_proxy.get("host"),
+            int(task_proxy.get("port", 1080)),
+            True,
+            task_proxy.get("username"),
+            task_proxy.get("password")
+        )
+        print(f"  [PROXY] Task proxy: {task_proxy.get('host')}:{task_proxy.get('port')}")
+    else:
+        proxy = get_proxy_settings(account)
+        if proxy:
+            print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
     
     try:
         api_id = account.get("api_id") or TELEGRAM_API_ID
@@ -206,7 +226,7 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
             await setup_handler(client, account_id)
             setattr(client, "_handler", True)
         
-        active_clients[account_id] = client
+        active_clients[cache_key] = client
         
         # Fast mode: skip profile if cached
         if account.get("first_name") or account.get("username"):
