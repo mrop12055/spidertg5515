@@ -205,6 +205,10 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             print(f"  [API] Using account/default API: {api_id}")
         
         # Create client with optimized settings
+        # Use sqlite3 connection with longer timeout to avoid "database is locked"
+        import sqlite3
+        sqlite3_conn_kwargs = {'timeout': 30.0}  # 30 second timeout for SQLite locks
+        
         client = TelegramClient(
             session_path, 
             int(api_id), 
@@ -221,6 +225,18 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             auto_reconnect=True,
             request_retries=3
         )
+        
+        # Enable WAL mode for better concurrent access on the session database
+        try:
+            import sqlite3 as sqlite3_mod
+            session_db_path = session_path + ".session"
+            if os.path.exists(session_db_path):
+                conn = sqlite3_mod.connect(session_db_path, timeout=30.0)
+                conn.execute("PRAGMA journal_mode=WAL")
+                conn.execute("PRAGMA busy_timeout=30000")  # 30 seconds
+                conn.close()
+        except Exception as wal_err:
+            print(f"  [WARN] Could not set WAL mode: {wal_err}")
         
         # Connect with retry logic
         print(f"  [CONNECT] {account['phone_number']}...")
