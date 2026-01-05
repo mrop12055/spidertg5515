@@ -23,7 +23,7 @@ serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({}));
-    const { runner, batch_size = 5 } = body;
+    const { runner, batch_size = 10 } = body;
 
     console.log(`[get-batch-tasks] Request for runner: ${runner}, batch_size: ${batch_size}`);
 
@@ -125,6 +125,109 @@ serve(async (req) => {
     const usedAccountIds = new Set<string>();
     const actualBatchSize = Math.min(batch_size, usableAccounts.length);
 
+    // WARMUP_CHAT RUNNER: Get pending warmup messages (PARALLEL BATCH)
+    if (runner === "warmup_chat") {
+      // Get pending warmup messages that are due, one per SENDER ACCOUNT to avoid conflicts
+      const { data: warmupMessages } = await supabase
+        .from("warmup_messages")
+        .select(`
+          *,
+          warmup_pairs(*),
+          sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)),
+          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number, telegram_id, username, first_name)
+        `)
+        .eq("status", "pending")
+        .lte("scheduled_at", new Date().toISOString())
+        .order("scheduled_at", { ascending: true })
+        .limit(actualBatchSize * 3); // Fetch extra to find unique senders
+
+      if (warmupMessages && warmupMessages.length > 0) {
+        console.log(`[get-batch-tasks] Found ${warmupMessages.length} pending warmup messages`);
+        
+        for (const msg of warmupMessages as any[]) {
+          if (tasks.length >= actualBatchSize) break;
+          
+          const senderAccount = msg.sender;
+          const receiverAccount = msg.receiver;
+          const proxy = Array.isArray(senderAccount?.proxies) ? senderAccount.proxies[0] : senderAccount?.proxies;
+
+          // Skip if sender already has a task in this batch (avoid parallel sends from same account)
+          if (usedAccountIds.has(senderAccount?.id)) continue;
+
+          // Check account is active and has active proxy
+          if (senderAccount && senderAccount.status === "active" && receiverAccount && proxy?.status === "active") {
+            const apiCred = senderAccount.telegram_api_credentials;
+
+            // Mark as in_progress
+            await supabase
+              .from("warmup_messages")
+              .update({ status: "in_progress" })
+              .eq("id", msg.id);
+
+            // Determine task type based on message_type
+            const taskType = msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat";
+
+            tasks.push({
+              task: taskType,
+              task_id: msg.id,
+              pair_id: msg.pair_id,
+              task_data: {
+                recipient_phone: receiverAccount.phone_number,
+                recipient_telegram_id: receiverAccount.telegram_id,
+                recipient_username: receiverAccount.username,
+                message: msg.message_content,
+                message_type: msg.message_type,
+                first_name: msg.message_type === "add_contact" ? msg.message_content : receiverAccount.first_name,
+                phone: receiverAccount.phone_number,
+              },
+              account: {
+                id: senderAccount.id,
+                phone_number: senderAccount.phone_number,
+                session_data: senderAccount.session_data,
+                device_model: senderAccount.device_model,
+                system_version: senderAccount.system_version,
+                app_version: senderAccount.app_version,
+                lang_code: senderAccount.lang_code,
+                system_lang_code: senderAccount.system_lang_code,
+                api_id: apiCred?.api_id || senderAccount.api_id,
+                api_hash: apiCred?.api_hash || senderAccount.api_hash,
+                proxy: proxy,
+              },
+            });
+
+            usedAccountIds.add(senderAccount.id);
+            console.log(`[get-batch-tasks] Added warmup task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
+          } else {
+            // Account not usable, mark as failed
+            const reason = !senderAccount ? "Sender account not found" :
+                           senderAccount.status !== "active" ? `Sender status: ${senderAccount.status}` :
+                           !proxy ? "No proxy assigned" :
+                           proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
+                           "Unknown reason";
+            
+            await supabase
+              .from("warmup_messages")
+              .update({ status: "failed", error_message: reason })
+              .eq("id", msg.id);
+            
+            console.log(`[get-batch-tasks] Warmup task skipped: ${reason}`);
+          }
+        }
+      }
+      
+      // Return warmup batch result
+      const delaySeconds = tasks.length > 0 ? 3 : 5; // Short delay if we got tasks
+      console.log(`[get-batch-tasks] Returning ${tasks.length} warmup tasks`);
+      
+      return new Response(JSON.stringify({
+        tasks,
+        delay_after: delaySeconds,
+        accounts_available: usableAccounts.length,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // CAMPAIGN RUNNER: Get pending campaign recipients
     if (runner === "campaign") {
       // Get pending recipients from running campaigns (include unassigned ones too)
@@ -202,7 +305,6 @@ serve(async (req) => {
                   port: account.proxies.port,
                   username: account.proxies.username,
                   password: account.proxies.password,
-                  // Backwards compatible: python expects proxy_type, older code may use type
                   proxy_type: account.proxies.proxy_type,
                   type: account.proxies.proxy_type,
                 }
@@ -282,7 +384,6 @@ serve(async (req) => {
                   port: account.proxies.port,
                   username: account.proxies.username,
                   password: account.proxies.password,
-                  // Backwards compatible: python expects proxy_type, older code may use type
                   proxy_type: account.proxies.proxy_type,
                   type: account.proxies.proxy_type,
                 }
