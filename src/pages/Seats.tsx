@@ -372,8 +372,8 @@ const Seats: React.FC = () => {
                 </Button>
               </div>
             ) : (
-              <div className="max-h-[450px] overflow-auto">
-                <div className="min-w-[1150px]">
+              <div className="overflow-auto">
+                <div className="min-w-[1100px]">
                   <Table>
                   <TableHeader>
                     <TableRow className="bg-gradient-to-r from-muted/50 to-muted/20 hover:bg-muted/50 border-b border-border/50">
