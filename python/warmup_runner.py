@@ -292,12 +292,17 @@ async def process_single_task(task: dict) -> dict:
         client = await get_or_create_client(account, task_proxy=task_proxy)
         
         if not client:
+            # Client connection failed - report with pair_id so warmup can be stopped
+            error_msg = "Could not connect client - proxy may be down or expired"
             await report_result("warmup_chat", {
                 "task_id": task_id,
+                "pair_id": pair_id,
+                "account_id": account.get("id"),
                 "success": False,
-                "error": "Could not connect client"
+                "error": error_msg,
+                "error_type": "proxy_error"
             })
-            return {"task_id": task_id, "success": False, "error": "Could not connect client"}
+            return {"task_id": task_id, "success": False, "error": error_msg}
         
         if task_type == "warmup_add_contact":
             target_phone = task_data.get("phone") or task_data.get("recipient_phone")

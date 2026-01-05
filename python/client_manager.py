@@ -80,21 +80,47 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
         return (ptype, host, int(port))
 
 
-async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> bool:
-    """Connect with retry logic and exponential backoff"""
+async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> tuple[bool, str]:
+    """Connect with retry logic and exponential backoff.
+    Returns (success, error_reason) tuple."""
+    last_error = ""
     for attempt in range(1, max_retries + 1):
         try:
             await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-            return True
+            return (True, "")
         except asyncio.TimeoutError:
+            last_error = "Connection timeout - proxy may be slow or unresponsive"
             print(f"    [TIMEOUT] Attempt {attempt}/{max_retries}")
             if attempt < max_retries:
                 await asyncio.sleep(RETRY_DELAY * attempt)
-        except Exception as e:
+        except ConnectionRefusedError:
+            last_error = "Proxy connection refused"
+            print(f"    [REFUSED] Attempt {attempt}/{max_retries}: Connection refused")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        except OSError as e:
+            # Network errors often indicate proxy issues
+            error_str = str(e).lower()
+            if "proxy" in error_str or "socks" in error_str or "connect" in error_str:
+                last_error = f"Proxy error: {e}"
+            elif "network" in error_str or "unreachable" in error_str:
+                last_error = f"Network unreachable - proxy may be down: {e}"
+            else:
+                last_error = f"Connection error: {e}"
             print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
             if attempt < max_retries:
                 await asyncio.sleep(RETRY_DELAY * attempt)
-    return False
+        except Exception as e:
+            error_str = str(e).lower()
+            # Detect proxy-specific errors
+            if any(x in error_str for x in ["proxy", "socks", "connection refused", "connect error", "unreachable"]):
+                last_error = f"Proxy error: {e}"
+            else:
+                last_error = f"Connection failed: {e}"
+            print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+    return (False, last_error)
 
 
 async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False, task_proxy: dict = None) -> Optional[TelegramClient]:
@@ -198,9 +224,19 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         
         # Connect with retry logic
         print(f"  [CONNECT] {account['phone_number']}...")
-        if not await connect_with_retry(client):
-            print(f"  [FAIL] Could not connect: {account['phone_number']}")
-            await report_result("account_disconnected", {"account_id": account_id, "reason": "Connection timeout"})
+        connected, connect_error = await connect_with_retry(client)
+        if not connected:
+            print(f"  [FAIL] Could not connect: {account['phone_number']} - {connect_error}")
+            # Determine if it's a proxy error
+            error_lower = connect_error.lower()
+            if any(x in error_lower for x in ["proxy", "socks", "refused", "unreachable", "timeout"]):
+                await report_result("proxy_error", {
+                    "account_id": account_id, 
+                    "reason": connect_error,
+                    "proxy_id": proxy[1] + ":" + str(proxy[2]) if proxy else None
+                })
+            else:
+                await report_result("account_disconnected", {"account_id": account_id, "reason": connect_error})
             return None
         
         if not await client.is_user_authorized():
