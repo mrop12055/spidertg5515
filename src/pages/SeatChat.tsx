@@ -1534,7 +1534,7 @@ const SeatChat: React.FC = () => {
                       <div className="bg-muted/40 rounded-xl p-4 border border-border/30 hover:bg-muted/60 transition-colors">
                         <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-1.5">Username</p>
                         <p className="text-foreground font-medium text-sm">
-                          @{selectedConversation.recipient_username}
+                          @{selectedConversation.recipient_username.replace(/^@/, '')}
                         </p>
                       </div>
                     )}
