@@ -1828,6 +1828,42 @@ serve(async (req) => {
                   error_type: "warmup_chat",
                 });
             }
+
+            // AUTO-STOP PAIR ON ERROR: Cancel pending messages and mark pair as stopped
+            console.log(`[report-task-result] Auto-stopping pair ${pair_id} due to error`);
+            
+            // Cancel all pending messages for this pair
+            const { data: cancelledMsgs } = await supabase
+              .from("warmup_messages")
+              .update({ status: "cancelled", error_message: "Pair stopped due to error" })
+              .eq("pair_id", pair_id)
+              .eq("status", "pending")
+              .select("id");
+            
+            console.log(`[report-task-result] Cancelled ${cancelledMsgs?.length || 0} pending messages for pair ${pair_id}`);
+            
+            // Mark pair as stopped (not completed - indicates error)
+            await supabase
+              .from("warmup_pairs")
+              .update({ status: "stopped" })
+              .eq("id", pair_id);
+            
+            // Check if all pairs are now stopped/completed - if so, stop the session
+            if (pairData?.session_id) {
+              const { data: remainingActive } = await supabase
+                .from("warmup_pairs")
+                .select("id")
+                .eq("session_id", pairData.session_id)
+                .eq("status", "active");
+              
+              if (!remainingActive || remainingActive.length === 0) {
+                console.log(`[report-task-result] All pairs stopped/completed, stopping session ${pairData.session_id}`);
+                await supabase
+                  .from("warmup_sessions")
+                  .update({ status: "stopped", stopped_at: new Date().toISOString() })
+                  .eq("id", pairData.session_id);
+              }
+            }
           }
 
           console.log(`[report-task-result] Warmup chat failed: ${task_id} - ${error}`);
