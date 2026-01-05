@@ -93,7 +93,18 @@ serve(async (req) => {
         console.log("Created new session:", session.id);
       }
 
-      // Create the pair
+      // Check if these accounts have EVER exchanged contacts (check any previous pair between them)
+      const { data: previousPairWithContacts } = await supabase
+        .from("warmup_pairs")
+        .select("id, contacts_exchanged")
+        .eq("contacts_exchanged", true)
+        .or(`and(account_a_id.eq.${accounts[0].id},account_b_id.eq.${accounts[1].id}),and(account_a_id.eq.${accounts[1].id},account_b_id.eq.${accounts[0].id})`)
+        .limit(1);
+
+      const contactsAlreadyExchanged = previousPairWithContacts && previousPairWithContacts.length > 0;
+      console.log(`Contacts already exchanged (from previous pair): ${contactsAlreadyExchanged}`);
+
+      // Create the pair with contacts_exchanged already set if they've exchanged before
       const { data: createdPair, error: pairError } = await supabase
         .from("warmup_pairs")
         .insert({
@@ -101,6 +112,7 @@ serve(async (req) => {
           account_b_id: accounts[1].id,
           session_id: session.id,
           status: "active",
+          contacts_exchanged: contactsAlreadyExchanged, // Carry over from previous pair
         })
         .select()
         .single();
@@ -108,18 +120,6 @@ serve(async (req) => {
       if (pairError) {
         throw new Error(`Failed to create pair: ${pairError.message}`);
       }
-
-      // Check if these accounts have already exchanged contacts in a previous warmup
-      const { data: previousContactExchange } = await supabase
-        .from("warmup_messages")
-        .select("id")
-        .eq("message_type", "add_contact")
-        .eq("status", "sent")
-        .or(`and(sender_account_id.eq.${accounts[0].id},receiver_account_id.eq.${accounts[1].id}),and(sender_account_id.eq.${accounts[1].id},receiver_account_id.eq.${accounts[0].id})`)
-        .limit(1);
-
-      const contactsAlreadyExchanged = previousContactExchange && previousContactExchange.length > 0;
-      console.log(`Contacts already exchanged: ${contactsAlreadyExchanged}`);
 
       // Get ALL message templates
       const { data: templates } = await supabase
@@ -397,25 +397,30 @@ serve(async (req) => {
     // 8. Create account lookup map
     const accountMap = new Map(accounts.map(a => [a.id, a]));
 
-    // 9. Check which pairs already have contacts exchanged
-    const pairAccountIds = createdPairs.flatMap(p => [p.account_a_id, p.account_b_id]);
-    const { data: previousContacts } = await supabase
-      .from("warmup_messages")
-      .select("sender_account_id, receiver_account_id")
-      .eq("message_type", "add_contact")
-      .eq("status", "sent")
-      .in("sender_account_id", pairAccountIds);
-
-    // Create a set of account pairs that have already exchanged contacts
+    // 9. Check which account combinations already have contacts exchanged (check ALL previous pairs)
+    // Build a set of account pairs that have exchanged contacts
     const contactsExchangedSet = new Set<string>();
-    for (const msg of (previousContacts || [])) {
-      // Store both directions
-      contactsExchangedSet.add(`${msg.sender_account_id}-${msg.receiver_account_id}`);
+    
+    // Get all previous pairs with contacts_exchanged=true for all involved accounts
+    const pairAccountIds = createdPairs.flatMap(p => [p.account_a_id, p.account_b_id]);
+    const { data: previousPairsWithContacts } = await supabase
+      .from("warmup_pairs")
+      .select("account_a_id, account_b_id")
+      .eq("contacts_exchanged", true)
+      .or(`account_a_id.in.(${pairAccountIds.join(',')}),account_b_id.in.(${pairAccountIds.join(',')})`);
+
+    for (const pp of (previousPairsWithContacts || [])) {
+      // Store both directions (a-b and b-a)
+      contactsExchangedSet.add(`${pp.account_a_id}-${pp.account_b_id}`);
+      contactsExchangedSet.add(`${pp.account_b_id}-${pp.account_a_id}`);
     }
+
+    console.log(`Found ${contactsExchangedSet.size / 2} account pairs with prior contact exchange`);
 
     // 10. Schedule contact tasks + messages for each pair
     const now = new Date();
     const allMessages: any[] = [];
+    const pairsNeedingContactFlag: string[] = []; // Track pairs that need contacts_exchanged=true after scheduling
 
     for (let pairIndex = 0; pairIndex < createdPairs.length; pairIndex++) {
       const pair = createdPairs[pairIndex];
@@ -424,10 +429,8 @@ serve(async (req) => {
       
       if (!accountA || !accountB) continue;
 
-      // Check if this pair already exchanged contacts
-      const aToB = contactsExchangedSet.has(`${pair.account_a_id}-${pair.account_b_id}`);
-      const bToA = contactsExchangedSet.has(`${pair.account_b_id}-${pair.account_a_id}`);
-      const contactsAlreadyExchanged = aToB && bToA;
+      // Check if this account combination already exchanged contacts (in ANY previous pair)
+      const contactsAlreadyExchanged = contactsExchangedSet.has(`${pair.account_a_id}-${pair.account_b_id}`);
 
       // Stagger pair start times (each pair starts 5-15 seconds after previous)
       const pairStartOffset = pairIndex * (5000 + Math.random() * 10000);
@@ -435,6 +438,9 @@ serve(async (req) => {
 
       // Only add contact tasks if first warmup for this pair
       if (!contactsAlreadyExchanged) {
+        // Track this pair needs contacts_exchanged flag after add_contact succeeds
+        pairsNeedingContactFlag.push(pair.id);
+        
         // IMPORTANT: Both accounts save each other as contacts FIRST before any chatting
         // Account A saves Account B as contact
         const contactTime1 = new Date(currentTime);
@@ -464,6 +470,10 @@ serve(async (req) => {
 
         // Wait 8-12 seconds after BOTH contacts are saved before starting chat
         currentTime = new Date(contactTime2.getTime() + (8000 + Math.random() * 4000));
+        
+        console.log(`Pair ${pair.id}: scheduling contact exchange (first warmup between these accounts)`);
+      } else {
+        console.log(`Pair ${pair.id}: skipping contact exchange (already done in previous session)`);
       }
 
       // Shuffle all templates and pick random ones for this pair

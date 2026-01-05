@@ -313,7 +313,7 @@ async def process_single_task(task: dict) -> dict:
                 "account_id": account.get("id"),
                 "success": success,
                 "error": error,
-                "task_subtype": "add_contact"
+                "message_type": "add_contact"  # Important: tells backend to mark contacts_exchanged=true
             })
             print(f"    {'✓' if success else '✗'} Contact saved")
             return {"task_id": task_id, "success": success, "error": error}
@@ -341,7 +341,8 @@ async def process_single_task(task: dict) -> dict:
                 "pair_id": pair_id,
                 "account_id": account.get("id"),
                 "success": success,
-                "error": error
+                "error": error,
+                "message_type": "text"  # Regular chat message
             })
             
             msg_preview = message[:30] + "..." if len(message) > 30 else message
