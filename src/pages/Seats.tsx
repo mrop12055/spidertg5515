@@ -13,7 +13,8 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { 
   Plus, Copy, Trash2, Users, MessageSquare, Send, 
-  ExternalLink, RefreshCw, CheckCircle, RotateCcw 
+  ExternalLink, RefreshCw, CheckCircle, RotateCcw,
+  User, Activity, Calendar, Reply, Zap
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -362,13 +363,48 @@ const Seats: React.FC = () => {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-gradient-to-r from-muted/50 to-muted/20 hover:bg-muted/50 border-b border-border/50">
-                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">Name</TableHead>
-                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">Status</TableHead>
-                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">Conversations</TableHead>
-                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">Sent Today</TableHead>
-                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">Responses</TableHead>
-                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">Created</TableHead>
-                      <TableHead className="text-right font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">Actions</TableHead>
+                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
+                        <div className="flex items-center gap-2">
+                          <User className="w-3.5 h-3.5 text-primary/70" />
+                          Name
+                        </div>
+                      </TableHead>
+                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
+                        <div className="flex items-center gap-2">
+                          <Activity className="w-3.5 h-3.5 text-green-500/70" />
+                          Status
+                        </div>
+                      </TableHead>
+                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
+                        <div className="flex items-center gap-2">
+                          <MessageSquare className="w-3.5 h-3.5 text-blue-500/70" />
+                          Conversations
+                        </div>
+                      </TableHead>
+                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
+                        <div className="flex items-center gap-2">
+                          <Send className="w-3.5 h-3.5 text-orange-500/70" />
+                          Sent Today
+                        </div>
+                      </TableHead>
+                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
+                        <div className="flex items-center gap-2">
+                          <Reply className="w-3.5 h-3.5 text-purple-500/70" />
+                          Responses
+                        </div>
+                      </TableHead>
+                      <TableHead className="font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-3.5 h-3.5 text-muted-foreground/70" />
+                          Created
+                        </div>
+                      </TableHead>
+                      <TableHead className="text-right font-semibold text-foreground/80 uppercase text-xs tracking-wider py-4">
+                        <div className="flex items-center justify-end gap-2">
+                          <Zap className="w-3.5 h-3.5 text-yellow-500/70" />
+                          Actions
+                        </div>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -377,12 +413,12 @@ const Seats: React.FC = () => {
                       return (
                         <TableRow 
                           key={seat.id} 
-                          className="group hover:bg-muted/50 transition-colors animate-fade-in"
+                          className="group hover:bg-muted/50 transition-colors animate-fade-in border-b border-border/30"
                           style={{ animationDelay: `${index * 30}ms` }}
                         >
-                          <TableCell className="font-medium">{seat.name}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
+                          <TableCell className="font-medium py-4">{seat.name}</TableCell>
+                          <TableCell className="py-4">
+                            <div className="flex items-center gap-2.5">
                               <Switch
                                 checked={seat.is_active}
                                 onCheckedChange={() => handleToggleActive(seat)}
@@ -390,7 +426,10 @@ const Seats: React.FC = () => {
                               />
                               <Badge 
                                 variant={seat.is_active ? "default" : "secondary"}
-                                className={seat.is_active ? "bg-primary/90 hover:bg-primary" : ""}
+                                className={seat.is_active 
+                                  ? "bg-gradient-to-r from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 shadow-sm" 
+                                  : "bg-muted text-muted-foreground"
+                                }
                               >
                                 {seat.is_active ? 'Active' : 'Inactive'}
                               </Badge>
