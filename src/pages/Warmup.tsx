@@ -93,6 +93,13 @@ interface OrphanedAccount {
   inactive_pair_reason: string | null; // "Connection timeout" or "Session expired"
 }
 
+// Interface for today's cycle data per pair
+interface TodayCycleData {
+  account_a_phone: string;
+  account_b_phone: string;
+  cycles_completed_today: number;
+}
+
 export default function Warmup() {
   const [session, setSession] = useState<WarmupSession | null>(null);
   const [pairs, setPairs] = useState<WarmupPair[]>([]);
@@ -102,6 +109,7 @@ export default function Warmup() {
   const [pendingMessages, setPendingMessages] = useState<WarmupMessage[]>([]);
   const [recentErrors, setRecentErrors] = useState<WarmupMessage[]>([]);
   const [unpairedAccounts, setUnpairedAccounts] = useState<UnpairedAccount[]>([]);
+  const [todayCycles, setTodayCycles] = useState<TodayCycleData[]>([]);
   const [stats, setStats] = useState({ 
     totalPairs: 0, 
     messagesScheduled: 0, 
@@ -151,6 +159,29 @@ export default function Warmup() {
         setPairs((pairsData as unknown as WarmupPair[]) || []);
       } else {
         setPairs([]);
+      }
+
+      // Fetch today's cycle data for ALL pairs (regardless of session)
+      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
+      const { data: todayCyclesData } = await supabase
+        .from("warmup_pairs")
+        .select(`
+          cycles_completed_today,
+          account_a:telegram_accounts!warmup_pairs_account_a_id_fkey(phone_number),
+          account_b:telegram_accounts!warmup_pairs_account_b_id_fkey(phone_number)
+        `)
+        .eq("last_cycle_date", today)
+        .gt("cycles_completed_today", 0);
+
+      if (todayCyclesData) {
+        const cycleData: TodayCycleData[] = todayCyclesData.map((p: any) => ({
+          account_a_phone: p.account_a?.phone_number || '',
+          account_b_phone: p.account_b?.phone_number || '',
+          cycles_completed_today: p.cycles_completed_today || 0,
+        }));
+        setTodayCycles(cycleData);
+      } else {
+        setTodayCycles([]);
       }
 
       // Fetch sent messages
@@ -873,12 +904,14 @@ export default function Warmup() {
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            {/* Show cycle count (today's completed warmup rounds) */}
+                            {/* Show cycle count (today's completed warmup rounds) - from todayCycles */}
                             {(() => {
-                              const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
-                              const pairCycles = activePair?.last_cycle_date === today 
-                                ? (activePair?.cycles_completed_today || 0) 
-                                : 0;
+                              // Find today's cycles for this pair from our fetched data
+                              const pairCycleData = todayCycles.find(
+                                c => (c.account_a_phone === account.phone_number && c.account_b_phone === account.pair_phone) ||
+                                     (c.account_b_phone === account.phone_number && c.account_a_phone === account.pair_phone)
+                              );
+                              const pairCycles = pairCycleData?.cycles_completed_today || 0;
                               return pairCycles > 0 ? (
                                 <Badge variant="outline" className="shrink-0 text-xs px-1.5 bg-blue-500/10 text-blue-600 border-blue-500/30">
                                   {pairCycles} cycle{pairCycles !== 1 ? 's' : ''}
