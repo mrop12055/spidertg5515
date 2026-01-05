@@ -1189,6 +1189,49 @@ serve(async (req) => {
         break;
       }
 
+      case "proxy_error": {
+        // Proxy connection failed - mark account with proxy error and optionally update proxy status
+        const { account_id, reason, proxy_id } = result;
+
+        // Update account with proxy error status - use 'disconnected' but with clear proxy error reason
+        await supabase
+          .from("telegram_accounts")
+          .update({ 
+            status: "disconnected",
+            disabled_reason: `Proxy error: ${reason || "Connection failed"}`,
+            geo_mismatch: true  // Flag as having connection issues
+          })
+          .eq("id", account_id);
+
+        // If we have the proxy_id (host:port), try to find and mark the proxy as having issues
+        if (proxy_id) {
+          const [host, portStr] = proxy_id.split(":");
+          if (host && portStr) {
+            await supabase
+              .from("proxies")
+              .update({ 
+                status: "error",
+                last_checked: new Date().toISOString()
+              })
+              .eq("host", host)
+              .eq("port", parseInt(portStr));
+            console.log(`[report-task-result] Marked proxy ${proxy_id} as error`);
+          }
+        }
+
+        // Log to warmup_errors if this came from warmup context
+        await supabase
+          .from("warmup_errors")
+          .insert({
+            account_id: account_id,
+            error_message: `Proxy error: ${reason || "Connection failed"}`,
+            error_type: "proxy_error"
+          });
+
+        console.log(`[report-task-result] Account ${account_id} PROXY ERROR: ${reason}`);
+        break;
+      }
+
       case "account_banned": {
         const { account_id, reason } = result;
 
