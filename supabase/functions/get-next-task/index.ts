@@ -15,6 +15,7 @@ let MESSAGE_DELAY_MAX_SECONDS = 15;
 let ACCOUNT_SWITCH_DELAY_SECONDS = 30;
 let DAILY_MESSAGE_LIMIT = 25;
 let MESSAGES_PER_ACCOUNT = 10;
+let DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT = 5; // Max campaign messages per account per day
 
 // Scheduler (rotation + cooldown)
 let SCHEDULER_ENABLED = true;
@@ -156,6 +157,7 @@ serve(async (req) => {
           WARMUP_DAYS = (value.warmupDays as number) || WARMUP_DAYS;
           DAILY_MESSAGE_LIMIT = (value.dailyMessageLimit as number) || DAILY_MESSAGE_LIMIT;
           MESSAGES_PER_ACCOUNT = (value.messagesPerAccount as number) || MESSAGES_PER_ACCOUNT;
+          DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT = (value.dailyCampaignLimitPerAccount as number) || DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT;
         } else if (setting.key === "scheduler" && value) {
           // If a value is missing, keep defaults
           if (typeof value.enabled === 'boolean') {
@@ -166,7 +168,7 @@ serve(async (req) => {
         }
       }
       console.log(
-        `[get-next-task] Loaded settings: delay=${MESSAGE_DELAY_MIN_SECONDS}-${MESSAGE_DELAY_MAX_SECONDS}s, switch=${ACCOUNT_SWITCH_DELAY_SECONDS}s, warmup=${WARMUP_DAYS}d, dailyLimit=${DAILY_MESSAGE_LIMIT}, perCampaign=${MESSAGES_PER_ACCOUNT}, rotate=${MAX_MESSAGES_BEFORE_ROTATION}, cooldown=${COOLDOWN_DURATION_SECONDS}s, enabled=${SCHEDULER_ENABLED}`
+        `[get-next-task] Loaded settings: delay=${MESSAGE_DELAY_MIN_SECONDS}-${MESSAGE_DELAY_MAX_SECONDS}s, switch=${ACCOUNT_SWITCH_DELAY_SECONDS}s, warmup=${WARMUP_DAYS}d, dailyLimit=${DAILY_MESSAGE_LIMIT}, perCampaign=${MESSAGES_PER_ACCOUNT}, dailyCampaignLimit=${DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT}, rotate=${MAX_MESSAGES_BEFORE_ROTATION}, cooldown=${COOLDOWN_DURATION_SECONDS}s, enabled=${SCHEDULER_ENABLED}`
       );
     }
 
@@ -283,6 +285,42 @@ serve(async (req) => {
     const accountsBeforeApiLimit = activeAccountsWithProxy.filter((a: any) => 
       !isTimeRestricted(a) && !a.auto_disabled
     );
+
+    // ========== DAILY CAMPAIGN LIMIT PER ACCOUNT ==========
+    // Count campaign messages sent TODAY per account (start of today UTC)
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString();
+    
+    // Get campaign messages sent today per account
+    const { data: todayCampaignMessages } = await supabase
+      .from("campaign_recipients")
+      .select("sent_by_account_id")
+      .in("status", ["sent", "sending"])
+      .gte("sent_at", todayStartIso);
+    
+    // Count per account
+    const accountCampaignCountToday = new Map<string, number>();
+    for (const rec of (todayCampaignMessages || []) as any[]) {
+      if (rec.sent_by_account_id) {
+        accountCampaignCountToday.set(
+          rec.sent_by_account_id, 
+          (accountCampaignCountToday.get(rec.sent_by_account_id) || 0) + 1
+        );
+      }
+    }
+    
+    // Filter accounts under daily campaign limit
+    const accountsUnderDailyCampaignLimit = accountsBeforeApiLimit.filter((a: any) => {
+      const sentToday = accountCampaignCountToday.get(a.id) || 0;
+      const underLimit = sentToday < DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT;
+      if (!underLimit) {
+        console.log(`[get-next-task] Account ${a.phone_number} at daily campaign limit (${sentToday}/${DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT})`);
+      }
+      return underLimit;
+    });
+    
+    console.log(`[get-next-task] Accounts: ${accountsBeforeApiLimit.length} available, ${accountsUnderDailyCampaignLimit.length} under daily campaign limit (${DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT}/day)`);
 
     // ========== SMART API ROUTING: Dynamic API assignment based on capacity ==========
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
@@ -436,8 +474,8 @@ serve(async (req) => {
       return null;
     };
 
-    // Process accounts: allow all accounts but dynamically route their API
-    const accountsWithSmartApi = accountsBeforeApiLimit.map((a: any) => {
+    // Process accounts: allow accounts under daily campaign limit but dynamically route their API
+    const accountsWithSmartApi = accountsUnderDailyCampaignLimit.map((a: any) => {
       const bestApi = getBestApiForAccount(a);
       if (!bestApi) {
         // No API available - mark for skipping
