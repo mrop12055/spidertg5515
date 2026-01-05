@@ -200,11 +200,12 @@ export default function Warmup() {
       setUnpairedAccounts((unpairedData as UnpairedAccount[]) || []);
 
       // Fetch pre-paired accounts (from telegram_accounts.warmup_pair_id)
+      // Include active AND restricted accounts (restricted only means campaign-restricted, not warmup-restricted)
       const { data: prePairedData } = await supabase
         .from("telegram_accounts")
-        .select("id, phone_number, first_name, warmup_pair_id")
+        .select("id, phone_number, first_name, warmup_pair_id, status")
         .not("warmup_pair_id", "is", null)
-        .eq("status", "active");
+        .in("status", ["active", "restricted"]);
 
       // Create unique pairs (avoid duplicates since A->B and B->A both exist)
       const seenPairs = new Set<string>();
