@@ -22,8 +22,7 @@ import {
   AlertTriangle,
   UserX,
   Timer,
-  XCircle,
-  Trash2
+  XCircle
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -513,30 +512,6 @@ export default function Warmup() {
   const formatPhone = (phone: string) => {
     if (!phone) return "Unknown";
     return phone;
-  };
-
-  const [isClearingFailed, setIsClearingFailed] = useState(false);
-
-  const handleClearAllFailed = async () => {
-    if (recentErrors.length === 0) return;
-    
-    setIsClearingFailed(true);
-    try {
-      const { error } = await supabase
-        .from("warmup_messages")
-        .delete()
-        .eq("status", "failed");
-
-      if (error) throw error;
-
-      toast.success(`Cleared ${recentErrors.length} failed messages`);
-      fetchData();
-    } catch (error: any) {
-      console.error("Error clearing failed messages:", error);
-      toast.error("Failed to clear messages");
-    } finally {
-      setIsClearingFailed(false);
-    }
   };
 
   // Find pair number for a message based on sender/receiver phones
@@ -1175,23 +1150,6 @@ export default function Warmup() {
                 </TabsContent>
                 
                 <TabsContent value="failed" className="mt-0">
-                  {recentErrors.length > 0 && (
-                    <div className="flex justify-end mb-2">
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={handleClearAllFailed}
-                        disabled={isClearingFailed}
-                      >
-                        {isClearingFailed ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-3 w-3 mr-1" />
-                        )}
-                        Clear All ({recentErrors.length})
-                      </Button>
-                    </div>
-                  )}
                   <ScrollArea className="h-[300px]">
                     <div className="space-y-2">
                       {recentErrors.length === 0 ? (
