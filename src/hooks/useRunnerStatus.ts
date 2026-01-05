@@ -55,16 +55,28 @@ export const useRunnerStatus = () => {
       
       const thirtySecondsAgo = new Date(Date.now() - 30000);
       const now = new Date();
+      
+      // Calculate the threshold for "confirmed offline" - if last seen is older than this,
+      // we should immediately show as offline (no grace period needed)
+      const confirmedOfflineThreshold = new Date(Date.now() - 30000 - OFFLINE_GRACE_PERIOD_MS);
 
       setRunners(prev => {
         const newRunners = prev.map(runner => {
-          const isOnline = runnerMap.has(runner.runnerKey) && runnerMap.get(runner.runnerKey)! > thirtySecondsAgo;
+          const lastSeen = runnerMap.get(runner.runnerKey);
+          const isOnline = lastSeen && lastSeen > thirtySecondsAgo;
           
           // Track offline transitions for grace period
           if (!isOnline) {
-            // If not already tracked as offline, start tracking
+            // If runner has been offline for longer than grace period already (based on last_seen),
+            // backdate the offline tracking so red dot shows immediately
             if (!offlineSinceRef.current.has(runner.runnerKey)) {
-              offlineSinceRef.current.set(runner.runnerKey, now);
+              if (lastSeen && lastSeen < confirmedOfflineThreshold) {
+                // Runner has been offline for a while, backdate to ensure immediate red dot
+                offlineSinceRef.current.set(runner.runnerKey, lastSeen);
+              } else {
+                // Just went offline, start grace period now
+                offlineSinceRef.current.set(runner.runnerKey, now);
+              }
             }
           } else {
             // Runner is online, remove from offline tracking
@@ -74,7 +86,7 @@ export const useRunnerStatus = () => {
           return {
             ...runner,
             isOnline,
-            lastSeen: runnerMap.get(runner.runnerKey) || runner.lastSeen,
+            lastSeen: lastSeen || runner.lastSeen,
           };
         });
         
