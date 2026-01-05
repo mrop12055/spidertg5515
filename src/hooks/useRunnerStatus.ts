@@ -13,6 +13,7 @@ const runnerNames: Record<string, string> = {
   livechat: 'LiveChat Runner',
   account: 'Account Runner',
   warmup: 'Warmup Runner',
+  warmup_chat: 'Warmup Chat Runner',
   block: 'Block Runner',
 };
 
