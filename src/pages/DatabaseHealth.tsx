@@ -723,7 +723,7 @@ const DatabaseHealth = () => {
           </CardHeader>
           <CardContent className="pt-6">
             <Tabs defaultValue="account" className="w-full">
-              <TabsList className="grid w-full grid-cols-6 h-auto p-1 bg-muted/50">
+              <TabsList className="grid w-full grid-cols-4 h-auto p-1 bg-muted/50">
                 <TabsTrigger value="account" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
                   <UserCheck className="w-4 h-4" />
                   <span className="hidden sm:inline">Account</span>
@@ -733,30 +733,12 @@ const DatabaseHealth = () => {
                     </Badge>
                   )}
                 </TabsTrigger>
-                <TabsTrigger value="block" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                  <Ban className="w-4 h-4" />
-                  <span className="hidden sm:inline">Block</span>
-                  {(health?.pending_block_tasks || 0) > 0 && (
-                    <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
-                      {health?.pending_block_tasks}
-                    </Badge>
-                  )}
-                </TabsTrigger>
                 <TabsTrigger value="import" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
                   <Upload className="w-4 h-4" />
                   <span className="hidden sm:inline">Import</span>
                   {(health?.pending_import_tasks || 0) > 0 && (
                     <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
                       {health?.pending_import_tasks}
-                    </Badge>
-                  )}
-                </TabsTrigger>
-                <TabsTrigger value="warmup" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
-                  <Flame className="w-4 h-4" />
-                  <span className="hidden sm:inline">Warmup</span>
-                  {warmupTasks.length > 0 && (
-                    <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
-                      {warmupTasks.length}
                     </Badge>
                   )}
                 </TabsTrigger>
@@ -788,28 +770,11 @@ const DatabaseHealth = () => {
               />
             </TabsContent>
             
-            <TabsContent value="block" className="mt-4">
-              <TaskTabContent 
-                pendingTasks={blockTasks} 
-                completedTasks={completedBlockTasks} 
-                tableName="block_contact_tasks" 
-              />
-            </TabsContent>
-            
             <TabsContent value="import" className="mt-4">
               <TaskTabContent 
                 pendingTasks={importTasks} 
                 completedTasks={completedImportTasks} 
                 tableName="contact_import_tasks" 
-              />
-            </TabsContent>
-            
-            <TabsContent value="warmup" className="mt-4">
-              <TaskTabContent 
-                pendingTasks={warmupTasks} 
-                completedTasks={completedWarmupTasks} 
-                tableName="warmup_schedule" 
-                showDayNumber 
               />
             </TabsContent>
 
