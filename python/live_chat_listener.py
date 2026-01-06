@@ -22,13 +22,14 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all, active_clients
+    send_message, shutdown_all, active_clients, send_heartbeat
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
 POLL_INTERVAL = 1  # 1-second polling for send tasks
 KEEP_ALIVE_INTERVAL = 60  # Ping connections every 60 seconds
+HEARTBEAT_INTERVAL = 30  # Send heartbeat every 30 seconds to let other runners know we're online
 
 # Reduce noise + avoid slowing the event loop with repeated DB checks for non-campaign senders
 LOG_IGNORED_NON_CAMPAIGN = False
@@ -279,12 +280,17 @@ async def main_loop():
     print("  📥 Handles: Incoming messages, Live chat replies")
     print(f"  ⚡ Polling: Every {POLL_INTERVAL} second(s)")
     print(f"  💓 Keep-alive: Every {KEEP_ALIVE_INTERVAL} seconds")
+    print(f"  📡 Heartbeat: Every {HEARTBEAT_INTERVAL} seconds")
     print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
     print("\n✓ Starting live chat listener...\n")
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
     last_keep_alive = time.time()
+    last_heartbeat = time.time()
+    
+    # Send initial heartbeat immediately
+    await send_heartbeat("livechat")
     
     while RUNNING:
         try:
@@ -332,7 +338,12 @@ async def main_loop():
                 await ping_connected_clients()
                 last_keep_alive = time.time()
             
-            # 5. Fixed 1-second polling interval
+            # 5. Send heartbeat every 30 seconds to let other runners know we're online
+            if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
+                await send_heartbeat("livechat")
+                last_heartbeat = time.time()
+            
+            # 6. Fixed 1-second polling interval
             await asyncio.sleep(POLL_INTERVAL)
         
         except Exception as e:
