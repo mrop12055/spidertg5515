@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -590,55 +591,50 @@ export default function Warmup() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-orange-500/10 rounded-lg">
-              <Flame className="h-6 w-6 text-orange-500" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold">Account Warmup</h1>
-              <p className="text-muted-foreground">1-to-1 pair chat system (10-15 min conversations)</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="icon"
-              onClick={fetchData}
-              disabled={loading}
-            >
-              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-            </Button>
-            {session?.status === "active" ? (
+        <PageHeader
+          title="Account Warmup"
+          description="1-to-1 pair chat system (10-15 min conversations)"
+          icon={Flame}
+          action={
+            <div className="flex items-center gap-2">
               <Button
-                variant="destructive"
-                onClick={handleStopWarmup}
-                disabled={isStopping}
+                variant="outline"
+                size="icon"
+                onClick={fetchData}
+                disabled={loading}
               >
-                {isStopping ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Square className="h-4 w-4 mr-2" />
-                )}
-                Stop Warmup
+                <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               </Button>
-            ) : (
-              <Button
-                onClick={handleStartWarmup}
-                disabled={isStarting}
-                className="bg-orange-500 hover:bg-orange-600"
-              >
-                {isStarting ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Play className="h-4 w-4 mr-2" />
-                )}
-                Start Warmup
-              </Button>
-            )}
-          </div>
-        </div>
+              {session?.status === "active" ? (
+                <Button
+                  variant="destructive"
+                  onClick={handleStopWarmup}
+                  disabled={isStopping}
+                >
+                  {isStopping ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Square className="h-4 w-4 mr-2" />
+                  )}
+                  Stop Warmup
+                </Button>
+              ) : (
+                <Button
+                  onClick={handleStartWarmup}
+                  disabled={isStarting}
+                  className="bg-orange-500 hover:bg-orange-600"
+                >
+                  {isStarting ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Play className="h-4 w-4 mr-2" />
+                  )}
+                  Start Warmup
+                </Button>
+              )}
+            </div>
+          }
+        />
 
         {/* Orphaned Accounts - Active accounts paired with session-expired accounts */}
         {orphanedAccounts.length > 0 && (() => {

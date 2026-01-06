@@ -267,6 +267,7 @@ const Reports: React.FC = () => {
       <PageHeader 
         title="Reports & Analytics" 
         description="Comprehensive overview of your messaging operations"
+        icon={BarChart3}
       />
 
       <div className="space-y-6">
