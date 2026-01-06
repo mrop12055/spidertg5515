@@ -616,23 +616,6 @@ async def disconnect_batch(account_ids: list):
         print(f"  [CLEANUP] Disconnected {disconnected} clients after batch")
 
 
-async def send_heartbeat(runner_name: str):
-    """Send heartbeat to backend so other runners know we're online.
-    
-    This is used to coordinate session access - e.g., account_manager won't try to
-    access accounts that livechat has connected, avoiding SQLite "database locked" errors.
-    """
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(
-                f"{BACKEND_URL}/report-task-result",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json={"task_type": "runner_heartbeat", "result": {"runner_name": runner_name}}
-            )
-    except Exception as e:
-        print(f"  [WARN] Failed to send heartbeat: {e}")
-
-
 async def shutdown_all():
     """Cleanup all clients on shutdown"""
     print("\n[SHUTDOWN] Disconnecting all clients...")

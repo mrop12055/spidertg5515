@@ -1,21 +1,15 @@
 @echo off
-title TelegramCRM - Unified Runner
+title TelegramCRM
 echo ============================================
-echo       TelegramCRM - UNIFIED RUNNER
+echo       TelegramCRM - Campaign Runner
 echo ============================================
 echo.
-echo  Handles ALL task types in ONE process:
-echo  - Live Chat (incoming + replies)
-echo  - Campaign Messages
-echo  - Account Management
-echo  - Warmup Tasks
-echo.
-echo  NO session conflicts!
+echo  Handles: Campaign Messages
 echo  Press Ctrl+C to stop
 echo.
 echo ============================================
 echo.
-python unified_runner.py
+python campaign_runner.py
 echo.
 echo Runner stopped.
 pause

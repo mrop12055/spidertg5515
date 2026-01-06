@@ -36,7 +36,6 @@ import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { CountdownTimer } from '@/components/ui/countdown-timer';
-import { StableAvatar } from '@/components/accounts/StableAvatar';
 
 // Status options for stat cards (merged categories)
 const statCardOptions: { value: string; label: string; color: string; icon: React.ReactNode }[] = [
@@ -1505,32 +1504,30 @@ const Accounts: React.FC = () => {
 
         {/* Avatar */}
         <div className="relative w-10 h-10 flex-shrink-0">
-          <StableAvatar
-            src={account.avatar}
-            alt={account.firstName || account.phoneNumber}
-            className="w-10 h-10 rounded-full"
-            imgClassName="rounded-full"
-            fallback={
-              <div
-                className={cn(
-                  "w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium",
-                  account.status === 'active' && "bg-status-active/15 text-status-active",
-                  account.status === 'banned' && "bg-status-banned/15 text-status-banned",
-                  account.status === 'restricted' && "bg-status-restricted/15 text-status-restricted",
-                  account.status === 'cooldown' && "bg-status-cooldown/15 text-status-cooldown",
-                  account.status === 'disconnected' && "bg-status-disconnected/15 text-status-disconnected",
-                )}
-              >
-                {verifyResult?.status === 'checking' ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (account.firstName || account.lastName) ? (
-                  (account.firstName || account.lastName || '').charAt(0).toUpperCase()
-                ) : (
-                  <Phone className="w-4 h-4" />
-                )}
-              </div>
-            }
-          />
+          {account.avatar ? (
+            <img 
+              src={account.avatar} 
+              alt={account.firstName || account.phoneNumber}
+              className="w-10 h-10 rounded-full object-cover"
+            />
+          ) : (
+            <div className={cn(
+"w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium",
+              account.status === 'active' && "bg-status-active/15 text-status-active",
+              account.status === 'banned' && "bg-status-banned/15 text-status-banned",
+              account.status === 'restricted' && "bg-status-restricted/15 text-status-restricted",
+              account.status === 'cooldown' && "bg-status-cooldown/15 text-status-cooldown",
+              account.status === 'disconnected' && "bg-status-disconnected/15 text-status-disconnected",
+            )}>
+              {verifyResult?.status === 'checking' ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (account.firstName || account.lastName) ? (
+                (account.firstName || account.lastName || '').charAt(0).toUpperCase()
+              ) : (
+                <Phone className="w-4 h-4" />
+              )}
+            </div>
+          )}
           
           {/* Status indicator */}
           <div className={cn(

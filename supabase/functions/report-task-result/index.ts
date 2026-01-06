@@ -2000,32 +2000,6 @@ serve(async (req) => {
         break;
       }
 
-      case "runner_heartbeat": {
-        // Update runner heartbeat so other runners know we're online
-        // This is used to coordinate session access and avoid conflicts
-        const { runner_name } = result;
-        
-        if (runner_name) {
-          // Upsert the heartbeat
-          const { error: heartbeatError } = await supabase
-            .from("runner_heartbeats")
-            .upsert({
-              runner_name: runner_name,
-              last_seen: new Date().toISOString(),
-              status: "online",
-            }, {
-              onConflict: "runner_name",
-            });
-          
-          if (heartbeatError) {
-            console.error(`[report-task-result] Error updating heartbeat for ${runner_name}:`, heartbeatError);
-          } else {
-            console.log(`[report-task-result] Heartbeat updated for runner: ${runner_name}`);
-          }
-        }
-        break;
-      }
-
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }

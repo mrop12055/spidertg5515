@@ -56,6 +56,3 @@ verify_jwt = false
 
 [functions.stop-warmup-chat]
 verify_jwt = false
-
-[functions.get-fallback-proxy]
-verify_jwt = false
