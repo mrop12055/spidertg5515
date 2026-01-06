@@ -22,6 +22,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 
 interface MaterialTag {
@@ -369,6 +370,54 @@ const Material: React.FC = () => {
     }
   };
 
+  // Bulk delete all items in a tag
+  const handleBulkDeleteData = async (tagId: string) => {
+    try {
+      const count = dataItems.filter(d => d.tag_id === tagId).length;
+      const { error } = await supabase.from('material_data').delete().eq('tag_id', tagId);
+      if (error) throw error;
+      toast.success(`Deleted ${count} data items`);
+      fetchData();
+    } catch (error) {
+      console.error('Error bulk deleting data:', error);
+      toast.error('Failed to delete items');
+    }
+  };
+
+  const handleBulkDeletePictures = async (tagId: string) => {
+    try {
+      const tagPictures = pictures.filter(p => p.tag_id === tagId);
+      // Delete from storage first
+      for (const pic of tagPictures) {
+        const fileName = pic.file_url.split('/').pop();
+        if (fileName) {
+          await supabase.storage.from('material-pictures').remove([fileName]);
+        }
+      }
+      // Then delete from database
+      const { error } = await supabase.from('material_pictures').delete().eq('tag_id', tagId);
+      if (error) throw error;
+      toast.success(`Deleted ${tagPictures.length} pictures`);
+      fetchData();
+    } catch (error) {
+      console.error('Error bulk deleting pictures:', error);
+      toast.error('Failed to delete pictures');
+    }
+  };
+
+  const handleBulkDeleteNames = async (tagId: string) => {
+    try {
+      const count = names.filter(n => n.tag_id === tagId).length;
+      const { error } = await supabase.from('material_names').delete().eq('tag_id', tagId);
+      if (error) throw error;
+      toast.success(`Deleted ${count} names`);
+      fetchData();
+    } catch (error) {
+      console.error('Error bulk deleting names:', error);
+      toast.error('Failed to delete names');
+    }
+  };
+
   return (
     <DashboardLayout>
       <PageHeader 
@@ -495,6 +544,18 @@ const Material: React.FC = () => {
                                       </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
+                                      {tagData.length > 0 && (
+                                        <>
+                                          <DropdownMenuItem 
+                                            onClick={() => handleBulkDeleteData(tag.id)}
+                                            className="text-destructive"
+                                          >
+                                            <Trash2 className="h-4 w-4 mr-2" />
+                                            Delete All Items ({tagData.length})
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                        </>
+                                      )}
                                       <DropdownMenuItem 
                                         onClick={() => handleDeleteTag(tag.id)}
                                         className="text-destructive"
@@ -574,6 +635,18 @@ const Material: React.FC = () => {
                                       </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
+                                      {tagPictures.length > 0 && (
+                                        <>
+                                          <DropdownMenuItem 
+                                            onClick={() => handleBulkDeletePictures(tag.id)}
+                                            className="text-destructive"
+                                          >
+                                            <Trash2 className="h-4 w-4 mr-2" />
+                                            Delete All Pictures ({tagPictures.length})
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                        </>
+                                      )}
                                       <DropdownMenuItem 
                                         onClick={() => handleDeleteTag(tag.id)}
                                         className="text-destructive"
@@ -645,6 +718,18 @@ const Material: React.FC = () => {
                                       </Button>
                                     </DropdownMenuTrigger>
                                     <DropdownMenuContent align="end">
+                                      {tagNames.length > 0 && (
+                                        <>
+                                          <DropdownMenuItem 
+                                            onClick={() => handleBulkDeleteNames(tag.id)}
+                                            className="text-destructive"
+                                          >
+                                            <Trash2 className="h-4 w-4 mr-2" />
+                                            Delete All Names ({tagNames.length})
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
+                                        </>
+                                      )}
                                       <DropdownMenuItem 
                                         onClick={() => handleDeleteTag(tag.id)}
                                         className="text-destructive"
