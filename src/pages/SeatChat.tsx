@@ -435,43 +435,109 @@ const SeatChat: React.FC = () => {
     }
   }, [messages]);
 
-  // Real-time subscriptions
+  // Debounced fetch refs to prevent flickering
+  const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastFetchRef = useRef<number>(0);
+
+  // Debounced refetch helper - prevents rapid re-renders
+  const debouncedRefetch = useCallback((fetchFn: () => void, delay = 500) => {
+    const now = Date.now();
+    // Skip if we just fetched within the last 300ms
+    if (now - lastFetchRef.current < 300) return;
+    
+    if (fetchTimeoutRef.current) {
+      clearTimeout(fetchTimeoutRef.current);
+    }
+    fetchTimeoutRef.current = setTimeout(() => {
+      lastFetchRef.current = Date.now();
+      fetchFn();
+    }, delay);
+  }, []);
+
+  // Real-time subscriptions with incremental updates
   useEffect(() => {
     if (!seat) return;
 
     const channel = supabase
-      .channel('seat-messages')
+      .channel(`seat-${seat.id}-realtime`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'messages' },
-        () => {
-          fetchMessages();
-          fetchConversations();
-          fetchStats();
+        (payload) => {
+          // Incremental update for messages if we have a selected conversation
+          if (selectedConversation && payload.eventType === 'INSERT') {
+            const m = payload.new as any;
+            if (m.conversation_id === selectedConversation.id) {
+              setMessages(prev => {
+                if (prev.some(msg => msg.id === m.id)) return prev;
+                return [...prev, {
+                  id: m.id,
+                  content: m.content,
+                  direction: m.direction,
+                  status: m.status,
+                  created_at: m.created_at,
+                  media_url: m.media_url,
+                  media_type: m.media_type
+                }];
+              });
+            }
+          } else if (payload.eventType === 'UPDATE') {
+            const m = payload.new as any;
+            setMessages(prev => prev.map(msg => 
+              msg.id === m.id ? { ...msg, status: m.status } : msg
+            ));
+          }
+          
+          // Debounced conversation/stats update
+          debouncedRefetch(() => {
+            fetchConversations();
+            fetchStats();
+          }, 1000);
         }
       )
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'conversations' },
-        () => {
-          fetchConversations();
-          fetchStats();
+        { event: '*', schema: 'public', table: 'conversations', filter: `seat_id=eq.${seat.id}` },
+        (payload) => {
+          // Incremental update for conversations
+          if (payload.eventType === 'UPDATE') {
+            const c = payload.new as any;
+            setConversations(prev => prev.map(conv => 
+              conv.id === c.id ? {
+                ...conv,
+                unread_count: c.unread_count ?? conv.unread_count,
+                last_message_at: c.last_message_at ?? conv.last_message_at,
+                last_message_content: c.last_message_content ?? conv.last_message_content,
+                last_message_direction: c.last_message_direction ?? conv.last_message_direction,
+                has_reply: c.has_reply ?? conv.has_reply,
+                is_pinned: c.is_pinned ?? conv.is_pinned,
+                is_hidden: c.is_hidden ?? conv.is_hidden,
+              } : conv
+            ));
+          } else {
+            // For INSERT/DELETE, do a debounced full refetch
+            debouncedRefetch(fetchConversations, 500);
+          }
+          debouncedRefetch(fetchStats, 1000);
         }
       )
       .subscribe();
 
     return () => {
+      if (fetchTimeoutRef.current) {
+        clearTimeout(fetchTimeoutRef.current);
+      }
       supabase.removeChannel(channel);
     };
-  }, [seat, fetchMessages, fetchConversations, fetchStats]);
+  }, [seat, selectedConversation, fetchMessages, fetchConversations, fetchStats, debouncedRefetch]);
 
-  // Refresh every 10 seconds
+  // Refresh every 30 seconds (less aggressive than 10s)
   useEffect(() => {
     if (!seat) return;
     const interval = setInterval(() => {
       fetchConversations();
       fetchStats();
-    }, 10000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [seat, fetchConversations, fetchStats]);
 
