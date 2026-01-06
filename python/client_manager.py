@@ -261,6 +261,7 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             return None
         
         # Test if account is still active by getting user info
+        me = None  # Initialize to prevent unbound variable error
         try:
             me = await asyncio.wait_for(client.get_me(), timeout=15)
             if not me:
@@ -286,8 +287,10 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
                 await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
                 return None
             else:
-                # Other error, try to continue
-                print(f"  [WARN] get_me error: {me_error}")
+                # Other error - return None to prevent using undefined 'me'
+                print(f"  [ERROR] get_me failed: {account['phone_number']} - {me_error}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": f"get_me failed: {me_error}"})
+                return None
         
         # Set up message handler if provided
         if setup_handler:
