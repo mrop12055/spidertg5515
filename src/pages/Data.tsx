@@ -303,6 +303,7 @@ const Data: React.FC = () => {
       <PageHeader 
         title="Data Management" 
         description="Organize contacts into tags for campaigns"
+        icon={Tag}
       />
 
       <div className="space-y-6">

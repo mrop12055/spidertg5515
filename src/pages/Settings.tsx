@@ -292,6 +292,7 @@ const Settings: React.FC = () => {
       <PageHeader
         title="Settings"
         description="Configure your Telegram Hub preferences"
+        icon={Key}
       />
 
       <div className="max-w-3xl space-y-6">

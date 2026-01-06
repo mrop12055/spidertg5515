@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Download, Loader2, Server, Monitor, Upload, CheckCircle2, RefreshCw } from 'lucide-react';
+import { Download, Loader2, Server, Monitor, Upload, CheckCircle2, RefreshCw, BookOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
@@ -2179,6 +2179,7 @@ if __name__ == "__main__":
         <PageHeader
           title="Setup"
           description="Download Python files for your PC or VPS"
+          icon={BookOpen}
         />
 
         <Tabs defaultValue="pc" className="w-full">

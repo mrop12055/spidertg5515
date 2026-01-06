@@ -19,7 +19,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Play, Pause, Trash2, Edit, Send, Users, CheckCircle, XCircle, 
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
-  AlertCircle, RotateCcw, Eye, TrendingUp, Database, Search
+  AlertCircle, RotateCcw, Eye, TrendingUp, Database, Search, Megaphone
 } from 'lucide-react';
 import AccountScheduler from '@/components/campaigns/AccountScheduler';
 import { format } from 'date-fns';
@@ -850,6 +850,7 @@ const Campaigns: React.FC = () => {
       <PageHeader
         title="Bulk Messaging System"
         description="Create and manage bulk messaging campaigns with multiple message templates"
+        icon={Megaphone}
         action={
           <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
             <DialogTrigger asChild>

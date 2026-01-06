@@ -210,6 +210,7 @@ const handleDeleteSeat = async (seatId: string) => {
       <PageHeader 
         title="Seats Management" 
         description="Create and manage worker seats for chat operations"
+        icon={Users}
       />
 
       <div className="space-y-6">
