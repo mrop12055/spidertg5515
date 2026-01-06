@@ -525,7 +525,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                         ...conv,
                         unreadCount: c.unread_count || 0,
                         updatedAt: new Date(c.updated_at || c.last_message_at || conv.updatedAt),
-                        lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : conv.lastMessageAt,
                         recipientName: c.recipient_name || conv.recipientName,
                         recipientUsername: c.recipient_username || conv.recipientUsername,
                         isActive: c.is_active ?? conv.isActive,
@@ -534,7 +533,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                       }
                     : conv
                 )
-                .sort((a, b) => (b.lastMessageAt?.getTime() || b.updatedAt.getTime()) - (a.lastMessageAt?.getTime() || a.updatedAt.getTime()))
+                .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
             );
           } else if (payload.eventType === 'DELETE') {
             const oldRow = payload.old as any;
@@ -956,24 +955,10 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const sendMessage = useCallback(async (accountId: string, recipientPhone: string, content: string, mediaUrl?: string, mediaType?: string) => {
     try {
-      const account = accounts.find(a => a.id === accountId);
-      // Allow "disconnected" for live chat: we will attempt reconnect via the runner.
-      const canSendStatuses: TelegramAccount['status'][] = ['active', 'restricted', 'cooldown', 'disconnected'];
-      if (!account) {
-        toast.error('Account not found');
-        return;
-      }
-      if (!canSendStatuses.includes(account.status)) {
-        toast.error('Message not sent: account is not available', {
-          description: 'Make sure the account is active (not banned/frozen), then try again.',
-        });
-        return;
-      }
-
       // Find or create conversation
       let conv = conversations.find(c => c.recipientPhone === recipientPhone && c.accountId === accountId);
       let conversationId = conv?.id;
-
+      
       if (!conversationId) {
         // Create conversation in database
         const { data: newConv, error: convError } = await supabase
@@ -986,7 +971,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           })
           .select()
           .single();
-
+        
         if (convError) throw convError;
         conversationId = newConv.id;
       }
@@ -1036,7 +1021,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.error('Error sending message:', error);
       toast.error('Failed to send message');
     }
-  }, [accounts, conversations, refreshData]);
+  }, [conversations, refreshData]);
 
   const sendMediaMessage = useCallback(async (accountId: string, recipientPhone: string, file: File, caption?: string) => {
     try {

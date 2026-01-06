@@ -1,22 +1,16 @@
 """
 TelegramCRM - Client Manager
 =============================
-Shared Telegram client logic for all runners with optimized connection speed.
-
-IMPORTANT: Clients are now managed with auto-disconnect to prevent database locking.
-- Clients are cached briefly and auto-disconnected after idle timeout
-- Use disconnect_client() to explicitly release a client when done
-- shutdown_all() cleans up all connections
+Shared Telegram client logic for all runners with optimized connection speed
 """
 
 import os
-import time
 import base64
 import tempfile
 import asyncio
 import httpx
 import socks
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional
 
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
@@ -28,59 +22,26 @@ from fingerprint_generator import generate_fingerprint
 # Temp folder for session files
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 
-# Active clients cache with last-used timestamps
+# Active clients cache
 active_clients: Dict[str, TelegramClient] = {}
-client_last_used: Dict[str, float] = {}  # account_id -> timestamp
-
-# IMPORTANT: Telethon stores session state in a SQLite-backed .session file.
-# Concurrent access (e.g. keepalive + send on the same client) can cause: "database is locked".
-# We mitigate this by serializing all per-client operations with an asyncio.Lock (see ensure_client_lock).
 
 # Connection settings for speed
 CONNECTION_TIMEOUT = 30  # Increased timeout
 CONNECTION_RETRIES = 3   # Retry attempts
 RETRY_DELAY = 2          # Delay between retries
 
-# Client lifecycle settings
-CLIENT_IDLE_TIMEOUT = 60  # Disconnect clients idle for 60 seconds
-MAX_CACHED_CLIENTS = 50   # Maximum number of cached clients
-
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
-    """Decode base64 session data and save to temp file. Enables WAL mode to prevent locking."""
+    """Decode base64 session data and save to temp file"""
     session_path = os.path.join(SESSION_FOLDER, phone_number.replace("+", ""))
-    session_file = session_path + ".session"
     try:
         session_bytes = base64.b64decode(base64_data)
-        with open(session_file, "wb") as f:
+        with open(session_path + ".session", "wb") as f:
             f.write(session_bytes)
-        
-        # Enable WAL mode to allow concurrent reads and reduce locking
-        try:
-            import sqlite3
-            conn = sqlite3.connect(session_file, timeout=30)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
-            conn.close()
-        except Exception as wal_err:
-            print(f"  [WARN] Could not enable WAL mode: {wal_err}")
-        
         return session_path
     except Exception as e:
         print(f"  [ERROR] Session decode failed: {e}")
         return None
-
-
-def ensure_client_lock(client: TelegramClient) -> asyncio.Lock:
-    """Serialize all per-client operations to avoid Telethon SQLite session locks."""
-    lock = getattr(client, "_op_lock", None)
-    if lock is None:
-        lock = asyncio.Lock()
-        try:
-            setattr(client, "_op_lock", lock)
-        except Exception:
-            pass
-    return lock
 
 
 def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple]:
@@ -119,7 +80,7 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
         return (ptype, host, int(port))
 
 
-async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> Tuple[bool, str]:
+async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> tuple[bool, str]:
     """Connect with retry logic and exponential backoff.
     Returns (success, error_reason) tuple."""
     last_error = ""
@@ -176,15 +137,11 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
     """
     account_id = account["id"]
     
-    # Clean up idle clients first to prevent too many connections
-    await cleanup_idle_clients()
-    
     # Return cached client if connected
     if account_id in active_clients:
         client = active_clients[account_id]
         try:
             if client.is_connected():
-                client_last_used[account_id] = time.time()  # Update last used
                 if setup_handler and not getattr(client, "_handler_installed", False):
                     await setup_handler(client, account_id)
                     setattr(client, "_handler_installed", True)
@@ -194,7 +151,6 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         except:
             # Client disconnected, remove from cache
             del active_clients[account_id]
-            client_last_used.pop(account_id, None)
     
     session_data = account.get("session_data")
     if not session_data:
@@ -265,64 +221,57 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             auto_reconnect=True,
             request_retries=3
         )
-
-        lock = ensure_client_lock(client)
-
-        # Connect + auth + basic validation under a single lock to avoid session DB contention
-        async with lock:
-            # Connect with retry logic
-            print(f"  [CONNECT] {account['phone_number']}...")
-            connected, connect_error = await connect_with_retry(client)
-            if not connected:
-                print(f"  [FAIL] Could not connect: {account['phone_number']} - {connect_error}")
-                # Determine if it's a proxy error
-                error_lower = connect_error.lower()
-                if any(x in error_lower for x in ["proxy", "socks", "refused", "unreachable", "timeout"]):
-                    await report_result("proxy_error", {
-                        "account_id": account_id, 
-                        "reason": connect_error,
-                        "proxy_id": proxy[1] + ":" + str(proxy[2]) if proxy else None
-                    })
-                else:
-                    await report_result("account_disconnected", {"account_id": account_id, "reason": connect_error})
+        
+        # Connect with retry logic
+        print(f"  [CONNECT] {account['phone_number']}...")
+        connected, connect_error = await connect_with_retry(client)
+        if not connected:
+            print(f"  [FAIL] Could not connect: {account['phone_number']} - {connect_error}")
+            # Determine if it's a proxy error
+            error_lower = connect_error.lower()
+            if any(x in error_lower for x in ["proxy", "socks", "refused", "unreachable", "timeout"]):
+                await report_result("proxy_error", {
+                    "account_id": account_id, 
+                    "reason": connect_error,
+                    "proxy_id": proxy[1] + ":" + str(proxy[2]) if proxy else None
+                })
+            else:
+                await report_result("account_disconnected", {"account_id": account_id, "reason": connect_error})
+            return None
+        
+        if not await client.is_user_authorized():
+            print(f"  [EXPIRED] Session expired: {account['phone_number']}")
+            await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
+            return None
+        
+        # Test if account is still active by getting user info
+        try:
+            me = await asyncio.wait_for(client.get_me(), timeout=15)
+            if not me:
+                print(f"  [DELETED] Account deleted: {account['phone_number']}")
+                await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted or banned"})
                 return None
-
-            if not await client.is_user_authorized():
-                print(f"  [EXPIRED] Session expired: {account['phone_number']}")
-                await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
+        except Exception as me_error:
+            error_str = str(me_error).lower()
+            # Detect banned/deleted/deactivated accounts
+            # Distinguish between user-deleted (frozen) vs Telegram-banned
+            if any(x in error_str for x in ["user_deactivated", "deactivated"]):
+                # User deleted their own account = FROZEN
+                print(f"  [FROZEN] Account deleted by user: {account['phone_number']} - {me_error}")
+                await report_result("account_frozen", {"account_id": account_id, "reason": str(me_error)})
                 return None
-
-            # Test if account is still active by getting user info
-            me = None  # Initialize to prevent unbound variable error
-            try:
-                me = await asyncio.wait_for(client.get_me(), timeout=15)
-                if not me:
-                    print(f"  [DELETED] Account deleted: {account['phone_number']}")
-                    await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted or banned"})
-                    return None
-            except Exception as me_error:
-                error_str = str(me_error).lower()
-                # Detect banned/deleted/deactivated accounts
-                # Distinguish between user-deleted (frozen) vs Telegram-banned
-                if any(x in error_str for x in ["user_deactivated", "deactivated"]):
-                    # User deleted their own account = FROZEN
-                    print(f"  [FROZEN] Account deleted by user: {account['phone_number']} - {me_error}")
-                    await report_result("account_frozen", {"account_id": account_id, "reason": str(me_error)})
-                    return None
-                elif any(x in error_str for x in ["banned", "deleted"]):
-                    # Telegram banned the account = BANNED
-                    print(f"  [BANNED] Account banned by Telegram: {account['phone_number']} - {me_error}")
-                    await report_result("account_banned", {"account_id": account_id, "reason": str(me_error)})
-                    return None
-                elif any(x in error_str for x in ["session", "revoked", "auth", "auth_key"]):
-                    print(f"  [EXPIRED] Session revoked: {account['phone_number']} - {me_error}")
-                    await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
-                    return None
-                else:
-                    # Other error - return None to prevent using undefined 'me'
-                    print(f"  [ERROR] get_me failed: {account['phone_number']} - {me_error}")
-                    await report_result("account_disconnected", {"account_id": account_id, "reason": f"get_me failed: {me_error}"})
-                    return None
+            elif any(x in error_str for x in ["banned", "deleted"]):
+                # Telegram banned the account = BANNED
+                print(f"  [BANNED] Account banned by Telegram: {account['phone_number']} - {me_error}")
+                await report_result("account_banned", {"account_id": account_id, "reason": str(me_error)})
+                return None
+            elif any(x in error_str for x in ["session", "revoked", "auth", "auth_key"]):
+                print(f"  [EXPIRED] Session revoked: {account['phone_number']} - {me_error}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
+                return None
+            else:
+                # Other error, try to continue
+                print(f"  [WARN] get_me error: {me_error}")
         
         # Set up message handler if provided
         if setup_handler:
@@ -330,7 +279,6 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             setattr(client, "_handler_installed", True)
         
         active_clients[account_id] = client
-        client_last_used[account_id] = time.time()  # Track connection time
         
         # Always sync FULL profile on first connection (including avatar) to ensure data is up to date
         await _sync_profile(client, account_id, skip_avatar=False)
@@ -353,62 +301,60 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
 
 async def _sync_profile(client: TelegramClient, account_id: str, skip_avatar: bool = True):
     """Fetch and report account profile data. Detects deleted/frozen accounts."""
-    lock = ensure_client_lock(client)
-    async with lock:
-        try:
-            me = await asyncio.wait_for(client.get_me(), timeout=10)
-            if me:
-                avatar_base64 = None
-                if not skip_avatar:
-                    try:
-                        photos = await asyncio.wait_for(client.get_profile_photos(me, limit=1), timeout=10)
-                        if photos:
-                            photo_bytes = await asyncio.wait_for(client.download_media(photos[0], file=bytes), timeout=15)
-                            if photo_bytes:
-                                avatar_base64 = base64.b64encode(photo_bytes).decode('utf-8')
-                    except:
-                        pass
-
-                # Check if account seems deleted by user (no profile info at all)
-                # Deleted accounts often return empty profile or just telegram_id
-                has_profile = bool(me.first_name or me.last_name or me.username)
-
-                if not has_profile:
-                    # Account exists but has NO profile info - likely deleted by user
-                    print(f"  [FROZEN] Account has no profile info (possibly deleted by user)")
-                    await report_result("account_frozen", {
-                        "account_id": account_id,
-                        "reason": "No profile info - account may be deleted by user",
-                        "telegram_id": me.id
-                    })
-                else:
-                    await report_result("account_connected", {
-                        "account_id": account_id,
-                        "first_name": me.first_name,
-                        "last_name": me.last_name,
-                        "username": me.username,
-                        "telegram_id": me.id,
-                        "phone": me.phone,
-                        "avatar_base64": avatar_base64
-                    })
-            else:
-                # get_me returned None - account may be deleted
-                print(f"  [FROZEN] get_me() returned None - account may be deleted")
+    try:
+        me = await asyncio.wait_for(client.get_me(), timeout=10)
+        if me:
+            avatar_base64 = None
+            if not skip_avatar:
+                try:
+                    photos = await asyncio.wait_for(client.get_profile_photos(me, limit=1), timeout=10)
+                    if photos:
+                        photo_bytes = await asyncio.wait_for(client.download_media(photos[0], file=bytes), timeout=15)
+                        if photo_bytes:
+                            avatar_base64 = base64.b64encode(photo_bytes).decode('utf-8')
+                except:
+                    pass
+            
+            # Check if account seems deleted by user (no profile info at all)
+            # Deleted accounts often return empty profile or just telegram_id
+            has_profile = bool(me.first_name or me.last_name or me.username)
+            
+            if not has_profile:
+                # Account exists but has NO profile info - likely deleted by user
+                print(f"  [FROZEN] Account has no profile info (possibly deleted by user)")
                 await report_result("account_frozen", {
                     "account_id": account_id,
-                    "reason": "get_me() returned None - account deleted by user"
-                })
-        except Exception as e:
-            error_str = str(e).lower()
-            # Detect if this is a "deleted by user" error vs Telegram ban
-            if any(x in error_str for x in ["user_deactivated", "deactivated"]):
-                print(f"  [FROZEN] Account deactivated by user: {e}")
-                await report_result("account_frozen", {
-                    "account_id": account_id,
-                    "reason": f"User deactivated: {e}"
+                    "reason": "No profile info - account may be deleted by user",
+                    "telegram_id": me.id
                 })
             else:
-                print(f"  [WARN] Profile sync error: {e}")
+                await report_result("account_connected", {
+                    "account_id": account_id,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                    "username": me.username,
+                    "telegram_id": me.id,
+                    "phone": me.phone,
+                    "avatar_base64": avatar_base64
+                })
+        else:
+            # get_me returned None - account may be deleted
+            print(f"  [FROZEN] get_me() returned None - account may be deleted")
+            await report_result("account_frozen", {
+                "account_id": account_id,
+                "reason": "get_me() returned None - account deleted by user"
+            })
+    except Exception as e:
+        error_str = str(e).lower()
+        # Detect if this is a "deleted by user" error vs Telegram ban
+        if any(x in error_str for x in ["user_deactivated", "deactivated"]):
+            print(f"  [FROZEN] Account deactivated by user: {e}")
+            await report_result("account_frozen", {
+                "account_id": account_id,
+                "reason": f"User deactivated: {e}"
+            })
+        else:
+            print(f"  [WARN] Profile sync error: {e}")
 
 
 async def get_next_task(runner: str = None) -> dict:
@@ -466,152 +412,149 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
     Using telegram_id when available avoids slow phone contact imports (major source of delays).
     """
     meta = None
-    lock = ensure_client_lock(client)
+    try:
+        entity = None
 
-    async with lock:
-        try:
-            entity = None
+        # Fast path: telegram user id
+        if isinstance(recipient, int):
+            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)
+        else:
+            recipient_str = str(recipient or "").strip()
 
-            # Fast path: telegram user id
-            if isinstance(recipient, int):
-                entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)
+            # If backend sent a numeric id as string
+            if recipient_str.isdigit():
+                entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=10)
+            elif recipient_str.startswith("@"): 
+                entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=15)
             else:
-                recipient_str = str(recipient or "").strip()
+                from telethon.tl.functions.contacts import ImportContactsRequest
+                from telethon.tl.types import InputPhoneContact
+                import random
 
-                # If backend sent a numeric id as string
-                if recipient_str.isdigit():
-                    entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=10)
-                elif recipient_str.startswith("@"): 
-                    entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=15)
-                else:
-                    from telethon.tl.functions.contacts import ImportContactsRequest
-                    from telethon.tl.types import InputPhoneContact
-                    import random
+                phone = recipient_str
+                if not phone.startswith("+"):
+                    phone = "+" + phone
 
-                    phone = recipient_str
-                    if not phone.startswith("+"):
-                        phone = "+" + phone
+                # Try direct lookup first
+                try:
+                    entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+                except Exception:
+                    pass
 
-                    # Try direct lookup first
-                    try:
-                        entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
-                    except Exception:
-                        pass
+                # Import as contact with retry logic for rate limits
+                if not entity:
+                    max_retries = 2
+                    for attempt in range(max_retries + 1):
+                        contact = InputPhoneContact(
+                            client_id=random.randint(0, 2**62),
+                            phone=phone,
+                            first_name="TG",
+                            last_name=str(random.randint(1000, 9999))
+                        )
+                        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
 
-                    # Import as contact with retry logic for rate limits
-                    if not entity:
-                        max_retries = 2
-                        for attempt in range(max_retries + 1):
-                            contact = InputPhoneContact(
-                                client_id=random.randint(0, 2**62),
-                                phone=phone,
-                                first_name="TG",
-                                last_name=str(random.randint(1000, 9999))
-                            )
-                            result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
-
-                            if result.users:
-                                entity = result.users[0]
-                                break
-                            elif result.retry_contacts:
-                                # retry_contacts means rate limited, not privacy restricted
-                                if attempt < max_retries:
-                                    print(f"  [RATE] Contact lookup rate limited, retrying in 3s (attempt {attempt + 1}/{max_retries})")
-                                    await asyncio.sleep(3)
-                                else:
-                                    # After retries, try ResolvePhoneRequest as fallback
-                                    try:
-                                        from telethon.tl.functions.contacts import ResolvePhoneRequest
-                                        resolve_result = await asyncio.wait_for(client(ResolvePhoneRequest(phone=phone)), timeout=10)
-                                        if resolve_result.users:
-                                            entity = resolve_result.users[0]
-                                            break
-                                    except Exception as resolve_err:
-                                        print(f"  [WARN] ResolvePhoneRequest failed: {resolve_err}")
-                                    return False, "Contact lookup rate limited - try again later", None
+                        if result.users:
+                            entity = result.users[0]
+                            break
+                        elif result.retry_contacts:
+                            # retry_contacts means rate limited, not privacy restricted
+                            if attempt < max_retries:
+                                print(f"  [RATE] Contact lookup rate limited, retrying in 3s (attempt {attempt + 1}/{max_retries})")
+                                await asyncio.sleep(3)
                             else:
-                                # No users and no retry_contacts means user not found
-                                break
+                                # After retries, try ResolvePhoneRequest as fallback
+                                try:
+                                    from telethon.tl.functions.contacts import ResolvePhoneRequest
+                                    resolve_result = await asyncio.wait_for(client(ResolvePhoneRequest(phone=phone)), timeout=10)
+                                    if resolve_result.users:
+                                        entity = resolve_result.users[0]
+                                        break
+                                except Exception as resolve_err:
+                                    print(f"  [WARN] ResolvePhoneRequest failed: {resolve_err}")
+                                return False, "Contact lookup rate limited - try again later", None
+                        else:
+                            # No users and no retry_contacts means user not found
+                            break
 
-            if not entity:
-                return False, "User not found on Telegram", None
+        if not entity:
+            return False, "User not found on Telegram", None
 
-            meta = {
-                "recipient_telegram_id": getattr(entity, "id", None),
-                "recipient_username": getattr(entity, "username", None),
-            }
+        meta = {
+            "recipient_telegram_id": getattr(entity, "id", None),
+            "recipient_username": getattr(entity, "username", None),
+        }
 
-            # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected.
+        # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected.
+        formatted_content = content
+        parse_mode = None
+        try:
+            import re
+            url_re = re.compile(r'(https?://[^\s<>"\']+)')
+            if content and url_re.search(content):
+                parse_mode = 'md'
+
+                def _to_md_link(m):
+                    url = m.group(1)
+                    return f"[{url}]({url})"
+
+                formatted_content = url_re.sub(_to_md_link, content)
+                print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
+        except Exception as e:
+            print(f"  [LINK ERROR] {e}")
             formatted_content = content
             parse_mode = None
+
+        # Send message with timeout
+        if media_url:
             try:
-                import re
-                url_re = re.compile(r'(https?://[^\s<>"\']+)')
-                if content and url_re.search(content):
-                    parse_mode = 'md'
+                import io
+                async with httpx.AsyncClient(timeout=30) as http:
+                    media_resp = await http.get(media_url)
+                    if media_resp.status_code == 200:
+                        # Determine filename from URL to help Telethon classify the file
+                        from urllib.parse import urlparse, unquote
+                        url_path = urlparse(media_url).path
+                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
 
-                    def _to_md_link(m):
-                        url = m.group(1)
-                        return f"[{url}]({url})"
+                        # Check if it's an image based on extension or content-type
+                        content_type = media_resp.headers.get("content-type", "").lower()
+                        ext = filename.split(".")[-1].lower() if "." in filename else ""
+                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
 
-                    formatted_content = url_re.sub(_to_md_link, content)
-                    print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
-            except Exception as e:
-                print(f"  [LINK ERROR] {e}")
-                formatted_content = content
-                parse_mode = None
+                        # Wrap bytes in BytesIO with a name so Telethon knows the file type
+                        file_bytes = io.BytesIO(media_resp.content)
+                        file_bytes.name = filename if "." in filename else "photo.jpg"
 
-            # Send message with timeout
-            if media_url:
-                try:
-                    import io
-                    async with httpx.AsyncClient(timeout=30) as http:
-                        media_resp = await http.get(media_url)
-                        if media_resp.status_code == 200:
-                            # Determine filename from URL to help Telethon classify the file
-                            from urllib.parse import urlparse, unquote
-                            url_path = urlparse(media_url).path
-                            filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+                        print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
 
-                            # Check if it's an image based on extension or content-type
-                            content_type = media_resp.headers.get("content-type", "").lower()
-                            ext = filename.split(".")[-1].lower() if "." in filename else ""
-                            is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
-
-                            # Wrap bytes in BytesIO with a name so Telethon knows the file type
-                            file_bytes = io.BytesIO(media_resp.content)
-                            file_bytes.name = filename if "." in filename else "photo.jpg"
-
-                            print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
-
-                            # For images, use force_document=False to send as photo preview
-                            await asyncio.wait_for(
-                                client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                                timeout=30
-                            )
-                        else:
-                            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
-                except Exception as media_err:
-                    print(f"  [MEDIA ERROR] {media_err}")
-                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
-            else:
+                        # For images, use force_document=False to send as photo preview
+                        await asyncio.wait_for(
+                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
+                            timeout=30
+                        )
+                    else:
+                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+            except Exception as media_err:
+                print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+        else:
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
 
-            return True, None, meta
-        except asyncio.TimeoutError:
-            return False, "Request timeout", meta
-        except UserPrivacyRestrictedError as e:
-            return False, f"UserPrivacyRestrictedError: {e}", meta
-        except FloodWaitError as e:
-            return False, f"FloodWaitError: {e.seconds}s wait required (caused by {e.request.__class__.__name__ if e.request else 'unknown'})", meta
-        except Exception as e:
-            error_str = str(e)
-            error_type = type(e).__name__
-            if "No user has" in error_str:
-                return False, f"{error_type}: Username not found - {error_str}", meta
-            if "private" in error_str.lower():
-                return False, f"{error_type}: Private profile - {error_str}", meta
-            return False, f"{error_type}: {error_str}", meta
+        return True, None, meta
+    except asyncio.TimeoutError:
+        return False, "Request timeout", meta
+    except UserPrivacyRestrictedError as e:
+        return False, f"UserPrivacyRestrictedError: {e}", meta
+    except FloodWaitError as e:
+        return False, f"FloodWaitError: {e.seconds}s wait required (caused by {e.request.__class__.__name__ if e.request else 'unknown'})", meta
+    except Exception as e:
+        error_str = str(e)
+        error_type = type(e).__name__
+        if "No user has" in error_str:
+            return False, f"{error_type}: Username not found - {error_str}", meta
+        if "private" in error_str.lower():
+            return False, f"{error_type}: Private profile - {error_str}", meta
+        return False, f"{error_type}: {error_str}", meta
 
 
 async def validate_contact(client: TelegramClient, phone: str):
@@ -640,45 +583,6 @@ async def validate_contact(client: TelegramClient, phone: str):
         raise e
 
 
-async def cleanup_idle_clients():
-    """Disconnect clients that have been idle for too long.
-    This prevents database locking from too many open sessions."""
-    now = time.time()
-    to_remove = []
-    
-    for account_id, last_used in list(client_last_used.items()):
-        if now - last_used > CLIENT_IDLE_TIMEOUT:
-            to_remove.append(account_id)
-    
-    # Also check if we have too many cached clients
-    if len(active_clients) > MAX_CACHED_CLIENTS:
-        # Remove oldest clients first
-        sorted_clients = sorted(client_last_used.items(), key=lambda x: x[1])
-        excess = len(active_clients) - MAX_CACHED_CLIENTS
-        for account_id, _ in sorted_clients[:excess]:
-            if account_id not in to_remove:
-                to_remove.append(account_id)
-    
-    for account_id in to_remove:
-        await disconnect_client(account_id)
-    
-    if to_remove:
-        print(f"  [CLEANUP] Disconnected {len(to_remove)} idle clients")
-
-
-async def disconnect_client(account_id: str):
-    """Disconnect and remove a specific client from cache.
-    Call this when done with a client to free up the session."""
-    if account_id in active_clients:
-        try:
-            client = active_clients[account_id]
-            await asyncio.wait_for(client.disconnect(), timeout=5)
-        except:
-            pass
-        del active_clients[account_id]
-    client_last_used.pop(account_id, None)
-
-
 async def shutdown_all():
     """Cleanup all clients on shutdown"""
     print("\n[SHUTDOWN] Disconnecting all clients...")
@@ -688,5 +592,4 @@ async def shutdown_all():
         except:
             pass
     active_clients.clear()
-    client_last_used.clear()
     print("[OK] All clients disconnected.")

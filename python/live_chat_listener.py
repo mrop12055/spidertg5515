@@ -17,8 +17,7 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, active_clients, cleanup_idle_clients, client_last_used,
-    ensure_client_lock,
+    send_message, shutdown_all, active_clients
 )
 
 # ========== GLOBAL STATE ==========
@@ -272,50 +271,6 @@ async def setup_message_handler(client, account_id: str):
             print(f"    ⚠ Handler error: {e}")
 
 
-async def keepalive_task():
-    """Periodically ping all connected clients to keep them alive"""
-    global RUNNING
-    KEEPALIVE_INTERVAL = 30  # Ping every 30 seconds
-    
-    while RUNNING:
-        await asyncio.sleep(KEEPALIVE_INTERVAL)
-        if not RUNNING:
-            break
-            
-        clients_to_check = list(active_clients.items())
-        if not clients_to_check:
-            continue
-            
-        for account_id, client in clients_to_check:
-            try:
-                if client.is_connected():
-                    # Serialize keepalive with any concurrent send to avoid session DB locks
-                    lock = ensure_client_lock(client)
-                    async with lock:
-                        await asyncio.wait_for(client.get_me(), timeout=10)
-                else:
-                    # Client disconnected, remove from cache so it reconnects
-                    print(f"  ⚠ Client {account_id[:8]}... disconnected, will reconnect")
-                    if account_id in active_clients:
-                        del active_clients[account_id]
-            except asyncio.TimeoutError:
-                print(f"  ⚠ Keepalive timeout for {account_id[:8]}...")
-                # Force reconnect on next task
-                if account_id in active_clients:
-                    try:
-                        await active_clients[account_id].disconnect()
-                    except:
-                        pass
-                    del active_clients[account_id]
-            except Exception as e:
-                error_str = str(e).lower()
-                # Ignore minor errors, but remove client on connection issues
-                if any(x in error_str for x in ["disconnect", "connection", "closed", "reset"]):
-                    print(f"  ⚠ Keepalive error for {account_id[:8]}...: {e}")
-                    if account_id in active_clients:
-                        del active_clients[account_id]
-
-
 async def main_loop():
     """Main live chat loop"""
     global RUNNING
@@ -330,84 +285,67 @@ async def main_loop():
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
     
-    # Start keepalive task in background
-    keepalive = asyncio.create_task(keepalive_task())
-    
-    try:
-        while RUNNING:
-            try:
-                # Get next task - ONLY livechat tasks
-                task = await get_next_task(runner="livechat")
-                task_type = task.get("task", "wait")
-                
-                if task_type == "wait":
-                    # Only connect NEW accounts (skip already connected for speed)
-                    accounts = task.get("accounts", [])
-                    new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
-                    if new_accounts:
-                        # Connect in parallel for faster startup
-                        # Each account carries its own proxy data from the edge function
-                        results = await asyncio.gather(
-                            *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")) for acc in new_accounts],
-                            return_exceptions=True
-                        )
-                        for acc in new_accounts:
-                            if acc.get("id"):
-                                connected_ids.add(acc["id"])
-                    
-                    # Check for disconnected clients and remove from connected_ids
-                    disconnected = [aid for aid in connected_ids if aid not in active_clients]
-                    for aid in disconnected:
-                        connected_ids.discard(aid)
-                    
-                    # No artificial delay - server returns seconds=0 for instant polling
-                    await asyncio.sleep(0.05)  # Tiny sleep to prevent CPU spin
-                elif task_type == "send":
-                    msg = task.get("message", {})
-                    recipient = task.get("recipient")
-                    recipient_tid = task.get("recipient_telegram_id")
-                    account = task.get("account", {})
-                    task_proxy = task.get("proxy")  # Task-level proxy for consistency
-
-                    # Skip profile sync for speed - just get/reuse client connection
-                    client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True, task_proxy=task_proxy)
-                    target = recipient_tid if recipient_tid else recipient
-
-                    if client and target:
-                        print(f"  ⚡ Live reply to {recipient}...")
-
-                        success, error, meta = await send_message(
-                            client, target, msg.get("content", ""),
-                            msg.get("media_url")
-                        )
-
-                        payload = {
-                            "message_id": msg.get("id"),
-                            "success": success,
-                            "error": error,
-                            "campaign_recipient_id": msg.get("campaign_recipient_id"),
-                            "account_id": account.get("id"),
-                        }
-                        if meta:
-                            payload.update(meta)
-
-                        await report_result("send", payload)
-
-                        if success:
-                            print(f"    ✓ Sent!")
-                        else:
-                            print(f"    ✗ Failed: {error}")
-            
-            except Exception as e:
-                print(f"  ⚠ Loop error: {e}")
-                await asyncio.sleep(0.1)
-    finally:
-        # Cancel keepalive task
-        keepalive.cancel()
+    while RUNNING:
         try:
-            await keepalive
-        except asyncio.CancelledError:
-            pass
+            # Get next task - ONLY livechat tasks
+            task = await get_next_task(runner="livechat")
+            task_type = task.get("task", "wait")
+            
+            if task_type == "wait":
+                # Only connect NEW accounts (skip already connected for speed)
+                accounts = task.get("accounts", [])
+                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
+                if new_accounts:
+                    # Connect in parallel for faster startup
+                    # Each account carries its own proxy data from the edge function
+                    results = await asyncio.gather(
+                        *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")) for acc in new_accounts],
+                        return_exceptions=True
+                    )
+                    for acc in new_accounts:
+                        if acc.get("id"):
+                            connected_ids.add(acc["id"])
+                # No artificial delay - server returns seconds=0 for instant polling
+                await asyncio.sleep(0.05)  # Tiny sleep to prevent CPU spin
+            elif task_type == "send":
+                msg = task.get("message", {})
+                recipient = task.get("recipient")
+                recipient_tid = task.get("recipient_telegram_id")
+                account = task.get("account", {})
+                task_proxy = task.get("proxy")  # Task-level proxy for consistency
+
+                # Skip profile sync for speed - just get/reuse client connection
+                client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True, task_proxy=task_proxy)
+                target = recipient_tid if recipient_tid else recipient
+
+                if client and target:
+                    print(f"  ⚡ Live reply to {recipient}...")
+
+                    success, error, meta = await send_message(
+                        client, target, msg.get("content", ""),
+                        msg.get("media_url")
+                    )
+
+                    payload = {
+                        "message_id": msg.get("id"),
+                        "success": success,
+                        "error": error,
+                        "campaign_recipient_id": msg.get("campaign_recipient_id"),
+                        "account_id": account.get("id"),
+                    }
+                    if meta:
+                        payload.update(meta)
+
+                    await report_result("send", payload)
+
+                    if success:
+                        print(f"    ✓ Sent!")
+                    else:
+                        print(f"    ✗ Failed: {error}")
+        
+        except Exception as e:
+            print(f"  ⚠ Loop error: {e}")
+            await asyncio.sleep(0.1)
     
     print("\n⏹ Live chat listener stopped.")
     await shutdown_all()

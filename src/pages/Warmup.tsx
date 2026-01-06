@@ -93,13 +93,6 @@ interface OrphanedAccount {
   inactive_pair_reason: string | null; // "Connection timeout" or "Session expired"
 }
 
-// Interface for today's cycle data per pair
-interface TodayCycleData {
-  account_a_phone: string;
-  account_b_phone: string;
-  cycles_completed_today: number;
-}
-
 export default function Warmup() {
   const [session, setSession] = useState<WarmupSession | null>(null);
   const [pairs, setPairs] = useState<WarmupPair[]>([]);
@@ -109,7 +102,6 @@ export default function Warmup() {
   const [pendingMessages, setPendingMessages] = useState<WarmupMessage[]>([]);
   const [recentErrors, setRecentErrors] = useState<WarmupMessage[]>([]);
   const [unpairedAccounts, setUnpairedAccounts] = useState<UnpairedAccount[]>([]);
-  const [todayCycles, setTodayCycles] = useState<TodayCycleData[]>([]);
   const [stats, setStats] = useState({ 
     totalPairs: 0, 
     messagesScheduled: 0, 
@@ -159,29 +151,6 @@ export default function Warmup() {
         setPairs((pairsData as unknown as WarmupPair[]) || []);
       } else {
         setPairs([]);
-      }
-
-      // Fetch today's cycle data for ALL pairs (regardless of session)
-      const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD format
-      const { data: todayCyclesData } = await supabase
-        .from("warmup_pairs")
-        .select(`
-          cycles_completed_today,
-          account_a:telegram_accounts!warmup_pairs_account_a_id_fkey(phone_number),
-          account_b:telegram_accounts!warmup_pairs_account_b_id_fkey(phone_number)
-        `)
-        .eq("last_cycle_date", today)
-        .gt("cycles_completed_today", 0);
-
-      if (todayCyclesData) {
-        const cycleData: TodayCycleData[] = todayCyclesData.map((p: any) => ({
-          account_a_phone: p.account_a?.phone_number || '',
-          account_b_phone: p.account_b?.phone_number || '',
-          cycles_completed_today: p.cycles_completed_today || 0,
-        }));
-        setTodayCycles(cycleData);
-      } else {
-        setTodayCycles([]);
       }
 
       // Fetch sent messages
@@ -904,14 +873,12 @@ export default function Warmup() {
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5 shrink-0">
-                            {/* Show cycle count (today's completed warmup rounds) - from todayCycles */}
+                            {/* Show cycle count (today's completed warmup rounds) */}
                             {(() => {
-                              // Find today's cycles for this pair from our fetched data
-                              const pairCycleData = todayCycles.find(
-                                c => (c.account_a_phone === account.phone_number && c.account_b_phone === account.pair_phone) ||
-                                     (c.account_b_phone === account.phone_number && c.account_a_phone === account.pair_phone)
-                              );
-                              const pairCycles = pairCycleData?.cycles_completed_today || 0;
+                              const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
+                              const pairCycles = activePair?.last_cycle_date === today 
+                                ? (activePair?.cycles_completed_today || 0) 
+                                : 0;
                               return pairCycles > 0 ? (
                                 <Badge variant="outline" className="shrink-0 text-xs px-1.5 bg-blue-500/10 text-blue-600 border-blue-500/30">
                                   {pairCycles} cycle{pairCycles !== 1 ? 's' : ''}
@@ -1105,28 +1072,9 @@ export default function Warmup() {
                               {isFailed && msg.error_message && (
                                 <p className="text-xs text-red-400 truncate">Reason: {msg.error_message}</p>
                               )}
-                              {(() => {
-                                const scheduledAt = new Date(msg.scheduled_at);
-                                const sentAt = msg.sent_at ? new Date(msg.sent_at) : null;
-                                const delayMin = sentAt
-                                  ? Math.round((sentAt.getTime() - scheduledAt.getTime()) / 60000)
-                                  : null;
-
-                                return (
-                                  <div className="text-xs text-muted-foreground space-y-0.5">
-                                    <p>
-                                      {sentAt
-                                        ? `Sent: ${format(sentAt, "MMM d, HH:mm")}`
-                                        : `Scheduled: ${format(scheduledAt, "MMM d, HH:mm")}`}
-                                    </p>
-                                    {sentAt && delayMin !== null && delayMin >= 5 && (
-                                      <p>
-                                        Scheduled: {format(scheduledAt, "MMM d, HH:mm")} ({delayMin}m delay)
-                                      </p>
-                                    )}
-                                  </div>
-                                );
-                              })()}
+                              <p className="text-xs text-muted-foreground">
+                                {format(new Date(msg.sent_at || msg.scheduled_at), "MMM d, HH:mm")}
+                              </p>
                             </div>
                           );
                         })
@@ -1209,7 +1157,7 @@ export default function Warmup() {
                             </div>
                             <p className="text-sm text-red-400 truncate">{msg.error_message || "Unknown error"}</p>
                             <p className="text-xs text-muted-foreground">
-                              Scheduled: {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
+                              {format(new Date(msg.scheduled_at), "MMM d, HH:mm")}
                             </p>
                           </div>
                         ))

@@ -104,48 +104,21 @@ serve(async (req) => {
       const contactsAlreadyExchanged = previousPairWithContacts && previousPairWithContacts.length > 0;
       console.log(`Contacts already exchanged (from previous pair): ${contactsAlreadyExchanged}`);
 
-      // Check if an active pair already exists for these accounts in THIS session
-      const { data: existingActivePair } = await supabase
+      // Create the pair with contacts_exchanged already set if they've exchanged before
+      const { data: createdPair, error: pairError } = await supabase
         .from("warmup_pairs")
-        .select("*")
-        .eq("session_id", session.id)
-        .or(`and(account_a_id.eq.${accounts[0].id},account_b_id.eq.${accounts[1].id}),and(account_a_id.eq.${accounts[1].id},account_b_id.eq.${accounts[0].id})`)
-        .limit(1)
-        .maybeSingle();
+        .insert({
+          account_a_id: accounts[0].id,
+          account_b_id: accounts[1].id,
+          session_id: session.id,
+          status: "active",
+          contacts_exchanged: contactsAlreadyExchanged, // Carry over from previous pair
+        })
+        .select()
+        .single();
 
-      let createdPair;
-      
-      if (existingActivePair) {
-        // Reuse existing pair - just schedule new messages for it
-        console.log(`Reusing existing pair: ${existingActivePair.id}`);
-        createdPair = existingActivePair;
-        
-        // Update pair status to active if it was completed
-        if (createdPair.status !== 'active') {
-          await supabase
-            .from("warmup_pairs")
-            .update({ status: 'active' })
-            .eq("id", createdPair.id);
-        }
-      } else {
-        // Create the pair with contacts_exchanged already set if they've exchanged before
-        const { data: newPair, error: pairError } = await supabase
-          .from("warmup_pairs")
-          .insert({
-            account_a_id: accounts[0].id,
-            account_b_id: accounts[1].id,
-            session_id: session.id,
-            status: "active",
-            contacts_exchanged: contactsAlreadyExchanged, // Carry over from previous pair
-          })
-          .select()
-          .single();
-
-        if (pairError) {
-          throw new Error(`Failed to create pair: ${pairError.message}`);
-        }
-        createdPair = newPair;
-        console.log(`Created new pair: ${createdPair.id}`);
+      if (pairError) {
+        throw new Error(`Failed to create pair: ${pairError.message}`);
       }
 
       // Get ALL message templates
@@ -157,30 +130,26 @@ serve(async (req) => {
         throw new Error("No message templates found");
       }
 
-      // Get ALL previously used template IDs for this pair (from today's warmup_messages)
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const { data: usedMessagesToday } = await supabase
-        .from("warmup_messages")
-        .select("template_id")
-        .or(`and(sender_account_id.eq.${accounts[0].id},receiver_account_id.eq.${accounts[1].id}),and(sender_account_id.eq.${accounts[1].id},receiver_account_id.eq.${accounts[0].id})`)
-        .not("template_id", "is", null)
-        .gte("created_at", today.toISOString());
+      // Get last used template for this pair (to avoid repetition)
+      const { data: existingPairData } = await supabase
+        .from("warmup_pairs")
+        .select("last_template_id")
+        .or(`and(account_a_id.eq.${accounts[0].id},account_b_id.eq.${accounts[1].id}),and(account_a_id.eq.${accounts[1].id},account_b_id.eq.${accounts[0].id})`)
+        .not("last_template_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1);
 
-      const usedTemplateIds = new Set((usedMessagesToday || []).map((m: any) => m.template_id));
-      console.log(`Templates used today by this pair: ${usedTemplateIds.size}`);
+      const lastUsedTemplateId = existingPairData?.[0]?.last_template_id;
+      console.log(`Last used template for this pair: ${lastUsedTemplateId || 'none'}`);
 
-      // Filter out ALL used templates to ensure random new ones
-      let availableTemplates = templates.filter(t => !usedTemplateIds.has(t.id));
+      // Filter out the last used template and shuffle remaining
+      const availableTemplates = lastUsedTemplateId 
+        ? templates.filter(t => t.id !== lastUsedTemplateId)
+        : templates;
       
-      // If all templates used today, reset and use all (allow repeats)
-      if (availableTemplates.length === 0) {
-        console.log("All templates used today, resetting pool");
-        availableTemplates = templates;
-      }
-      
-      // Shuffle available templates for true randomness
-      const shuffledTemplates = [...availableTemplates].sort(() => Math.random() - 0.5);
+      // If we filtered out the last template and have none left, use all templates
+      const templatesToUse = availableTemplates.length > 0 ? availableTemplates : templates;
+      const shuffledTemplates = [...templatesToUse].sort(() => Math.random() - 0.5);
       
       // Pick a "cycle template" (first template after shuffle) to track
       const cycleTemplateId = shuffledTemplates[0]?.id;
@@ -539,28 +508,26 @@ serve(async (req) => {
         console.log(`Pair ${pair.id}: skipping contact exchange (already done in previous session)`);
       }
 
-      // Get ALL previously used template IDs for this pair TODAY
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const { data: usedMessagesToday } = await supabase
-        .from("warmup_messages")
-        .select("template_id")
-        .or(`and(sender_account_id.eq.${pair.account_a_id},receiver_account_id.eq.${pair.account_b_id}),and(sender_account_id.eq.${pair.account_b_id},receiver_account_id.eq.${pair.account_a_id})`)
-        .not("template_id", "is", null)
-        .gte("created_at", today.toISOString());
+      // Get last used template for this specific pair (to avoid repetition)
+      const pairKey1 = `${pair.account_a_id}-${pair.account_b_id}`;
+      const pairKey2 = `${pair.account_b_id}-${pair.account_a_id}`;
+      const { data: pairHistory } = await supabase
+        .from("warmup_pairs")
+        .select("last_template_id")
+        .or(`and(account_a_id.eq.${pair.account_a_id},account_b_id.eq.${pair.account_b_id}),and(account_a_id.eq.${pair.account_b_id},account_b_id.eq.${pair.account_a_id})`)
+        .not("last_template_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1);
 
-      const usedTemplateIds = new Set((usedMessagesToday || []).map((m: any) => m.template_id));
+      const lastUsedTemplateId = pairHistory?.[0]?.last_template_id;
       
-      // Filter out ALL used templates to ensure random new ones
-      let availableTemplates = templates.filter(t => !usedTemplateIds.has(t.id));
+      // Filter out the last used template and shuffle remaining
+      const availableTemplates = lastUsedTemplateId 
+        ? templates.filter(t => t.id !== lastUsedTemplateId)
+        : templates;
       
-      // If all templates used today, reset and use all (allow repeats)
-      if (availableTemplates.length === 0) {
-        availableTemplates = templates;
-      }
-      
-      // Shuffle available templates for true randomness
-      const shuffledTemplates = [...availableTemplates].sort(() => Math.random() - 0.5);
+      const templatesToUse = availableTemplates.length > 0 ? availableTemplates : templates;
+      const shuffledTemplates = [...templatesToUse].sort(() => Math.random() - 0.5);
       
       // Pick a "cycle template" (first template after shuffle) to track
       const cycleTemplateId = shuffledTemplates[0]?.id;

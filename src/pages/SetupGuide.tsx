@@ -23,10 +23,10 @@ TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
-  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed + Idle Cleanup) ==========
+  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed) ==========
   const clientManagerPy = `"""
-TelegramCRM - Client Manager (Optimized with Idle Cleanup)
-Fast connections with retry logic, timeouts, proxy support, and automatic idle client cleanup
+TelegramCRM - Client Manager (Optimized)
+Fast connections with retry logic, timeouts, and proxy support
 """
 
 import os
@@ -35,7 +35,6 @@ import tempfile
 import asyncio
 import httpx
 import socks
-import time
 from typing import Dict, Optional
 
 from telethon import TelegramClient
@@ -46,49 +45,19 @@ from fingerprint_generator import generate_fingerprint
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
-client_last_used: Dict[str, float] = {}  # Track when each client was last used
-
-# Telethon session files are SQLite; concurrent use of the same client can cause "database is locked".
-# We serialize all per-client operations with an asyncio.Lock.
-
-def ensure_client_lock(client: TelegramClient):
-    lock = getattr(client, "_op_lock", None)
-    if lock is None:
-        lock = asyncio.Lock()
-        try:
-            setattr(client, "_op_lock", lock)
-        except:
-            pass
-    return lock
 
 # Speed settings
 CONNECTION_TIMEOUT = 30
 CONNECTION_RETRIES = 3
 RETRY_DELAY = 2
 
-# Idle client cleanup settings
-CLIENT_IDLE_TIMEOUT = 60  # Disconnect clients idle for 60 seconds
-MAX_CACHED_CLIENTS = 50   # Maximum number of cached clients
-
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
     session_path = os.path.join(SESSION_FOLDER, phone_number.replace("+", ""))
-    session_file = session_path + ".session"
     try:
         session_bytes = base64.b64decode(base64_data)
-        with open(session_file, "wb") as f:
+        with open(session_path + ".session", "wb") as f:
             f.write(session_bytes)
-        
-        # Enable WAL mode to prevent database locking between runners
-        try:
-            import sqlite3
-            conn = sqlite3.connect(session_file, timeout=30)
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=30000")
-            conn.close()
-        except:
-            pass
-        
         return session_path
     except Exception as e:
         print(f"  [ERROR] Session decode: {e}")
@@ -137,17 +106,11 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
     return False
 
 
-async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None) -> Optional[TelegramClient]:
-    """Create or retrieve a Telegram client. Supports optional task-level proxy override."""
+async def get_or_create_client(account: dict, setup_handler=None) -> Optional[TelegramClient]:
     account_id = account["id"]
     
-    # Check if we need a fresh client due to proxy change
-    use_task_proxy = task_proxy and task_proxy.get("host")
-    cache_key = f"{account_id}_{task_proxy.get('id') if use_task_proxy else 'default'}"
-    
-    if cache_key in active_clients:
-        client = active_clients[cache_key]
-        client_last_used[cache_key] = time.time()  # Update last used time
+    if account_id in active_clients:
+        client = active_clients[account_id]
         try:
             if client.is_connected():
                 if setup_handler and not getattr(client, "_handler", False):
@@ -155,7 +118,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                     setattr(client, "_handler", True)
                 return client
         except:
-            del active_clients[cache_key]
+            del active_clients[account_id]
     
     session_data = account.get("session_data")
     if not session_data:
@@ -171,9 +134,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     lang_code = account.get("lang_code") or "en"
     system_lang_code = account.get("system_lang_code") or "en-US"
     
-    if device_model and system_version:
-        print(f"  [FP] Using saved: {device_model} ({system_version})")
-    else:
+    if not device_model or not system_version:
         fp = generate_fingerprint()
         device_model = fp["device_model"]
         system_version = fp["system_version"]
@@ -190,24 +151,9 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             "system_lang_code": system_lang_code
         })
     
-    # Priority: task_proxy > account.proxy
-    proxy = None
-    if use_task_proxy:
-        ptype = (task_proxy.get("proxy_type") or "socks5").lower()
-        proxy_types = {"http": 1, "https": 1, "socks4": 2, "socks5": 3}
-        proxy = (
-            proxy_types.get(ptype, 3),
-            task_proxy.get("host"),
-            int(task_proxy.get("port", 1080)),
-            True,
-            task_proxy.get("username"),
-            task_proxy.get("password")
-        )
-        print(f"  [PROXY] Task proxy: {task_proxy.get('host')}:{task_proxy.get('port')}")
-    else:
-        proxy = get_proxy_settings(account)
-        if proxy:
-            print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
+    proxy = get_proxy_settings(account)
+    if proxy:
+        print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
     
     try:
         api_id = account.get("api_id") or TELEGRAM_API_ID
@@ -227,7 +173,6 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             auto_reconnect=True,
             request_retries=3
         )
-        ensure_client_lock(client)
         
         print(f"  [CONNECT] {account['phone_number']}...")
         if not await connect_with_retry(client):
@@ -240,7 +185,6 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             return None
         
         # Check if account is deleted/banned
-        me = None  # Initialize to prevent unbound variable error
         try:
             me = await asyncio.wait_for(client.get_me(), timeout=15)
             if not me:
@@ -257,18 +201,12 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                 print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
                 await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)})
                 return None
-            else:
-                # Other error - return None to prevent using undefined 'me'
-                print(f"  [ERROR] get_me failed: {account['phone_number']}: {me_err}")
-                await report_result("account_disconnected", {"account_id": account_id, "reason": f"get_me failed: {me_err}"})
-                return None
         
         if setup_handler:
             await setup_handler(client, account_id)
             setattr(client, "_handler", True)
         
-        active_clients[cache_key] = client
-        client_last_used[cache_key] = time.time()  # Track when client was created
+        active_clients[account_id] = client
         
         # Fast mode: skip profile if cached
         if account.get("first_name") or account.get("username"):
@@ -310,21 +248,6 @@ async def get_next_task(runner: str = None) -> dict:
         return {"task": "wait", "seconds": 1}
 
 
-async def get_batch_tasks(runner: str = "warmup_chat", batch_size: int = 200) -> dict:
-    """Fetch batch of tasks for parallel processing"""
-    try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{BACKEND_URL}/get-batch-tasks",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json={"runner": runner, "batch_size": batch_size}
-            )
-            return resp.json()
-    except Exception as e:
-        print(f"  [ERROR] get_batch_tasks: {e}")
-        return {"tasks": [], "delay_after": 5}
-
-
 async def report_result(task_type: str, result: dict):
     asyncio.create_task(_report(task_type, result))
 
@@ -342,98 +265,96 @@ async def _report(task_type: str, result: dict):
 
 
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
-    lock = ensure_client_lock(client)
-    async with lock:
-        try:
-            entity = None
-            if isinstance(recipient, int):
-                entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)
-            else:
-                recipient_str = str(recipient or "").strip()
-                if recipient_str.isdigit():
-                    entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=10)
-                elif recipient_str.startswith("@"): 
-                    entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=15)
-                else:
-                    from telethon.tl.functions.contacts import ImportContactsRequest
-                    from telethon.tl.types import InputPhoneContact
-                    import random
-
-                    phone = recipient_str if recipient_str.startswith("+") else "+" + recipient_str
-                    try:
-                        entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
-                    except:
-                        pass
-
-                    if not entity:
-                        contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
-                        if result.users:
-                            entity = result.users[0]
-                        elif result.retry_contacts:
-                            return False, "Privacy restricted"
-
+    try:
+        entity = None
+        if recipient.startswith("@"):
+            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=15)
+        else:
+            from telethon.tl.functions.contacts import ImportContactsRequest
+            from telethon.tl.types import InputPhoneContact
+            import random
+            
+            phone = recipient if recipient.startswith("+") else "+" + recipient
+            try:
+                entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+            except:
+                pass
+            
             if not entity:
-                return False, "User not found on Telegram"
+                contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+                if result.users:
+                    entity = result.users[0]
+                elif result.retry_contacts:
+                    return False, "Privacy restricted"
+        
+        if not entity:
+            return False, "User not found on Telegram"
+        
+        # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected
+        formatted_content = content
+        parse_mode = None
+        try:
+            import re
+            url_re = re.compile(r'(https?://[^\\s<>"\\']+)')
+            if content and url_re.search(content):
+                parse_mode = 'md'
 
-            # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected
+                def _to_md_link(m):
+                    url = m.group(1)
+                    return f"[{url}]({url})"
+
+                formatted_content = url_re.sub(_to_md_link, content)
+                print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
+        except Exception as e:
+            print(f"  [LINK ERROR] {e}")
             formatted_content = content
             parse_mode = None
+
+        if media_url:
             try:
-                import re
-                url_re = re.compile(r"(https?://[^\\s<>\\\"']+)")
-                if content and url_re.search(content):
-                    parse_mode = 'md'
-
-                    def _to_md_link(m):
-                        url = m.group(1)
-                        return f"[{url}]({url})"
-
-                    formatted_content = url_re.sub(_to_md_link, content)
-                    print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
-            except Exception as e:
-                print(f"  [LINK ERROR] {e}")
-                formatted_content = content
-                parse_mode = None
-
-            if media_url:
-                try:
-                    import io
-                    async with httpx.AsyncClient(timeout=30) as http:
-                        resp = await http.get(media_url)
-                        if resp.status_code == 200:
-                            from urllib.parse import urlparse, unquote
-                            url_path = urlparse(media_url).path
-                            filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
-
-                            content_type = resp.headers.get("content-type", "").lower()
-                            ext = filename.split(".")[-1].lower() if "." in filename else ""
-                            is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
-
-                            file_bytes = io.BytesIO(resp.content)
-                            file_bytes.name = filename if "." in filename else "photo.jpg"
-
-                            await asyncio.wait_for(
-                                client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                                timeout=30
-                            )
-                        else:
-                            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
-                except Exception as media_err:
-                    print(f"  [MEDIA ERROR] {media_err}")
-                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
-            else:
+                import io
+                async with httpx.AsyncClient(timeout=30) as http:
+                    resp = await http.get(media_url)
+                    if resp.status_code == 200:
+                        # Determine filename from URL to help Telethon classify the file
+                        from urllib.parse import urlparse, unquote
+                        url_path = urlparse(media_url).path
+                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+                        
+                        # Check if it's an image based on extension or content-type
+                        content_type = resp.headers.get("content-type", "").lower()
+                        ext = filename.split(".")[-1].lower() if "." in filename else ""
+                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+                        
+                        # Wrap bytes in BytesIO with a name so Telethon knows the file type
+                        file_bytes = io.BytesIO(resp.content)
+                        file_bytes.name = filename if "." in filename else f"photo.jpg"
+                        
+                        print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
+                        
+                        # For images, use force_document=False to send as photo preview
+                        await asyncio.wait_for(
+                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
+                            timeout=30
+                        )
+                    else:
+                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+            except Exception as media_err:
+                print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
-
-            return True, None
-        except asyncio.TimeoutError:
-            return False, "Request timeout"
-        except UserPrivacyRestrictedError:
-            return False, "Privacy restricted"
-        except FloodWaitError as e:
-            return False, f"Rate limited: {e.seconds}s"
-        except Exception as e:
-            return False, str(e)
+        else:
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+        
+        return True, None
+    except asyncio.TimeoutError:
+        return False, "Request timeout"
+    except UserPrivacyRestrictedError:
+        return False, "Privacy restricted"
+    except FloodWaitError as e:
+        return False, f"Rate limited: {e.seconds}s"
+    except Exception as e:
+        return False, str(e)
 
 
 async def validate_contact(client: TelegramClient, phone: str):
@@ -451,56 +372,6 @@ async def validate_contact(client: TelegramClient, phone: str):
         return False, None, None
 
 
-async def cleanup_idle_clients():
-    """Disconnect clients that have been idle for too long to prevent DB locking"""
-    now = time.time()
-    clients_to_remove = []
-    
-    for cache_key, last_used in list(client_last_used.items()):
-        if now - last_used > CLIENT_IDLE_TIMEOUT:
-            clients_to_remove.append(cache_key)
-    
-    # Also cleanup if we have too many clients
-    if len(active_clients) > MAX_CACHED_CLIENTS:
-        sorted_by_usage = sorted(client_last_used.items(), key=lambda x: x[1])
-        excess = len(active_clients) - MAX_CACHED_CLIENTS
-        for cache_key, _ in sorted_by_usage[:excess]:
-            if cache_key not in clients_to_remove:
-                clients_to_remove.append(cache_key)
-    
-    for cache_key in clients_to_remove:
-        try:
-            if cache_key in active_clients:
-                client = active_clients[cache_key]
-                await asyncio.wait_for(client.disconnect(), timeout=5)
-                del active_clients[cache_key]
-            if cache_key in client_last_used:
-                del client_last_used[cache_key]
-            print(f"  [CLEANUP] Disconnected idle client: {cache_key[:16]}...")
-        except Exception as e:
-            print(f"  [WARN] Cleanup error for {cache_key[:16]}: {e}")
-            if cache_key in active_clients:
-                del active_clients[cache_key]
-            if cache_key in client_last_used:
-                del client_last_used[cache_key]
-
-
-async def disconnect_client(account_id: str):
-    """Explicitly disconnect a specific client"""
-    keys_to_remove = [k for k in active_clients.keys() if k.startswith(account_id)]
-    for cache_key in keys_to_remove:
-        try:
-            client = active_clients.get(cache_key)
-            if client:
-                await asyncio.wait_for(client.disconnect(), timeout=5)
-            if cache_key in active_clients:
-                del active_clients[cache_key]
-            if cache_key in client_last_used:
-                del client_last_used[cache_key]
-        except:
-            pass
-
-
 async def shutdown_all():
     print("\\n[SHUTDOWN] Disconnecting...")
     for account_id, client in list(active_clients.items()):
@@ -509,7 +380,6 @@ async def shutdown_all():
         except:
             pass
     active_clients.clear()
-    client_last_used.clear()
     print("[OK] Done.")
 `;
 
@@ -561,11 +431,10 @@ import signal
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, validate_contact, shutdown_all, cleanup_idle_clients
+    send_message, validate_contact, shutdown_all
 )
 
 RUNNING = True
-CLEANUP_INTERVAL = 30  # Run cleanup every 30 messages
 
 def signal_handler(sig, frame):
     global RUNNING
@@ -581,8 +450,6 @@ async def main_loop():
     print("  Campaign Runner")
     print("  [Messages + Validation]")
     print("=" * 50)
-    
-    message_count = 0
     
     while RUNNING:
         try:
@@ -615,11 +482,6 @@ async def main_loop():
                         "account_id": account.get("id")
                     })
                     print(f"    {'[OK]' if success else '[FAIL] ' + str(error)}")
-                    
-                    # Periodic cleanup
-                    message_count += 1
-                    if message_count % CLEANUP_INTERVAL == 0:
-                        await cleanup_idle_clients()
             
             elif task_type == "validate":
                 recipients = task.get("recipients", [])
@@ -652,7 +514,6 @@ if __name__ == "__main__":
   const livechatRunnerPy = `#!/usr/bin/env python3
 """
 LiveChat Runner - Handles incoming messages and live chat replies
-With keepalive to prevent idle disconnections
 """
 import asyncio
 import signal
@@ -664,7 +525,7 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, active_clients, cleanup_idle_clients, ensure_client_lock
+    send_message, shutdown_all
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
@@ -757,16 +618,23 @@ async def setup_message_handler(client, account_id: str):
             if getattr(sender, 'bot', False):
                 return
             
-            # FILTER: Only process messages from contacts (people in contact list)
-            if not getattr(sender, 'contact', False):
-                return  # Skip - sender is not in contact list
-            
             # Get sender info for matching
             sender_username = getattr(sender, 'username', None)
             sender_phone = None
             if hasattr(sender, 'phone') and sender.phone:
                 sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
             sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
+            
+            # Multi-strategy conversation check
+            conversation_exists = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
+            if not conversation_exists:
+                # Rate-limited logging for ignored messages
+                if not hasattr(handler, '_ignored_log') or time.time() - handler._ignored_log.get(sender.id, 0) > 60:
+                    if not hasattr(handler, '_ignored_log'):
+                        handler._ignored_log = {}
+                    handler._ignored_log[sender.id] = time.time()
+                    print(f"    [IGNORED] {sender_name} (id={sender.id}): no campaign conversation")
+                return
             
             content = event.message.text or "[Media]"
             media_url = None
@@ -830,117 +698,52 @@ async def setup_message_handler(client, account_id: str):
             print(f"  [WARN] Handler error: {e}")
 
 
-async def keepalive_task():
-    """Periodically ping all connected clients to keep them alive"""
-    global RUNNING
-    KEEPALIVE_INTERVAL = 30  # Ping every 30 seconds
-    
-    while RUNNING:
-        await asyncio.sleep(KEEPALIVE_INTERVAL)
-        if not RUNNING:
-            break
-            
-        clients_to_check = list(active_clients.items())
-        if not clients_to_check:
-            continue
-            
-        for account_id, client in clients_to_check:
-            try:
-                if client.is_connected():
-                    # Serialize keepalive with any concurrent send to avoid session DB locks
-                    lock = ensure_client_lock(client)
-                    async with lock:
-                        await asyncio.wait_for(client.get_me(), timeout=10)
-                else:
-                    # Client disconnected, remove from cache
-                    print(f"  [WARN] Client {account_id[:8]}... disconnected, will reconnect")
-                    if account_id in active_clients:
-                        del active_clients[account_id]
-            except asyncio.TimeoutError:
-                print(f"  [WARN] Keepalive timeout for {account_id[:8]}...")
-                if account_id in active_clients:
-                    try:
-                        await active_clients[account_id].disconnect()
-                    except:
-                        pass
-                    del active_clients[account_id]
-            except Exception as e:
-                error_str = str(e).lower()
-                if any(x in error_str for x in ["disconnect", "connection", "closed", "reset"]):
-                    print(f"  [WARN] Keepalive error for {account_id[:8]}...: {e}")
-                    if account_id in active_clients:
-                        del active_clients[account_id]
-
-
 async def main_loop():
-    global RUNNING
     print("=" * 50)
-    print("  LiveChat Runner (with Keepalive)")
+    print("  LiveChat Runner")
     print("  [Incoming + Replies]")
     print("=" * 50)
     
-    connected_ids = set()  # Track connected accounts
+    connected_ids = set()  # Track connected accounts to avoid redundant work
     
-    # Start keepalive task in background
-    keepalive = asyncio.create_task(keepalive_task())
-    
-    try:
-        while RUNNING:
-            try:
-                task = await get_next_task(runner="livechat")
-                task_type = task.get("task", "wait")
-                
-                if task_type == "wait":
-                    accounts = task.get("accounts", [])
-                    # Only connect NEW accounts (skip already connected)
-                    new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
-                    if new_accounts:
-                        # Connect in parallel for speed
-                        results = await asyncio.gather(
-                            *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")) for acc in new_accounts],
-                            return_exceptions=True
-                        )
-                        for acc in new_accounts:
-                            if acc.get("id"):
-                                connected_ids.add(acc["id"])
-                    
-                    # Check for disconnected clients and remove from connected_ids
-                    disconnected = [aid for aid in connected_ids if aid not in active_clients]
-                    for aid in disconnected:
-                        connected_ids.discard(aid)
-                    
-                    await asyncio.sleep(0.05)  # Tiny sleep to prevent CPU spin
-                
-                elif task_type == "send":
-                    msg = task.get("message", {})
-                    recipient = task.get("recipient")
-                    recipient_tid = task.get("recipient_telegram_id")
-                    account = task.get("account", {})
-                    task_proxy = task.get("proxy")
-                    
-                    client = await get_or_create_client(account, setup_handler=setup_message_handler, task_proxy=task_proxy)
-                    target = recipient_tid if recipient_tid else recipient
-                    
-                    if client and target:
-                        print(f"  [REPLY] To {recipient}...")
-                        success, error = await send_message(client, target, msg.get("content", ""), msg.get("media_url"))
-                        await report_result("send", {
-                            "message_id": msg.get("id"),
-                            "success": success,
-                            "error": error,
-                            "account_id": account.get("id")
-                        })
-            
-            except Exception as e:
-                print(f"  [ERROR] {e}")
-                await asyncio.sleep(0.5)
-    finally:
-        # Cancel keepalive task
-        keepalive.cancel()
+    while RUNNING:
         try:
-            await keepalive
-        except asyncio.CancelledError:
-            pass
+            task = await get_next_task(runner="livechat")
+            task_type = task.get("task", "wait")
+            
+            if task_type == "wait":
+                accounts = task.get("accounts", [])
+                # Only connect NEW accounts (skip already connected)
+                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
+                if new_accounts:
+                    # Connect in parallel for speed
+                    results = await asyncio.gather(
+                        *[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts],
+                        return_exceptions=True
+                    )
+                    for acc in new_accounts:
+                        if acc.get("id"):
+                            connected_ids.add(acc["id"])
+                # No artificial delay - server returns seconds=0 for instant polling
+            
+            elif task_type == "send":
+                msg = task.get("message", {})
+                recipient = task.get("recipient")
+                account = task.get("account", {})
+                client = await get_or_create_client(account, setup_handler=setup_message_handler)
+                if client and recipient:
+                    print(f"  [REPLY] To {recipient}...")
+                    success, error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+                    await report_result("send", {
+                        "message_id": msg.get("id"),
+                        "success": success,
+                        "error": error,
+                        "account_id": account.get("id")
+                    })
+        
+        except Exception as e:
+            print(f"  [ERROR] {e}")
+            await asyncio.sleep(0.5)
     
     await shutdown_all()
 
@@ -1242,40 +1045,23 @@ if __name__ == "__main__":
   // ========== 7. WARMUP_RUNNER.PY ==========
   const warmupRunnerPy = `#!/usr/bin/env python3
 """
-TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)
-===================================================
-Handles 14-day account warm-up tasks with PARALLEL processing:
-- Join channels
-- View content
-- Send reactions
-- Profile updates
-- Build activity history
-- 1-to-1 warmup chat between paired accounts (PARALLEL across pairs)
-
-Each account maintains human-like timing independently.
-
-Run: python warmup_runner.py
-Stop: Ctrl+C
+Warmup Runner - Handles warmup chat (1-to-1 pair conversations), join channels, reactions, bio updates
 """
 import asyncio
 import signal
 import random
 
 from client_manager import (
-    get_or_create_client, get_next_task, get_batch_tasks, report_result, shutdown_all, cleanup_idle_clients
+    get_or_create_client, get_next_task, report_result, shutdown_all
 )
 
-# ========== GLOBAL STATE ==========
 RUNNING = True
-PARALLEL_BATCH_SIZE = 200  # Process up to 200 pairs simultaneously
-
-WARMUP_CHANNELS = ["telegram", "durov", "TelegramTips", "android", "ios"]
-REACTIONS = ["👍", "❤️", "🔥", "👏", "😊", "🎉", "💯", "⭐"]
-
+WARMUP_CHANNELS = ["telegram", "durov", "tginfo", "techcrunch"]
+REACTIONS = ["👍", "❤️", "🔥", "👏", "😂", "🎉", "💯", "⭐"]
 
 def signal_handler(sig, frame):
     global RUNNING
-    print("\\n⏹ Stop signal received...")
+    print("\\n[STOP] Shutting down...")
     RUNNING = False
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -1288,7 +1074,12 @@ async def add_contact(client, phone, first_name, last_name=""):
         from telethon.tl.functions.contacts import ImportContactsRequest
         from telethon.tl.types import InputPhoneContact
         
-        contact = InputPhoneContact(client_id=0, phone=phone, first_name=first_name, last_name=last_name)
+        contact = InputPhoneContact(
+            client_id=0,
+            phone=phone,
+            first_name=first_name,
+            last_name=last_name
+        )
         result = await client(ImportContactsRequest([contact]))
         if result.imported:
             return True, phone, None
@@ -1319,7 +1110,7 @@ async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_
             except:
                 pass
         
-        # Fallback to phone number
+        # Fallback to phone number - use actual name
         if not user:
             contact = InputPhoneContact(
                 client_id=random.randint(0, 999999),
@@ -1354,298 +1145,209 @@ async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_
 async def join_channel(client, channel_username=None):
     try:
         from telethon.tl.functions.channels import JoinChannelRequest
-        channel = channel_username or random.choice(WARMUP_CHANNELS)
-        entity = await client.get_entity(channel)
+        if not channel_username:
+            channel_username = random.choice(WARMUP_CHANNELS)
+        entity = await client.get_entity(channel_username)
         await client(JoinChannelRequest(entity))
-        await asyncio.sleep(random.uniform(1, 3))
-        return True, channel, None
+        return True, channel_username, None
     except Exception as e:
-        error_msg = str(e).lower()
-        if "already" in error_msg or "participant" in error_msg:
-            return True, channel_username, "Already joined"
         return False, channel_username, str(e)
 
 
 async def view_channel_messages(client, channel_username=None):
     try:
-        from telethon.tl.functions.messages import GetHistoryRequest, ReadHistoryRequest
-        channel = channel_username or random.choice(WARMUP_CHANNELS)
-        entity = await client.get_entity(channel)
-        history = await client(GetHistoryRequest(peer=entity, limit=20, offset_date=None, offset_id=0, max_id=0, min_id=0, add_offset=0, hash=0))
-        if history.messages:
-            try:
-                await client(ReadHistoryRequest(peer=entity, max_id=history.messages[0].id))
-            except:
-                pass
-        await asyncio.sleep(random.uniform(2, 5))
-        return True, channel, len(history.messages) if history.messages else 0
+        if not channel_username:
+            channel_username = random.choice(WARMUP_CHANNELS)
+        entity = await client.get_entity(channel_username)
+        messages = await client.get_messages(entity, limit=10)
+        if messages:
+            await client.send_read_acknowledge(entity, messages[-1])
+        return True, len(messages), None
     except Exception as e:
-        return False, channel_username, str(e)
+        return False, 0, str(e)
 
 
 async def send_reaction(client, channel_username=None):
     try:
         from telethon.tl.functions.messages import SendReactionRequest
         from telethon.tl.types import ReactionEmoji
-        channel = channel_username or random.choice(WARMUP_CHANNELS)
-        entity = await client.get_entity(channel)
-        messages = await client.get_messages(entity, limit=10)
+        if not channel_username:
+            channel_username = random.choice(WARMUP_CHANNELS)
+        entity = await client.get_entity(channel_username)
+        messages = await client.get_messages(entity, limit=5)
         if messages:
             msg = random.choice(messages)
             reaction = random.choice(REACTIONS)
-            try:
-                await client(SendReactionRequest(peer=entity, msg_id=msg.id, reaction=[ReactionEmoji(emoticon=reaction)]))
-                await asyncio.sleep(random.uniform(1, 2))
-                return True, channel, reaction
-            except Exception as e:
-                return True, channel, f"Viewed (reactions disabled)"
-        return True, channel, "No messages to react to"
+            await client(SendReactionRequest(
+                peer=entity,
+                msg_id=msg.id,
+                reaction=[ReactionEmoji(emoticon=reaction)]
+            ))
+            return True, reaction, None
     except Exception as e:
-        return False, channel_username, str(e)
+        return False, None, str(e)
+    return False, None, "No messages"
 
 
 async def update_profile_bio(client, bio=None):
     try:
         from telethon.tl.functions.account import UpdateProfileRequest
-        bios = ["✨", "🌟", "Life is good", "Happy days", "Living my best life", ""]
-        new_bio = bio or random.choice(bios)
-        await client(UpdateProfileRequest(about=new_bio))
-        return True, new_bio, None
+        if not bio:
+            bios = ["🚀", "✨", "💫", "🌟", "⚡", "🔥", "💪", "🎯"]
+            bio = random.choice(bios)
+        await client(UpdateProfileRequest(about=bio))
+        return True, None
     except Exception as e:
-        return False, None, str(e)
-
-
-async def process_single_task(task: dict) -> dict:
-    """Process a single warmup task with full human-like timing.
-    IMPORTANT: This function is fully isolated - any exception here
-    only affects this task, never crashes the whole runner.
-    """
-    task_type = task.get("task", "unknown")
-    task_id = task.get("task_id")
-    account = task.get("account", {})
-    task_data = task.get("task_data", {})
-    pair_id = task.get("pair_id")
-    is_cycle_last = task.get("is_cycle_last", False)
-    
-    phone = account.get("phone_number", "Unknown")
-    
-    try:
-        task_proxy = account.get("proxy")
-        client = await get_or_create_client(account, task_proxy=task_proxy)
-        
-        if not client:
-            error_msg = "Could not connect client - proxy may be down or expired"
-            await report_result("warmup_chat", {
-                "task_id": task_id,
-                "pair_id": pair_id,
-                "account_id": account.get("id"),
-                "success": False,
-                "error": error_msg,
-                "error_type": "proxy_error",
-                "is_cycle_last": is_cycle_last,
-            })
-            return {"task_id": task_id, "success": False, "error": error_msg}
-        
-        if task_type == "warmup_add_contact":
-            target_phone = task_data.get("phone") or task_data.get("recipient_phone")
-            first_name = task_data.get("first_name", "Friend")
-            display_phone = target_phone[:8] + "..." if target_phone and len(target_phone) > 8 else target_phone
-            print(f"  👤 [{phone}] Saving contact: {display_phone}...")
-            
-            success, added_phone, error = await add_contact(client, target_phone, first_name)
-            await report_result("warmup_chat", {
-                "task_id": task_id,
-                "pair_id": pair_id,
-                "account_id": account.get("id"),
-                "success": success,
-                "error": error,
-                "message_type": "add_contact",
-                "is_cycle_last": is_cycle_last,
-            })
-            print(f"    {'✓' if success else '✗'} Contact saved")
-            return {"task_id": task_id, "success": success, "error": error}
-        
-        elif task_type == "warmup_chat":
-            recipient_phone = task_data.get("recipient_phone")
-            recipient_telegram_id = task_data.get("recipient_telegram_id")
-            recipient_username = task_data.get("recipient_username")
-            recipient_first_name = task_data.get("first_name")
-            message = task_data.get("message", "Hey! 👋")
-            
-            display_phone = recipient_phone[:8] + "..." if recipient_phone and len(recipient_phone) > 8 else recipient_phone
-            cycle_indicator = " [LAST]" if is_cycle_last else ""
-            print(f"  🔥 [{phone}] Warmup chat to {display_phone}{cycle_indicator}...")
-            
-            success, error = await send_warmup_chat(
-                client, recipient_phone, message, recipient_telegram_id, recipient_username, recipient_first_name
-            )
-            await report_result("warmup_chat", {
-                "task_id": task_id,
-                "pair_id": pair_id,
-                "account_id": account.get("id"),
-                "success": success,
-                "error": error,
-                "message_type": "text",
-                "is_cycle_last": is_cycle_last,
-            })
-            
-            msg_preview = message[:30] + "..." if len(message) > 30 else message
-            print(f"    {'✓' if success else '✗'} {msg_preview}")
-            return {"task_id": task_id, "success": success, "error": error}
-        
-        else:
-            print(f"  ❓ Unknown task type: {task_type}")
-            return {"task_id": task_id, "success": False, "error": f"Unknown task type: {task_type}"}
-    
-    except Exception as e:
-        error_str = str(e)
-        error_type = "unknown"
-        error_lower = error_str.lower()
-        if any(x in error_lower for x in ["proxy", "socks", "connection refused", "unreachable"]):
-            error_type = "proxy_error"
-        elif any(x in error_lower for x in ["timeout", "timed out"]):
-            error_type = "connection_error"
-        
-        print(f"  ⚠ Task error [{phone}]: {e}")
-        
-        try:
-            await report_result("warmup_chat", {
-                "task_id": task_id,
-                "pair_id": pair_id,
-                "account_id": account.get("id"),
-                "success": False,
-                "error": error_str,
-                "error_type": error_type,
-                "is_cycle_last": is_cycle_last,
-            })
-        except:
-            pass
-        
-        return {"task_id": task_id, "success": False, "error": error_str}
-
-
-async def process_regular_warmup_task(task: dict):
-    """Process regular warmup tasks (channel joins, reactions, etc.)"""
-    task_type = task.get("task", "wait")
-    if task_type == "wait":
-        return
-    
-    task_id = task.get("task_id")
-    account = task.get("account", {})
-    task_data = task.get("task_data", {})
-    task_proxy = task.get("proxy")
-    
-    client = await get_or_create_client(account, task_proxy=task_proxy)
-    if not client:
-        await report_result("warmup", {"task_id": task_id, "success": False, "error": "Could not connect client"})
-        return
-    
-    phone = account.get("phone_number", "Unknown")
-    
-    if task_type == "warmup_join_channel":
-        channel = task_data.get("channel_username") or task.get("channel_username")
-        print(f"  📺 Joining channel for {phone}...")
-        success, channel_name, error = await join_channel(client, channel)
-        await report_result("warmup", {"task_id": task_id, "task_type": "join_channel", "account_id": account.get("id"), "success": success, "error": error})
-    
-    elif task_type == "warmup_view_content":
-        channel = task_data.get("channel_username") or task.get("channel_username")
-        print(f"  👁 Viewing content for {phone}...")
-        success, channel_name, count = await view_channel_messages(client, channel)
-        await report_result("warmup", {"task_id": task_id, "task_type": "view_content", "account_id": account.get("id"), "success": success, "error": count if not isinstance(count, int) else None})
-    
-    elif task_type == "warmup_send_reaction":
-        channel = task_data.get("channel_username") or task.get("channel_username")
-        print(f"  ❤️ Sending reaction for {phone}...")
-        success, channel_name, reaction = await send_reaction(client, channel)
-        await report_result("warmup", {"task_id": task_id, "task_type": "send_reaction", "account_id": account.get("id"), "success": success, "error": reaction if not success else None})
-    
-    elif task_type == "warmup_profile_update":
-        bio = task_data.get("bio")
-        print(f"  ✏️ Updating profile for {phone}...")
-        success, new_bio, error = await update_profile_bio(client, bio)
-        await report_result("warmup", {"task_id": task_id, "task_type": "profile_update", "account_id": account.get("id"), "success": success, "error": error})
+        return False, str(e)
 
 
 async def main_loop():
-    """Main warmup loop with PARALLEL BATCH processing"""
-    global RUNNING
+    print("=" * 50)
+    print("  Warmup Runner")
+    print("  [Chat, Contact, Join, View, React, Bio]")
+    print("=" * 50)
     
-    print("=" * 60)
-    print("  TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)")
-    print("=" * 60)
-    print(f"  🔥 Processing up to {PARALLEL_BATCH_SIZE} pairs SIMULTANEOUSLY")
-    print("  📌 Each account maintains human-like timing independently")
-    print("  ⏹ Stop: Press Ctrl+C")
-    print("=" * 60)
-    print("\\n✓ Starting warmup runner...\\n")
-    
-    consecutive_empty = 0
+    last_runner = "warmup_chat"
     
     while RUNNING:
         try:
-            # Fetch batch of warmup tasks
-            batch_result = await get_batch_tasks(runner="warmup_chat", batch_size=PARALLEL_BATCH_SIZE)
-            tasks = batch_result.get("tasks", [])
-            delay_after = batch_result.get("delay_after", 5)
+            # Alternate between warmup_chat and warmup runners
+            runner = "warmup_chat" if last_runner == "warmup" else "warmup_chat"
+            last_runner = runner
             
-            if not tasks:
-                consecutive_empty += 1
-                if consecutive_empty == 1:
-                    print("  ⏳ No pending warmup tasks, waiting...")
-                elif consecutive_empty % 12 == 0:
-                    print("  ⏳ Still waiting for warmup tasks...")
-                
-                # Also check for regular warmup tasks (with error handling)
-                try:
-                    regular_task = await get_next_task(runner="warmup")
-                    if regular_task and regular_task.get("task") != "wait":
-                        await process_regular_warmup_task(regular_task)
-                        consecutive_empty = 0
-                    else:
-                        await asyncio.sleep(max(1, delay_after))
-                except Exception as e:
-                    print(f"  ⚠ Error checking regular tasks: {e}")
-                    await asyncio.sleep(2)
+            task = await get_next_task(runner=runner)
+            task_type = task.get("task", "wait")
+            
+            if task_type == "wait":
+                if runner == "warmup_chat":
+                    task = await get_next_task(runner="warmup")
+                    task_type = task.get("task", "wait")
+                    if task_type == "wait":
+                        await asyncio.sleep(task.get("seconds", 5))
+                        continue
+                else:
+                    await asyncio.sleep(task.get("seconds", 5))
+                    continue
+            
+            task_id = task.get("task_id")
+            account = task.get("account", {})
+            task_data = task.get("task_data", {})
+            pair_id = task.get("pair_id")
+            
+            client = await get_or_create_client(account)
+            if not client:
+                result_type = "warmup_chat" if task_type in ["warmup_chat", "warmup_add_contact"] else "warmup"
+                await report_result(result_type, {
+                    "task_id": task_id,
+                    "success": False,
+                    "error": "Could not connect client"
+                })
                 continue
             
-            consecutive_empty = 0
-            print(f"\\n  📦 Processing batch of {len(tasks)} warmup tasks in PARALLEL...")
+            phone = account.get("phone_number", "Unknown")
             
-            # Process all tasks in parallel using asyncio.gather
-            results = await asyncio.gather(
-                *[process_single_task(task) for task in tasks],
-                return_exceptions=True
-            )
+            if task_type == "warmup_add_contact":
+                target_phone = task_data.get("phone") or task_data.get("recipient_phone")
+                first_name = task_data.get("first_name", "Friend")
+                display_phone = target_phone[:8] + "..." if target_phone and len(target_phone) > 8 else target_phone
+                print(f"  [CONTACT] {phone} adds {display_phone}...")
+                
+                success, added_phone, error = await add_contact(client, target_phone, first_name)
+                await report_result("warmup_chat", {
+                    "task_id": task_id,
+                    "pair_id": pair_id,
+                    "account_id": account.get("id"),
+                    "success": success,
+                    "error": error,
+                    "task_subtype": "add_contact"
+                })
+                print(f"    {'✓' if success else '✗'} Contact saved")
             
-            success_count = sum(1 for r in results if isinstance(r, dict) and r.get("success"))
-            fail_count = len(results) - success_count
-            print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
+            elif task_type == "warmup_chat":
+                recipient_phone = task_data.get("recipient_phone")
+                recipient_telegram_id = task_data.get("recipient_telegram_id")
+                recipient_username = task_data.get("recipient_username")
+                recipient_first_name = task_data.get("first_name")
+                message = task_data.get("message", "Hey! 👋")
+                
+                display_phone = recipient_phone[:8] + "..." if recipient_phone and len(recipient_phone) > 8 else recipient_phone
+                print(f"  [CHAT] {phone} -> {display_phone}...")
+                
+                success, error = await send_warmup_chat(
+                    client, recipient_phone, message, recipient_telegram_id, recipient_username, recipient_first_name
+                )
+                await report_result("warmup_chat", {
+                    "task_id": task_id,
+                    "pair_id": pair_id,
+                    "account_id": account.get("id"),
+                    "success": success,
+                    "error": error
+                })
+                
+                msg_preview = message[:30] + "..." if len(message) > 30 else message
+                print(f"    {'✓' if success else '✗'} {msg_preview}")
             
-            # Cleanup idle clients after each batch to prevent DB locking
-            await cleanup_idle_clients()
+            elif task_type == "warmup_join_channel":
+                channel = task_data.get("channel_username") or task.get("channel_username")
+                print(f"  [JOIN] Joining channel...")
+                success, channel_name, error = await join_channel(client, channel)
+                await report_result("warmup", {
+                    "task_id": task_id,
+                    "task_type": "join_channel",
+                    "account_id": account.get("id"),
+                    "success": success,
+                    "error": error
+                })
             
-            # Minimal delay before next batch
-            await asyncio.sleep(max(0.3, delay_after))
+            elif task_type == "warmup_view_content":
+                channel = task_data.get("channel_username") or task.get("channel_username")
+                print(f"  [VIEW] Viewing content...")
+                success, count, error = await view_channel_messages(client, channel)
+                await report_result("warmup", {
+                    "task_id": task_id,
+                    "task_type": "view_content",
+                    "account_id": account.get("id"),
+                    "success": success,
+                    "error": error
+                })
+            
+            elif task_type == "warmup_send_reaction":
+                channel = task_data.get("channel_username") or task.get("channel_username")
+                print(f"  [REACT] Sending reaction...")
+                success, reaction, error = await send_reaction(client, channel)
+                await report_result("warmup", {
+                    "task_id": task_id,
+                    "task_type": "send_reaction",
+                    "account_id": account.get("id"),
+                    "success": success,
+                    "error": error
+                })
+            
+            elif task_type == "warmup_profile_update":
+                bio = task_data.get("bio")
+                print(f"  [BIO] Updating bio...")
+                success, error = await update_profile_bio(client, bio)
+                await report_result("warmup", {
+                    "task_id": task_id,
+                    "task_type": "profile_update",
+                    "account_id": account.get("id"),
+                    "success": success,
+                    "error": error
+                })
         
         except Exception as e:
-            print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(2)
+            print(f"  [ERROR] {e}")
+            await asyncio.sleep(1)
     
-    print("\\n⏹ Warmup runner stopped.")
     await shutdown_all()
 
 
 if __name__ == "__main__":
-    print("Starting Warmup Runner (PARALLEL MODE)... Press Ctrl+C to stop.")
-    print(f"Processing up to {PARALLEL_BATCH_SIZE} pairs simultaneously.")
-    print("Required: pip install telethon httpx")
+    print("\\nInstall: pip install telethon httpx\\n")
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
-        print("\\n⏹ Keyboard interrupt.")
-    finally:
-        print("Goodbye!")
+        print("\\nStopped.")
 `;
 
   // ========== 8. BLOCK_RUNNER.PY ==========

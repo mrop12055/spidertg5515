@@ -15,9 +15,8 @@ import { Switch } from '@/components/ui/switch';
 import { 
   Plus, Trash2, Globe, Loader2, Search, RefreshCw, 
   CheckCircle, XCircle, Wifi, WifiOff, User, Clock, Server, AlertTriangle,
-  Shield, Activity, Flag, Eye, EyeOff, MapPin, Zap, Phone, Circle, ChevronDown
+  Shield, Activity, Flag, Eye, EyeOff, MapPin, Zap
 } from 'lucide-react';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Proxy } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -1051,25 +1050,17 @@ const Proxies: React.FC = () => {
                       aria-label={`Select ${proxy.host}`}
                     />
 
-                    {/* Country Flag Avatar */}
+                    {/* Country Flag / Status Icon */}
                     <div className={cn(
-                      "w-10 h-10 rounded-lg flex items-center justify-center overflow-hidden border-2",
-                      proxy.status === 'active' && "border-green-500/50",
-                      proxy.status === 'error' && "border-destructive/50",
-                      proxy.status === 'inactive' && "border-muted"
+                      "w-10 h-10 rounded-lg flex items-center justify-center text-xl",
+                      proxy.status === 'active' && "bg-green-500/10",
+                      proxy.status === 'error' && "bg-destructive/10",
+                      proxy.status === 'inactive' && "bg-muted"
                     )}>
                       {testResult?.status === 'testing' ? (
                         <Loader2 className="w-5 h-5 text-primary animate-spin" />
                       ) : proxyCountry ? (
-                        <img 
-                          src={`https://flagcdn.com/w80/${proxyCountry.toLowerCase()}.png`}
-                          alt={countryNames[proxyCountry] || proxyCountry}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            e.currentTarget.style.display = 'none';
-                            e.currentTarget.parentElement?.classList.add('bg-muted');
-                          }}
-                        />
+                        getCountryFlag(proxyCountry)
                       ) : proxy.status === 'active' ? (
                         <Wifi className="w-5 h-5 text-green-500" />
                       ) : proxy.status === 'error' ? (
@@ -1084,6 +1075,9 @@ const Proxies: React.FC = () => {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium font-mono">{proxy.host}:{proxy.port}</span>
                         {getStatusBadge(proxy.status)}
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-secondary border border-border uppercase">
+                          {proxy.type}
+                        </span>
                         {(proxy.responseTime || testResult?.responseTime) && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-600 border border-blue-500/30 flex items-center gap-1">
                             <Zap className="w-3 h-3" />
@@ -1130,118 +1124,13 @@ const Proxies: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Accounts Using - Enhanced with Popover */}
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button 
-                          className={cn(
-                            "flex items-center gap-2 px-3 py-2 rounded-lg transition-all cursor-pointer hover:bg-secondary min-w-[100px]",
-                            accountsUsing.length > 0 ? "bg-secondary/50" : "bg-muted/30"
-                          )}
-                        >
-                          {/* Fixed-width avatar container */}
-                          <div className="w-[52px] flex items-center justify-start">
-                            {accountsUsing.length > 0 ? (
-                              <div className="flex -space-x-1.5">
-                                {accountsUsing.slice(0, 2).map((acc) => (
-                                  <div
-                                    key={acc.id}
-                                    className={cn(
-                                      "w-6 h-6 rounded-full border-2 border-background flex items-center justify-center text-xs font-medium",
-                                      acc.status === 'active' && "bg-green-500 text-white",
-                                      acc.status === 'cooldown' && "bg-amber-500 text-white",
-                                      acc.status === 'banned' && "bg-destructive text-white",
-                                      acc.status === 'restricted' && "bg-orange-500 text-white",
-                                      acc.status === 'disconnected' && "bg-muted text-muted-foreground"
-                                    )}
-                                  >
-                                    {acc.firstName?.[0] || acc.phoneNumber?.[1] || '?'}
-                                  </div>
-                                ))}
-                                {accountsUsing.length > 2 && (
-                                  <div className="w-6 h-6 rounded-full border-2 border-background bg-muted flex items-center justify-center text-[10px] font-medium text-muted-foreground">
-                                    +{accountsUsing.length - 2}
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <div className="w-6 h-6 rounded-full bg-muted flex items-center justify-center">
-                                <User className="w-3 h-3 text-muted-foreground" />
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex flex-col items-start">
-                            <div className="text-sm font-medium">{accountsUsing.length}</div>
-                            <div className="text-[10px] text-muted-foreground leading-none">
-                              {accountsUsing.length === 1 ? 'Account' : 'Accounts'}
-                            </div>
-                          </div>
-                          <ChevronDown className="w-3 h-3 text-muted-foreground" />
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-72 p-0" align="end">
-                        <div className="p-3 border-b border-border">
-                          <h4 className="font-medium text-sm">Connected Accounts</h4>
-                          <p className="text-xs text-muted-foreground">
-                            {accountsUsing.length} account{accountsUsing.length !== 1 ? 's' : ''} using this proxy
-                          </p>
-                        </div>
-                        {accountsUsing.length === 0 ? (
-                          <div className="p-4 text-center text-sm text-muted-foreground">
-                            No accounts connected to this proxy
-                          </div>
-                        ) : (
-                          <div className="max-h-64 overflow-y-auto">
-                            {accountsUsing.map((acc) => (
-                              <div 
-                                key={acc.id} 
-                                className="flex items-center gap-3 p-3 hover:bg-secondary/50 border-b border-border last:border-0 transition-colors"
-                              >
-                                {/* Status indicator */}
-                                <div className={cn(
-                                  "w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold",
-                                  acc.status === 'active' && "bg-green-500/20 text-green-600",
-                                  acc.status === 'cooldown' && "bg-amber-500/20 text-amber-600",
-                                  acc.status === 'banned' && "bg-destructive/20 text-destructive",
-                                  acc.status === 'restricted' && "bg-orange-500/20 text-orange-600",
-                                  acc.status === 'disconnected' && "bg-muted text-muted-foreground"
-                                )}>
-                                  {acc.firstName?.[0]?.toUpperCase() || acc.phoneNumber?.[1] || '?'}
-                                </div>
-                                
-                                {/* Account info */}
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="font-medium text-sm truncate">
-                                      {acc.firstName || acc.username || 'Unknown'}
-                                    </span>
-                                    {/* Live status dot */}
-                                    <span className={cn(
-                                      "flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium",
-                                      acc.status === 'active' && "bg-green-500/20 text-green-600",
-                                      acc.status === 'cooldown' && "bg-amber-500/20 text-amber-600",
-                                      acc.status === 'banned' && "bg-destructive/20 text-destructive",
-                                      acc.status === 'restricted' && "bg-orange-500/20 text-orange-600",
-                                      acc.status === 'disconnected' && "bg-muted text-muted-foreground"
-                                    )}>
-                                      <Circle className={cn(
-                                        "w-1.5 h-1.5 fill-current",
-                                        acc.status === 'active' && "animate-pulse"
-                                      )} />
-                                      {acc.status}
-                                    </span>
-                                  </div>
-                                  <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                                    <Phone className="w-3 h-3" />
-                                    <span className="font-mono">{acc.phoneNumber}</span>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </PopoverContent>
-                    </Popover>
+                    {/* Accounts Using */}
+                    {accountsUsing.length > 0 && (
+                      <div className="text-center px-3 py-1 bg-secondary/50 rounded-lg">
+                        <div className="font-medium">{accountsUsing.length}</div>
+                        <div className="text-xs text-muted-foreground">Accounts</div>
+                      </div>
+                    )}
 
                     {/* Status Select */}
                     <Select

@@ -15,7 +15,7 @@ import random
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, cleanup_idle_clients
+    send_message, shutdown_all
 )
 
 # ========== GLOBAL STATE ==========
@@ -189,9 +189,6 @@ async def main_loop():
             
             # Report result to backend
             await report_result("send", result)
-            
-            # Cleanup idle clients periodically to prevent session locks
-            await cleanup_idle_clients()
             
             # Wait random delay between min and max BEFORE next message
             # Skip delay if we need to rotate account (privacy error)
