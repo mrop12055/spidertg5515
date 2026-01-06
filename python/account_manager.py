@@ -21,7 +21,7 @@ import base64
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    shutdown_all, SESSION_FOLDER, release_client
+    shutdown_all, SESSION_FOLDER
 )
 
 # ========== GLOBAL STATE ==========
@@ -244,8 +244,7 @@ async def main_loop():
                 account = task.get("account", {})
                 task_proxy = task.get("proxy")  # Task-level proxy for consistency
                 
-                # Use runner="account" for priority locking (lower than livechat/campaign/warmup)
-                client = await get_or_create_client(account, task_proxy=task_proxy, runner="account")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🤖 SpamBot check for {account.get('phone_number')}...")
                     status, ban_reason, response = await check_spambot(client)
@@ -264,8 +263,7 @@ async def main_loop():
                 account = task.get("account", {})
                 task_proxy = task.get("proxy")
                 
-                # Use runner="account" for priority locking
-                client = await get_or_create_client(account, task_proxy=task_proxy, runner="account")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  ✏️ Changing name for {account.get('phone_number')}...")
                     success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
@@ -285,8 +283,7 @@ async def main_loop():
                 account = task.get("account", {})
                 task_proxy = task.get("proxy")
                 
-                # Use runner="account" for priority locking
-                client = await get_or_create_client(account, task_proxy=task_proxy, runner="account")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  📷 Changing photo for {account.get('phone_number')}...")
                     success, error = await change_profile_photo(client, task_data.get("photo_base64", ""))
@@ -304,8 +301,7 @@ async def main_loop():
                 account = task.get("account", {})
                 task_proxy = task.get("proxy")
                 
-                # Use runner="account" for priority locking
-                client = await get_or_create_client(account, task_proxy=task_proxy, runner="account")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🔒 Updating privacy for {account.get('phone_number')}...")
                     success, error = await update_privacy(
@@ -328,8 +324,7 @@ async def main_loop():
                 account = task.get("account", {})
                 task_proxy = task.get("proxy")
                 
-                # Use runner="account" for priority locking
-                client = await get_or_create_client(account, task_proxy=task_proxy, runner="account")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🔐 Changing password for {account.get('phone_number')}...")
                     success, error = await change_password(
@@ -350,8 +345,7 @@ async def main_loop():
                 account = task.get("account", {})
                 task_proxy = task.get("proxy")
                 
-                # Use runner="account" for priority locking
-                client = await get_or_create_client(account, task_proxy=task_proxy, runner="account")
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  🚪 Logging out other sessions for {account.get('phone_number')}...")
                     success, error = await logout_other_sessions(client)
@@ -370,8 +364,7 @@ async def main_loop():
                 
                 print(f"  🔄 Syncing profile for {account.get('phone_number')}...")
                 # Force full profile sync including avatar
-                # Use runner="account" for priority locking
-                client = await get_or_create_client(account, skip_avatar=False, force_profile_sync=True, task_proxy=task_proxy, runner="account")
+                client = await get_or_create_client(account, skip_avatar=False, force_profile_sync=True, task_proxy=task_proxy)
                 if client:
                     await report_result("sync_profile", {
                         "task_id": task_id,
@@ -395,8 +388,7 @@ async def main_loop():
                 
                 print(f"  🔍 Verifying session for {account.get('phone_number')}...")
                 try:
-                    # Use runner="account" for priority locking
-                    client = await get_or_create_client(account, task_proxy=task_proxy, runner="account")
+                    client = await get_or_create_client(account, task_proxy=task_proxy)
                     if client:
                         status, error, user_data = await verify_session(client, account.get("id"))
                         await report_result("verify_session", {

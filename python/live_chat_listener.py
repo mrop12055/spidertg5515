@@ -17,7 +17,7 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, active_clients, release_client
+    send_message, shutdown_all, active_clients
 )
 
 # ========== GLOBAL STATE ==========
@@ -288,17 +288,13 @@ async def keepalive_task():
         for account_id, client in clients_to_check:
             try:
                 if client.is_connected():
-                    # Ping the server to keep the connection active
+                    # Ping the server to keep connection alive
+                    # GetState is a lightweight call that keeps the connection active
                     await asyncio.wait_for(client.get_me(), timeout=10)
                 else:
                     # Client disconnected, remove from cache so it reconnects
                     print(f"  ⚠ Client {account_id[:8]}... disconnected, will reconnect")
                     if account_id in active_clients:
-                        # Release lock associated with this client before removing
-                        try:
-                            release_client(account_id)
-                        except Exception:
-                            pass
                         del active_clients[account_id]
             except asyncio.TimeoutError:
                 print(f"  ⚠ Keepalive timeout for {account_id[:8]}...")
@@ -308,10 +304,6 @@ async def keepalive_task():
                         await active_clients[account_id].disconnect()
                     except:
                         pass
-                    try:
-                        release_client(account_id)
-                    except Exception:
-                        pass
                     del active_clients[account_id]
             except Exception as e:
                 error_str = str(e).lower()
@@ -319,10 +311,6 @@ async def keepalive_task():
                 if any(x in error_str for x in ["disconnect", "connection", "closed", "reset"]):
                     print(f"  ⚠ Keepalive error for {account_id[:8]}...: {e}")
                     if account_id in active_clients:
-                        try:
-                            release_client(account_id)
-                        except Exception:
-                            pass
                         del active_clients[account_id]
 
 
@@ -357,9 +345,8 @@ async def main_loop():
                     if new_accounts:
                         # Connect in parallel for faster startup
                         # Each account carries its own proxy data from the edge function
-                        # Pass runner="livechat" for HIGHEST priority locking
                         results = await asyncio.gather(
-                            *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy"), runner="livechat") for acc in new_accounts],
+                            *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")) for acc in new_accounts],
                             return_exceptions=True
                         )
                         for acc in new_accounts:
@@ -381,8 +368,7 @@ async def main_loop():
                     task_proxy = task.get("proxy")  # Task-level proxy for consistency
 
                     # Skip profile sync for speed - just get/reuse client connection
-                    # Use runner="livechat" for HIGHEST priority
-                    client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True, task_proxy=task_proxy, runner="livechat")
+                    client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True, task_proxy=task_proxy)
                     target = recipient_tid if recipient_tid else recipient
 
                     if client and target:
