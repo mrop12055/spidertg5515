@@ -17,7 +17,7 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, active_clients
+    send_message, shutdown_all, active_clients, cleanup_idle_clients, client_last_used
 )
 
 # ========== GLOBAL STATE ==========
