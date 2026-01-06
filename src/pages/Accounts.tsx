@@ -100,6 +100,23 @@ const Accounts: React.FC = () => {
   // Bulk operations dialogs
   const [isBulkNameOpen, setIsBulkNameOpen] = useState(false);
   const [bulkNames, setBulkNames] = useState('');
+  
+  // Material-based name change
+  const [nameTags, setNameTags] = useState<{ id: string; name: string; item_count: number }[]>([]);
+  const [selectedNameTagId, setSelectedNameTagId] = useState<string>('');
+  const [materialNames, setMaterialNames] = useState<{ id: string; first_name: string; last_name: string | null }[]>([]);
+  const [selectedMaterialNames, setSelectedMaterialNames] = useState<Set<string>>(new Set());
+  const [nameAssignMode, setNameAssignMode] = useState<'random' | 'select'>('random');
+  const [isLoadingNames, setIsLoadingNames] = useState(false);
+  
+  // Profile picture change
+  const [isProfilePicOpen, setIsProfilePicOpen] = useState(false);
+  const [pictureTags, setPictureTags] = useState<{ id: string; name: string; item_count: number }[]>([]);
+  const [selectedPicTagId, setSelectedPicTagId] = useState<string>('');
+  const [materialPictures, setMaterialPictures] = useState<{ id: string; file_name: string; file_url: string }[]>([]);
+  const [selectedMaterialPics, setSelectedMaterialPics] = useState<Set<string>>(new Set());
+  const [picAssignMode, setPicAssignMode] = useState<'random' | 'select'>('random');
+  const [isLoadingPictures, setIsLoadingPictures] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isGroupDialogOpen, setIsGroupDialogOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
@@ -222,7 +239,7 @@ const Accounts: React.FC = () => {
   }, [isSpamBotChecking, refreshData]);
   
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
-  const ACCOUNT_TASK_TYPES = ['change_name', 'privacy_settings', 'change_password', 'logout_sessions'];
+  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions'];
   
   useEffect(() => {
     if (!isAccountTaskRunning) return;
@@ -685,26 +702,110 @@ const Accounts: React.FC = () => {
     setShowAccountTaskLogs(true);
   };
 
+  // Fetch name tags when dialog opens
+  const fetchNameTags = async () => {
+    const { data, error } = await supabase
+      .from('material_tags')
+      .select('id, name, item_count')
+      .eq('type', 'names')
+      .order('name');
+    if (data && !error) {
+      setNameTags(data);
+    }
+  };
+
+  // Fetch names for selected tag
+  const fetchNamesForTag = async (tagId: string) => {
+    setIsLoadingNames(true);
+    const { data, error } = await supabase
+      .from('material_names')
+      .select('id, first_name, last_name')
+      .eq('tag_id', tagId);
+    if (data && !error) {
+      setMaterialNames(data);
+    }
+    setIsLoadingNames(false);
+  };
+
+  // Fetch picture tags when dialog opens
+  const fetchPictureTags = async () => {
+    const { data, error } = await supabase
+      .from('material_tags')
+      .select('id, name, item_count')
+      .eq('type', 'pictures')
+      .order('name');
+    if (data && !error) {
+      setPictureTags(data);
+    }
+  };
+
+  // Fetch pictures for selected tag
+  const fetchPicturesForTag = async (tagId: string) => {
+    setIsLoadingPictures(true);
+    const { data, error } = await supabase
+      .from('material_pictures')
+      .select('id, file_name, file_url')
+      .eq('tag_id', tagId);
+    if (data && !error) {
+      setMaterialPictures(data);
+    }
+    setIsLoadingPictures(false);
+  };
+
   // Bulk name change - creates tasks for Python to process
   const handleBulkNameChange = async () => {
-    if (selectedIds.size === 0 || !bulkNames.trim()) return;
+    if (selectedIds.size === 0) return;
     
-    const names = bulkNames.split(/[,\n]/).map(n => n.trim()).filter(n => n);
     const selectedAccountIds = Array.from(selectedIds);
+    let namesToUse: { first_name: string; last_name: string }[] = [];
+    
+    // Use material names from selected tag
+    if (selectedNameTagId && materialNames.length > 0) {
+      if (nameAssignMode === 'random') {
+        // Use all names from the tag, randomly assigned
+        namesToUse = materialNames.map(n => ({
+          first_name: n.first_name,
+          last_name: n.last_name || ''
+        }));
+      } else {
+        // Use only selected names
+        const selectedNamesList = materialNames.filter(n => selectedMaterialNames.has(n.id));
+        namesToUse = selectedNamesList.map(n => ({
+          first_name: n.first_name,
+          last_name: n.last_name || ''
+        }));
+      }
+    } else if (bulkNames.trim()) {
+      // Fallback to manual text input
+      const names = bulkNames.split(/[,\n]/).map(n => n.trim()).filter(n => n);
+      namesToUse = names.map(name => {
+        const parts = name.split(' ');
+        return {
+          first_name: parts[0] || '',
+          last_name: parts.slice(1).join(' ') || ''
+        };
+      });
+    }
+    
+    if (namesToUse.length === 0) {
+      toast.error('Please select a tag with names or enter names manually');
+      return;
+    }
     
     try {
       // Create tasks for Python script to change names on Telegram
       const tasks = selectedAccountIds.map((accountId, i) => {
-        const name = names[i % names.length] || names[0];
-        const parts = name.split(' ');
-        const firstName = parts[0] || '';
-        const lastName = parts.slice(1).join(' ') || '';
+        // Randomly pick or cycle through names
+        const nameIndex = nameAssignMode === 'random' 
+          ? Math.floor(Math.random() * namesToUse.length)
+          : i % namesToUse.length;
+        const nameData = namesToUse[nameIndex];
         
         return {
           account_id: accountId,
           task_type: 'change_name',
           status: 'pending',
-          result: JSON.stringify({ first_name: firstName, last_name: lastName }),
+          result: JSON.stringify({ first_name: nameData.first_name, last_name: nameData.last_name }),
         };
       });
       
@@ -717,10 +818,67 @@ const Accounts: React.FC = () => {
       startAccountTaskTracking('Change Name', selectedAccountIds.length);
       toast.info(`Queued name change for ${selectedAccountIds.length} account(s). Check logs panel for progress.`);
       setBulkNames('');
+      setSelectedNameTagId('');
+      setMaterialNames([]);
+      setSelectedMaterialNames(new Set());
       setIsBulkNameOpen(false);
     } catch (error) {
       console.error('Error queuing name change:', error);
       toast.error('Failed to queue name change');
+    }
+  };
+
+  // Profile picture change - creates tasks for Python to process
+  const handleBulkProfilePicChange = async () => {
+    if (selectedIds.size === 0) return;
+    
+    const selectedAccountIds = Array.from(selectedIds);
+    let picturesToUse: { file_url: string }[] = [];
+    
+    if (selectedPicTagId && materialPictures.length > 0) {
+      if (picAssignMode === 'random') {
+        picturesToUse = materialPictures.map(p => ({ file_url: p.file_url }));
+      } else {
+        const selectedPicsList = materialPictures.filter(p => selectedMaterialPics.has(p.id));
+        picturesToUse = selectedPicsList.map(p => ({ file_url: p.file_url }));
+      }
+    }
+    
+    if (picturesToUse.length === 0) {
+      toast.error('Please select a tag with pictures');
+      return;
+    }
+    
+    try {
+      const tasks = selectedAccountIds.map((accountId, i) => {
+        const picIndex = picAssignMode === 'random'
+          ? Math.floor(Math.random() * picturesToUse.length)
+          : i % picturesToUse.length;
+        const picData = picturesToUse[picIndex];
+        
+        return {
+          account_id: accountId,
+          task_type: 'change_photo',
+          status: 'pending',
+          result: JSON.stringify({ photo_url: picData.file_url }),
+        };
+      });
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasks);
+      
+      if (error) throw error;
+      
+      startAccountTaskTracking('Change Photo', selectedAccountIds.length);
+      toast.info(`Queued profile picture change for ${selectedAccountIds.length} account(s). Check logs panel for progress.`);
+      setSelectedPicTagId('');
+      setMaterialPictures([]);
+      setSelectedMaterialPics(new Set());
+      setIsProfilePicOpen(false);
+    } catch (error) {
+      console.error('Error queuing profile picture change:', error);
+      toast.error('Failed to queue profile picture change');
     }
   };
 
@@ -1858,9 +2016,13 @@ const Accounts: React.FC = () => {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-52">
-                    <DropdownMenuItem onClick={() => setIsBulkNameOpen(true)}>
+                    <DropdownMenuItem onClick={() => { setIsBulkNameOpen(true); fetchNameTags(); }}>
                       <UserCircle className="w-4 h-4 mr-2" />
                       Change Name
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => { setIsProfilePicOpen(true); fetchPictureTags(); }}>
+                      <Image className="w-4 h-4 mr-2" />
+                      Change Profile Picture
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
                       <EyeOff className="w-4 h-4 mr-2" />
@@ -2183,27 +2345,296 @@ const Accounts: React.FC = () => {
         {/* Dialogs */}
         
         {/* Bulk Name Change Dialog */}
-        <Dialog open={isBulkNameOpen} onOpenChange={setIsBulkNameOpen}>
-          <DialogContent>
+        <Dialog open={isBulkNameOpen} onOpenChange={(open) => {
+          setIsBulkNameOpen(open);
+          if (!open) {
+            setSelectedNameTagId('');
+            setMaterialNames([]);
+            setSelectedMaterialNames(new Set());
+            setBulkNames('');
+          }
+        }}>
+          <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Change Names</DialogTitle>
               <DialogDescription>
-                Enter names (comma or newline separated). This will queue tasks for Python to change names on Telegram.
+                Select names from Material or enter manually. {selectedIds.size} account(s) selected.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 pt-4">
-              <Textarea
-                placeholder="John Doe, Jane Smith&#10;or&#10;John Doe&#10;Jane Smith"
-                value={bulkNames}
-                onChange={(e) => setBulkNames(e.target.value)}
-                rows={5}
-              />
-              <p className="text-xs text-muted-foreground">
-                {bulkNames.split(/[,\n]/).filter(n => n.trim()).length} name(s) for {selectedIds.size} account(s)
-              </p>
+              {/* Tag Selection */}
+              <div className="space-y-2">
+                <Label>Select Name Tag</Label>
+                <Select 
+                  value={selectedNameTagId} 
+                  onValueChange={(v) => {
+                    setSelectedNameTagId(v);
+                    setSelectedMaterialNames(new Set());
+                    if (v) fetchNamesForTag(v);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a tag..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {nameTags.map(tag => (
+                      <SelectItem key={tag.id} value={tag.id}>
+                        {tag.name} ({tag.item_count} names)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Mode Selection */}
+              {selectedNameTagId && materialNames.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Assignment Mode</Label>
+                  <RadioGroup value={nameAssignMode} onValueChange={(v) => setNameAssignMode(v as 'random' | 'select')}>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="random" id="name-random" />
+                      <Label htmlFor="name-random">Random - Use all names randomly</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="select" id="name-select" />
+                      <Label htmlFor="name-select">Select - Choose specific names</Label>
+                    </div>
+                  </RadioGroup>
+                </div>
+              )}
+
+              {/* Names List */}
+              {isLoadingNames ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                </div>
+              ) : selectedNameTagId && materialNames.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>{materialNames.length} names available</Label>
+                    {nameAssignMode === 'select' && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => {
+                          if (selectedMaterialNames.size === materialNames.length) {
+                            setSelectedMaterialNames(new Set());
+                          } else {
+                            setSelectedMaterialNames(new Set(materialNames.map(n => n.id)));
+                          }
+                        }}
+                      >
+                        {selectedMaterialNames.size === materialNames.length ? 'Deselect All' : 'Select All'}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 max-h-48 overflow-y-auto border rounded-lg p-2">
+                    {materialNames.map(name => (
+                      <div 
+                        key={name.id}
+                        className={cn(
+                          "flex items-center gap-2 p-2 rounded-md cursor-pointer transition-colors",
+                          nameAssignMode === 'select' && "hover:bg-muted",
+                          selectedMaterialNames.has(name.id) && "bg-primary/10 border border-primary/30"
+                        )}
+                        onClick={() => {
+                          if (nameAssignMode === 'select') {
+                            const newSelected = new Set(selectedMaterialNames);
+                            if (newSelected.has(name.id)) {
+                              newSelected.delete(name.id);
+                            } else {
+                              newSelected.add(name.id);
+                            }
+                            setSelectedMaterialNames(newSelected);
+                          }
+                        }}
+                      >
+                        {nameAssignMode === 'select' && (
+                          <Checkbox checked={selectedMaterialNames.has(name.id)} />
+                        )}
+                        <Users className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm">{name.first_name} {name.last_name || ''}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : selectedNameTagId ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No names in this tag</p>
+              ) : null}
+
+              {/* Manual Input Fallback */}
+              {!selectedNameTagId && (
+                <div className="space-y-2">
+                  <Label>Or Enter Names Manually</Label>
+                  <Textarea
+                    placeholder="John Doe, Jane Smith&#10;or&#10;John Doe&#10;Jane Smith"
+                    value={bulkNames}
+                    onChange={(e) => setBulkNames(e.target.value)}
+                    rows={4}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    {bulkNames.split(/[,\n]/).filter(n => n.trim()).length} name(s)
+                  </p>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setIsBulkNameOpen(false)}>Cancel</Button>
-                <Button onClick={handleBulkNameChange}>Queue Name Change</Button>
+                <Button 
+                  onClick={handleBulkNameChange}
+                  disabled={
+                    (!selectedNameTagId || materialNames.length === 0 || (nameAssignMode === 'select' && selectedMaterialNames.size === 0)) &&
+                    !bulkNames.trim()
+                  }
+                >
+                  Queue Name Change
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Profile Picture Change Dialog */}
+        <Dialog open={isProfilePicOpen} onOpenChange={(open) => {
+          setIsProfilePicOpen(open);
+          if (!open) {
+            setSelectedPicTagId('');
+            setMaterialPictures([]);
+            setSelectedMaterialPics(new Set());
+          }
+        }}>
+          <DialogContent className="max-w-3xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Change Profile Pictures</DialogTitle>
+              <DialogDescription>
+                Select pictures from Material. {selectedIds.size} account(s) selected.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              {/* Tag Selection */}
+              <div className="space-y-2">
+                <Label>Select Picture Tag</Label>
+                <Select 
+                  value={selectedPicTagId} 
+                  onValueChange={(v) => {
+                    setSelectedPicTagId(v);
+                    setSelectedMaterialPics(new Set());
+                    if (v) fetchPicturesForTag(v);
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a tag..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {pictureTags.map(tag => (
+                      <SelectItem key={tag.id} value={tag.id}>
+                        {tag.name} ({tag.item_count} pictures)
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Mode Selection */}
+              {selectedPicTagId && materialPictures.length > 0 && (
+                <div className="space-y-2">
+                  <Label>Assignment Mode</Label>
+                  <RadioGroup value={picAssignMode} onValueChange={(v) => setPicAssignMode(v as 'random' | 'select')}>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="random" id="pic-random" />
+                      <Label htmlFor="pic-random">Random - Use all pictures randomly</Label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      <RadioGroupItem value="select" id="pic-select" />
+                      <Label htmlFor="pic-select">Select - Choose specific pictures</Label>
+                    </div>
+                  </RadioGroup>
+                </div>
+              )}
+
+              {/* Pictures Grid */}
+              {isLoadingPictures ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin" />
+                </div>
+              ) : selectedPicTagId && materialPictures.length > 0 ? (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>{materialPictures.length} pictures available</Label>
+                    {picAssignMode === 'select' && (
+                      <Button 
+                        variant="ghost" 
+                        size="sm"
+                        onClick={() => {
+                          if (selectedMaterialPics.size === materialPictures.length) {
+                            setSelectedMaterialPics(new Set());
+                          } else {
+                            setSelectedMaterialPics(new Set(materialPictures.map(p => p.id)));
+                          }
+                        }}
+                      >
+                        {selectedMaterialPics.size === materialPictures.length ? 'Deselect All' : 'Select All'}
+                      </Button>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-4 gap-3 max-h-64 overflow-y-auto border rounded-lg p-3">
+                    {materialPictures.map(pic => (
+                      <div 
+                        key={pic.id}
+                        className={cn(
+                          "relative aspect-square rounded-lg overflow-hidden cursor-pointer transition-all",
+                          picAssignMode === 'select' && "hover:ring-2 hover:ring-primary/50",
+                          selectedMaterialPics.has(pic.id) && "ring-2 ring-primary"
+                        )}
+                        onClick={() => {
+                          if (picAssignMode === 'select') {
+                            const newSelected = new Set(selectedMaterialPics);
+                            if (newSelected.has(pic.id)) {
+                              newSelected.delete(pic.id);
+                            } else {
+                              newSelected.add(pic.id);
+                            }
+                            setSelectedMaterialPics(newSelected);
+                          }
+                        }}
+                      >
+                        <img 
+                          src={pic.file_url} 
+                          alt={pic.file_name}
+                          className="w-full h-full object-cover"
+                        />
+                        {picAssignMode === 'select' && selectedMaterialPics.has(pic.id) && (
+                          <div className="absolute inset-0 bg-primary/20 flex items-center justify-center">
+                            <Check className="w-6 h-6 text-primary" />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {picAssignMode === 'select' && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedMaterialPics.size} picture(s) selected
+                    </p>
+                  )}
+                </div>
+              ) : selectedPicTagId ? (
+                <p className="text-sm text-muted-foreground text-center py-4">No pictures in this tag</p>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">Select a tag to view pictures</p>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setIsProfilePicOpen(false)}>Cancel</Button>
+                <Button 
+                  onClick={handleBulkProfilePicChange}
+                  disabled={
+                    !selectedPicTagId || 
+                    materialPictures.length === 0 || 
+                    (picAssignMode === 'select' && selectedMaterialPics.size === 0)
+                  }
+                >
+                  Queue Picture Change
+                </Button>
               </div>
             </div>
           </DialogContent>
