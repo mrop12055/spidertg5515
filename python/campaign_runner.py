@@ -15,7 +15,7 @@ import random
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all
+    send_message, shutdown_all, release_client
 )
 
 # ========== GLOBAL STATE ==========
@@ -123,9 +123,9 @@ async def main_loop():
             skip_delay = False  # Flag to skip delay when account needs rotation
             
             try:
-                # Pass task-level proxy to ensure consistent proxy usage
+                # Pass task-level proxy and runner="campaign" for priority locking
                 task_proxy = task_response.get("proxy")
-                client = await get_or_create_client(account, task_proxy=task_proxy)
+                client = await get_or_create_client(account, task_proxy=task_proxy, runner="campaign")
                 if not client or not recipient:
                     result = {
                         "success": False,

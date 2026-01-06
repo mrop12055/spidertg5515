@@ -23,10 +23,18 @@ TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
-  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed) ==========
+  // ========== 2. CLIENT_MANAGER.PY (Optimized with Priority Locking) ==========
   const clientManagerPy = `"""
-TelegramCRM - Client Manager (Optimized)
-Fast connections with retry logic, timeouts, and proxy support
+TelegramCRM - Client Manager (Optimized with Priority Locking)
+Fast connections with retry logic, timeouts, proxy support, and
+priority-based locking to prevent SQLite "database is locked" errors.
+
+Priority order:
+1. livechat  - HIGHEST (real-time)
+2. campaign  - HIGH
+3. warmup    - MEDIUM
+4. account   - LOW
+5. block     - LOWEST
 """
 
 import os
@@ -42,9 +50,11 @@ from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
 
 from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
 from fingerprint_generator import generate_fingerprint
+from priority_lock import lock_account, unlock_account
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
+_current_runner: Dict[str, str] = {}  # Track runner per account
 
 # Speed settings
 CONNECTION_TIMEOUT = 30
@@ -106,9 +116,17 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
     return False
 
 
-async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None) -> Optional[TelegramClient]:
-    """Create or retrieve a Telegram client. Supports optional task-level proxy override."""
+async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None, runner: str = "unknown") -> Optional[TelegramClient]:
+    """Create or retrieve a Telegram client with priority locking."""
     account_id = account["id"]
+    
+    # Acquire priority-based lock for this account
+    lock_acquired = await lock_account(account_id, runner)
+    if not lock_acquired:
+        print(f"  [LOCK] Could not acquire lock for {account.get('phone_number', 'unknown')} ({runner})")
+        return None
+    
+    _current_runner[account_id] = runner
     
     # Check if we need a fresh client due to proxy change
     use_task_proxy = task_proxy and task_proxy.get("host")
@@ -429,6 +447,12 @@ async def validate_contact(client: TelegramClient, phone: str):
         return False, None, None
 
 
+def release_client(account_id: str):
+    """Release priority lock for an account"""
+    runner = _current_runner.pop(account_id, "unknown")
+    unlock_account(account_id, runner)
+
+
 async def shutdown_all():
     print("\\n[SHUTDOWN] Disconnecting...")
     for account_id, client in list(active_clients.items()):
@@ -436,7 +460,9 @@ async def shutdown_all():
             await asyncio.wait_for(client.disconnect(), timeout=5)
         except:
             pass
+        release_client(account_id)
     active_clients.clear()
+    _current_runner.clear()
     print("[OK] Done.")
 `;
 
@@ -476,6 +502,86 @@ def generate_fingerprint():
         "lang_code": lang["code"],
         "system_lang_code": random.choice(lang["systems"])
     }
+`;
+
+  // ========== 3b. PRIORITY_LOCK.PY ==========
+  const priorityLockPy = `"""
+TelegramCRM - Priority Lock Manager
+Prevents SQLite "database is locked" errors by coordinating
+access across runners with priority-based queueing.
+
+Priority levels (lower = higher priority):
+1. livechat  - HIGHEST (real-time user interactions)
+2. campaign  - HIGH (time-sensitive outreach)
+3. warmup    - MEDIUM (background warming)
+4. account   - LOW (management tasks)
+5. block     - LOWEST (cleanup tasks)
+"""
+
+import asyncio
+import time
+from typing import Dict
+from collections import defaultdict
+
+PRIORITY_LEVELS = {
+    "livechat": 1,
+    "campaign": 2,
+    "warmup": 3,
+    "warmup_chat": 3,
+    "account": 4,
+    "block": 5,
+}
+
+_account_locks: Dict[str, asyncio.Lock] = {}
+_account_owners: Dict[str, tuple] = {}
+_global_lock = asyncio.Lock()
+
+LOCK_TIMEOUT = 30.0
+WAIT_TIMEOUT = 15.0
+PREEMPT_GRACE_PERIOD = 2.0
+
+
+def get_priority(runner: str) -> int:
+    return PRIORITY_LEVELS.get(runner, 10)
+
+
+async def lock_account(account_id: str, runner: str, timeout: float = WAIT_TIMEOUT) -> bool:
+    priority = get_priority(runner)
+    
+    async with _global_lock:
+        if account_id not in _account_locks:
+            _account_locks[account_id] = asyncio.Lock()
+    
+    lock = _account_locks[account_id]
+    start_time = time.time()
+    
+    while True:
+        if not lock.locked():
+            try:
+                await asyncio.wait_for(lock.acquire(), timeout=0.1)
+                _account_owners[account_id] = (runner, priority, time.time())
+                return True
+            except asyncio.TimeoutError:
+                pass
+        
+        if time.time() - start_time > timeout:
+            return False
+        
+        await asyncio.sleep(0.1)
+
+
+def unlock_account(account_id: str, runner: str):
+    if account_id in _account_locks:
+        lock = _account_locks[account_id]
+        owner = _account_owners.get(account_id)
+        
+        if owner and owner[0] == runner:
+            _account_owners.pop(account_id, None)
+            if lock.locked():
+                try:
+                    lock.release()
+                except RuntimeError:
+                    pass
 `;
 
   // ========== 4. CAMPAIGN_RUNNER.PY ==========
@@ -520,14 +626,14 @@ async def main_loop():
             if task_type == "wait":
                 accounts = task.get("accounts", [])
                 for acc in accounts:
-                    await get_or_create_client(acc)
+                    await get_or_create_client(acc, runner="campaign")
                 await asyncio.sleep(task.get("seconds", 1))
             
             elif task_type == "send":
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="campaign")
                 if client and recipient:
                     print(f"  [SEND] To {recipient}...")
                     success, error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
@@ -543,7 +649,7 @@ async def main_loop():
             elif task_type == "validate":
                 recipients = task.get("recipients", [])
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="campaign")
                 if client:
                     print(f"  [VALIDATE] {len(recipients)} recipients...")
                     for r in recipients:
@@ -812,9 +918,9 @@ async def main_loop():
                     # Only connect NEW accounts (skip already connected)
                     new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
                     if new_accounts:
-                        # Connect in parallel for speed
+                        # Connect in parallel for speed - HIGHEST PRIORITY for livechat
                         results = await asyncio.gather(
-                            *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")) for acc in new_accounts],
+                            *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy"), runner="livechat") for acc in new_accounts],
                             return_exceptions=True
                         )
                         for acc in new_accounts:
@@ -835,7 +941,8 @@ async def main_loop():
                     account = task.get("account", {})
                     task_proxy = task.get("proxy")
                     
-                    client = await get_or_create_client(account, setup_handler=setup_message_handler, task_proxy=task_proxy)
+                    # HIGHEST PRIORITY for livechat
+                    client = await get_or_create_client(account, setup_handler=setup_message_handler, task_proxy=task_proxy, runner="livechat")
                     target = recipient_tid if recipient_tid else recipient
                     
                     if client and target:
@@ -1027,7 +1134,7 @@ async def main_loop():
             
             elif task_type == "spambot_check":
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="account")
                 if client:
                     print(f"  [SPAM] Checking {account.get('phone_number')}...")
                     status, ban_reason, response = await check_spambot(client)
@@ -1041,7 +1148,7 @@ async def main_loop():
                 valid_numbers = list(task.get("valid_numbers", []))
                 invalid_numbers = list(task.get("invalid_numbers", []))
                 
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="account")
                 if client:
                     print(f"  [IMPORT] Validating {len(phone_numbers)} contacts...")
                     for phone in phone_numbers:
@@ -1084,7 +1191,7 @@ async def main_loop():
             elif task_type == "change_name":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="account")
                 if client:
                     print(f"  [NAME] Changing...")
                     success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
@@ -1093,7 +1200,7 @@ async def main_loop():
             elif task_type == "change_photo":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="account")
                 if client:
                     print(f"  [PHOTO] Changing...")
                     success, error = await change_profile_photo(client, task_data.get("photo_base64", ""))
@@ -1102,7 +1209,7 @@ async def main_loop():
             elif task_type == "privacy_settings":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="account")
                 if client:
                     print(f"  [PRIVACY] Updating...")
                     success, error = await update_privacy(client, task_data.get("hidePhone", False), task_data.get("hideLastSeen", False), task_data.get("disableCalls", False))
@@ -1111,7 +1218,7 @@ async def main_loop():
             elif task_type == "change_password":
                 task_data = task.get("task_data", {})
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="account")
                 if client:
                     print(f"  [PASS] Changing...")
                     success, error = await change_password(client, task_data.get("existing_password", ""), task_data.get("new_password", ""))
@@ -1119,7 +1226,7 @@ async def main_loop():
             
             elif task_type == "logout_sessions":
                 account = task.get("account", {})
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, runner="account")
                 if client:
                     print(f"  [LOGOUT] Logging out other sessions...")
                     success, error = await logout_other_sessions(client)
@@ -1129,7 +1236,7 @@ async def main_loop():
                 account = task.get("account", {})
                 print(f"  [VERIFY] Checking {account.get('phone_number')}...")
                 try:
-                    client = await get_or_create_client(account)
+                    client = await get_or_create_client(account, runner="account")
                     if client:
                         status, error, user_data = await verify_session(client, account.get("id"))
                         await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": status, "error": error, "user_data": user_data})
@@ -1348,7 +1455,8 @@ async def process_single_task(task: dict) -> dict:
     
     try:
         task_proxy = account.get("proxy")
-        client = await get_or_create_client(account, task_proxy=task_proxy)
+        # Use runner="warmup" for MEDIUM priority
+        client = await get_or_create_client(account, task_proxy=task_proxy, runner="warmup")
         
         if not client:
             error_msg = "Could not connect client - proxy may be down or expired"
@@ -1452,7 +1560,8 @@ async def process_regular_warmup_task(task: dict):
     task_data = task.get("task_data", {})
     task_proxy = task.get("proxy")
     
-    client = await get_or_create_client(account, task_proxy=task_proxy)
+    # Use runner="warmup" for MEDIUM priority
+    client = await get_or_create_client(account, task_proxy=task_proxy, runner="warmup")
     if not client:
         await report_result("warmup", {"task_id": task_id, "success": False, "error": "Could not connect client"})
         return
@@ -1620,7 +1729,8 @@ async def main_loop():
                 account = task.get("account", {})
                 target = task.get("target", {})
                 action = task.get("action", "block")
-                client = await get_or_create_client(account)
+                # Use runner="block" for LOWEST priority
+                client = await get_or_create_client(account, runner="block")
                 if client:
                     print(f"  [{action.upper()}] Processing...")
                     success, error = await block_contact(client, target, action)
@@ -1718,6 +1828,7 @@ pysocks>=1.7.1
     folder?.file("config.py", configPy);
     folder?.file("client_manager.py", clientManagerPy);
     folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
+    folder?.file("priority_lock.py", priorityLockPy);
     folder?.file("requirements.txt", requirementsTxt);
     
     // Individual runners
@@ -1738,7 +1849,7 @@ pysocks>=1.7.1
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded! 10 files included.");
+    toast.success("ZIP downloaded! 11 files included.");
   };
 
   return (
@@ -1764,17 +1875,18 @@ pysocks>=1.7.1
             </Button>
 
             <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-              <p className="font-medium">📁 Files included (10 total):</p>
+              <p className="font-medium">📁 Files included (11 total):</p>
               <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
                 <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 5 runners</strong></li>
                 <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + validation</li>
-                <li><code className="text-purple-500">livechat_runner.py</code> - Incoming messages + replies</li>
+                <li><code className="text-purple-500">livechat_runner.py</code> - Incoming messages + replies (HIGHEST priority)</li>
                 <li><code className="text-yellow-500">account_runner.py</code> - SpamBot, name, photo, privacy, import</li>
                 <li><code className="text-orange-500">warmup_runner.py</code> - Join channels, view, react, bio</li>
-                <li><code className="text-red-500">block_runner.py</code> - Block/unblock contacts</li>
+                <li><code className="text-red-500">block_runner.py</code> - Block/unblock contacts (LOWEST priority)</li>
                 <li><code>config.py</code> - Backend settings</li>
-                <li><code>client_manager.py</code> - Shared Telegram logic</li>
+                <li><code>client_manager.py</code> - Shared Telegram logic + priority locking</li>
                 <li><code>fingerprint_generator.py</code> - Device fingerprints</li>
+                <li><code>priority_lock.py</code> - Prevents "database is locked" errors</li>
                 <li><code>requirements.txt</code> - Dependencies</li>
               </ul>
             </div>
