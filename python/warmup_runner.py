@@ -455,18 +455,13 @@ async def main_loop():
             
             # Disconnect clients after batch (on-demand pattern)
             # This saves memory and reduces Telegram connection count
+            # Note: warmup tasks use "account" key (the sender), not sender_account/receiver_account
             batch_account_ids = list(set(
-                task.get("sender_account", {}).get("id") 
+                task.get("account", {}).get("id") 
                 for task in tasks 
-                if task.get("sender_account", {}).get("id")
+                if task.get("account", {}).get("id")
             ))
-            # Also include receiver accounts
-            batch_account_ids.extend([
-                task.get("receiver_account", {}).get("id") 
-                for task in tasks 
-                if task.get("receiver_account", {}).get("id")
-            ])
-            await disconnect_batch(list(set(batch_account_ids)))
+            await disconnect_batch(batch_account_ids)
             
             # Short delay before next batch (tasks have their own timing)
             await asyncio.sleep(delay_after)
