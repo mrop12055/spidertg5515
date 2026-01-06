@@ -24,6 +24,16 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 interface MaterialTag {
   id: string;
@@ -72,6 +82,15 @@ const Material: React.FC = () => {
   const [isUploadPicturesOpen, setIsUploadPicturesOpen] = useState(false);
   const [isAddNameOpen, setIsAddNameOpen] = useState(false);
   const [isImportNamesOpen, setIsImportNamesOpen] = useState(false);
+  
+  // Bulk delete confirmation states
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState<{
+    open: boolean;
+    type: 'data' | 'pictures' | 'names' | 'tag';
+    tagId: string;
+    tagName: string;
+    count: number;
+  } | null>(null);
   
   // Form states
   const [newTagName, setNewTagName] = useState('');
@@ -370,6 +389,26 @@ const Material: React.FC = () => {
     }
   };
 
+  // Bulk delete confirmation triggers
+  const confirmBulkDeleteData = (tagId: string, tagName: string) => {
+    const count = dataItems.filter(d => d.tag_id === tagId).length;
+    setBulkDeleteConfirm({ open: true, type: 'data', tagId, tagName, count });
+  };
+
+  const confirmBulkDeletePictures = (tagId: string, tagName: string) => {
+    const count = pictures.filter(p => p.tag_id === tagId).length;
+    setBulkDeleteConfirm({ open: true, type: 'pictures', tagId, tagName, count });
+  };
+
+  const confirmBulkDeleteNames = (tagId: string, tagName: string) => {
+    const count = names.filter(n => n.tag_id === tagId).length;
+    setBulkDeleteConfirm({ open: true, type: 'names', tagId, tagName, count });
+  };
+
+  const confirmDeleteTag = (tagId: string, tagName: string) => {
+    setBulkDeleteConfirm({ open: true, type: 'tag', tagId, tagName, count: 0 });
+  };
+
   // Bulk delete all items in a tag
   const handleBulkDeleteData = async (tagId: string) => {
     try {
@@ -415,6 +454,29 @@ const Material: React.FC = () => {
     } catch (error) {
       console.error('Error bulk deleting names:', error);
       toast.error('Failed to delete names');
+    }
+  };
+
+  // Handle confirmed bulk delete
+  const handleConfirmedBulkDelete = async () => {
+    if (!bulkDeleteConfirm) return;
+    
+    const { type, tagId } = bulkDeleteConfirm;
+    setBulkDeleteConfirm(null);
+    
+    switch (type) {
+      case 'data':
+        await handleBulkDeleteData(tagId);
+        break;
+      case 'pictures':
+        await handleBulkDeletePictures(tagId);
+        break;
+      case 'names':
+        await handleBulkDeleteNames(tagId);
+        break;
+      case 'tag':
+        await handleDeleteTag(tagId);
+        break;
     }
   };
 
@@ -547,7 +609,7 @@ const Material: React.FC = () => {
                                       {tagData.length > 0 && (
                                         <>
                                           <DropdownMenuItem 
-                                            onClick={() => handleBulkDeleteData(tag.id)}
+                                            onClick={() => confirmBulkDeleteData(tag.id, tag.name)}
                                             className="text-destructive"
                                           >
                                             <Trash2 className="h-4 w-4 mr-2" />
@@ -557,7 +619,7 @@ const Material: React.FC = () => {
                                         </>
                                       )}
                                       <DropdownMenuItem 
-                                        onClick={() => handleDeleteTag(tag.id)}
+                                        onClick={() => confirmDeleteTag(tag.id, tag.name)}
                                         className="text-destructive"
                                       >
                                         <Trash2 className="h-4 w-4 mr-2" />
@@ -638,7 +700,7 @@ const Material: React.FC = () => {
                                       {tagPictures.length > 0 && (
                                         <>
                                           <DropdownMenuItem 
-                                            onClick={() => handleBulkDeletePictures(tag.id)}
+                                            onClick={() => confirmBulkDeletePictures(tag.id, tag.name)}
                                             className="text-destructive"
                                           >
                                             <Trash2 className="h-4 w-4 mr-2" />
@@ -648,7 +710,7 @@ const Material: React.FC = () => {
                                         </>
                                       )}
                                       <DropdownMenuItem 
-                                        onClick={() => handleDeleteTag(tag.id)}
+                                        onClick={() => confirmDeleteTag(tag.id, tag.name)}
                                         className="text-destructive"
                                       >
                                         <Trash2 className="h-4 w-4 mr-2" />
@@ -721,7 +783,7 @@ const Material: React.FC = () => {
                                       {tagNames.length > 0 && (
                                         <>
                                           <DropdownMenuItem 
-                                            onClick={() => handleBulkDeleteNames(tag.id)}
+                                            onClick={() => confirmBulkDeleteNames(tag.id, tag.name)}
                                             className="text-destructive"
                                           >
                                             <Trash2 className="h-4 w-4 mr-2" />
@@ -731,7 +793,7 @@ const Material: React.FC = () => {
                                         </>
                                       )}
                                       <DropdownMenuItem 
-                                        onClick={() => handleDeleteTag(tag.id)}
+                                        onClick={() => confirmDeleteTag(tag.id, tag.name)}
                                         className="text-destructive"
                                       >
                                         <Trash2 className="h-4 w-4 mr-2" />
@@ -1031,6 +1093,42 @@ const Material: React.FC = () => {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <AlertDialog open={bulkDeleteConfirm?.open ?? false} onOpenChange={(open) => !open && setBulkDeleteConfirm(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {bulkDeleteConfirm?.type === 'tag' ? 'Delete Tag?' : 'Delete All Items?'}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {bulkDeleteConfirm?.type === 'tag' ? (
+                <>
+                  This will permanently delete the tag "<strong>{bulkDeleteConfirm?.tagName}</strong>" and all its contents. This action cannot be undone.
+                </>
+              ) : bulkDeleteConfirm?.type === 'data' ? (
+                <>
+                  This will permanently delete <strong>{bulkDeleteConfirm?.count} data items</strong> from "<strong>{bulkDeleteConfirm?.tagName}</strong>". This action cannot be undone.
+                </>
+              ) : bulkDeleteConfirm?.type === 'pictures' ? (
+                <>
+                  This will permanently delete <strong>{bulkDeleteConfirm?.count} pictures</strong> from "<strong>{bulkDeleteConfirm?.tagName}</strong>". This action cannot be undone.
+                </>
+              ) : (
+                <>
+                  This will permanently delete <strong>{bulkDeleteConfirm?.count} names</strong> from "<strong>{bulkDeleteConfirm?.tagName}</strong>". This action cannot be undone.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmedBulkDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 };
