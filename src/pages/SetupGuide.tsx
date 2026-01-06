@@ -49,6 +49,13 @@ from fingerprint_generator import generate_fingerprint
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
+session_locks: Dict[str, asyncio.Lock] = {}  # Per-session locks to prevent "database is locked"
+
+def get_session_lock(account_id: str) -> asyncio.Lock:
+    """Get or create a lock for a specific account session."""
+    if account_id not in session_locks:
+        session_locks[account_id] = asyncio.Lock()
+    return session_locks[account_id]
 
 # Speed settings
 CONNECTION_TIMEOUT = 30
@@ -118,128 +125,140 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None) -> Optional[TelegramClient]:
     account_id = account["id"]
     
-    if account_id in active_clients:
-        client = active_clients[account_id]
-        try:
-            if client.is_connected():
-                if setup_handler and not getattr(client, "_handler", False):
-                    await setup_handler(client, account_id)
-                    setattr(client, "_handler", True)
-                return client
-        except:
-            del active_clients[account_id]
+    # Use session lock to prevent "database is locked" errors when multiple runners access same session
+    session_lock = get_session_lock(account_id)
     
-    session_data = account.get("session_data")
-    if not session_data:
-        return None
-    
-    session_path = decode_session_file(account["phone_number"], session_data)
-    if not session_path:
-        return None
-    
-    device_model = account.get("device_model")
-    system_version = account.get("system_version")
-    app_version = account.get("app_version") or "10.14.2"
-    lang_code = account.get("lang_code") or "en"
-    system_lang_code = account.get("system_lang_code") or "en-US"
-    
-    if not device_model or not system_version:
-        fp = generate_fingerprint()
-        device_model = fp["device_model"]
-        system_version = fp["system_version"]
-        app_version = fp["app_version"]
-        lang_code = fp["lang_code"]
-        system_lang_code = fp["system_lang_code"]
-        print(f"  [FP] Generated: {device_model} ({system_version})")
-        await report_result("fingerprint_generated", {
-            "account_id": account_id,
-            "device_model": device_model,
-            "system_version": system_version,
-            "app_version": app_version,
-            "lang_code": lang_code,
-            "system_lang_code": system_lang_code
-        })
-    
-    proxy = get_proxy_settings(account, task_proxy=task_proxy)
-    if proxy:
-        print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
-    try:
-        api_id = account.get("api_id") or TELEGRAM_API_ID
-        api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+    async with session_lock:
+        if account_id in active_clients:
+            client = active_clients[account_id]
+            try:
+                if client.is_connected():
+                    if setup_handler and not getattr(client, "_handler", False):
+                        await setup_handler(client, account_id)
+                        setattr(client, "_handler", True)
+                    return client
+            except:
+                del active_clients[account_id]
         
-        client = TelegramClient(
-            session_path, int(api_id), api_hash,
-            device_model=device_model,
-            system_version=system_version,
-            app_version=app_version,
-            lang_code=lang_code,
-            system_lang_code=system_lang_code,
-            proxy=proxy,
-            timeout=CONNECTION_TIMEOUT,
-            connection_retries=CONNECTION_RETRIES,
-            retry_delay=RETRY_DELAY,
-            auto_reconnect=True,
-            request_retries=3
-        )
-        
-        print(f"  [CONNECT] {account['phone_number']}...")
-        if not await connect_with_retry(client):
-            print(f"  [FAIL] Timeout: {account['phone_number']}")
-            await report_result("account_disconnected", {"account_id": account_id, "reason": "Connection timeout"})
+        session_data = account.get("session_data")
+        if not session_data:
             return None
         
-        if not await client.is_user_authorized():
-            await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
+        session_path = decode_session_file(account["phone_number"], session_data)
+        if not session_path:
             return None
         
-        # Check if account is deleted/banned
+        device_model = account.get("device_model")
+        system_version = account.get("system_version")
+        app_version = account.get("app_version") or "10.14.2"
+        lang_code = account.get("lang_code") or "en"
+        system_lang_code = account.get("system_lang_code") or "en-US"
+        
+        if not device_model or not system_version:
+            fp = generate_fingerprint()
+            device_model = fp["device_model"]
+            system_version = fp["system_version"]
+            app_version = fp["app_version"]
+            lang_code = fp["lang_code"]
+            system_lang_code = fp["system_lang_code"]
+            print(f"  [FP] Generated: {device_model} ({system_version})")
+            await report_result("fingerprint_generated", {
+                "account_id": account_id,
+                "device_model": device_model,
+                "system_version": system_version,
+                "app_version": app_version,
+                "lang_code": lang_code,
+                "system_lang_code": system_lang_code
+            })
+        
+        proxy = get_proxy_settings(account, task_proxy=task_proxy)
+        if proxy:
+            print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
         try:
-            me = await asyncio.wait_for(client.get_me(), timeout=15)
-            if not me:
-                print(f"  [BANNED] Account deleted: {account['phone_number']}")
-                await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"})
+            api_id = account.get("api_id") or TELEGRAM_API_ID
+            api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+            
+            client = TelegramClient(
+                session_path, int(api_id), api_hash,
+                device_model=device_model,
+                system_version=system_version,
+                app_version=app_version,
+                lang_code=lang_code,
+                system_lang_code=system_lang_code,
+                proxy=proxy,
+                timeout=CONNECTION_TIMEOUT,
+                connection_retries=CONNECTION_RETRIES,
+                retry_delay=RETRY_DELAY,
+                auto_reconnect=True,
+                request_retries=3
+            )
+            
+            print(f"  [CONNECT] {account['phone_number']}...")
+            if not await connect_with_retry(client):
+                print(f"  [FAIL] Timeout: {account['phone_number']}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": "Connection timeout"})
                 return None
-        except Exception as me_err:
-            err_str = str(me_err).lower()
-            if any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
-                print(f"  [BANNED] {account['phone_number']}: {me_err}")
-                await report_result("account_banned", {"account_id": account_id, "reason": str(me_err)})
+            
+            if not await client.is_user_authorized():
+                await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
                 return None
-            elif any(x in err_str for x in ["session", "revoked", "auth"]):
-                print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
-                await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)})
-                return None
-        
-        if setup_handler:
-            await setup_handler(client, account_id)
-            setattr(client, "_handler", True)
-        
-        active_clients[account_id] = client
-        
-        # Fast mode: skip profile if cached
-        if account.get("first_name") or account.get("username"):
-            await report_result("account_connected", {"account_id": account_id, "skip_profile_update": True})
-        else:
-            if me:
-                await report_result("account_connected", {
-                    "account_id": account_id,
-                    "first_name": me.first_name,
-                    "last_name": me.last_name,
-                    "username": me.username,
-                    "telegram_id": me.id,
-                    "phone": me.phone
-                })
-        
-        print(f"  [OK] Connected: {account['phone_number']}")
-        return client
-    except Exception as e:
-        err_str = str(e).lower()
-        if any(x in err_str for x in ["deleted", "deactivated", "banned"]):
-            print(f"  [BANNED] {account['phone_number']}: {e}")
-            await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
-        else:
-            print(f"  [FAIL] {account['phone_number']}: {e}")
-        return None
+            
+            # Check if account is deleted/banned
+            try:
+                me = await asyncio.wait_for(client.get_me(), timeout=15)
+                if not me:
+                    print(f"  [BANNED] Account deleted: {account['phone_number']}")
+                    await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"})
+                    return None
+            except Exception as me_err:
+                err_str = str(me_err).lower()
+                if any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
+                    print(f"  [BANNED] {account['phone_number']}: {me_err}")
+                    await report_result("account_banned", {"account_id": account_id, "reason": str(me_err)})
+                    return None
+                elif any(x in err_str for x in ["session", "revoked", "auth"]):
+                    print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
+                    await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)})
+                    return None
+                elif "database is locked" in err_str or "locked" in err_str:
+                    print(f"  [LOCKED] Session busy: {account['phone_number']}")
+                    await report_result("account_disconnected", {"account_id": account_id, "reason": "Session file locked by another process"})
+                    return None
+            
+            if setup_handler:
+                await setup_handler(client, account_id)
+                setattr(client, "_handler", True)
+            
+            active_clients[account_id] = client
+            
+            # Fast mode: skip profile if cached
+            if account.get("first_name") or account.get("username"):
+                await report_result("account_connected", {"account_id": account_id, "skip_profile_update": True})
+            else:
+                if me:
+                    await report_result("account_connected", {
+                        "account_id": account_id,
+                        "first_name": me.first_name,
+                        "last_name": me.last_name,
+                        "username": me.username,
+                        "telegram_id": me.id,
+                        "phone": me.phone
+                    })
+            
+            print(f"  [OK] Connected: {account['phone_number']}")
+            return client
+        except Exception as e:
+            err_str = str(e).lower()
+            if any(x in err_str for x in ["deleted", "deactivated", "banned"]):
+                print(f"  [BANNED] {account['phone_number']}: {e}")
+                await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
+            elif "database is locked" in err_str or "locked" in err_str:
+                print(f"  [LOCKED] Session busy: {account['phone_number']}: {e}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": "Session file locked"})
+            else:
+                print(f"  [FAIL] {account['phone_number']}: {e}")
+            return None
+
 
 
 async def get_next_task(runner: str = None) -> dict:
