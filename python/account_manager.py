@@ -83,15 +83,30 @@ async def change_name(client, first_name: str, last_name: str = ""):
         return False, str(e)
 
 
-async def change_profile_photo(client, photo_base64: str):
-    """Change profile photo on Telegram"""
+async def change_profile_photo(client, photo_source: str):
+    """Change profile photo on Telegram - accepts base64 or URL"""
     try:
         from telethon.tl.functions.photos import UploadProfilePhotoRequest
+        import aiohttp
         
-        photo_bytes = base64.b64decode(photo_base64)
         temp_path = os.path.join(SESSION_FOLDER, "temp_photo.jpg")
-        with open(temp_path, "wb") as f:
-            f.write(photo_bytes)
+        
+        # Check if it's a URL or base64
+        if photo_source.startswith("http://") or photo_source.startswith("https://"):
+            # Download from URL
+            async with aiohttp.ClientSession() as session:
+                async with session.get(photo_source) as resp:
+                    if resp.status == 200:
+                        photo_bytes = await resp.read()
+                        with open(temp_path, "wb") as f:
+                            f.write(photo_bytes)
+                    else:
+                        return False, f"Failed to download image: HTTP {resp.status}"
+        else:
+            # Assume base64
+            photo_bytes = base64.b64decode(photo_source)
+            with open(temp_path, "wb") as f:
+                f.write(photo_bytes)
         
         file = await client.upload_file(temp_path)
         await client(UploadProfilePhotoRequest(file=file))
@@ -286,7 +301,9 @@ async def main_loop():
                 client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  📷 Changing photo for {account.get('phone_number')}...")
-                    success, error = await change_profile_photo(client, task_data.get("photo_base64", ""))
+                    # Support both photo_url and photo_base64
+                    photo_source = task_data.get("photo_url") or task_data.get("photo_base64", "")
+                    success, error = await change_profile_photo(client, photo_source)
                     await report_result("change_photo", {
                         "task_id": task_id,
                         "account_id": account.get("id"),
