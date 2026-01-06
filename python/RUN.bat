@@ -1,15 +1,15 @@
 @echo off
 title TelegramCRM
 echo ============================================
-echo       TelegramCRM - Main Runner
+echo       TelegramCRM - Campaign Runner
 echo ============================================
 echo.
-echo  Handles: Campaigns, Live Chat, Accounts
+echo  Handles: Campaign Messages
 echo  Press Ctrl+C to stop
 echo.
 echo ============================================
 echo.
-python main_runner.py
+python campaign_runner.py
 echo.
 echo Runner stopped.
 pause
