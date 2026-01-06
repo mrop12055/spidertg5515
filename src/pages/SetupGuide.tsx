@@ -303,6 +303,19 @@ async def report_result(task_type: str, result: dict):
         pass
 
 
+async def send_heartbeat(runner_name: str = "unified"):
+    """Send heartbeat to backend to show runner is alive."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"{BACKEND_URL}/report-task-result",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json={"task_type": "heartbeat", "result": {"runner": runner_name, "status": "online"}}
+            )
+    except:
+        pass
+
+
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
     try:
         entity = None
