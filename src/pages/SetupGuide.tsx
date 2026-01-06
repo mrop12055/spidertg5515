@@ -23,10 +23,10 @@ TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
-  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed) ==========
+  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed + Idle Cleanup) ==========
   const clientManagerPy = `"""
-TelegramCRM - Client Manager (Optimized)
-Fast connections with retry logic, timeouts, and proxy support
+TelegramCRM - Client Manager (Optimized with Idle Cleanup)
+Fast connections with retry logic, timeouts, proxy support, and automatic idle client cleanup
 """
 
 import os
@@ -35,6 +35,7 @@ import tempfile
 import asyncio
 import httpx
 import socks
+import time
 from typing import Dict, Optional
 
 from telethon import TelegramClient
@@ -45,11 +46,16 @@ from fingerprint_generator import generate_fingerprint
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
+client_last_used: Dict[str, float] = {}  # Track when each client was last used
 
 # Speed settings
 CONNECTION_TIMEOUT = 30
 CONNECTION_RETRIES = 3
 RETRY_DELAY = 2
+
+# Idle client cleanup settings
+CLIENT_IDLE_TIMEOUT = 60  # Disconnect clients idle for 60 seconds
+MAX_CACHED_CLIENTS = 50   # Maximum number of cached clients
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
@@ -116,6 +122,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     
     if cache_key in active_clients:
         client = active_clients[cache_key]
+        client_last_used[cache_key] = time.time()  # Update last used time
         try:
             if client.is_connected():
                 if setup_handler and not getattr(client, "_handler", False):
@@ -229,6 +236,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             setattr(client, "_handler", True)
         
         active_clients[cache_key] = client
+        client_last_used[cache_key] = time.time()  # Track when client was created
         
         # Fast mode: skip profile if cached
         if account.get("first_name") or account.get("username"):
@@ -409,6 +417,56 @@ async def validate_contact(client: TelegramClient, phone: str):
         return False, None, None
 
 
+async def cleanup_idle_clients():
+    """Disconnect clients that have been idle for too long to prevent DB locking"""
+    now = time.time()
+    clients_to_remove = []
+    
+    for cache_key, last_used in list(client_last_used.items()):
+        if now - last_used > CLIENT_IDLE_TIMEOUT:
+            clients_to_remove.append(cache_key)
+    
+    # Also cleanup if we have too many clients
+    if len(active_clients) > MAX_CACHED_CLIENTS:
+        sorted_by_usage = sorted(client_last_used.items(), key=lambda x: x[1])
+        excess = len(active_clients) - MAX_CACHED_CLIENTS
+        for cache_key, _ in sorted_by_usage[:excess]:
+            if cache_key not in clients_to_remove:
+                clients_to_remove.append(cache_key)
+    
+    for cache_key in clients_to_remove:
+        try:
+            if cache_key in active_clients:
+                client = active_clients[cache_key]
+                await asyncio.wait_for(client.disconnect(), timeout=5)
+                del active_clients[cache_key]
+            if cache_key in client_last_used:
+                del client_last_used[cache_key]
+            print(f"  [CLEANUP] Disconnected idle client: {cache_key[:16]}...")
+        except Exception as e:
+            print(f"  [WARN] Cleanup error for {cache_key[:16]}: {e}")
+            if cache_key in active_clients:
+                del active_clients[cache_key]
+            if cache_key in client_last_used:
+                del client_last_used[cache_key]
+
+
+async def disconnect_client(account_id: str):
+    """Explicitly disconnect a specific client"""
+    keys_to_remove = [k for k in active_clients.keys() if k.startswith(account_id)]
+    for cache_key in keys_to_remove:
+        try:
+            client = active_clients.get(cache_key)
+            if client:
+                await asyncio.wait_for(client.disconnect(), timeout=5)
+            if cache_key in active_clients:
+                del active_clients[cache_key]
+            if cache_key in client_last_used:
+                del client_last_used[cache_key]
+        except:
+            pass
+
+
 async def shutdown_all():
     print("\\n[SHUTDOWN] Disconnecting...")
     for account_id, client in list(active_clients.items()):
@@ -417,6 +475,7 @@ async def shutdown_all():
         except:
             pass
     active_clients.clear()
+    client_last_used.clear()
     print("[OK] Done.")
 `;
 
@@ -468,10 +527,11 @@ import signal
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, validate_contact, shutdown_all
+    send_message, validate_contact, shutdown_all, cleanup_idle_clients
 )
 
 RUNNING = True
+CLEANUP_INTERVAL = 30  # Run cleanup every 30 messages
 
 def signal_handler(sig, frame):
     global RUNNING
@@ -487,6 +547,8 @@ async def main_loop():
     print("  Campaign Runner")
     print("  [Messages + Validation]")
     print("=" * 50)
+    
+    message_count = 0
     
     while RUNNING:
         try:
@@ -519,6 +581,11 @@ async def main_loop():
                         "account_id": account.get("id")
                     })
                     print(f"    {'[OK]' if success else '[FAIL] ' + str(error)}")
+                    
+                    # Periodic cleanup
+                    message_count += 1
+                    if message_count % CLEANUP_INTERVAL == 0:
+                        await cleanup_idle_clients()
             
             elif task_type == "validate":
                 recipients = task.get("recipients", [])
@@ -563,7 +630,7 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, active_clients
+    send_message, shutdown_all, active_clients, cleanup_idle_clients
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
@@ -1159,7 +1226,7 @@ import signal
 import random
 
 from client_manager import (
-    get_or_create_client, get_next_task, get_batch_tasks, report_result, shutdown_all
+    get_or_create_client, get_next_task, get_batch_tasks, report_result, shutdown_all, cleanup_idle_clients
 )
 
 # ========== GLOBAL STATE ==========
@@ -1518,6 +1585,9 @@ async def main_loop():
             success_count = sum(1 for r in results if isinstance(r, dict) and r.get("success"))
             fail_count = len(results) - success_count
             print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
+            
+            # Cleanup idle clients after each batch to prevent DB locking
+            await cleanup_idle_clients()
             
             # Minimal delay before next batch
             await asyncio.sleep(max(0.3, delay_after))
