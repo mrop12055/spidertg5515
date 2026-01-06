@@ -44,9 +44,12 @@ serve(async (req) => {
     // Only check for pending messages and return immediately.
     if (runner === "livechat") {
       // Minimal select for speed - only what we need
-      const { data: pendingMessages } = await supabase
+      const { data: pendingMessages, error: pendingErr } = await supabase
         .from("messages")
-        .select("id, content, media_url, media_type, account_id, campaign_recipient_id, priority, conversations!inner(id, recipient_phone, recipient_username, recipient_telegram_id)")
+        // Use explicit FK to avoid PostgREST relationship ambiguity
+        .select(
+          "id, content, media_url, media_type, account_id, campaign_recipient_id, priority, conversations!messages_conversation_id_fkey(id, recipient_phone, recipient_username, recipient_telegram_id)"
+        )
         .eq("status", "pending")
         .eq("direction", "outgoing")
         .is("campaign_recipient_id", null)
@@ -54,19 +57,34 @@ serve(async (req) => {
         .order("created_at", { ascending: true })
         .limit(5);
 
+      if (pendingErr) {
+        console.log(`[get-next-task] Livechat pending query error: ${pendingErr.message}`);
+      }
+
       if (pendingMessages && pendingMessages.length > 0) {
         // Get minimal account data for the first message with available account
         for (const msg of pendingMessages) {
+          const nowIso = new Date().toISOString();
+
           const { data: account } = await supabase
             .from("telegram_accounts")
-            .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
+            .select(
+              "id, phone_number, status, restricted_until, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)"
+            )
             .eq("id", msg.account_id)
-            .in("status", ["active", "restricted", "cooldown", "frozen"])
+            .in("status", ["active", "restricted", "cooldown", "frozen", "disconnected"])
             .single();
 
           // proxies is an array from the join, get first element
           const proxy = Array.isArray(account?.proxies) ? account.proxies[0] : account?.proxies;
-          if (account && proxy?.status === "active") {
+
+          // IMPORTANT: if the account is temporarily restricted (restricted_until in the future),
+          // DO NOT attempt to send (prevents endless "Too many requests" loops). Keep message pending.
+          const isTimeRestricted = Boolean(
+            account?.restricted_until && account.restricted_until > nowIso
+          );
+
+          if (account && proxy?.status === "active" && !isTimeRestricted) {
             // Mark as sending
             await supabase
               .from("messages")
@@ -76,39 +94,44 @@ serve(async (req) => {
 
             const conv = (msg as any).conversations || {};
             const apiCred = account.telegram_api_credentials as any;
-            
-            console.log(`[get-next-task] FAST livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
-            
-            return new Response(JSON.stringify({
-              task: "send",
-              message: {
-                id: msg.id,
-                content: msg.content,
-                media_url: msg.media_url,
-                media_type: msg.media_type,
-                campaign_recipient_id: msg.campaign_recipient_id,
-              },
-              recipient: conv.recipient_username || conv.recipient_phone,
-              recipient_telegram_id: conv.recipient_telegram_id,
-              recipient_username: conv.recipient_username,
-              recipient_phone: conv.recipient_phone,
-              account: {
-                id: account.id,
-                phone_number: account.phone_number,
-                session_data: account.session_data,
-                device_model: account.device_model,
-                system_version: account.system_version,
-                app_version: account.app_version,
-                lang_code: account.lang_code,
-                system_lang_code: account.system_lang_code,
-                api_id: apiCred?.api_id || account.api_id,
-                api_hash: apiCred?.api_hash || account.api_hash,
-                proxy: proxy,
-              },
-              mode: "live",
-            }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+
+            console.log(
+              `[get-next-task] FAST livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority})`
+            );
+
+            return new Response(
+              JSON.stringify({
+                task: "send",
+                message: {
+                  id: msg.id,
+                  content: msg.content,
+                  media_url: msg.media_url,
+                  media_type: msg.media_type,
+                  campaign_recipient_id: msg.campaign_recipient_id,
+                },
+                recipient: conv.recipient_username || conv.recipient_phone,
+                recipient_telegram_id: conv.recipient_telegram_id,
+                recipient_username: conv.recipient_username,
+                recipient_phone: conv.recipient_phone,
+                account: {
+                  id: account.id,
+                  phone_number: account.phone_number,
+                  session_data: account.session_data,
+                  device_model: account.device_model,
+                  system_version: account.system_version,
+                  app_version: account.app_version,
+                  lang_code: account.lang_code,
+                  system_lang_code: account.system_lang_code,
+                  api_id: apiCred?.api_id || account.api_id,
+                  api_hash: apiCred?.api_hash || account.api_hash,
+                  proxy: proxy,
+                },
+                mode: "live",
+              }),
+              {
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+              }
+            );
           }
         }
       }

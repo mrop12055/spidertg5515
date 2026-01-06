@@ -957,14 +957,15 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   const sendMessage = useCallback(async (accountId: string, recipientPhone: string, content: string, mediaUrl?: string, mediaType?: string) => {
     try {
       const account = accounts.find(a => a.id === accountId);
-      const canSendStatuses: TelegramAccount['status'][] = ['active', 'restricted', 'cooldown'];
+      // Allow "disconnected" for live chat: we will attempt reconnect via the runner.
+      const canSendStatuses: TelegramAccount['status'][] = ['active', 'restricted', 'cooldown', 'disconnected'];
       if (!account) {
         toast.error('Account not found');
         return;
       }
       if (!canSendStatuses.includes(account.status)) {
-        toast.error('Message not sent: account is disconnected', {
-          description: 'Reconnect/verify the session on the Accounts page, then try again.',
+        toast.error('Message not sent: account is not available', {
+          description: 'Make sure the account is active (not banned/frozen), then try again.',
         });
         return;
       }
