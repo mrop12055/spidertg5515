@@ -8,6 +8,7 @@ import { Progress } from '@/components/ui/progress';
 import { useTelegram } from '@/context/TelegramContext';
 import { supabase } from '@/integrations/supabase/client';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
+import { VPSManager } from '@/components/dashboard/VPSManager';
 import { 
   LayoutDashboard, 
   Phone, 
@@ -20,6 +21,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+
 const Dashboard: React.FC = () => {
   const { campaigns, accounts, proxies, refreshData } = useTelegram();
   const navigate = useNavigate();
@@ -118,9 +120,10 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
-      {/* Runner Status */}
-      <div className="mb-8">
+      {/* Runner Status & VPS Manager */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
         <RunnerStatusCard />
+        <VPSManager />
       </div>
 
       {/* Running Campaigns */}
