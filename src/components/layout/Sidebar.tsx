@@ -65,13 +65,13 @@ export const Sidebar: React.FC = () => {
       {/* Logo */}
       <div className="h-16 flex items-center px-4 border-b border-sidebar-border">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center shadow-glow">
-            <Send className="w-5 h-5 text-primary-foreground" />
+          <div className="w-11 h-11 rounded-2xl gradient-primary flex items-center justify-center shadow-lg shadow-primary/25">
+            <Send className="w-5 h-5 text-primary-foreground" strokeWidth={1.5} />
           </div>
-        {!collapsed && (
+          {!collapsed && (
             <div className="animate-fade-in flex items-center gap-2">
               <div>
-                <h1 className="font-bold text-lg text-sidebar-foreground">TGxOP</h1>
+                <h1 className="font-bold text-lg text-sidebar-foreground tracking-tight">TGxOP</h1>
                 <p className="text-xs text-muted-foreground">Dashboard</p>
               </div>
               {anyOfflineConfirmed && (
@@ -98,18 +98,22 @@ export const Sidebar: React.FC = () => {
               key={item.path}
               to={item.path}
               className={cn(
-                "flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all duration-200 group relative",
+                "flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative",
                 isActive 
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-glow" 
+                  ? "bg-primary/10 text-primary font-medium" 
                   : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 collapsed && "justify-center px-2"
               )}
             >
-              <div className="relative">
+              <div className={cn(
+                "relative flex items-center justify-center",
+                isActive && "text-primary"
+              )}>
                 <item.icon className={cn(
                   "w-5 h-5 flex-shrink-0 transition-transform duration-200",
-                  !isActive && "group-hover:scale-110"
-                )} />
+                  !isActive && "group-hover:scale-105",
+                  isActive && "text-primary"
+                )} strokeWidth={isActive ? 2 : 1.5} />
                 {showBadge && collapsed && (
                   <span className="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] rounded-full bg-destructive text-destructive-foreground text-[10px] font-bold flex items-center justify-center animate-pulse">
                     {totalUnread > 99 ? '99+' : totalUnread}
@@ -117,7 +121,7 @@ export const Sidebar: React.FC = () => {
                 )}
               </div>
               {!collapsed && (
-                <span className="text-sm font-medium animate-fade-in">{item.label}</span>
+                <span className="text-sm animate-fade-in">{item.label}</span>
               )}
               {showBadge && !collapsed && (
                 <span className="ml-auto min-w-[20px] h-[20px] rounded-full bg-destructive text-destructive-foreground text-xs font-bold flex items-center justify-center animate-pulse">
@@ -125,7 +129,7 @@ export const Sidebar: React.FC = () => {
                 </span>
               )}
               {isActive && !collapsed && !showBadge && (
-                <div className="ml-auto w-1.5 h-1.5 rounded-full bg-sidebar-primary-foreground animate-pulse" />
+                <div className="ml-auto w-1.5 h-1.5 rounded-full bg-primary" />
               )}
             </NavLink>
           );

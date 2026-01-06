@@ -1653,152 +1653,145 @@ const Accounts: React.FC = () => {
     <DashboardLayout>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold">Accounts</h1>
-            <p className="text-muted-foreground text-sm mt-1">
-              Manage your {stats.total} Telegram accounts
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={refreshData} disabled={isLoading} size="sm" className="gap-2">
-              <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-              Refresh
-            </Button>
-            <Dialog open={isAddOpen} onOpenChange={(open) => {
-              setIsAddOpen(open);
-              if (!open) {
-                setSessionFiles([]);
-                setUploadResults(null);
-                setUploadTags([]);
-                setNewUploadTag('');
-              }
-            }}>
-              <DialogTrigger asChild>
-                <Button size="sm" className="gap-2">
-                  <Plus className="w-4 h-4" />
-                  Add Accounts
-                </Button>
-              </DialogTrigger>
-              <DialogContent className="max-w-lg">
-                <DialogHeader>
-                  <DialogTitle>Upload Session Files</DialogTitle>
-                  <DialogDescription>
-                    Drop .session files to add accounts (supports bulk upload)
-                  </DialogDescription>
-                </DialogHeader>
-                <div className="space-y-4 pt-4">
-                  <div
-                    {...getRootProps()}
-                    className={cn(
-                      "relative border-2 border-dashed rounded-xl p-6 transition-all cursor-pointer",
-                      "hover:border-primary/50 hover:bg-primary/5",
-                      isDragActive && "border-primary bg-primary/10",
-                      isUploading && "pointer-events-none opacity-60"
+        <PageHeader
+          title="Accounts"
+          description={`Manage your ${stats.total} Telegram accounts`}
+          icon={Phone}
+          action={
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={refreshData} disabled={isLoading} size="sm" className="gap-2">
+                <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+                Refresh
+              </Button>
+              <Dialog open={isAddOpen} onOpenChange={(open) => {
+                setIsAddOpen(open);
+                if (!open) {
+                  setSessionFiles([]);
+                  setUploadResults(null);
+                  setUploadTags([]);
+                  setNewUploadTag('');
+                }
+              }}>
+                <DialogTrigger asChild>
+                  <Button size="sm" className="gap-2">
+                    <Plus className="w-4 h-4" />
+                    Add Accounts
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>Upload Session Files</DialogTitle>
+                    <DialogDescription>
+                      Drop .session files to add accounts (supports bulk upload)
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="space-y-4 pt-4">
+                    <div
+                      {...getRootProps()}
+                      className={cn(
+                        "relative border-2 border-dashed rounded-xl p-6 transition-all cursor-pointer",
+                        "hover:border-primary/50 hover:bg-primary/5",
+                        isDragActive && "border-primary bg-primary/10",
+                        isUploading && "pointer-events-none opacity-60"
+                      )}
+                    >
+                      <input {...getInputProps()} />
+                      <div className="flex flex-col items-center text-center">
+                        <Upload className={cn("w-10 h-10 mb-3", isDragActive ? "text-primary" : "text-muted-foreground")} />
+                        <p className="font-medium">{isDragActive ? 'Drop files here' : 'Drop .session files'}</p>
+                        <p className="text-sm text-muted-foreground">or click to browse</p>
+                      </div>
+                    </div>
+
+                    {sessionFiles.length > 0 && (
+                      <div className="space-y-2 max-h-40 overflow-y-auto">
+                        {sessionFiles.slice(0, 5).map((sf, i) => (
+                          <div key={i} className="flex items-center gap-2 p-2 rounded bg-muted/50 text-sm">
+                            <FileText className="w-4 h-4 text-primary flex-shrink-0" />
+                            <span className="flex-1 truncate">{sf.phoneNumber}</span>
+                            <Button variant="ghost" size="sm" onClick={() => removeSessionFile(i)} className="h-6 w-6 p-0">
+                              <XCircle className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ))}
+                        {sessionFiles.length > 5 && (
+                          <p className="text-xs text-muted-foreground text-center">
+                            +{sessionFiles.length - 5} more files
+                          </p>
+                        )}
+                      </div>
                     )}
-                  >
-                    <input {...getInputProps()} />
-                    <div className="flex flex-col items-center text-center">
-                      <Upload className={cn("w-10 h-10 mb-3", isDragActive ? "text-primary" : "text-muted-foreground")} />
-                      <p className="font-medium">{isDragActive ? 'Drop files here' : 'Drop .session files'}</p>
-                      <p className="text-sm text-muted-foreground">or click to browse</p>
-                    </div>
-                  </div>
 
-                  {sessionFiles.length > 0 && (
-                    <div className="space-y-2 max-h-40 overflow-y-auto">
-                      {sessionFiles.slice(0, 5).map((sf, i) => (
-                        <div key={i} className="flex items-center gap-2 p-2 rounded bg-muted/50 text-sm">
-                          <FileText className="w-4 h-4 text-primary flex-shrink-0" />
-                          <span className="flex-1 truncate">{sf.phoneNumber}</span>
-                          <Button variant="ghost" size="sm" onClick={() => removeSessionFile(i)} className="h-6 w-6 p-0">
-                            <XCircle className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      ))}
-                      {sessionFiles.length > 5 && (
-                        <p className="text-xs text-muted-foreground text-center">
-                          +{sessionFiles.length - 5} more files
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {uploadResults && (
-                    <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 text-sm">
-                      <span className="flex items-center gap-1 text-status-active">
-                        <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
-                      </span>
-                      {uploadResults.failed > 0 && (
-                        <span className="flex items-center gap-1 text-destructive">
-                          <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
+                    {uploadResults && (
+                      <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 text-sm">
+                        <span className="flex items-center gap-1 text-status-active">
+                          <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
                         </span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Tag assignment for uploaded accounts */}
-                  {sessionFiles.length > 0 && (
-                    <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Tag className="w-4 h-4" />
-                        Assign Tags (Optional)
+                        {uploadResults.failed > 0 && (
+                          <span className="flex items-center gap-1 text-destructive">
+                            <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
+                          </span>
+                        )}
                       </div>
-                      
-                      {/* Select existing tags */}
-                      {availableTags.length > 0 && (
-                        <div className="flex flex-wrap gap-2">
-                          {availableTags.map(tag => (
-                            <Badge
-                              key={tag}
-                              variant={uploadTags.includes(tag) ? "default" : "outline"}
-                              className="cursor-pointer"
-                              onClick={() => {
-                                if (uploadTags.includes(tag)) {
-                                  setUploadTags(prev => prev.filter(t => t !== tag));
-                                } else {
-                                  setUploadTags(prev => [...prev, tag]);
-                                }
-                              }}
-                            >
-                              <Tag className="w-3 h-3 mr-1" />
-                              {tag}
-                              {uploadTags.includes(tag) && <Check className="w-3 h-3 ml-1" />}
-                            </Badge>
-                          ))}
+                    )}
+
+                    {sessionFiles.length > 0 && (
+                      <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Tag className="w-4 h-4" />
+                          Assign Tags (Optional)
                         </div>
-                      )}
-                      
-                      {/* Create new tag */}
-                      <div className="flex gap-2">
-                        <Input
-                          placeholder="Or enter new tag name..."
-                          value={newUploadTag}
-                          onChange={(e) => setNewUploadTag(e.target.value)}
-                          className="h-8 text-sm"
-                        />
+                        {availableTags.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {availableTags.map(tag => (
+                              <Badge
+                                key={tag}
+                                variant={uploadTags.includes(tag) ? "default" : "outline"}
+                                className="cursor-pointer"
+                                onClick={() => {
+                                  if (uploadTags.includes(tag)) {
+                                    setUploadTags(prev => prev.filter(t => t !== tag));
+                                  } else {
+                                    setUploadTags(prev => [...prev, tag]);
+                                  }
+                                }}
+                              >
+                                <Tag className="w-3 h-3 mr-1" />
+                                {tag}
+                                {uploadTags.includes(tag) && <Check className="w-3 h-3 ml-1" />}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Or enter new tag name..."
+                            value={newUploadTag}
+                            onChange={(e) => setNewUploadTag(e.target.value)}
+                            className="h-8 text-sm"
+                          />
+                        </div>
+                        {(uploadTags.length > 0 || newUploadTag.trim()) && (
+                          <p className="text-xs text-muted-foreground">
+                            {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
+                          </p>
+                        )}
                       </div>
-                      
-                      {(uploadTags.length > 0 || newUploadTag.trim()) && (
-                        <p className="text-xs text-muted-foreground">
-                          {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
-                        </p>
-                      )}
-                    </div>
-                  )}
+                    )}
 
-                  <div className="flex justify-end gap-2">
-                    <Button variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
-                    <Button onClick={handleUploadSessions} disabled={isUploading || sessionFiles.length === 0}>
-                      {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
-                      Upload {sessionFiles.length} Account{sessionFiles.length !== 1 ? 's' : ''}
-                    </Button>
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
+                      <Button onClick={handleUploadSessions} disabled={isUploading || sessionFiles.length === 0}>
+                        {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
+                        Upload {sessionFiles.length} Account{sessionFiles.length !== 1 ? 's' : ''}
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              </DialogContent>
-            </Dialog>
-          </div>
-        </div>
+                </DialogContent>
+              </Dialog>
+            </div>
+          }
+        />
 
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">

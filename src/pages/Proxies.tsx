@@ -572,6 +572,7 @@ const Proxies: React.FC = () => {
       <PageHeader
         title="Proxy Management"
         description="Manage your proxy servers for Telegram accounts"
+        icon={Globe}
         action={
           <div className="flex items-center gap-2">
             <Button variant="outline" onClick={handleTestAll} disabled={isBulkTesting || proxies.length === 0} className="gap-2">
