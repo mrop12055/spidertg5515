@@ -706,72 +706,79 @@ const DatabaseHealth = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.5 }}
       >
-        <Card className="mb-6">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="w-5 h-5" />
-            Task Queue Management
-            <Badge variant="outline" className="ml-2 bg-green-500/10 text-green-500 border-green-500/30">
-              <Activity className="w-3 h-3 mr-1" />
-              Live
-            </Badge>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Tabs defaultValue="account" className="w-full">
-            <TabsList className="grid w-full grid-cols-6">
-              <TabsTrigger value="account">
-                Account
-                {(health?.pending_account_tasks || 0) > 0 && (
-                  <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {health?.pending_account_tasks}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="block">
-                Block
-                {(health?.pending_block_tasks || 0) > 0 && (
-                  <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {health?.pending_block_tasks}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="import">
-                Import
-                {(health?.pending_import_tasks || 0) > 0 && (
-                  <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {health?.pending_import_tasks}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="warmup">
-                <Zap className="w-3 h-3 mr-1" />
-                Warmup
-                {warmupTasks.length > 0 && (
-                  <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {warmupTasks.length}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="recipients">
-                <UserCheck className="w-3 h-3 mr-1" />
-                Recipients
-                {(health?.pending_recipients || 0) > 0 && (
-                  <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {health?.pending_recipients}
-                  </Badge>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="messages">
-                <Send className="w-3 h-3 mr-1" />
-                Messages
-                {(health?.pending_messages || 0) > 0 && (
-                  <Badge variant="destructive" className="ml-1 text-xs px-1">
-                    {health?.pending_messages}
-                  </Badge>
-                )}
-              </TabsTrigger>
-            </TabsList>
+        <Card className="mb-6 overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-muted/50 to-transparent border-b">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-primary/10">
+                  <ListTodo className="w-5 h-5 text-primary" />
+                </div>
+                <span>Task Queue Management</span>
+                <Badge variant="outline" className="bg-green-500/10 text-green-500 border-green-500/30">
+                  <Activity className="w-3 h-3 mr-1" />
+                  Live
+                </Badge>
+              </CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <Tabs defaultValue="account" className="w-full">
+              <TabsList className="grid w-full grid-cols-6 h-auto p-1 bg-muted/50">
+                <TabsTrigger value="account" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <UserCheck className="w-4 h-4" />
+                  <span className="hidden sm:inline">Account</span>
+                  {(health?.pending_account_tasks || 0) > 0 && (
+                    <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
+                      {health?.pending_account_tasks}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="block" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <Ban className="w-4 h-4" />
+                  <span className="hidden sm:inline">Block</span>
+                  {(health?.pending_block_tasks || 0) > 0 && (
+                    <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
+                      {health?.pending_block_tasks}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="import" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <Upload className="w-4 h-4" />
+                  <span className="hidden sm:inline">Import</span>
+                  {(health?.pending_import_tasks || 0) > 0 && (
+                    <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
+                      {health?.pending_import_tasks}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="warmup" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <Flame className="w-4 h-4" />
+                  <span className="hidden sm:inline">Warmup</span>
+                  {warmupTasks.length > 0 && (
+                    <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
+                      {warmupTasks.length}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="recipients" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <Send className="w-4 h-4" />
+                  <span className="hidden sm:inline">Recipients</span>
+                  {(health?.pending_recipients || 0) > 0 && (
+                    <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
+                      {health?.pending_recipients}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+                <TabsTrigger value="messages" className="flex items-center gap-1.5 py-2.5 data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                  <MessageSquare className="w-4 h-4" />
+                  <span className="hidden sm:inline">Messages</span>
+                  {(health?.pending_messages || 0) > 0 && (
+                    <Badge variant="destructive" className="ml-1 text-xs px-1.5 py-0 h-5">
+                      {health?.pending_messages}
+                    </Badge>
+                  )}
+                </TabsTrigger>
+              </TabsList>
             
             <TabsContent value="account" className="mt-4">
               <TaskTabContent 
@@ -1079,51 +1086,74 @@ const DatabaseHealth = () => {
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, delay: 0.6 }}
       >
-        <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertCircle className="w-5 h-5 text-destructive" />
-            All Recent Errors
-            <Badge variant="outline" className="ml-2 bg-destructive/10 text-destructive border-destructive/30">
-              Live Feed
-            </Badge>
-            <Badge variant="outline" className="ml-1 bg-muted text-muted-foreground">
-              {recentErrors.length} errors
-            </Badge>
-          </CardTitle>
-          <CardDescription>Latest 300 errors from all sources (campaigns, messages, tasks, warmup, accounts)</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ScrollArea className="h-[500px]">
-            {recentErrors.length === 0 ? (
-              <div className="text-center py-8 text-muted-foreground">
-                <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50 text-primary" />
-                <p>No recent errors</p>
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {recentErrors.map((error) => (
-                  <div key={`${error.source}-${error.id}`} className="p-3 rounded-lg border bg-destructive/5 border-destructive/20">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <Badge variant="outline" className="text-xs bg-muted/50">
-                          {error.source}
-                        </Badge>
-                        <Phone className="w-4 h-4 text-muted-foreground" />
-                        <span className="font-medium text-sm">{error.phone}</span>
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {format(new Date(error.timestamp), 'MMM d, HH:mm:ss')}
-                      </span>
-                    </div>
-                    <p className="text-sm text-destructive">{error.reason}</p>
+        <Card className="overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-destructive/10 to-transparent border-b">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-3">
+                <div className="p-2 rounded-xl bg-destructive/10">
+                  <AlertTriangle className="w-5 h-5 text-destructive" />
+                </div>
+                <span>Recent Errors</span>
+                <Badge variant="outline" className="bg-destructive/10 text-destructive border-destructive/30">
+                  <Activity className="w-3 h-3 mr-1" />
+                  Live Feed
+                </Badge>
+                <Badge variant="secondary" className="font-mono">
+                  {recentErrors.length}
+                </Badge>
+              </CardTitle>
+            </div>
+            <CardDescription className="mt-2">
+              Latest 300 errors from all sources (campaigns, messages, tasks, warmup, accounts)
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <ScrollArea className="h-[400px]">
+              {recentErrors.length === 0 ? (
+                <div className="text-center py-16 text-muted-foreground">
+                  <div className="p-4 rounded-full bg-green-500/10 w-fit mx-auto mb-4">
+                    <CheckCircle className="w-10 h-10 text-green-500" />
                   </div>
-                ))}
-              </div>
-            )}
-          </ScrollArea>
-        </CardContent>
-      </Card>
+                  <p className="font-medium">No recent errors</p>
+                  <p className="text-sm mt-1">All systems running smoothly</p>
+                </div>
+              ) : (
+                <div className="divide-y">
+                  {recentErrors.map((error, idx) => (
+                    <motion.div 
+                      key={`${error.source}-${error.id}`} 
+                      initial={{ opacity: 0, x: -10 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.2, delay: idx * 0.02 }}
+                      className="p-4 hover:bg-muted/30 transition-colors"
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          <Badge 
+                            variant="outline" 
+                            className={`text-xs ${
+                              error.source === 'Account' ? 'bg-orange-500/10 text-orange-500 border-orange-500/30' :
+                              error.source === 'Campaign' ? 'bg-blue-500/10 text-blue-500 border-blue-500/30' :
+                              error.source === 'Warmup' ? 'bg-purple-500/10 text-purple-500 border-purple-500/30' :
+                              'bg-muted'
+                            }`}
+                          >
+                            {error.source}
+                          </Badge>
+                          <span className="font-mono text-sm text-muted-foreground">{error.phone}</span>
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {format(new Date(error.timestamp), 'MMM d, HH:mm:ss')}
+                        </span>
+                      </div>
+                      <p className="text-sm text-destructive line-clamp-2">{error.reason}</p>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </ScrollArea>
+          </CardContent>
+        </Card>
       </motion.div>
     </DashboardLayout>
   );
