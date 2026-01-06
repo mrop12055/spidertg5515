@@ -3,7 +3,12 @@
 TelegramCRM - Live Chat Listener
 =================================
 Keeps all accounts connected and listens for incoming messages.
-Sends outgoing messages for active conversations instantly.
+Sends outgoing messages for active conversations with 1-second polling.
+
+Features:
+- 1-second polling for send tasks (batch mode)
+- Keep-alive mechanism to prevent disconnections
+- Parallel batch processing of send tasks
 
 Run: python live_chat_listener.py
 Stop: Ctrl+C
@@ -11,47 +16,22 @@ Stop: Ctrl+C
 
 import asyncio
 import signal
-import sys
+import time
 
 from telethon import events
 
 from client_manager import (
-    get_or_create_client, get_next_task, report_result,
+    get_or_create_client, get_batch_tasks, report_result,
     send_message, shutdown_all, active_clients
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
+POLL_INTERVAL = 1  # 1-second polling for send tasks
+KEEP_ALIVE_INTERVAL = 60  # Ping connections every 60 seconds
 
 # Reduce noise + avoid slowing the event loop with repeated DB checks for non-campaign senders
 LOG_IGNORED_NON_CAMPAIGN = False
-
-# Cache conversation existence results to avoid repeated REST calls (which can block the loop and delay sends)
-NEGATIVE_CACHE_TTL_SECONDS = 365 * 24 * 60 * 60  # 1 year = permanent (non-campaign senders are NEVER processed)
-POSITIVE_CACHE_TTL_SECONDS = 6 * 60 * 60         # 6h: re-check campaign contacts occasionally
-
-# (account_id, sender_id) -> (exists: bool, cached_at: float)
-_conversation_cache = {}
-
-
-def _cache_get(account_id: str, sender_id: int):
-    import time
-    key = (account_id, int(sender_id))
-    val = _conversation_cache.get(key)
-    if not val:
-        return None
-    exists, ts = val
-    ttl = POSITIVE_CACHE_TTL_SECONDS if exists else NEGATIVE_CACHE_TTL_SECONDS
-    if (time.time() - ts) > ttl:
-        _conversation_cache.pop(key, None)
-        return None
-    return exists
-
-
-def _cache_set(account_id: str, sender_id: int, exists: bool):
-    import time
-    _conversation_cache[(account_id, int(sender_id))] = (bool(exists), time.time())
-
 
 
 def signal_handler(sig, frame):
@@ -65,87 +45,105 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def check_conversation_exists(account_id: str, sender_id: int, sender_username: str = None, sender_phone: str = None) -> bool:
-    """
-    Check if we have an existing campaign conversation with this sender.
-    Uses multi-strategy matching: telegram_id -> username -> phone
-    This handles the case where recipient_telegram_id was NULL when we first messaged.
-    """
-    import httpx
-    from config import SUPABASE_URL, SUPABASE_KEY
+async def ping_connected_clients():
+    """Keep connections alive by checking client status"""
+    disconnected = []
+    for acc_id, client in list(active_clients.items()):
+        try:
+            if not client.is_connected():
+                disconnected.append(acc_id)
+            else:
+                # Light ping - just check connection
+                await asyncio.wait_for(client.get_me(), timeout=5)
+        except Exception as e:
+            print(f"  ⚠ Client {acc_id[:8]}... ping failed: {e}")
+            disconnected.append(acc_id)
+    
+    # Remove disconnected from tracking
+    for acc_id in disconnected:
+        if acc_id in active_clients:
+            try:
+                await active_clients[acc_id].disconnect()
+            except:
+                pass
+            del active_clients[acc_id]
+    
+    if disconnected:
+        print(f"  🔄 Cleaned up {len(disconnected)} disconnected clients")
+
+
+async def process_send_task(task: dict) -> dict:
+    """Process a single send task for live chat"""
+    msg = task.get("message", {})
+    recipient = task.get("recipient")
+    recipient_tid = task.get("recipient_telegram_id")
+    account = task.get("account", {})
+    task_proxy = task.get("proxy")
+    
+    account_id = account.get("id")
+    account_phone = account.get("phone_number", "????")[-4:]
+    
+    if not account_id or not recipient:
+        return {
+            "message_id": msg.get("id"),
+            "success": False,
+            "error": "Missing account or recipient",
+            "account_id": account_id,
+        }
     
     try:
-        async with httpx.AsyncClient(timeout=5.0) as http:
-            # Strategy 1: Match by telegram_id (fastest, most reliable)
-            response = await http.get(
-                f"{SUPABASE_URL}/rest/v1/conversations",
-                headers={
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}"
-                },
-                params={
-                    "account_id": f"eq.{account_id}",
-                    "recipient_telegram_id": f"eq.{sender_id}",
-                    "first_message_sent": "eq.true",
-                    "select": "id"
-                }
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if data and len(data) > 0:
-                    return True
-            
-            # Strategy 2: Match by username (if sender has one)
-            if sender_username:
-                username_clean = sender_username.lstrip("@").lower()
-                for variant in [f"@{username_clean}", username_clean]:
-                    response = await http.get(
-                        f"{SUPABASE_URL}/rest/v1/conversations",
-                        headers={
-                            "apikey": SUPABASE_KEY,
-                            "Authorization": f"Bearer {SUPABASE_KEY}"
-                        },
-                        params={
-                            "account_id": f"eq.{account_id}",
-                            "recipient_username": f"ilike.{variant}",
-                            "first_message_sent": "eq.true",
-                            "select": "id"
-                        }
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data and len(data) > 0:
-                            return True
-            
-            # Strategy 3: Match by phone (if sender has phone exposed)
-            if sender_phone:
-                # Normalize phone: remove non-digits, try with/without +
-                import re
-                digits = re.sub(r'\D', '', sender_phone)
-                phone_variants = [f"+{digits}", digits, sender_phone]
-                for pv in phone_variants:
-                    response = await http.get(
-                        f"{SUPABASE_URL}/rest/v1/conversations",
-                        headers={
-                            "apikey": SUPABASE_KEY,
-                            "Authorization": f"Bearer {SUPABASE_KEY}"
-                        },
-                        params={
-                            "account_id": f"eq.{account_id}",
-                            "recipient_phone": f"eq.{pv}",
-                            "first_message_sent": "eq.true",
-                            "select": "id"
-                        }
-                    )
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data and len(data) > 0:
-                            return True
-            
-            return False
+        # Get or create client with task-level proxy
+        client = await get_or_create_client(
+            account, 
+            setup_handler=setup_message_handler,
+            skip_avatar=True,
+            task_proxy=task_proxy
+        )
+        
+        if not client:
+            return {
+                "message_id": msg.get("id"),
+                "success": False,
+                "error": "Could not connect client",
+                "account_id": account_id,
+            }
+        
+        target = recipient_tid if recipient_tid else recipient
+        
+        print(f"  ⚡ [{account_phone}] Live reply to {recipient}...")
+        
+        success, error, meta = await send_message(
+            client, target, msg.get("content", ""),
+            msg.get("media_url")
+        )
+        
+        result = {
+            "message_id": msg.get("id"),
+            "success": success,
+            "error": error,
+            "campaign_recipient_id": msg.get("campaign_recipient_id"),
+            "account_id": account_id,
+        }
+        
+        if meta:
+            result.update(meta)
+        
+        if success:
+            print(f"    ✓ Sent!")
+        else:
+            print(f"    ✗ Failed: {error}")
+        
+        return result
+        
     except Exception as e:
-        print(f"    ⚠ Check conversation error: {e}")
-        return False
+        error_str = str(e)
+        print(f"    ✗ [{account_phone}] Error: {error_str[:50]}")
+        return {
+            "message_id": msg.get("id"),
+            "success": False,
+            "error": error_str,
+            "account_id": account_id,
+        }
 
 
 async def setup_message_handler(client, account_id: str):
@@ -205,11 +203,11 @@ async def setup_message_handler(client, account_id: str):
                     if photo_bytes:
                         import base64
                         import httpx
-                        import time
+                        import time as time_module
                         from config import SUPABASE_URL, SUPABASE_KEY
                         
                         # Upload to Supabase storage using PUT with x-upsert
-                        file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.jpg"
+                        file_name = f"incoming_{account_id}_{int(time_module.time() * 1000)}.jpg"
                         file_path = f"{account_id}/{file_name}"
                         
                         # Get mime type from message if available
@@ -272,80 +270,74 @@ async def setup_message_handler(client, account_id: str):
 
 
 async def main_loop():
-    """Main live chat loop"""
+    """Main live chat loop with 1-second polling and keep-alive"""
     global RUNNING
     
     print("=" * 60)
     print("  TelegramCRM - Live Chat Listener")
     print("=" * 60)
     print("  📥 Handles: Incoming messages, Live chat replies")
+    print(f"  ⚡ Polling: Every {POLL_INTERVAL} second(s)")
+    print(f"  💓 Keep-alive: Every {KEEP_ALIVE_INTERVAL} seconds")
     print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
     print("\n✓ Starting live chat listener...\n")
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
+    last_keep_alive = time.time()
     
     while RUNNING:
         try:
-            # Get next task - ONLY livechat tasks
-            task = await get_next_task(runner="livechat")
-            task_type = task.get("task", "wait")
+            # 1. Poll for send tasks using batch endpoint (every 1 second)
+            batch_result = await get_batch_tasks(runner="livechat", batch_size=50)
+            tasks = batch_result.get("tasks", [])
+            accounts = batch_result.get("accounts", [])
             
-            if task_type == "wait":
-                # Only connect NEW accounts (skip already connected for speed)
-                accounts = task.get("accounts", [])
-                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
-                if new_accounts:
-                    # Connect in parallel for faster startup
-                    # Each account carries its own proxy data from the edge function
-                    results = await asyncio.gather(
-                        *[get_or_create_client(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")) for acc in new_accounts],
-                        return_exceptions=True
-                    )
-                    for acc in new_accounts:
-                        if acc.get("id"):
-                            connected_ids.add(acc["id"])
-                # No artificial delay - server returns seconds=0 for instant polling
-                await asyncio.sleep(0.05)  # Tiny sleep to prevent CPU spin
-            elif task_type == "send":
-                msg = task.get("message", {})
-                recipient = task.get("recipient")
-                recipient_tid = task.get("recipient_telegram_id")
-                account = task.get("account", {})
-                task_proxy = task.get("proxy")  # Task-level proxy for consistency
-
-                # Skip profile sync for speed - just get/reuse client connection
-                client = await get_or_create_client(account, setup_handler=setup_message_handler, skip_avatar=True, task_proxy=task_proxy)
-                target = recipient_tid if recipient_tid else recipient
-
-                if client and target:
-                    print(f"  ⚡ Live reply to {recipient}...")
-
-                    success, error, meta = await send_message(
-                        client, target, msg.get("content", ""),
-                        msg.get("media_url")
-                    )
-
-                    payload = {
-                        "message_id": msg.get("id"),
-                        "success": success,
-                        "error": error,
-                        "campaign_recipient_id": msg.get("campaign_recipient_id"),
-                        "account_id": account.get("id"),
-                    }
-                    if meta:
-                        payload.update(meta)
-
-                    await report_result("send", payload)
-
-                    if success:
-                        print(f"    ✓ Sent!")
-                    else:
-                        print(f"    ✗ Failed: {error}")
+            # 2. Connect new accounts from response
+            new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
+            if new_accounts:
+                print(f"  🔌 Connecting {len(new_accounts)} new accounts...")
+                # Connect in parallel for faster startup
+                results = await asyncio.gather(
+                    *[get_or_create_client(
+                        acc, 
+                        setup_handler=setup_message_handler, 
+                        task_proxy=acc.get("proxy")
+                    ) for acc in new_accounts],
+                    return_exceptions=True
+                )
+                for acc in new_accounts:
+                    if acc.get("id"):
+                        connected_ids.add(acc["id"])
+            
+            # 3. Process send tasks in parallel
+            if tasks:
+                print(f"\n  📦 Processing {len(tasks)} send tasks in parallel...")
+                results = await asyncio.gather(
+                    *[process_send_task(task) for task in tasks],
+                    return_exceptions=True
+                )
+                
+                # Report all results
+                for result in results:
+                    if isinstance(result, Exception):
+                        print(f"  ⚠ Task exception: {result}")
+                        continue
+                    if isinstance(result, dict):
+                        await report_result("send", result)
+            
+            # 4. Keep-alive ping every 60 seconds
+            if time.time() - last_keep_alive > KEEP_ALIVE_INTERVAL:
+                print("  💓 Keep-alive check...")
+                await ping_connected_clients()
+                last_keep_alive = time.time()
+            
+            # 5. Fixed 1-second polling interval
+            await asyncio.sleep(POLL_INTERVAL)
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(1)
     
     print("\n⏹ Live chat listener stopped.")
     await shutdown_all()

@@ -34,12 +34,17 @@ export interface CleanupSettings {
   retentionDays: number;
 }
 
+export interface WarmupBatchSettings {
+  batchSize: number;
+}
+
 export interface AllSettings {
   message_timing: MessageTimingSettings;
   scheduler: SchedulerSettings;
   account_limits: AccountLimitsSettings;
   safety: SafetySettings;
   cleanup: CleanupSettings;
+  warmup_batch_size: WarmupBatchSettings;
 }
 
 const defaultSettings: AllSettings = {
@@ -68,6 +73,9 @@ const defaultSettings: AllSettings = {
   cleanup: {
     autoCleanup: true,
     retentionDays: 30,
+  },
+  warmup_batch_size: {
+    batchSize: 100,
   },
 };
 
