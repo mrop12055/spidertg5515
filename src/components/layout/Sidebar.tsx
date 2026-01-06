@@ -13,7 +13,8 @@ import {
   BookOpen,
   Globe,
   Database,
-  Flame
+  Flame,
+  Package
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -37,7 +38,7 @@ const navItems: NavItem[] = [
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: Flame, label: 'Warmup', path: '/warmup' },
   { icon: Users, label: 'Seats', path: '/seats' },
-  { icon: Database, label: 'Material', path: '/material' },
+  { icon: Package, label: 'Material', path: '/material' },
   { icon: Database, label: 'Database', path: '/database' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: Settings, label: 'Settings', path: '/settings' },

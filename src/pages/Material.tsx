@@ -11,8 +11,9 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { 
   Plus, Upload, Trash2, Tag, 
-  Download, RefreshCw, FileText, FolderOpen, MoreVertical
+  Download, RefreshCw, FileText, FolderOpen, MoreVertical, Package
 } from 'lucide-react';
+import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -28,7 +29,7 @@ interface ContactTag {
   total_count: number;
 }
 
-const Data: React.FC = () => {
+const Material: React.FC = () => {
   const [tags, setTags] = useState<ContactTag[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
@@ -303,8 +304,35 @@ const Data: React.FC = () => {
       <PageHeader 
         title="Material Management" 
         description="Organize contacts into tags for campaigns"
-        icon={Tag}
+        icon={Package}
       />
+
+      {isLoading ? (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex items-center justify-between">
+                <div className="space-y-2">
+                  <Skeleton className="h-6 w-32" />
+                  <Skeleton className="h-4 w-48" />
+                </div>
+                <div className="flex gap-2">
+                  <Skeleton className="h-9 w-24" />
+                  <Skeleton className="h-9 w-28" />
+                  <Skeleton className="h-9 w-28" />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[1, 2, 3].map((i) => (
+                  <Skeleton key={i} className="h-40 rounded-xl" />
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
 
       <div className="space-y-6">
         {/* Tags List */}
@@ -514,8 +542,9 @@ ahmadraza9392`}
           </CardContent>
         </Card>
       </div>
+      )}
     </DashboardLayout>
   );
 };
 
-export default Data;
+export default Material;
