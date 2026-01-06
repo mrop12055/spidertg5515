@@ -548,6 +548,39 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       )
       .subscribe();
 
+    // Subscribe to telegram_accounts changes (for profile sync updates)
+    const accountsChannel = supabase
+      .channel('accounts-realtime')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'telegram_accounts'
+        },
+        (payload) => {
+          const acc = payload.new as any;
+          setAccounts(prev =>
+            prev.map(account =>
+              account.id === acc.id
+                ? {
+                    ...account,
+                    firstName: acc.first_name || account.firstName,
+                    lastName: acc.last_name || account.lastName,
+                    username: acc.username || account.username,
+                    avatar: acc.avatar_url || account.avatar,
+                    status: acc.status as TelegramAccount['status'] || account.status,
+                    lastActive: acc.last_active ? new Date(acc.last_active) : account.lastActive,
+                    spambotStatus: acc.spambot_status || account.spambotStatus,
+                    banReason: acc.ban_reason || account.banReason,
+                  }
+                : account
+            )
+          );
+        }
+      )
+      .subscribe();
+
     // Subscribe to campaign changes
     const campaignsChannel = supabase
       .channel('campaigns-realtime')
@@ -594,6 +627,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     return () => {
       supabase.removeChannel(messagesChannel);
       supabase.removeChannel(conversationsChannel);
+      supabase.removeChannel(accountsChannel);
       supabase.removeChannel(campaignsChannel);
     };
   }, [refreshData]);
