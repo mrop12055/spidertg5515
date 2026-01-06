@@ -1125,6 +1125,24 @@ username123
                 <TabsContent value="settings" className="space-y-6 mt-4">
                   <div className="space-y-4">
                     <div className="space-y-2">
+                      <Label>Batch Size (parallel sends)</Label>
+                      <div className="flex items-center gap-4">
+                        <Slider
+                          value={[newCampaign.batchSize]}
+                          onValueChange={([v]) => setNewCampaign(prev => ({ ...prev, batchSize: v }))}
+                          min={10}
+                          max={200}
+                          step={10}
+                          className="flex-1"
+                        />
+                        <span className="w-12 text-center font-medium">{newCampaign.batchSize}</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Number of messages to send simultaneously per batch (10-200)
+                      </p>
+                    </div>
+                    
+                    <div className="space-y-2">
                       <Label>Messages per Account per Day</Label>
                       <div className="flex items-center gap-4">
                         <Slider
