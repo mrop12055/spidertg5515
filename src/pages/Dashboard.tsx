@@ -93,30 +93,35 @@ const Dashboard: React.FC = () => {
           value={accounts.length}
           icon={Phone}
           variant="primary"
+          index={0}
         />
         <StatCard
           title="Active Accounts"
           value={activeAccounts}
           icon={Users}
           variant="success"
+          index={1}
         />
         <StatCard
           title="Active Proxies"
           value={activeProxies}
           icon={Globe}
           variant="default"
+          index={2}
         />
         <StatCard
           title="Messages (24h)"
           value={messages24h}
           icon={Send}
           variant="warning"
+          index={3}
         />
         <StatCard
           title="Replies (24h)"
           value={replies24h}
           icon={MessageSquare}
           variant="default"
+          index={4}
         />
       </div>
 
