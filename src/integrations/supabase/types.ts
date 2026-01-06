@@ -1110,6 +1110,47 @@ export type Database = {
         }
         Relationships: []
       }
+      vps_commands: {
+        Row: {
+          command: string
+          created_at: string
+          id: string
+          processed_at: string | null
+          result: string | null
+          status: string
+          target_runner: string | null
+          vps_id: string | null
+        }
+        Insert: {
+          command: string
+          created_at?: string
+          id?: string
+          processed_at?: string | null
+          result?: string | null
+          status?: string
+          target_runner?: string | null
+          vps_id?: string | null
+        }
+        Update: {
+          command?: string
+          created_at?: string
+          id?: string
+          processed_at?: string | null
+          result?: string | null
+          status?: string
+          target_runner?: string | null
+          vps_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vps_commands_vps_id_fkey"
+            columns: ["vps_id"]
+            isOneToOne: false
+            referencedRelation: "vps_connections"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       vps_connections: {
         Row: {
           api_key: string
@@ -1139,6 +1180,41 @@ export type Database = {
           status?: string | null
         }
         Relationships: []
+      }
+      vps_logs: {
+        Row: {
+          created_at: string
+          id: string
+          log_level: string | null
+          message: string
+          runner_name: string
+          vps_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          log_level?: string | null
+          message: string
+          runner_name: string
+          vps_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          log_level?: string | null
+          message?: string
+          runner_name?: string
+          vps_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vps_logs_vps_id_fkey"
+            columns: ["vps_id"]
+            isOneToOne: false
+            referencedRelation: "vps_connections"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       warmup_errors: {
         Row: {
