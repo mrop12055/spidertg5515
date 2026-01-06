@@ -1375,7 +1375,27 @@ serve(async (req) => {
       }
 
       case "sync_profile": {
-        const { task_id, account_id, success, error } = result;
+        const { task_id, account_id, success, error, first_name, last_name, username, telegram_id, avatar_url } = result;
+
+        if (success) {
+          // Update the account with synced profile data
+          const updateData: Record<string, unknown> = {
+            last_active: new Date().toISOString(),
+          };
+          
+          if (first_name !== undefined) updateData.first_name = first_name;
+          if (last_name !== undefined) updateData.last_name = last_name;
+          if (username !== undefined) updateData.username = username;
+          if (telegram_id !== undefined) updateData.telegram_id = telegram_id;
+          if (avatar_url) updateData.avatar_url = avatar_url;
+
+          await supabase
+            .from("telegram_accounts")
+            .update(updateData)
+            .eq("id", account_id);
+
+          console.log(`[report-task-result] Profile sync completed for ${account_id}: name=${first_name} ${last_name}, username=${username}, has_avatar=${!!avatar_url}`);
+        }
 
         await supabase
           .from("account_check_tasks")
