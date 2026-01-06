@@ -248,6 +248,22 @@ async def get_next_task(runner: str = None) -> dict:
         return {"task": "wait", "seconds": 1}
 
 
+async def get_batch_tasks(runner: str = None, batch_size: int = 50) -> dict:
+    """Fetch a batch of tasks for parallel processing."""
+    try:
+        body = {"runner": runner, "batch_size": batch_size}
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}/get-batch-tasks",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json=body
+            )
+            return resp.json()
+    except Exception as e:
+        print(f"  [ERROR] get_batch_tasks: {e}")
+        return {"tasks": [], "delay_after": 5}
+
+
 async def report_result(task_type: str, result: dict):
     asyncio.create_task(_report(task_type, result))
 
