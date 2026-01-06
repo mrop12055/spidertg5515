@@ -214,6 +214,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             return None
         
         # Check if account is deleted/banned
+        me = None  # Initialize to prevent unbound variable error
         try:
             me = await asyncio.wait_for(client.get_me(), timeout=15)
             if not me:
@@ -229,6 +230,11 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             elif any(x in err_str for x in ["session", "revoked", "auth"]):
                 print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
                 await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)})
+                return None
+            else:
+                # Other error - return None to prevent using undefined 'me'
+                print(f"  [ERROR] get_me failed: {account['phone_number']}: {me_err}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": f"get_me failed: {me_err}"})
                 return None
         
         if setup_handler:
