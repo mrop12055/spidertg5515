@@ -582,6 +582,7 @@ const DatabaseHealth = () => {
       <PageHeader
         title="Database Health"
         description="Monitor system health and manage pending tasks (real-time updates)"
+        icon={Database}
         action={
           <Button onClick={handleRefresh} disabled={refreshing}>
             <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
