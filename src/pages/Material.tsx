@@ -1,301 +1,371 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Textarea } from '@/components/ui/textarea';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Textarea } from '@/components/ui/textarea';
 import { 
-  Plus, Upload, Trash2, Tag, 
-  Download, RefreshCw, FileText, FolderOpen, MoreVertical, Package
+  Plus, Upload, Trash2, Tag, Package, FileText, Image, User,
+  RefreshCw, MoreVertical, Phone, AtSign
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { format } from 'date-fns';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { motion, AnimatePresence } from 'framer-motion';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
-interface ContactTag {
+interface MaterialTag {
   id: string;
   name: string;
+  type: 'data' | 'pictures' | 'names';
+  item_count: number;
   created_at: string;
-  unused_count: number;
-  used_count: number;
-  total_count: number;
+}
+
+interface MaterialData {
+  id: string;
+  tag_id: string;
+  phone_number: string | null;
+  username: string | null;
+  created_at: string;
+}
+
+interface MaterialPicture {
+  id: string;
+  tag_id: string;
+  file_url: string;
+  file_name: string;
+  created_at: string;
+}
+
+interface MaterialName {
+  id: string;
+  tag_id: string;
+  first_name: string;
+  last_name: string | null;
+  created_at: string;
 }
 
 const Material: React.FC = () => {
-  const [tags, setTags] = useState<ContactTag[]>([]);
+  const [activeTab, setActiveTab] = useState<'data' | 'pictures' | 'names'>('data');
+  const [tags, setTags] = useState<MaterialTag[]>([]);
+  const [dataItems, setDataItems] = useState<MaterialData[]>([]);
+  const [pictures, setPictures] = useState<MaterialPicture[]>([]);
+  const [names, setNames] = useState<MaterialName[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Dialog states
   const [isCreateTagOpen, setIsCreateTagOpen] = useState(false);
+  const [isAddDataOpen, setIsAddDataOpen] = useState(false);
+  const [isImportDataOpen, setIsImportDataOpen] = useState(false);
+  const [isUploadPicturesOpen, setIsUploadPicturesOpen] = useState(false);
+  const [isAddNameOpen, setIsAddNameOpen] = useState(false);
+  const [isImportNamesOpen, setIsImportNamesOpen] = useState(false);
+  
+  // Form states
   const [newTagName, setNewTagName] = useState('');
-  
-  // Add contacts dialog
-  const [isAddContactsOpen, setIsAddContactsOpen] = useState(false);
-  const [bulkText, setBulkText] = useState('');
-  const [addToTagId, setAddToTagId] = useState<string>('');
-  
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [selectedTagId, setSelectedTagId] = useState<string>('');
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [username, setUsername] = useState('');
+  const [importText, setImportText] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [uploadingFiles, setUploadingFiles] = useState(false);
 
-  const fetchTags = useCallback(async () => {
+  const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const { data: tagsData, error: tagsError } = await supabase
-        .from('contact_tags')
-        .select('*')
-        .order('created_at', { ascending: false });
+      const [tagsRes, dataRes, picturesRes, namesRes] = await Promise.all([
+        supabase.from('material_tags').select('*').order('created_at', { ascending: false }),
+        supabase.from('material_data').select('*').order('created_at', { ascending: false }),
+        supabase.from('material_pictures').select('*').order('created_at', { ascending: false }),
+        supabase.from('material_names').select('*').order('created_at', { ascending: false }),
+      ]);
 
-      if (tagsError) throw tagsError;
-
-      const { data: contactsData, error: contactsError } = await supabase
-        .from('contacts_data')
-        .select('tag_id, is_used');
-
-      if (contactsError) throw contactsError;
-
-      const tagCounts: Record<string, { unused: number; used: number; total: number }> = {};
-      (contactsData || []).forEach(c => {
-        if (c.tag_id) {
-          if (!tagCounts[c.tag_id]) {
-            tagCounts[c.tag_id] = { unused: 0, used: 0, total: 0 };
-          }
-          tagCounts[c.tag_id].total++;
-          if (c.is_used) {
-            tagCounts[c.tag_id].used++;
-          } else {
-            tagCounts[c.tag_id].unused++;
-          }
-        }
-      });
-
-      const enrichedTags: ContactTag[] = (tagsData || []).map(tag => ({
-        ...tag,
-        unused_count: tagCounts[tag.id]?.unused || 0,
-        used_count: tagCounts[tag.id]?.used || 0,
-        total_count: tagCounts[tag.id]?.total || 0,
-      }));
-
-      setTags(enrichedTags);
+      if (tagsRes.data) setTags(tagsRes.data as MaterialTag[]);
+      if (dataRes.data) setDataItems(dataRes.data);
+      if (picturesRes.data) setPictures(picturesRes.data);
+      if (namesRes.data) setNames(namesRes.data);
     } catch (error) {
-      console.error('Error fetching tags:', error);
-      toast.error('Failed to load tags');
+      console.error('Error fetching data:', error);
+      toast.error('Failed to load materials');
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchTags();
-  }, [fetchTags]);
+    fetchData();
+  }, [fetchData]);
 
+  const filteredTags = tags.filter(tag => tag.type === activeTab);
+
+  // Create Tag
   const handleCreateTag = async () => {
     if (!newTagName.trim()) {
-      toast.error('Tag name is required');
+      toast.error('Please enter a tag name');
       return;
     }
 
     try {
-      const { error } = await supabase
-        .from('contact_tags')
-        .insert({ name: newTagName.trim() });
+      const { error } = await supabase.from('material_tags').insert({
+        name: newTagName.trim(),
+        type: activeTab,
+      });
 
-      if (error) {
-        if (error.code === '23505') {
-          toast.error('Tag name already exists');
-        } else {
-          throw error;
-        }
-        return;
-      }
-
-      toast.success('Tag created');
+      if (error) throw error;
+      toast.success('Tag created successfully');
       setNewTagName('');
       setIsCreateTagOpen(false);
-      fetchTags();
+      fetchData();
     } catch (error) {
       console.error('Error creating tag:', error);
       toast.error('Failed to create tag');
     }
   };
 
+  // Delete Tag
   const handleDeleteTag = async (tagId: string) => {
     try {
-      await supabase.from('contacts_data').delete().eq('tag_id', tagId);
-      
-      const { error } = await supabase
-        .from('contact_tags')
-        .delete()
-        .eq('id', tagId);
+      // Delete associated pictures from storage first
+      const tagPictures = pictures.filter(p => p.tag_id === tagId);
+      for (const pic of tagPictures) {
+        const fileName = pic.file_url.split('/').pop();
+        if (fileName) {
+          await supabase.storage.from('material-pictures').remove([fileName]);
+        }
+      }
 
+      const { error } = await supabase.from('material_tags').delete().eq('id', tagId);
       if (error) throw error;
-
-      toast.success('Tag deleted');
-      fetchTags();
+      toast.success('Tag deleted successfully');
+      fetchData();
     } catch (error) {
       console.error('Error deleting tag:', error);
       toast.error('Failed to delete tag');
     }
   };
 
-  const normalizeContact = (input: string): string => {
-    const trimmed = input.trim();
-    
-    if (trimmed.startsWith('@')) {
-      return trimmed.toLowerCase();
-    }
-    
-    const isLikelyUsername = /^[a-zA-Z][a-zA-Z0-9_]*$/.test(trimmed) && !/^\d+$/.test(trimmed);
-    if (isLikelyUsername) {
-      return '@' + trimmed.toLowerCase();
-    }
-    
-    let normalized = trimmed.replace(/[^\d+]/g, '');
-    if (normalized && !normalized.startsWith('+')) {
-      normalized = '+' + normalized;
-    }
-    
-    return normalized;
-  };
-
-  const handleAddContacts = async () => {
-    if (!addToTagId) {
+  // Add Data (phone/username)
+  const handleAddData = async () => {
+    if (!selectedTagId) {
       toast.error('Please select a tag');
       return;
     }
-
-    const lines = bulkText.split('\n').filter(l => l.trim());
-    if (lines.length === 0) {
-      toast.error('Please enter at least one contact');
-      return;
-    }
-
-    const contacts = lines.map(line => {
-      const parts = line.split(/[,\t]/).map(p => p.trim());
-      return {
-        phone_number: normalizeContact(parts[0]),
-        name: parts[1] || null,
-        tag_id: addToTagId
-      };
-    }).filter(c => c.phone_number && c.phone_number.length >= 2);
-
-    if (contacts.length === 0) {
-      toast.error('No valid contacts found');
+    if (!phoneNumber.trim() && !username.trim()) {
+      toast.error('Please enter phone number or username');
       return;
     }
 
     try {
-      const { error } = await supabase
-        .from('contacts_data')
-        .upsert(contacts, { onConflict: 'phone_number' });
+      const { error } = await supabase.from('material_data').insert({
+        tag_id: selectedTagId,
+        phone_number: phoneNumber.trim() || null,
+        username: username.trim() || null,
+      });
 
       if (error) throw error;
-
-      toast.success(`Added ${contacts.length} contacts`);
-      setBulkText('');
-      setIsAddContactsOpen(false);
-      fetchTags();
+      toast.success('Data added successfully');
+      setPhoneNumber('');
+      setUsername('');
+      setIsAddDataOpen(false);
+      fetchData();
     } catch (error) {
-      console.error('Error adding contacts:', error);
-      toast.error('Failed to add contacts');
+      console.error('Error adding data:', error);
+      toast.error('Failed to add data');
     }
   };
 
-  const handleFileImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  // Import Data from text
+  const handleImportData = async () => {
+    if (!selectedTagId) {
+      toast.error('Please select a tag');
+      return;
+    }
+    if (!importText.trim()) {
+      toast.error('Please enter data to import');
+      return;
+    }
 
-    if (!addToTagId) {
+    try {
+      const lines = importText.split('\n').filter(line => line.trim());
+      const records = lines.map(line => {
+        const trimmed = line.trim();
+        // Check if it looks like a phone number (starts with + or digits)
+        const isPhone = /^[+\d]/.test(trimmed);
+        return {
+          tag_id: selectedTagId,
+          phone_number: isPhone ? trimmed : null,
+          username: isPhone ? null : trimmed.replace('@', ''),
+        };
+      });
+
+      const { error } = await supabase.from('material_data').insert(records);
+      if (error) throw error;
+      toast.success(`Imported ${records.length} items`);
+      setImportText('');
+      setIsImportDataOpen(false);
+      fetchData();
+    } catch (error) {
+      console.error('Error importing data:', error);
+      toast.error('Failed to import data');
+    }
+  };
+
+  // Upload Pictures
+  const handleUploadPictures = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    if (!selectedTagId) {
       toast.error('Please select a tag first');
       return;
     }
 
+    setUploadingFiles(true);
     try {
-      const text = await file.text();
-      const lines = text.split('\n').filter(l => l.trim());
-      
-      if (lines.length === 0) {
-        toast.error('File is empty');
-        return;
+      const uploads = [];
+      for (const file of Array.from(files)) {
+        const fileName = `${Date.now()}-${file.name}`;
+        const { error } = await supabase.storage
+          .from('material-pictures')
+          .upload(fileName, file);
+
+        if (error) throw error;
+
+        const { data: urlData } = supabase.storage
+          .from('material-pictures')
+          .getPublicUrl(fileName);
+
+        uploads.push({
+          tag_id: selectedTagId,
+          file_url: urlData.publicUrl,
+          file_name: file.name,
+        });
       }
 
-      const contacts = lines.map(line => {
-        const parts = line.split(/[,\t]/).map(p => p.trim());
-        return {
-          phone_number: normalizeContact(parts[0]),
-          name: parts[1] || null,
-          tag_id: addToTagId
-        };
-      }).filter(c => c.phone_number && c.phone_number.length >= 2);
-
-      if (contacts.length === 0) {
-        toast.error('No valid contacts found in file');
-        return;
-      }
-
-      const { error } = await supabase
-        .from('contacts_data')
-        .upsert(contacts, { onConflict: 'phone_number' });
-
+      const { error } = await supabase.from('material_pictures').insert(uploads);
       if (error) throw error;
-
-      toast.success(`Added ${contacts.length} contacts from file`);
-      setIsAddContactsOpen(false);
-      fetchTags();
+      
+      toast.success(`Uploaded ${uploads.length} pictures`);
+      setIsUploadPicturesOpen(false);
+      fetchData();
     } catch (error) {
-      console.error('Error importing file:', error);
-      toast.error('Failed to import contacts');
+      console.error('Error uploading pictures:', error);
+      toast.error('Failed to upload pictures');
     } finally {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+      setUploadingFiles(false);
     }
   };
 
-  const exportContacts = async (tagId: string, tagName: string, filter: 'all' | 'unused' | 'used') => {
+  // Add Name
+  const handleAddName = async () => {
+    if (!selectedTagId) {
+      toast.error('Please select a tag');
+      return;
+    }
+    if (!firstName.trim()) {
+      toast.error('Please enter first name');
+      return;
+    }
+
     try {
-      let query = supabase
-        .from('contacts_data')
-        .select('phone_number, name, username, is_used')
-        .eq('tag_id', tagId);
-      
-      if (filter === 'unused') {
-        query = query.eq('is_used', false);
-      } else if (filter === 'used') {
-        query = query.eq('is_used', true);
-      }
+      const { error } = await supabase.from('material_names').insert({
+        tag_id: selectedTagId,
+        first_name: firstName.trim(),
+        last_name: lastName.trim() || null,
+      });
 
-      const { data, error } = await query;
       if (error) throw error;
-
-      if (!data || data.length === 0) {
-        toast.warning('No contacts to export');
-        return;
-      }
-
-      const csv = [
-        'Phone Number,Name,Username,Used',
-        ...data.map(c => 
-          `${c.phone_number},${c.name || ''},${c.username || ''},${c.is_used}`
-        )
-      ].join('\n');
-
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${tagName}_${filter}_${format(new Date(), 'yyyy-MM-dd')}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      
-      toast.success(`Exported ${data.length} ${filter} contacts`);
+      toast.success('Name added successfully');
+      setFirstName('');
+      setLastName('');
+      setIsAddNameOpen(false);
+      fetchData();
     } catch (error) {
-      console.error('Error exporting contacts:', error);
-      toast.error('Failed to export contacts');
+      console.error('Error adding name:', error);
+      toast.error('Failed to add name');
+    }
+  };
+
+  // Import Names from text
+  const handleImportNames = async () => {
+    if (!selectedTagId) {
+      toast.error('Please select a tag');
+      return;
+    }
+    if (!importText.trim()) {
+      toast.error('Please enter names to import');
+      return;
+    }
+
+    try {
+      const lines = importText.split('\n').filter(line => line.trim());
+      const records = lines.map(line => {
+        const parts = line.trim().split(/\s+/);
+        return {
+          tag_id: selectedTagId,
+          first_name: parts[0] || '',
+          last_name: parts.slice(1).join(' ') || null,
+        };
+      }).filter(r => r.first_name);
+
+      const { error } = await supabase.from('material_names').insert(records);
+      if (error) throw error;
+      toast.success(`Imported ${records.length} names`);
+      setImportText('');
+      setIsImportNamesOpen(false);
+      fetchData();
+    } catch (error) {
+      console.error('Error importing names:', error);
+      toast.error('Failed to import names');
+    }
+  };
+
+  // Delete individual items
+  const handleDeleteData = async (id: string) => {
+    try {
+      const { error } = await supabase.from('material_data').delete().eq('id', id);
+      if (error) throw error;
+      toast.success('Deleted');
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to delete');
+    }
+  };
+
+  const handleDeletePicture = async (id: string, fileUrl: string) => {
+    try {
+      const fileName = fileUrl.split('/').pop();
+      if (fileName) {
+        await supabase.storage.from('material-pictures').remove([fileName]);
+      }
+      const { error } = await supabase.from('material_pictures').delete().eq('id', id);
+      if (error) throw error;
+      toast.success('Deleted');
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to delete');
+    }
+  };
+
+  const handleDeleteName = async (id: string) => {
+    try {
+      const { error } = await supabase.from('material_names').delete().eq('id', id);
+      if (error) throw error;
+      toast.success('Deleted');
+      fetchData();
+    } catch (error) {
+      toast.error('Failed to delete');
     }
   };
 
@@ -303,246 +373,579 @@ const Material: React.FC = () => {
     <DashboardLayout>
       <PageHeader 
         title="Material Management" 
-        description="Organize contacts into tags for campaigns"
+        description="Manage data, pictures, and names for account operations"
         icon={Package}
       />
 
-      {isLoading ? (
-        <div className="space-y-6">
-          <Card>
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <div className="space-y-2">
-                  <Skeleton className="h-6 w-32" />
-                  <Skeleton className="h-4 w-48" />
+      <AnimatePresence mode="wait">
+        {isLoading ? (
+          <motion.div
+            key="loading"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="space-y-6"
+          >
+            <Card>
+              <CardHeader>
+                <Skeleton className="h-10 w-64" />
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-40 rounded-xl" />
+                  ))}
                 </div>
-                <div className="flex gap-2">
-                  <Skeleton className="h-9 w-24" />
-                  <Skeleton className="h-9 w-28" />
-                  <Skeleton className="h-9 w-28" />
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {[1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-40 rounded-xl" />
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      ) : (
+              </CardContent>
+            </Card>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="content"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+          >
+            <Card>
+              <CardHeader className="pb-3">
+                <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'data' | 'pictures' | 'names')}>
+                  <div className="flex items-center justify-between flex-wrap gap-4">
+                    <TabsList className="grid w-full max-w-md grid-cols-3">
+                      <TabsTrigger value="data" className="flex items-center gap-2">
+                        <FileText className="h-4 w-4" />
+                        Data
+                      </TabsTrigger>
+                      <TabsTrigger value="pictures" className="flex items-center gap-2">
+                        <Image className="h-4 w-4" />
+                        Pictures
+                      </TabsTrigger>
+                      <TabsTrigger value="names" className="flex items-center gap-2">
+                        <User className="h-4 w-4" />
+                        Names
+                      </TabsTrigger>
+                    </TabsList>
 
-      <div className="space-y-6">
-        {/* Tags List */}
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Tag className="w-5 h-5" />
-                  Contact Tags
-                </CardTitle>
-                <CardDescription>Create tags to organize your contacts</CardDescription>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm" onClick={() => fetchTags()} disabled={isLoading}>
-                  <RefreshCw className={cn("w-4 h-4 mr-2", isLoading && "animate-spin")} />
-                  Refresh
-                </Button>
-                
-                <Dialog open={isAddContactsOpen} onOpenChange={setIsAddContactsOpen}>
-                  <DialogTrigger asChild>
-                    <Button variant="outline" size="sm">
-                      <Upload className="w-4 h-4 mr-2" />
-                      Add Contacts
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-lg">
-                    <DialogHeader>
-                      <DialogTitle>Add Contacts to Tag</DialogTitle>
-                      <DialogDescription>
-                        Add phone numbers or usernames to a tag
-                      </DialogDescription>
-                    </DialogHeader>
-                    
-                    <div className="space-y-4">
-                      <div>
-                        <Label>Select Tag *</Label>
-                        <Select value={addToTagId} onValueChange={setAddToTagId}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Choose a tag" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {tags.map(tag => (
-                              <SelectItem key={tag.id} value={tag.id}>
-                                {tag.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      
-                      <div className="flex gap-2">
-                        <input
-                          type="file"
-                          ref={fileInputRef}
-                          accept=".txt,.csv"
-                          onChange={handleFileImport}
-                          className="hidden"
-                        />
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={!addToTagId}
-                        >
-                          <FileText className="w-4 h-4 mr-2" />
-                          Import File
-                        </Button>
-                      </div>
-
-                      <div className="p-3 rounded-lg bg-accent/30 border border-border text-xs text-muted-foreground">
-                        <p className="font-semibold mb-1">Format examples:</p>
-                        <pre className="font-mono">
-{`12303802803
-93282083028
-ahmadraza9392`}
-                        </pre>
-                      </div>
-                      
-                      <Textarea
-                        placeholder={`12303802803\n93282083028\nahmadraza9392`}
-                        value={bulkText}
-                        onChange={(e) => setBulkText(e.target.value)}
-                        className="min-h-[150px] font-mono text-sm"
-                      />
-                    </div>
-                    
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsAddContactsOpen(false)}>Cancel</Button>
-                      <Button onClick={handleAddContacts} disabled={!addToTagId || !bulkText.trim()}>
-                        <Plus className="w-4 h-4 mr-2" />
-                        Add Contacts
+                    <div className="flex gap-2">
+                      <Button onClick={() => setIsCreateTagOpen(true)} variant="outline" size="sm">
+                        <Tag className="h-4 w-4 mr-2" />
+                        Create Tag
                       </Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-
-                <Dialog open={isCreateTagOpen} onOpenChange={setIsCreateTagOpen}>
-                  <DialogTrigger asChild>
-                    <Button size="sm">
-                      <Plus className="w-4 h-4 mr-2" />
-                      Create Tag
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Create New Tag</DialogTitle>
-                      <DialogDescription>
-                        Create a tag to organize your contacts
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4">
-                      <div>
-                        <Label>Tag Name *</Label>
-                        <Input
-                          placeholder="e.g., Campaign 1, Hot Leads, etc."
-                          value={newTagName}
-                          onChange={(e) => setNewTagName(e.target.value)}
-                        />
-                      </div>
+                      {activeTab === 'data' && (
+                        <>
+                          <Button onClick={() => { setSelectedTagId(''); setIsAddDataOpen(true); }} size="sm">
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add Data
+                          </Button>
+                          <Button onClick={() => { setSelectedTagId(''); setIsImportDataOpen(true); }} variant="secondary" size="sm">
+                            <Upload className="h-4 w-4 mr-2" />
+                            Import
+                          </Button>
+                        </>
+                      )}
+                      {activeTab === 'pictures' && (
+                        <Button onClick={() => { setSelectedTagId(''); setIsUploadPicturesOpen(true); }} size="sm">
+                          <Upload className="h-4 w-4 mr-2" />
+                          Upload Pictures
+                        </Button>
+                      )}
+                      {activeTab === 'names' && (
+                        <>
+                          <Button onClick={() => { setSelectedTagId(''); setIsAddNameOpen(true); }} size="sm">
+                            <Plus className="h-4 w-4 mr-2" />
+                            Add Name
+                          </Button>
+                          <Button onClick={() => { setSelectedTagId(''); setIsImportNamesOpen(true); }} variant="secondary" size="sm">
+                            <Upload className="h-4 w-4 mr-2" />
+                            Import
+                          </Button>
+                        </>
+                      )}
+                      <Button onClick={fetchData} variant="ghost" size="sm">
+                        <RefreshCw className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <DialogFooter>
-                      <Button variant="outline" onClick={() => setIsCreateTagOpen(false)}>Cancel</Button>
-                      <Button onClick={handleCreateTag}>Create Tag</Button>
-                    </DialogFooter>
-                  </DialogContent>
-                </Dialog>
-              </div>
+                  </div>
+
+                  <TabsContent value="data" className="mt-6">
+                    {filteredTags.length === 0 ? (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p>No data tags yet. Create a tag to start adding phone numbers and usernames.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        {filteredTags.map((tag) => {
+                          const tagData = dataItems.filter(d => d.tag_id === tag.id);
+                          return (
+                            <Card key={tag.id} className="border-border/50">
+                              <CardHeader className="py-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <Tag className="h-4 w-4 text-primary" />
+                                    <CardTitle className="text-base">{tag.name}</CardTitle>
+                                    <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                                      {tag.item_count} items
+                                    </span>
+                                  </div>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem 
+                                        onClick={() => handleDeleteTag(tag.id)}
+                                        className="text-destructive"
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete Tag
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              </CardHeader>
+                              <CardContent className="pt-0">
+                                {tagData.length === 0 ? (
+                                  <p className="text-sm text-muted-foreground">No data in this tag</p>
+                                ) : (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
+                                    {tagData.map((item) => (
+                                      <div key={item.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2 text-sm">
+                                        <div className="flex items-center gap-2 truncate">
+                                          {item.phone_number ? (
+                                            <>
+                                              <Phone className="h-3 w-3 text-muted-foreground" />
+                                              <span className="truncate">{item.phone_number}</span>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <AtSign className="h-3 w-3 text-muted-foreground" />
+                                              <span className="truncate">{item.username}</span>
+                                            </>
+                                          )}
+                                        </div>
+                                        <Button 
+                                          variant="ghost" 
+                                          size="icon" 
+                                          className="h-6 w-6 shrink-0"
+                                          onClick={() => handleDeleteData(item.id)}
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="pictures" className="mt-6">
+                    {filteredTags.length === 0 ? (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <Image className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p>No picture tags yet. Create a tag to start uploading profile pictures.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        {filteredTags.map((tag) => {
+                          const tagPictures = pictures.filter(p => p.tag_id === tag.id);
+                          return (
+                            <Card key={tag.id} className="border-border/50">
+                              <CardHeader className="py-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <Tag className="h-4 w-4 text-primary" />
+                                    <CardTitle className="text-base">{tag.name}</CardTitle>
+                                    <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                                      {tag.item_count} pictures
+                                    </span>
+                                  </div>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem 
+                                        onClick={() => handleDeleteTag(tag.id)}
+                                        className="text-destructive"
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete Tag
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              </CardHeader>
+                              <CardContent className="pt-0">
+                                {tagPictures.length === 0 ? (
+                                  <p className="text-sm text-muted-foreground">No pictures in this tag</p>
+                                ) : (
+                                  <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-2 max-h-60 overflow-y-auto">
+                                    {tagPictures.map((pic) => (
+                                      <div key={pic.id} className="relative group aspect-square">
+                                        <img 
+                                          src={pic.file_url} 
+                                          alt={pic.file_name}
+                                          className="w-full h-full object-cover rounded-lg"
+                                        />
+                                        <Button 
+                                          variant="destructive" 
+                                          size="icon" 
+                                          className="absolute top-1 right-1 h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                          onClick={() => handleDeletePicture(pic.id, pic.file_url)}
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </TabsContent>
+
+                  <TabsContent value="names" className="mt-6">
+                    {filteredTags.length === 0 ? (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <User className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                        <p>No name tags yet. Create a tag to start adding names.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-6">
+                        {filteredTags.map((tag) => {
+                          const tagNames = names.filter(n => n.tag_id === tag.id);
+                          return (
+                            <Card key={tag.id} className="border-border/50">
+                              <CardHeader className="py-3">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex items-center gap-2">
+                                    <Tag className="h-4 w-4 text-primary" />
+                                    <CardTitle className="text-base">{tag.name}</CardTitle>
+                                    <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
+                                      {tag.item_count} names
+                                    </span>
+                                  </div>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <Button variant="ghost" size="icon" className="h-8 w-8">
+                                        <MoreVertical className="h-4 w-4" />
+                                      </Button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="end">
+                                      <DropdownMenuItem 
+                                        onClick={() => handleDeleteTag(tag.id)}
+                                        className="text-destructive"
+                                      >
+                                        <Trash2 className="h-4 w-4 mr-2" />
+                                        Delete Tag
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
+                                </div>
+                              </CardHeader>
+                              <CardContent className="pt-0">
+                                {tagNames.length === 0 ? (
+                                  <p className="text-sm text-muted-foreground">No names in this tag</p>
+                                ) : (
+                                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2 max-h-60 overflow-y-auto">
+                                    {tagNames.map((name) => (
+                                      <div key={name.id} className="flex items-center justify-between bg-muted/50 rounded-lg px-3 py-2 text-sm">
+                                        <div className="flex items-center gap-2 truncate">
+                                          <User className="h-3 w-3 text-muted-foreground" />
+                                          <span className="truncate">
+                                            {name.first_name} {name.last_name || ''}
+                                          </span>
+                                        </div>
+                                        <Button 
+                                          variant="ghost" 
+                                          size="icon" 
+                                          className="h-6 w-6 shrink-0"
+                                          onClick={() => handleDeleteName(name.id)}
+                                        >
+                                          <Trash2 className="h-3 w-3" />
+                                        </Button>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </CardHeader>
+            </Card>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Create Tag Dialog */}
+      <Dialog open={isCreateTagOpen} onOpenChange={setIsCreateTagOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Create Tag for {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}</DialogTitle>
+            <DialogDescription>
+              Create a new tag to organize your {activeTab}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Tag Name</Label>
+              <Input 
+                value={newTagName}
+                onChange={(e) => setNewTagName(e.target.value)}
+                placeholder="e.g., New Accounts, VIP List"
+              />
             </div>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="text-center py-12">
-                <RefreshCw className="w-8 h-8 mx-auto mb-3 animate-spin text-muted-foreground" />
-                <p className="text-muted-foreground">Loading tags...</p>
-              </div>
-            ) : tags.length === 0 ? (
-              <div className="text-center py-12 text-muted-foreground">
-                <Tag className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p className="mb-2">No tags created yet</p>
-                <p className="text-sm">Create a tag to start organizing your contacts</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {tags.map(tag => (
-                  <Card key={tag.id} className="border-border/50">
-                    <CardContent className="pt-4">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <FolderOpen className="w-5 h-5 text-primary" />
-                          <h3 className="font-semibold">{tag.name}</h3>
-                        </div>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreVertical className="w-4 h-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => exportContacts(tag.id, tag.name, 'all')}>
-                              <Download className="w-4 h-4 mr-2" />
-                              Export All
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => exportContacts(tag.id, tag.name, 'unused')}>
-                              <Download className="w-4 h-4 mr-2" />
-                              Export Unused
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => exportContacts(tag.id, tag.name, 'used')}>
-                              <Download className="w-4 h-4 mr-2" />
-                              Export Used
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem 
-                              className="text-destructive"
-                              onClick={() => handleDeleteTag(tag.id)}
-                            >
-                              <Trash2 className="w-4 h-4 mr-2" />
-                              Delete Tag
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                      
-                      <div className="grid grid-cols-3 gap-2 text-sm">
-                        <div className="text-center p-2 rounded-md bg-muted/50">
-                          <p className="text-xs text-muted-foreground mb-0.5">Total</p>
-                          <p className="font-bold">{tag.total_count}</p>
-                        </div>
-                        <div className="text-center p-2 rounded-md bg-primary/10">
-                          <p className="text-xs text-muted-foreground mb-0.5">Unused</p>
-                          <p className="font-bold text-primary">{tag.unused_count}</p>
-                        </div>
-                        <div className="text-center p-2 rounded-md bg-muted/50">
-                          <p className="text-xs text-muted-foreground mb-0.5">Used</p>
-                          <p className="font-bold">{tag.used_count}</p>
-                        </div>
-                      </div>
-                      
-                      <p className="text-xs text-muted-foreground mt-3">
-                        Created {format(new Date(tag.created_at), 'MMM d, yyyy')}
-                      </p>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsCreateTagOpen(false)}>Cancel</Button>
+            <Button onClick={handleCreateTag}>Create Tag</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Data Dialog */}
+      <Dialog open={isAddDataOpen} onOpenChange={setIsAddDataOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Data</DialogTitle>
+            <DialogDescription>
+              Add phone number or username
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Select Tag</Label>
+              <Select value={selectedTagId} onValueChange={setSelectedTagId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a tag" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tags.filter(t => t.type === 'data').map((tag) => (
+                    <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Phone Number</Label>
+              <Input 
+                value={phoneNumber}
+                onChange={(e) => setPhoneNumber(e.target.value)}
+                placeholder="+1234567890 or 1234567890"
+              />
+            </div>
+            <div>
+              <Label>Username</Label>
+              <Input 
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="@username or username"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAddDataOpen(false)}>Cancel</Button>
+            <Button onClick={handleAddData}>Add</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Data Dialog */}
+      <Dialog open={isImportDataOpen} onOpenChange={setIsImportDataOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Import Data</DialogTitle>
+            <DialogDescription>
+              Import phone numbers and usernames (one per line)
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Select Tag</Label>
+              <Select value={selectedTagId} onValueChange={setSelectedTagId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a tag" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tags.filter(t => t.type === 'data').map((tag) => (
+                    <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Data (one per line)</Label>
+              <Textarea 
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder={"+1234567890\n9876543210\n@username\nusername2"}
+                rows={8}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Phone numbers (with or without +) and usernames (with or without @)
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsImportDataOpen(false)}>Cancel</Button>
+            <Button onClick={handleImportData}>Import</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Upload Pictures Dialog */}
+      <Dialog open={isUploadPicturesOpen} onOpenChange={setIsUploadPicturesOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload Pictures</DialogTitle>
+            <DialogDescription>
+              Upload profile pictures in bulk
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Select Tag</Label>
+              <Select value={selectedTagId} onValueChange={setSelectedTagId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a tag" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tags.filter(t => t.type === 'pictures').map((tag) => (
+                    <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Select Images</Label>
+              <Input 
+                type="file"
+                accept="image/*"
+                multiple
+                onChange={handleUploadPictures}
+                disabled={!selectedTagId || uploadingFiles}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Select multiple images to upload at once
+              </p>
+            </div>
+            {uploadingFiles && (
+              <p className="text-sm text-primary">Uploading...</p>
             )}
-          </CardContent>
-        </Card>
-      </div>
-      )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsUploadPicturesOpen(false)}>Close</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Add Name Dialog */}
+      <Dialog open={isAddNameOpen} onOpenChange={setIsAddNameOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Add Name</DialogTitle>
+            <DialogDescription>
+              Add first and last name
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Select Tag</Label>
+              <Select value={selectedTagId} onValueChange={setSelectedTagId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a tag" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tags.filter(t => t.type === 'names').map((tag) => (
+                    <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>First Name</Label>
+              <Input 
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                placeholder="John"
+              />
+            </div>
+            <div>
+              <Label>Last Name (optional)</Label>
+              <Input 
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="Smith"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAddNameOpen(false)}>Cancel</Button>
+            <Button onClick={handleAddName}>Add</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Names Dialog */}
+      <Dialog open={isImportNamesOpen} onOpenChange={setIsImportNamesOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Import Names</DialogTitle>
+            <DialogDescription>
+              Import names (one per line, first name and optional last name)
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>Select Tag</Label>
+              <Select value={selectedTagId} onValueChange={setSelectedTagId}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a tag" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tags.filter(t => t.type === 'names').map((tag) => (
+                    <SelectItem key={tag.id} value={tag.id}>{tag.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label>Names (one per line)</Label>
+              <Textarea 
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+                placeholder={"John Smith\nJane Doe\nMike\nSarah Johnson"}
+                rows={8}
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Format: "FirstName LastName" or just "FirstName"
+              </p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsImportNamesOpen(false)}>Cancel</Button>
+            <Button onClick={handleImportNames}>Import</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 };

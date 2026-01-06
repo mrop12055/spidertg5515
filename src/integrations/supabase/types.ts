@@ -611,6 +611,126 @@ export type Database = {
           },
         ]
       }
+      material_data: {
+        Row: {
+          created_at: string | null
+          id: string
+          phone_number: string | null
+          tag_id: string
+          username: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          phone_number?: string | null
+          tag_id: string
+          username?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          phone_number?: string | null
+          tag_id?: string
+          username?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "material_data_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "material_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      material_names: {
+        Row: {
+          created_at: string | null
+          first_name: string
+          id: string
+          last_name: string | null
+          tag_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          first_name: string
+          id?: string
+          last_name?: string | null
+          tag_id: string
+        }
+        Update: {
+          created_at?: string | null
+          first_name?: string
+          id?: string
+          last_name?: string | null
+          tag_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "material_names_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "material_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      material_pictures: {
+        Row: {
+          created_at: string | null
+          file_name: string
+          file_url: string
+          id: string
+          tag_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          file_name: string
+          file_url: string
+          id?: string
+          tag_id: string
+        }
+        Update: {
+          created_at?: string | null
+          file_name?: string
+          file_url?: string
+          id?: string
+          tag_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "material_pictures_tag_id_fkey"
+            columns: ["tag_id"]
+            isOneToOne: false
+            referencedRelation: "material_tags"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      material_tags: {
+        Row: {
+          created_at: string | null
+          id: string
+          item_count: number | null
+          name: string
+          type: string
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          item_count?: number | null
+          name: string
+          type: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          item_count?: number | null
+          name?: string
+          type?: string
+        }
+        Relationships: []
+      }
       maturation_tasks: {
         Row: {
           account_id: string
