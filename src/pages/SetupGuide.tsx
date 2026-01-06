@@ -48,6 +48,19 @@ SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 client_last_used: Dict[str, float] = {}  # Track when each client was last used
 
+# Telethon session files are SQLite; concurrent use of the same client can cause "database is locked".
+# We serialize all per-client operations with an asyncio.Lock.
+
+def ensure_client_lock(client: TelegramClient):
+    lock = getattr(client, "_op_lock", None)
+    if lock is None:
+        lock = asyncio.Lock()
+        try:
+            setattr(client, "_op_lock", lock)
+        except:
+            pass
+    return lock
+
 # Speed settings
 CONNECTION_TIMEOUT = 30
 CONNECTION_RETRIES = 3
@@ -214,6 +227,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             auto_reconnect=True,
             request_retries=3
         )
+        ensure_client_lock(client)
         
         print(f"  [CONNECT] {account['phone_number']}...")
         if not await connect_with_retry(client):
@@ -328,96 +342,98 @@ async def _report(task_type: str, result: dict):
 
 
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
-    try:
-        entity = None
-        if recipient.startswith("@"):
-            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=15)
-        else:
-            from telethon.tl.functions.contacts import ImportContactsRequest
-            from telethon.tl.types import InputPhoneContact
-            import random
-            
-            phone = recipient if recipient.startswith("+") else "+" + recipient
-            try:
-                entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
-            except:
-                pass
-            
-            if not entity:
-                contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
-                if result.users:
-                    entity = result.users[0]
-                elif result.retry_contacts:
-                    return False, "Privacy restricted"
-        
-        if not entity:
-            return False, "User not found on Telegram"
-        
-        # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected
-        formatted_content = content
-        parse_mode = None
+    lock = ensure_client_lock(client)
+    async with lock:
         try:
-            import re
-            url_re = re.compile(r'(https?://[^\\s<>"\\']+)')
-            if content and url_re.search(content):
-                parse_mode = 'md'
+            entity = None
+            if isinstance(recipient, int):
+                entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)
+            else:
+                recipient_str = str(recipient or "").strip()
+                if recipient_str.isdigit():
+                    entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=10)
+                elif recipient_str.startswith("@"): 
+                    entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=15)
+                else:
+                    from telethon.tl.functions.contacts import ImportContactsRequest
+                    from telethon.tl.types import InputPhoneContact
+                    import random
 
-                def _to_md_link(m):
-                    url = m.group(1)
-                    return f"[{url}]({url})"
+                    phone = recipient_str if recipient_str.startswith("+") else "+" + recipient_str
+                    try:
+                        entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+                    except:
+                        pass
 
-                formatted_content = url_re.sub(_to_md_link, content)
-                print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
-        except Exception as e:
-            print(f"  [LINK ERROR] {e}")
+                    if not entity:
+                        contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
+                        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+                        if result.users:
+                            entity = result.users[0]
+                        elif result.retry_contacts:
+                            return False, "Privacy restricted"
+
+            if not entity:
+                return False, "User not found on Telegram"
+
+            # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected
             formatted_content = content
             parse_mode = None
-
-        if media_url:
             try:
-                import io
-                async with httpx.AsyncClient(timeout=30) as http:
-                    resp = await http.get(media_url)
-                    if resp.status_code == 200:
-                        # Determine filename from URL to help Telethon classify the file
-                        from urllib.parse import urlparse, unquote
-                        url_path = urlparse(media_url).path
-                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
-                        
-                        # Check if it's an image based on extension or content-type
-                        content_type = resp.headers.get("content-type", "").lower()
-                        ext = filename.split(".")[-1].lower() if "." in filename else ""
-                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
-                        
-                        # Wrap bytes in BytesIO with a name so Telethon knows the file type
-                        file_bytes = io.BytesIO(resp.content)
-                        file_bytes.name = filename if "." in filename else f"photo.jpg"
-                        
-                        print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
-                        
-                        # For images, use force_document=False to send as photo preview
-                        await asyncio.wait_for(
-                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                            timeout=30
-                        )
-                    else:
-                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
-            except Exception as media_err:
-                print(f"  [MEDIA ERROR] {media_err}")
+                import re
+                url_re = re.compile(r'(https?://[^\s<>"\']+)')
+                if content and url_re.search(content):
+                    parse_mode = 'md'
+
+                    def _to_md_link(m):
+                        url = m.group(1)
+                        return f"[{url}]({url})"
+
+                    formatted_content = url_re.sub(_to_md_link, content)
+                    print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
+            except Exception as e:
+                print(f"  [LINK ERROR] {e}")
+                formatted_content = content
+                parse_mode = None
+
+            if media_url:
+                try:
+                    import io
+                    async with httpx.AsyncClient(timeout=30) as http:
+                        resp = await http.get(media_url)
+                        if resp.status_code == 200:
+                            from urllib.parse import urlparse, unquote
+                            url_path = urlparse(media_url).path
+                            filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+
+                            content_type = resp.headers.get("content-type", "").lower()
+                            ext = filename.split(".")[-1].lower() if "." in filename else ""
+                            is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+
+                            file_bytes = io.BytesIO(resp.content)
+                            file_bytes.name = filename if "." in filename else "photo.jpg"
+
+                            await asyncio.wait_for(
+                                client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
+                                timeout=30
+                            )
+                        else:
+                            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+                except Exception as media_err:
+                    print(f"  [MEDIA ERROR] {media_err}")
+                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+            else:
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
-        else:
-            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
-        
-        return True, None
-    except asyncio.TimeoutError:
-        return False, "Request timeout"
-    except UserPrivacyRestrictedError:
-        return False, "Privacy restricted"
-    except FloodWaitError as e:
-        return False, f"Rate limited: {e.seconds}s"
-    except Exception as e:
-        return False, str(e)
+
+            return True, None
+        except asyncio.TimeoutError:
+            return False, "Request timeout"
+        except UserPrivacyRestrictedError:
+            return False, "Privacy restricted"
+        except FloodWaitError as e:
+            return False, f"Rate limited: {e.seconds}s"
+        except Exception as e:
+            return False, str(e)
 
 
 async def validate_contact(client: TelegramClient, phone: str):
@@ -648,7 +664,7 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, active_clients, cleanup_idle_clients
+    send_message, shutdown_all, active_clients, cleanup_idle_clients, ensure_client_lock
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
@@ -831,8 +847,10 @@ async def keepalive_task():
         for account_id, client in clients_to_check:
             try:
                 if client.is_connected():
-                    # Ping the server to keep connection alive
-                    await asyncio.wait_for(client.get_me(), timeout=10)
+                    # Serialize keepalive with any concurrent send to avoid session DB locks
+                    lock = ensure_client_lock(client)
+                    async with lock:
+                        await asyncio.wait_for(client.get_me(), timeout=10)
                 else:
                     # Client disconnected, remove from cache
                     print(f"  [WARN] Client {account_id[:8]}... disconnected, will reconnect")
