@@ -43,12 +43,24 @@ MAX_CACHED_CLIENTS = 50   # Maximum number of cached clients
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
-    """Decode base64 session data and save to temp file"""
+    """Decode base64 session data and save to temp file. Enables WAL mode to prevent locking."""
     session_path = os.path.join(SESSION_FOLDER, phone_number.replace("+", ""))
+    session_file = session_path + ".session"
     try:
         session_bytes = base64.b64decode(base64_data)
-        with open(session_path + ".session", "wb") as f:
+        with open(session_file, "wb") as f:
             f.write(session_bytes)
+        
+        # Enable WAL mode to allow concurrent reads and reduce locking
+        try:
+            import sqlite3
+            conn = sqlite3.connect(session_file, timeout=30)
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=30000")  # 30 second timeout
+            conn.close()
+        except Exception as wal_err:
+            print(f"  [WARN] Could not enable WAL mode: {wal_err}")
+        
         return session_path
     except Exception as e:
         print(f"  [ERROR] Session decode failed: {e}")
