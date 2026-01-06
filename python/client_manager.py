@@ -1,10 +1,16 @@
 """
 TelegramCRM - Client Manager
 =============================
-Shared Telegram client logic for all runners with optimized connection speed
+Shared Telegram client logic for all runners with optimized connection speed.
+
+IMPORTANT: Clients are now managed with auto-disconnect to prevent database locking.
+- Clients are cached briefly and auto-disconnected after idle timeout
+- Use disconnect_client() to explicitly release a client when done
+- shutdown_all() cleans up all connections
 """
 
 import os
+import time
 import base64
 import tempfile
 import asyncio
@@ -22,13 +28,18 @@ from fingerprint_generator import generate_fingerprint
 # Temp folder for session files
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 
-# Active clients cache
+# Active clients cache with last-used timestamps
 active_clients: Dict[str, TelegramClient] = {}
+client_last_used: Dict[str, float] = {}  # account_id -> timestamp
 
 # Connection settings for speed
 CONNECTION_TIMEOUT = 30  # Increased timeout
 CONNECTION_RETRIES = 3   # Retry attempts
 RETRY_DELAY = 2          # Delay between retries
+
+# Client lifecycle settings
+CLIENT_IDLE_TIMEOUT = 60  # Disconnect clients idle for 60 seconds
+MAX_CACHED_CLIENTS = 50   # Maximum number of cached clients
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
@@ -137,11 +148,15 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
     """
     account_id = account["id"]
     
+    # Clean up idle clients first to prevent too many connections
+    await cleanup_idle_clients()
+    
     # Return cached client if connected
     if account_id in active_clients:
         client = active_clients[account_id]
         try:
             if client.is_connected():
+                client_last_used[account_id] = time.time()  # Update last used
                 if setup_handler and not getattr(client, "_handler_installed", False):
                     await setup_handler(client, account_id)
                     setattr(client, "_handler_installed", True)
@@ -151,6 +166,7 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         except:
             # Client disconnected, remove from cache
             del active_clients[account_id]
+            client_last_used.pop(account_id, None)
     
     session_data = account.get("session_data")
     if not session_data:
@@ -279,6 +295,7 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             setattr(client, "_handler_installed", True)
         
         active_clients[account_id] = client
+        client_last_used[account_id] = time.time()  # Track connection time
         
         # Always sync FULL profile on first connection (including avatar) to ensure data is up to date
         await _sync_profile(client, account_id, skip_avatar=False)
@@ -583,6 +600,45 @@ async def validate_contact(client: TelegramClient, phone: str):
         raise e
 
 
+async def cleanup_idle_clients():
+    """Disconnect clients that have been idle for too long.
+    This prevents database locking from too many open sessions."""
+    now = time.time()
+    to_remove = []
+    
+    for account_id, last_used in list(client_last_used.items()):
+        if now - last_used > CLIENT_IDLE_TIMEOUT:
+            to_remove.append(account_id)
+    
+    # Also check if we have too many cached clients
+    if len(active_clients) > MAX_CACHED_CLIENTS:
+        # Remove oldest clients first
+        sorted_clients = sorted(client_last_used.items(), key=lambda x: x[1])
+        excess = len(active_clients) - MAX_CACHED_CLIENTS
+        for account_id, _ in sorted_clients[:excess]:
+            if account_id not in to_remove:
+                to_remove.append(account_id)
+    
+    for account_id in to_remove:
+        await disconnect_client(account_id)
+    
+    if to_remove:
+        print(f"  [CLEANUP] Disconnected {len(to_remove)} idle clients")
+
+
+async def disconnect_client(account_id: str):
+    """Disconnect and remove a specific client from cache.
+    Call this when done with a client to free up the session."""
+    if account_id in active_clients:
+        try:
+            client = active_clients[account_id]
+            await asyncio.wait_for(client.disconnect(), timeout=5)
+        except:
+            pass
+        del active_clients[account_id]
+    client_last_used.pop(account_id, None)
+
+
 async def shutdown_all():
     """Cleanup all clients on shutdown"""
     print("\n[SHUTDOWN] Disconnecting all clients...")
@@ -592,4 +648,5 @@ async def shutdown_all():
         except:
             pass
     active_clients.clear()
+    client_last_used.clear()
     print("[OK] All clients disconnected.")

@@ -22,7 +22,7 @@ import random
 
 from client_manager import (
     get_or_create_client, get_next_task, get_batch_tasks, report_result,
-    shutdown_all
+    shutdown_all, disconnect_client, cleanup_idle_clients
 )
 
 # ========== GLOBAL STATE ==========
@@ -449,6 +449,9 @@ async def main_loop():
             success_count = sum(1 for r in results if isinstance(r, dict) and r.get("success"))
             fail_count = len(results) - success_count
             print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
+            
+            # Cleanup idle clients after each batch to prevent session locks
+            await cleanup_idle_clients()
             
             # FAST MODE: Immediately fetch next batch, no waiting (tasks have their own timing)
             # Only add minimal delay to prevent API rate limits
