@@ -7,8 +7,10 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { StatCard } from '@/components/ui/stat-card';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
+import { motion } from 'framer-motion';
 import { 
   RefreshCw, 
   Trash2, 
@@ -23,7 +25,12 @@ import {
   Zap,
   Send,
   UserCheck,
-  Phone
+  Phone,
+  ListTodo,
+  Ban,
+  Upload,
+  Flame,
+  AlertTriangle
 } from 'lucide-react';
 import { format } from 'date-fns';
 
@@ -591,130 +598,115 @@ const DatabaseHealth = () => {
         }
       />
 
-      {/* Health Overview Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-green-500/10">
-                <Users className="w-5 h-5 text-green-500" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{health?.active_accounts || 0}</p>
-                <p className="text-xs text-muted-foreground">Active Accounts</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-orange-500/30">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-orange-500/10">
-                <AlertCircle className="w-5 h-5 text-orange-500" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-orange-500">{restrictedAccountsCount}</p>
-                <p className="text-xs text-muted-foreground">Restricted Accounts</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-blue-500/10">
-                <Shield className="w-5 h-5 text-blue-500" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{health?.active_proxies || 0}</p>
-                <p className="text-xs text-muted-foreground">Active Proxies</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-purple-500/10">
-                <MessageSquare className="w-5 h-5 text-purple-500" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{health?.total_conversations || 0}</p>
-                <p className="text-xs text-muted-foreground">Conversations</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-yellow-500/10">
-                <Clock className="w-5 h-5 text-yellow-500" />
-              </div>
-              <div>
-                <p className="text-2xl font-bold">{health?.pending_recipients || 0}</p>
-                <p className="text-xs text-muted-foreground">Pending Recipients</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
+      {/* System Overview - Main Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+        <StatCard
+          title="Active Accounts"
+          value={health?.active_accounts || 0}
+          icon={Users}
+          variant="success"
+          index={0}
+        />
+        <StatCard
+          title="Restricted"
+          value={restrictedAccountsCount}
+          icon={AlertCircle}
+          variant="warning"
+          index={1}
+        />
+        <StatCard
+          title="Active Proxies"
+          value={health?.active_proxies || 0}
+          icon={Shield}
+          variant="primary"
+          index={2}
+        />
+        <StatCard
+          title="Conversations"
+          value={health?.total_conversations || 0}
+          icon={MessageSquare}
+          variant="default"
+          index={3}
+        />
       </div>
 
       {/* Pending Tasks Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-        <Card className="border-yellow-500/30">
-          <CardContent className="pt-4 pb-4">
-            <div className="text-center">
-              <p className="text-3xl font-bold text-yellow-500">{health?.pending_account_tasks || 0}</p>
-              <p className="text-xs text-muted-foreground">Account Tasks</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-yellow-500/30">
-          <CardContent className="pt-4 pb-4">
-            <div className="text-center">
-              <p className="text-3xl font-bold text-yellow-500">{health?.pending_block_tasks || 0}</p>
-              <p className="text-xs text-muted-foreground">Block Tasks</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-yellow-500/30">
-          <CardContent className="pt-4 pb-4">
-            <div className="text-center">
-              <p className="text-3xl font-bold text-yellow-500">{health?.pending_import_tasks || 0}</p>
-              <p className="text-xs text-muted-foreground">Import Tasks</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-orange-500/30">
-          <CardContent className="pt-4 pb-4">
-            <div className="text-center">
-              <p className="text-3xl font-bold text-orange-500">{warmupTasks.length}</p>
-              <p className="text-xs text-muted-foreground">Warmup Tasks</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-red-500/30">
-          <CardContent className="pt-4 pb-4">
-            <div className="text-center">
-              <p className="text-3xl font-bold text-red-500">{health?.stuck_messages || 0}</p>
-              <p className="text-xs text-muted-foreground">Stuck Messages</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.3 }}
+        className="mb-6"
+      >
+        <div className="flex items-center gap-2 mb-4">
+          <div className="p-2 rounded-xl bg-yellow-500/10">
+            <Clock className="w-5 h-5 text-yellow-500" />
+          </div>
+          <h2 className="text-lg font-semibold">Pending Queue</h2>
+          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/30">
+            {(health?.pending_account_tasks || 0) + (health?.pending_block_tasks || 0) + 
+             (health?.pending_import_tasks || 0) + warmupTasks.length + (health?.pending_messages || 0)} total
+          </Badge>
+        </div>
+        
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+          {[
+            { label: 'Account', value: health?.pending_account_tasks || 0, icon: UserCheck, color: 'yellow' },
+            { label: 'Block', value: health?.pending_block_tasks || 0, icon: Ban, color: 'yellow' },
+            { label: 'Import', value: health?.pending_import_tasks || 0, icon: Upload, color: 'yellow' },
+            { label: 'Warmup', value: warmupTasks.length, icon: Flame, color: 'orange' },
+            { label: 'Recipients', value: health?.pending_recipients || 0, icon: Send, color: 'blue' },
+            { label: 'Stuck', value: health?.stuck_messages || 0, icon: AlertTriangle, color: 'red' },
+          ].map((item, idx) => (
+            <motion.div
+              key={item.label}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.3, delay: 0.4 + idx * 0.05 }}
+              className={`relative overflow-hidden rounded-xl border p-4 bg-card hover:shadow-md transition-all duration-200 ${
+                item.color === 'red' ? 'border-red-500/30' : 
+                item.color === 'orange' ? 'border-orange-500/30' : 
+                item.color === 'blue' ? 'border-blue-500/30' : 
+                'border-yellow-500/30'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className={`text-2xl font-bold ${
+                    item.color === 'red' ? 'text-red-500' : 
+                    item.color === 'orange' ? 'text-orange-500' : 
+                    item.color === 'blue' ? 'text-blue-500' : 
+                    'text-yellow-500'
+                  }`}>
+                    {item.value}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{item.label}</p>
+                </div>
+                <div className={`p-2 rounded-lg ${
+                  item.color === 'red' ? 'bg-red-500/10' : 
+                  item.color === 'orange' ? 'bg-orange-500/10' : 
+                  item.color === 'blue' ? 'bg-blue-500/10' : 
+                  'bg-yellow-500/10'
+                }`}>
+                  <item.icon className={`w-4 h-4 ${
+                    item.color === 'red' ? 'text-red-500' : 
+                    item.color === 'orange' ? 'text-orange-500' : 
+                    item.color === 'blue' ? 'text-blue-500' : 
+                    'text-yellow-500'
+                  }`} />
+                </div>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      </motion.div>
 
       {/* Task Tables */}
-      <Card className="mb-6">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.5 }}
+      >
+        <Card className="mb-6">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Database className="w-5 h-5" />
@@ -1079,9 +1071,15 @@ const DatabaseHealth = () => {
           </Tabs>
         </CardContent>
       </Card>
+      </motion.div>
 
       {/* Recent Errors Log */}
-      <Card>
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, delay: 0.6 }}
+      >
+        <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 text-destructive" />
@@ -1126,6 +1124,7 @@ const DatabaseHealth = () => {
           </ScrollArea>
         </CardContent>
       </Card>
+      </motion.div>
     </DashboardLayout>
   );
 };
