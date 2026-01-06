@@ -2122,16 +2122,32 @@ if __name__ == "__main__":
       
       const blob = await zip.generateAsync({ type: "blob" });
       
-      const { error } = await supabase.storage
+      const { error: uploadError } = await supabase.storage
         .from('python-scripts')
         .upload('runners.zip', blob, { 
           upsert: true,
           contentType: 'application/zip'
         });
       
-      if (error) throw error;
+      if (uploadError) throw uploadError;
       
-      toast.success("Scripts uploaded! Click 'Update Scripts' in VPS Manager to deploy.");
+      // Find connected VPS and send update command automatically
+      const { data: vps } = await supabase
+        .from('vps_connections')
+        .select('id')
+        .limit(1)
+        .maybeSingle();
+      
+      if (vps) {
+        // Send update command - VPS agent will stop old scripts, download new ones, and restart
+        await supabase.from('vps_commands').insert({
+          vps_id: vps.id,
+          command: 'update',
+        });
+        toast.success("Scripts uploaded and update command sent! VPS will restart with new scripts.");
+      } else {
+        toast.success("Scripts uploaded! Connect a VPS to enable auto-updates.");
+      }
     } catch (error) {
       console.error('Upload error:', error);
       toast.error("Failed to upload scripts");

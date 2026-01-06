@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -7,12 +7,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Server, Play, Square, RefreshCw, Download, Loader2, 
   Terminal, CheckCircle2, XCircle, Clock, Send, MessageSquare,
-  UserCog, Flame, Ban, Wifi, WifiOff, Trash2
+  UserCog, Flame, Ban, Wifi, WifiOff, Trash2, Circle
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { useRunnerStatus } from '@/hooks/useRunnerStatus';
+
+const VPS_ONLINE_THRESHOLD_MS = 30000; // 30 seconds
 
 interface VPSConnection {
   id: string;
@@ -55,7 +57,20 @@ export const VPSManager: React.FC = () => {
   const [commands, setCommands] = useState<VPSCommand[]>([]);
   const [loading, setLoading] = useState(true);
   const [sendingCommand, setSendingCommand] = useState<string | null>(null);
+  const [vpsOnline, setVpsOnline] = useState(false);
+  const statusCheckRef = useRef<NodeJS.Timeout | null>(null);
   const { runners } = useRunnerStatus();
+
+  // Check VPS online status based on last_seen
+  const checkVpsStatus = useCallback(() => {
+    if (!vps?.last_seen) {
+      setVpsOnline(false);
+      return;
+    }
+    const lastSeen = new Date(vps.last_seen).getTime();
+    const isOnline = Date.now() - lastSeen < VPS_ONLINE_THRESHOLD_MS;
+    setVpsOnline(isOnline);
+  }, [vps]);
 
   const fetchVPS = useCallback(async () => {
     const { data } = await supabase
@@ -97,8 +112,15 @@ export const VPSManager: React.FC = () => {
     if (vps) {
       fetchLogs();
       fetchCommands();
+      checkVpsStatus();
+      
+      // Check status every 5 seconds
+      statusCheckRef.current = setInterval(checkVpsStatus, 5000);
+      return () => {
+        if (statusCheckRef.current) clearInterval(statusCheckRef.current);
+      };
     }
-  }, [vps, fetchLogs, fetchCommands]);
+  }, [vps, fetchLogs, fetchCommands, checkVpsStatus]);
 
   // Realtime subscriptions
   useEffect(() => {
@@ -139,8 +161,14 @@ export const VPSManager: React.FC = () => {
     toast.success('Logs cleared');
   };
 
-  const isOnline = vps?.status === 'online' && vps?.last_seen && 
-    new Date(vps.last_seen).getTime() > Date.now() - 30000;
+  // Format last seen time
+  const getLastSeenText = () => {
+    if (!vps?.last_seen) return 'Never';
+    const diff = Date.now() - new Date(vps.last_seen).getTime();
+    if (diff < 60000) return `${Math.floor(diff / 1000)}s ago`;
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    return new Date(vps.last_seen).toLocaleTimeString();
+  };
 
   if (loading) {
     return (
@@ -179,16 +207,29 @@ export const VPSManager: React.FC = () => {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center gap-2 text-base">
-          <Server className="h-5 w-5 text-primary" />
-          VPS Manager
-          <Badge variant={isOnline ? 'default' : 'destructive'} className="ml-2">
-            {isOnline ? <><Wifi className="h-3 w-3 mr-1" /> Online</> : <><WifiOff className="h-3 w-3 mr-1" /> Offline</>}
-          </Badge>
-          {vps.ip_address && (
-            <span className="ml-auto text-xs font-mono text-muted-foreground">{vps.ip_address}</span>
-          )}
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Server className="h-5 w-5 text-primary" />
+            VPS Agent
+          </CardTitle>
+          <div className="flex items-center gap-3">
+            {vps.ip_address && (
+              <span className="text-xs font-mono text-muted-foreground">{vps.ip_address}</span>
+            )}
+            <div className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium",
+              vpsOnline 
+                ? "bg-green-500/15 text-green-600 dark:text-green-400" 
+                : "bg-red-500/15 text-red-600 dark:text-red-400"
+            )}>
+              <Circle className={cn("h-2 w-2 fill-current", vpsOnline && "animate-pulse")} />
+              {vpsOnline ? 'Running' : 'Stopped'}
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {getLastSeenText()}
+            </span>
+          </div>
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Global Controls */}
