@@ -1207,6 +1207,45 @@ async def main_loop():
                 except Exception as e:
                     await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": "disconnected", "error": str(e)})
                     print(f"    Error: {e}")
+            
+            elif task_type == "sync_profile":
+                account = task.get("account", {})
+                print(f"  [SYNC] Syncing profile for {account.get('phone_number')}...")
+                try:
+                    client = await get_or_create_client(account)
+                    if client:
+                        me = await client.get_me()
+                        if me:
+                            # Get profile photo if available
+                            avatar_url = None
+                            try:
+                                photos = await client.get_profile_photos("me", limit=1)
+                                if photos:
+                                    # Download to bytes and encode
+                                    photo_bytes = await client.download_media(photos[0], bytes)
+                                    if photo_bytes:
+                                        avatar_url = f"data:image/jpeg;base64,{base64.b64encode(photo_bytes).decode()}"
+                            except:
+                                pass
+                            
+                            await report_result("sync_profile", {
+                                "task_id": task.get("task_id"),
+                                "account_id": account.get("id"),
+                                "success": True,
+                                "first_name": me.first_name,
+                                "last_name": me.last_name or "",
+                                "username": me.username,
+                                "telegram_id": me.id,
+                                "avatar_url": avatar_url
+                            })
+                            print(f"    Synced: {me.first_name} {me.last_name or ''}")
+                        else:
+                            await report_result("sync_profile", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": False, "error": "Could not get user info"})
+                    else:
+                        await report_result("sync_profile", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": False, "error": "Could not connect"})
+                except Exception as e:
+                    await report_result("sync_profile", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": False, "error": str(e)})
+                    print(f"    Error: {e}")
         
         except Exception as e:
             print(f"  [ERROR] {e}")
