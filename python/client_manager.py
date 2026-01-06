@@ -140,7 +140,12 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
     Get existing client or create new one with unique device fingerprint.
     Optimized for fast connection with retry logic and proxy support.
     Uses priority-based locking to prevent SQLite "database is locked" errors.
-    
+
+    Locking model:
+    - We only acquire the lock when we need to (re)create a client.
+    - Once a client is connected, it stays cached and we do NOT reacquire the lock on every reuse.
+    - If creation fails, we always release the lock so we don't deadlock future attempts.
+
     Args:
         account: Account data from edge function (must include fingerprint fields)
         setup_handler: Optional async function to set up message handlers
@@ -150,17 +155,8 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         runner: Runner name for priority locking (livechat, campaign, warmup, account, block)
     """
     account_id = account["id"]
-    
-    # Acquire priority-based lock for this account
-    lock_acquired = await lock_account(account_id, runner)
-    if not lock_acquired:
-        print(f"  [LOCK] Could not acquire lock for {account.get('phone_number', 'unknown')} ({runner})")
-        return None
-    
-    # Track which runner owns this account
-    _current_runner[account_id] = runner
-    
-    # Return cached client if connected
+
+    # Fast path: Return cached, connected client (no lock reacquire)
     if account_id in active_clients:
         client = active_clients[account_id]
         try:
@@ -171,180 +167,202 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
                 if force_profile_sync:
                     await _sync_profile(client, account_id, skip_avatar=False)
                 return client
-        except:
-            # Client disconnected, remove from cache
+        except Exception:
+            pass
+
+        # Cached client is unusable; remove it and release any held lock so we can reconnect.
+        try:
             del active_clients[account_id]
-    
+        except Exception:
+            pass
+        try:
+            release_client(account_id)
+        except Exception:
+            pass
+
     session_data = account.get("session_data")
     if not session_data:
         print(f"  [SKIP] No session: {account.get('phone_number', 'unknown')}")
         return None
-    
-    session_path = decode_session_file(account["phone_number"], session_data)
-    if not session_path:
+
+    # Acquire priority-based lock ONLY for (re)creation.
+    lock_acquired = await lock_account(account_id, runner)
+    if not lock_acquired:
+        print(f"  [LOCK] Could not acquire lock for {account.get('phone_number', 'unknown')} ({runner})")
         return None
-    
-    # Get or generate device fingerprint
-    device_model = account.get("device_model")
-    system_version = account.get("system_version")
-    app_version = account.get("app_version")
-    lang_code = account.get("lang_code") or "en"
-    system_lang_code = account.get("system_lang_code") or "en-US"
-    
-    if not device_model or not system_version:
-        fp = generate_fingerprint()
-        device_model = fp["device_model"]
-        system_version = fp["system_version"]
-        app_version = fp["app_version"]
-        lang_code = fp["lang_code"]
-        system_lang_code = fp["system_lang_code"]
-        print(f"  [FP] Generated: {device_model} ({system_version})")
-        await report_result("fingerprint_generated", {
-            "account_id": account_id,
-            "device_model": device_model,
-            "system_version": system_version,
-            "app_version": app_version,
-            "lang_code": lang_code,
-            "system_lang_code": system_lang_code
-        })
-    
-    # Get proxy settings - task_proxy takes priority for consistency
-    proxy = get_proxy_settings(account, task_proxy)
-    if proxy:
-        print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
-    else:
-        print(f"  [WARN] No proxy configured for {account.get('phone_number', 'unknown')}")
-    
+
+    _current_runner[account_id] = runner
+    connected_client = False
+
     try:
-        # Get API credentials from joined telegram_api_credentials (priority) or fallback to account/config
-        api_creds = account.get("telegram_api_credentials")
-        if api_creds and api_creds.get("api_id") and api_creds.get("api_hash"):
-            api_id = api_creds["api_id"]
-            api_hash = api_creds["api_hash"]
-            print(f"  [API] Using credential: {api_creds.get('client_type', 'unknown')} ({api_id})")
+        session_path = decode_session_file(account["phone_number"], session_data)
+        if not session_path:
+            return None
+
+        # Get or generate device fingerprint
+        device_model = account.get("device_model")
+        system_version = account.get("system_version")
+        app_version = account.get("app_version")
+        lang_code = account.get("lang_code") or "en"
+        system_lang_code = account.get("system_lang_code") or "en-US"
+
+        if not device_model or not system_version:
+            fp = generate_fingerprint()
+            device_model = fp["device_model"]
+            system_version = fp["system_version"]
+            app_version = fp["app_version"]
+            lang_code = fp["lang_code"]
+            system_lang_code = fp["system_lang_code"]
+            print(f"  [FP] Generated: {device_model} ({system_version})")
+            await report_result(
+                "fingerprint_generated",
+                {
+                    "account_id": account_id,
+                    "device_model": device_model,
+                    "system_version": system_version,
+                    "app_version": app_version,
+                    "lang_code": lang_code,
+                    "system_lang_code": system_lang_code,
+                },
+            )
+
+        # Get proxy settings - task_proxy takes priority for consistency
+        proxy = get_proxy_settings(account, task_proxy)
+        if proxy:
+            print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
         else:
-            api_id = account.get("api_id") or TELEGRAM_API_ID
-            api_hash = account.get("api_hash") or TELEGRAM_API_HASH
-            print(f"  [API] Using account/default API: {api_id}")
-        
-        # Create client with optimized settings
-        # Use sqlite3 connection with longer timeout to avoid "database is locked"
-        import sqlite3
-        sqlite3_conn_kwargs = {'timeout': 30.0}  # 30 second timeout for SQLite locks
-        
-        client = TelegramClient(
-            session_path, 
-            int(api_id), 
-            api_hash,
-            device_model=device_model,
-            system_version=system_version,
-            app_version=app_version,
-            lang_code=lang_code,
-            system_lang_code=system_lang_code,
-            proxy=proxy,
-            timeout=CONNECTION_TIMEOUT,
-            connection_retries=CONNECTION_RETRIES,
-            retry_delay=RETRY_DELAY,
-            auto_reconnect=True,
-            request_retries=3
-        )
-        
-        # Enable WAL mode for better concurrent access on the session database
+            print(f"  [WARN] No proxy configured for {account.get('phone_number', 'unknown')}")
+
         try:
-            import sqlite3 as sqlite3_mod
-            session_db_path = session_path + ".session"
-            if os.path.exists(session_db_path):
-                conn = sqlite3_mod.connect(session_db_path, timeout=30.0)
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA busy_timeout=30000")  # 30 seconds
-                conn.close()
-        except Exception as wal_err:
-            print(f"  [WARN] Could not set WAL mode: {wal_err}")
-        
-        # Connect with retry logic
-        print(f"  [CONNECT] {account['phone_number']}...")
-        connected, connect_error = await connect_with_retry(client)
-        if not connected:
-            print(f"  [FAIL] Could not connect: {account['phone_number']} - {connect_error}")
-            # Determine if it's a proxy error
-            error_lower = connect_error.lower()
-            if any(x in error_lower for x in ["proxy", "socks", "refused", "unreachable", "timeout"]):
-                await report_result("proxy_error", {
-                    "account_id": account_id, 
-                    "reason": connect_error,
-                    "proxy_id": proxy[1] + ":" + str(proxy[2]) if proxy else None
-                })
+            # Get API credentials from joined telegram_api_credentials (priority) or fallback to account/config
+            api_creds = account.get("telegram_api_credentials")
+            if api_creds and api_creds.get("api_id") and api_creds.get("api_hash"):
+                api_id = api_creds["api_id"]
+                api_hash = api_creds["api_hash"]
+                print(f"  [API] Using credential: {api_creds.get('client_type', 'unknown')} ({api_id})")
             else:
-                await report_result("account_disconnected", {"account_id": account_id, "reason": connect_error})
-            return None
-        
-        if not await client.is_user_authorized():
-            print(f"  [EXPIRED] Session expired: {account['phone_number']}")
-            await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
-            return None
-        
-        # Test if account is still active by getting user info
-        me = None  # Initialize to avoid UnboundLocalError
-        try:
-            me = await asyncio.wait_for(client.get_me(), timeout=15)
-            if not me:
-                print(f"  [DELETED] Account deleted: {account['phone_number']}")
-                await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted or banned"})
+                api_id = account.get("api_id") or TELEGRAM_API_ID
+                api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+                print(f"  [API] Using account/default API: {api_id}")
+
+            # Create client with optimized settings
+            client = TelegramClient(
+                session_path,
+                int(api_id),
+                api_hash,
+                device_model=device_model,
+                system_version=system_version,
+                app_version=app_version,
+                lang_code=lang_code,
+                system_lang_code=system_lang_code,
+                proxy=proxy,
+                timeout=CONNECTION_TIMEOUT,
+                connection_retries=CONNECTION_RETRIES,
+                retry_delay=RETRY_DELAY,
+                auto_reconnect=True,
+                request_retries=3,
+            )
+
+            # Enable WAL mode + busy_timeout for better concurrent access on the session database
+            try:
+                import sqlite3 as sqlite3_mod
+
+                session_db_path = session_path + ".session"
+                if os.path.exists(session_db_path):
+                    conn = sqlite3_mod.connect(session_db_path, timeout=30.0)
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA busy_timeout=30000")
+                    conn.close()
+            except Exception as wal_err:
+                print(f"  [WARN] Could not set WAL mode: {wal_err}")
+
+            # Connect with retry logic
+            print(f"  [CONNECT] {account['phone_number']}...")
+            connected, connect_error = await connect_with_retry(client)
+            if not connected:
+                print(f"  [FAIL] Could not connect: {account['phone_number']} - {connect_error}")
+                error_lower = connect_error.lower()
+                if any(x in error_lower for x in ["proxy", "socks", "refused", "unreachable", "timeout"]):
+                    await report_result(
+                        "proxy_error",
+                        {
+                            "account_id": account_id,
+                            "reason": connect_error,
+                            "proxy_id": proxy[1] + ":" + str(proxy[2]) if proxy else None,
+                        },
+                    )
+                else:
+                    await report_result("account_disconnected", {"account_id": account_id, "reason": connect_error})
                 return None
-        except Exception as me_error:
-            error_str = str(me_error).lower()
-            # Detect banned/deleted/deactivated accounts
-            # Distinguish between user-deleted (frozen) vs Telegram-banned
+
+            if not await client.is_user_authorized():
+                print(f"  [EXPIRED] Session expired: {account['phone_number']}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
+                return None
+
+            # Test if account is still active by getting user info
+            me = None
+            try:
+                me = await asyncio.wait_for(client.get_me(), timeout=15)
+                if not me:
+                    print(f"  [DELETED] Account deleted: {account['phone_number']}")
+                    await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted or banned"})
+                    return None
+            except Exception as me_error:
+                error_str = str(me_error).lower()
+                if any(x in error_str for x in ["user_deactivated", "deactivated"]):
+                    print(f"  [FROZEN] Account deleted by user: {account['phone_number']} - {me_error}")
+                    await report_result("account_frozen", {"account_id": account_id, "reason": str(me_error)})
+                    return None
+                elif any(x in error_str for x in ["banned", "deleted"]):
+                    print(f"  [BANNED] Account banned by Telegram: {account['phone_number']} - {me_error}")
+                    await report_result("account_banned", {"account_id": account_id, "reason": str(me_error)})
+                    return None
+                elif any(x in error_str for x in ["session", "revoked", "auth", "auth_key"]):
+                    print(f"  [EXPIRED] Session revoked: {account['phone_number']} - {me_error}")
+                    await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
+                    return None
+                elif "database" in error_str and "locked" in error_str:
+                    print(f"  [WARN] Database locked, retrying get_me...")
+                    await asyncio.sleep(1)
+                    try:
+                        me = await asyncio.wait_for(client.get_me(), timeout=15)
+                    except Exception:
+                        pass
+                else:
+                    print(f"  [WARN] get_me error: {me_error}")
+
+            # Set up message handler if provided
+            if setup_handler:
+                await setup_handler(client, account_id)
+                setattr(client, "_handler_installed", True)
+
+            active_clients[account_id] = client
+            connected_client = True
+
+            # Always sync FULL profile on first connection (including avatar) to ensure data is up to date
+            await _sync_profile(client, account_id, skip_avatar=False)
+
+            print(f"  [OK] Connected: {account['phone_number']}")
+            return client
+
+        except Exception as e:
+            error_str = str(e).lower()
             if any(x in error_str for x in ["user_deactivated", "deactivated"]):
-                # User deleted their own account = FROZEN
-                print(f"  [FROZEN] Account deleted by user: {account['phone_number']} - {me_error}")
-                await report_result("account_frozen", {"account_id": account_id, "reason": str(me_error)})
-                return None
-            elif any(x in error_str for x in ["banned", "deleted"]):
-                # Telegram banned the account = BANNED
-                print(f"  [BANNED] Account banned by Telegram: {account['phone_number']} - {me_error}")
-                await report_result("account_banned", {"account_id": account_id, "reason": str(me_error)})
-                return None
-            elif any(x in error_str for x in ["session", "revoked", "auth", "auth_key"]):
-                print(f"  [EXPIRED] Session revoked: {account['phone_number']} - {me_error}")
-                await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
-                return None
-            elif "database" in error_str and "locked" in error_str:
-                # SQLite lock - retry once after short delay
-                print(f"  [WARN] Database locked, retrying get_me...")
-                await asyncio.sleep(1)
-                try:
-                    me = await asyncio.wait_for(client.get_me(), timeout=15)
-                except:
-                    pass  # Continue with me=None, profile sync will handle it
+                print(f"  [FROZEN] {account['phone_number']}: {e}")
+                await report_result("account_frozen", {"account_id": account_id, "reason": str(e)})
+            elif any(x in error_str for x in ["deleted", "banned"]):
+                print(f"  [BANNED] {account['phone_number']}: {e}")
+                await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
             else:
-                # Other error, try to continue
-                print(f"  [WARN] get_me error: {me_error}")
-        
-        # Set up message handler if provided
-        if setup_handler:
-            await setup_handler(client, account_id)
-            setattr(client, "_handler_installed", True)
-        
-        active_clients[account_id] = client
-        
-        # Always sync FULL profile on first connection (including avatar) to ensure data is up to date
-        await _sync_profile(client, account_id, skip_avatar=False)
-        
-        print(f"  [OK] Connected: {account['phone_number']}")
-        return client
-    except Exception as e:
-        error_str = str(e).lower()
-        # Detect user-deleted (frozen) vs Telegram-banned from connection errors
-        if any(x in error_str for x in ["user_deactivated", "deactivated"]):
-            print(f"  [FROZEN] {account['phone_number']}: {e}")
-            await report_result("account_frozen", {"account_id": account_id, "reason": str(e)})
-        elif any(x in error_str for x in ["deleted", "banned"]):
-            print(f"  [BANNED] {account['phone_number']}: {e}")
-            await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
-        else:
-            print(f"  [FAIL] {account['phone_number']}: {e}")
-        return None
+                print(f"  [FAIL] {account['phone_number']}: {e}")
+            return None
+
+    finally:
+        # If we failed to create/connect, release the lock so future attempts can proceed.
+        if not connected_client:
+            _current_runner.pop(account_id, None)
+            unlock_account(account_id, runner)
 
 
 async def _sync_profile(client: TelegramClient, account_id: str, skip_avatar: bool = True):
