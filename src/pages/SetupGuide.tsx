@@ -122,7 +122,24 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
     return False
 
 
-async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None) -> Optional[TelegramClient]:
+async def get_fallback_proxy(account_id: str) -> Optional[dict]:
+    """Get an available proxy when the assigned one fails."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{BACKEND_URL}/get-fallback-proxy",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json={"account_id": account_id}
+            )
+            data = resp.json()
+            if data.get("proxy"):
+                return data["proxy"]
+    except:
+        pass
+    return None
+
+
+async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None, allow_fallback_proxy: bool = True) -> Optional[TelegramClient]:
     account_id = account["id"]
     
     # Use session lock to prevent "database is locked" errors when multiple runners access same session
@@ -148,6 +165,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         if not session_path:
             return None
         
+        # USE STORED FINGERPRINT - only generate if missing
         device_model = account.get("device_model")
         system_version = account.get("system_version")
         app_version = account.get("app_version") or "10.14.2"
@@ -161,7 +179,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             app_version = fp["app_version"]
             lang_code = fp["lang_code"]
             system_lang_code = fp["system_lang_code"]
-            print(f"  [FP] Generated: {device_model} ({system_version})")
+            print(f"  [FP] Generated NEW fingerprint: {device_model} ({system_version})")
             await report_result("fingerprint_generated", {
                 "account_id": account_id,
                 "device_model": device_model,
@@ -170,10 +188,16 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                 "lang_code": lang_code,
                 "system_lang_code": system_lang_code
             })
+        else:
+            print(f"  [FP] Using stored: {device_model} ({system_version})")
         
         proxy = get_proxy_settings(account, task_proxy=task_proxy)
+        original_proxy = proxy
+        proxy_source = "assigned"
+        
         if proxy:
-            print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
+            print(f"  [PROXY] Using {proxy_source}: {proxy[1]}:{proxy[2]}")
+        
         try:
             api_id = account.get("api_id") or TELEGRAM_API_ID
             api_hash = account.get("api_hash") or TELEGRAM_API_HASH
@@ -194,7 +218,43 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             )
             
             print(f"  [CONNECT] {account['phone_number']}...")
-            if not await connect_with_retry(client):
+            connected = await connect_with_retry(client)
+            
+            # FALLBACK PROXY: If connection fails and we have a proxy, try getting another
+            if not connected and proxy and allow_fallback_proxy:
+                print(f"  [PROXY] Connection failed, trying fallback proxy...")
+                await report_result("proxy_failed", {
+                    "account_id": account_id, 
+                    "proxy_host": proxy[1] if proxy else None,
+                    "reason": "Connection timeout"
+                })
+                
+                fallback = await get_fallback_proxy(account_id)
+                if fallback:
+                    proxy = get_proxy_settings({"proxy": fallback})
+                    if proxy:
+                        print(f"  [PROXY] Trying fallback: {proxy[1]}:{proxy[2]}")
+                        
+                        # Create new client with fallback proxy
+                        client = TelegramClient(
+                            session_path, int(api_id), api_hash,
+                            device_model=device_model,
+                            system_version=system_version,
+                            app_version=app_version,
+                            lang_code=lang_code,
+                            system_lang_code=system_lang_code,
+                            proxy=proxy,
+                            timeout=CONNECTION_TIMEOUT,
+                            connection_retries=CONNECTION_RETRIES,
+                            retry_delay=RETRY_DELAY,
+                            auto_reconnect=True,
+                            request_retries=3
+                        )
+                        connected = await connect_with_retry(client)
+                        if connected:
+                            proxy_source = "fallback"
+            
+            if not connected:
                 print(f"  [FAIL] Timeout: {account['phone_number']}")
                 await report_result("account_disconnected", {"account_id": account_id, "reason": "Connection timeout"})
                 return None
@@ -233,7 +293,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             
             # Fast mode: skip profile if cached
             if account.get("first_name") or account.get("username"):
-                await report_result("account_connected", {"account_id": account_id, "skip_profile_update": True})
+                await report_result("account_connected", {"account_id": account_id, "skip_profile_update": True, "proxy_source": proxy_source})
             else:
                 if me:
                     await report_result("account_connected", {
@@ -242,10 +302,11 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                         "last_name": me.last_name,
                         "username": me.username,
                         "telegram_id": me.id,
-                        "phone": me.phone
+                        "phone": me.phone,
+                        "proxy_source": proxy_source
                     })
             
-            print(f"  [OK] Connected: {account['phone_number']}")
+            print(f"  [OK] Connected: {account['phone_number']} ({proxy_source} proxy)")
             return client
         except Exception as e:
             err_str = str(e).lower()
