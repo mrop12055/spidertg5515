@@ -116,6 +116,8 @@ export default function Warmup() {
   const [startingPairId, setStartingPairId] = useState<string | null>(null);
   const [stoppingPairId, setStoppingPairId] = useState<string | null>(null);
   const [isStopping, setIsStopping] = useState(false);
+  const [warmupBatchSize, setWarmupBatchSize] = useState(100);
+  const [isSavingBatchSize, setIsSavingBatchSize] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -353,6 +355,23 @@ export default function Warmup() {
     }
   };
 
+  // Load warmup batch size from settings
+  useEffect(() => {
+    const loadBatchSize = async () => {
+      const { data } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'warmup_batch_size')
+        .single();
+      
+      if (data?.value) {
+        const value = data.value as { batchSize?: number };
+        setWarmupBatchSize(value.batchSize || 100);
+      }
+    };
+    loadBatchSize();
+  }, []);
+
   useEffect(() => {
     fetchData();
 
@@ -391,6 +410,24 @@ export default function Warmup() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  const handleSaveBatchSize = async () => {
+    setIsSavingBatchSize(true);
+    try {
+      await supabase
+        .from('app_settings')
+        .upsert({
+          key: 'warmup_batch_size',
+          value: { batchSize: warmupBatchSize },
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'key' });
+      toast.success('Batch size saved');
+    } catch (error) {
+      toast.error('Failed to save batch size');
+    } finally {
+      setIsSavingBatchSize(false);
+    }
+  };
 
   const handleStartWarmup = async () => {
     setIsStarting(true);
@@ -784,7 +821,7 @@ export default function Warmup() {
             <CardHeader>
               <CardTitle className="text-lg">Warmup Settings</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-6">
               <div className="space-y-2">
                 <Label>Messages per pair: {messagesPerPair[0]} - {messagesPerPair[1]}</Label>
                 <Slider
@@ -797,6 +834,31 @@ export default function Warmup() {
                 />
                 <p className="text-sm text-muted-foreground">
                   Each pair will exchange {messagesPerPair[0]}-{messagesPerPair[1]} messages (~{Math.ceil(messagesPerPair[1] * 0.5)} min per conversation)
+                </p>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Batch Size (parallel pairs): {warmupBatchSize}</Label>
+                <div className="flex items-center gap-4">
+                  <Slider
+                    value={[warmupBatchSize]}
+                    onValueChange={([v]) => setWarmupBatchSize(v)}
+                    min={10}
+                    max={500}
+                    step={10}
+                    className="w-full max-w-md"
+                  />
+                  <Button 
+                    onClick={handleSaveBatchSize}
+                    disabled={isSavingBatchSize}
+                    size="sm"
+                    variant="outline"
+                  >
+                    {isSavingBatchSize ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
+                  </Button>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Number of pairs to process simultaneously (10-500)
                 </p>
               </div>
             </CardContent>
