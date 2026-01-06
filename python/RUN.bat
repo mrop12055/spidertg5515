@@ -1,16 +1,15 @@
 @echo off
-title TelegramCRM - Master Runner
+title TelegramCRM
 echo ============================================
-echo       TelegramCRM - MASTER RUNNER
+echo       TelegramCRM - Campaign Runner
 echo ============================================
 echo.
-echo  Handles: Campaigns, Live Chat, Warmup, Account
-echo  Single session per account - maximum speed!
+echo  Handles: Campaign Messages
 echo  Press Ctrl+C to stop
 echo.
 echo ============================================
 echo.
-python master_runner.py
+python campaign_runner.py
 echo.
 echo Runner stopped.
 pause
