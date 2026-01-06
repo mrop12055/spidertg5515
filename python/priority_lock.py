@@ -29,7 +29,8 @@ PRIORITY_LEVELS = {
 
 # Global lock state
 _account_locks: Dict[str, asyncio.Lock] = {}
-_account_owners: Dict[str, tuple] = {}  # account_id -> (runner_name, priority, acquired_at)
+# account_id -> (runner_name, priority, acquired_at, reentrancy_count)
+_account_owners: Dict[str, tuple] = {}
 _pending_queue: Dict[str, list] = defaultdict(list)  # account_id -> [(priority, event, runner)]
 _global_lock = asyncio.Lock()
 
@@ -45,68 +46,105 @@ def get_priority(runner: str) -> int:
 
 
 async def acquire_account_lock(account_id: str, runner: str, timeout: float = WAIT_TIMEOUT) -> bool:
-    """
-    Acquire lock for an account with priority-based queuing.
-    Higher priority runners can preempt lower priority ones.
-    
+    """Acquire lock for an account with priority-based queuing.
+
+    Notes:
+    - Locks are re-entrant per runner (same runner can acquire multiple times).
+    - Stale locks are force-released after LOCK_TIMEOUT to avoid permanent deadlocks.
+
     Returns True if lock acquired, False if timed out.
     """
     priority = get_priority(runner)
-    
+
     async with _global_lock:
-        # Get or create lock for this account
         if account_id not in _account_locks:
             _account_locks[account_id] = asyncio.Lock()
-    
+
+        # Re-entrant: if we already own the lock, just bump the count.
+        owner = _account_owners.get(account_id)
+        if owner:
+            owner_runner, owner_priority, acquired_at, count = owner
+            if owner_runner == runner:
+                _account_owners[account_id] = (owner_runner, owner_priority, acquired_at, count + 1)
+                return True
+
+            # Stale owner safeguard
+            if (time.time() - acquired_at) > LOCK_TIMEOUT:
+                try:
+                    if _account_locks[account_id].locked():
+                        _account_locks[account_id].release()
+                except RuntimeError:
+                    pass
+                _account_owners.pop(account_id, None)
+
     lock = _account_locks[account_id]
     start_time = time.time()
-    
+
     while True:
-        # Check if we can acquire
+        # Try acquire when available
         if not lock.locked():
             try:
-                await asyncio.wait_for(lock.acquire(), timeout=0.1)
-                _account_owners[account_id] = (runner, priority, time.time())
+                await asyncio.wait_for(lock.acquire(), timeout=0.2)
+                async with _global_lock:
+                    _account_owners[account_id] = (runner, priority, time.time(), 1)
                 return True
             except asyncio.TimeoutError:
                 pass
-        
-        # Check current owner
+
+        # Check staleness + priority (soft)
         async with _global_lock:
             owner = _account_owners.get(account_id)
             if owner:
-                owner_runner, owner_priority, acquired_at = owner
-                
-                # If we have higher priority (lower number), request preemption
-                if priority < owner_priority:
-                    # Just log and wait - let lower priority finish current op
-                    elapsed = time.time() - acquired_at
-                    if elapsed > PREEMPT_GRACE_PERIOD:
-                        # Lower priority has had enough time, they should yield soon
+                owner_runner, owner_priority, acquired_at, count = owner
+
+                # Force-release stale locks
+                if (time.time() - acquired_at) > LOCK_TIMEOUT:
+                    try:
+                        if lock.locked():
+                            lock.release()
+                    except RuntimeError:
                         pass
-        
-        # Check timeout
-        if time.time() - start_time > timeout:
+                    _account_owners.pop(account_id, None)
+                else:
+                    # Higher priority runner is waiting; we don't forcibly preempt,
+                    # but this makes intent visible for future yield logic.
+                    if priority < owner_priority:
+                        pass
+
+        if (time.time() - start_time) > timeout:
             return False
-        
-        # Wait a bit before retrying
+
         await asyncio.sleep(0.1)
 
 
 def release_account_lock(account_id: str, runner: str):
-    """Release lock for an account"""
-    if account_id in _account_locks:
-        lock = _account_locks[account_id]
-        owner = _account_owners.get(account_id)
-        
-        # Only release if we own it
-        if owner and owner[0] == runner:
-            _account_owners.pop(account_id, None)
-            if lock.locked():
-                try:
-                    lock.release()
-                except RuntimeError:
-                    pass  # Lock was already released
+    """Release lock for an account (re-entrant)."""
+    if account_id not in _account_locks:
+        return
+
+    lock = _account_locks[account_id]
+
+    # Only release if we own it
+    owner = _account_owners.get(account_id)
+    if not owner:
+        return
+
+    owner_runner, owner_priority, acquired_at, count = owner
+    if owner_runner != runner:
+        return
+
+    # Re-entrant release
+    if count > 1:
+        _account_owners[account_id] = (owner_runner, owner_priority, acquired_at, count - 1)
+        return
+
+    # Final release
+    _account_owners.pop(account_id, None)
+    if lock.locked():
+        try:
+            lock.release()
+        except RuntimeError:
+            pass  # Lock was already released
 
 
 def should_yield(account_id: str, current_runner: str) -> bool:
@@ -164,7 +202,17 @@ def unlock_account(account_id: str, runner: str):
 
 def get_lock_stats() -> dict:
     """Get current lock statistics for debugging"""
+    owners = {}
+    for acc_id, owner in _account_owners.items():
+        runner, priority, acquired_at, count = owner
+        owners[acc_id] = {
+            "runner": runner,
+            "priority": priority,
+            "acquired_at": acquired_at,
+            "count": count,
+        }
+
     return {
-        "active_locks": len([a for a in _account_owners]),
-        "owners": dict(_account_owners),
+        "active_locks": len(_account_owners),
+        "owners": owners,
     }
