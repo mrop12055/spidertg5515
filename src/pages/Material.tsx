@@ -301,7 +301,7 @@ const Data: React.FC = () => {
   return (
     <DashboardLayout>
       <PageHeader 
-        title="Data Management" 
+        title="Material Management" 
         description="Organize contacts into tags for campaigns"
         icon={Tag}
       />

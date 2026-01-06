@@ -37,7 +37,7 @@ const navItems: NavItem[] = [
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: Flame, label: 'Warmup', path: '/warmup' },
   { icon: Users, label: 'Seats', path: '/seats' },
-  { icon: Database, label: 'Data', path: '/data' },
+  { icon: Database, label: 'Material', path: '/material' },
   { icon: Database, label: 'Database', path: '/database' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: Settings, label: 'Settings', path: '/settings' },
