@@ -44,7 +44,8 @@ REACTIONS = ["👍", "❤️", "🔥", "👏", "😊", "🎉", "💯", "⭐"]
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
     global RUNNING
-    print("\n⏹ Stop signal received...")
+    print("")
+    print("[STOP] Stop signal received...")
     RUNNING = False
 
 

@@ -1326,7 +1326,8 @@ REACTIONS = ["👍", "❤️", "🔥", "👏", "😊", "🎉", "💯", "⭐"]
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
     global RUNNING
-    print("\\n[STOP] Stop signal received...")
+    print("")
+    print("[STOP] Stop signal received...")
     RUNNING = False
 
 
@@ -1693,7 +1694,7 @@ async def main_loop():
     print("  📌 Each account maintains human-like timing independently")
     print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
-    print("\n✓ Starting warmup runner...\n")
+    print("\\n✓ Starting warmup runner...\\n")
 
     consecutive_empty = 0
 
@@ -1719,7 +1720,7 @@ async def main_loop():
                 continue
 
             consecutive_empty = 0
-            print(f"\n  📦 Processing batch of {len(tasks)} warmup tasks in PARALLEL...")
+            print(f"\\n  📦 Processing batch of {len(tasks)} warmup tasks in PARALLEL...")
 
             results = await asyncio.gather(
                 *[process_single_task(task) for task in tasks],
@@ -1743,7 +1744,7 @@ async def main_loop():
             print(f"  ⚠ Loop error: {e}")
             await asyncio.sleep(2)
 
-    print("\n⏹ Warmup runner stopped.")
+    print("\\n⏹ Warmup runner stopped.")
     await shutdown_all()
 
 
@@ -1753,7 +1754,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
-        print("\n⏹ Keyboard interrupt.")
+        print("\\n⏹ Keyboard interrupt.")
     finally:
         print("Goodbye!")
 `;
@@ -2402,19 +2403,27 @@ if __name__ == "__main__":
         zip.file("block_runner.py", blockRunnerPy);
         zip.file("client_manager.py", clientManagerPy);
         zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
-        
+
         const blob = await zip.generateAsync({ type: "blob" });
-        
-        await supabase.storage
+
+        const { error } = await supabase.storage
           .from('python-scripts')
-          .upload('runners.zip', blob, { 
+          .upload('runners.zip', blob, {
             upsert: true,
-            contentType: 'application/zip'
+            contentType: 'application/zip',
+            cacheControl: '0',
           });
-        
+
+        if (error) {
+          console.error('[Auto-Sync] Failed to sync scripts:', error);
+          toast.error(`Auto-sync failed: ${error.message}`);
+          return;
+        }
+
         console.log('[Auto-Sync] Scripts synced to storage');
       } catch (error) {
         console.error('[Auto-Sync] Failed to sync scripts:', error);
+        toast.error('Auto-sync failed. Please refresh and try again.');
       }
     };
     
