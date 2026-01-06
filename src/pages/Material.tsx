@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { 
   Plus, Upload, Trash2, Tag, Package, FileText, Image, User,
-  RefreshCw, MoreVertical, Phone, AtSign
+  RefreshCw, MoreVertical, Phone, AtSign, Download
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
@@ -480,6 +480,130 @@ const Material: React.FC = () => {
     }
   };
 
+  // Export functions
+  const handleExportData = (tagId: string, tagName: string, format: 'csv' | 'txt') => {
+    const tagData = dataItems.filter(d => d.tag_id === tagId);
+    if (tagData.length === 0) {
+      toast.error('No data to export');
+      return;
+    }
+
+    let content: string;
+    let filename: string;
+    let mimeType: string;
+
+    if (format === 'csv') {
+      const headers = 'phone_number,username';
+      const rows = tagData.map(d => `${d.phone_number || ''},${d.username || ''}`);
+      content = [headers, ...rows].join('\n');
+      filename = `${tagName}-data.csv`;
+      mimeType = 'text/csv';
+    } else {
+      content = tagData.map(d => d.phone_number || d.username || '').join('\n');
+      filename = `${tagName}-data.txt`;
+      mimeType = 'text/plain';
+    }
+
+    downloadFile(content, filename, mimeType);
+    toast.success(`Exported ${tagData.length} items`);
+  };
+
+  const handleExportNames = (tagId: string, tagName: string, format: 'csv' | 'txt') => {
+    const tagNames = names.filter(n => n.tag_id === tagId);
+    if (tagNames.length === 0) {
+      toast.error('No names to export');
+      return;
+    }
+
+    let content: string;
+    let filename: string;
+    let mimeType: string;
+
+    if (format === 'csv') {
+      const headers = 'first_name,last_name';
+      const rows = tagNames.map(n => `${n.first_name},${n.last_name || ''}`);
+      content = [headers, ...rows].join('\n');
+      filename = `${tagName}-names.csv`;
+      mimeType = 'text/csv';
+    } else {
+      content = tagNames.map(n => `${n.first_name}${n.last_name ? ' ' + n.last_name : ''}`).join('\n');
+      filename = `${tagName}-names.txt`;
+      mimeType = 'text/plain';
+    }
+
+    downloadFile(content, filename, mimeType);
+    toast.success(`Exported ${tagNames.length} names`);
+  };
+
+  const downloadFile = (content: string, filename: string, mimeType: string) => {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Import from file
+  const handleImportFromFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!selectedTagId) {
+      toast.error('Please select a tag first');
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').filter(line => line.trim());
+      
+      // Skip header if CSV
+      const startIndex = file.name.endsWith('.csv') && lines[0]?.includes(',') ? 1 : 0;
+      
+      const records = lines.slice(startIndex).map(line => {
+        let phone: string | null = null;
+        let user: string | null = null;
+        
+        if (line.includes(',')) {
+          const parts = line.split(',');
+          phone = parts[0]?.trim() || null;
+          user = parts[1]?.trim() || null;
+        } else {
+          const trimmed = line.trim();
+          const isPhone = /^[+\d]/.test(trimmed);
+          phone = isPhone ? trimmed : null;
+          user = isPhone ? null : trimmed.replace('@', '');
+        }
+        
+        return {
+          tag_id: selectedTagId,
+          phone_number: phone || null,
+          username: user || null,
+        };
+      }).filter(r => r.phone_number || r.username);
+
+      if (records.length === 0) {
+        toast.error('No valid data found in file');
+        return;
+      }
+
+      const { error } = await supabase.from('material_data').insert(records);
+      if (error) throw error;
+      toast.success(`Imported ${records.length} items from file`);
+      setIsImportDataOpen(false);
+      fetchData();
+    } catch (error) {
+      console.error('Error importing from file:', error);
+      toast.error('Failed to import from file');
+    }
+    
+    // Reset file input
+    e.target.value = '';
+  };
+
   return (
     <DashboardLayout>
       <PageHeader 
@@ -608,6 +732,15 @@ const Material: React.FC = () => {
                                     <DropdownMenuContent align="end">
                                       {tagData.length > 0 && (
                                         <>
+                                          <DropdownMenuItem onClick={() => handleExportData(tag.id, tag.name, 'csv')}>
+                                            <Download className="h-4 w-4 mr-2" />
+                                            Export as CSV
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem onClick={() => handleExportData(tag.id, tag.name, 'txt')}>
+                                            <Download className="h-4 w-4 mr-2" />
+                                            Export as TXT
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
                                           <DropdownMenuItem 
                                             onClick={() => confirmBulkDeleteData(tag.id, tag.name)}
                                             className="text-destructive"
@@ -782,6 +915,15 @@ const Material: React.FC = () => {
                                     <DropdownMenuContent align="end">
                                       {tagNames.length > 0 && (
                                         <>
+                                          <DropdownMenuItem onClick={() => handleExportNames(tag.id, tag.name, 'csv')}>
+                                            <Download className="h-4 w-4 mr-2" />
+                                            Export as CSV
+                                          </DropdownMenuItem>
+                                          <DropdownMenuItem onClick={() => handleExportNames(tag.id, tag.name, 'txt')}>
+                                            <Download className="h-4 w-4 mr-2" />
+                                            Export as TXT
+                                          </DropdownMenuItem>
+                                          <DropdownMenuSeparator />
                                           <DropdownMenuItem 
                                             onClick={() => confirmBulkDeleteNames(tag.id, tag.name)}
                                             className="text-destructive"
@@ -921,7 +1063,7 @@ const Material: React.FC = () => {
           <DialogHeader>
             <DialogTitle>Import Data</DialogTitle>
             <DialogDescription>
-              Import phone numbers and usernames (one per line)
+              Import phone numbers and usernames from text or file
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -938,13 +1080,34 @@ const Material: React.FC = () => {
                 </SelectContent>
               </Select>
             </div>
+            <div className="border rounded-lg p-4 bg-muted/30">
+              <Label className="text-sm font-medium">Import from File</Label>
+              <p className="text-xs text-muted-foreground mb-2">
+                Upload a .txt or .csv file with data
+              </p>
+              <Input 
+                type="file"
+                accept=".txt,.csv"
+                onChange={handleImportFromFile}
+                disabled={!selectedTagId}
+                className="cursor-pointer"
+              />
+            </div>
+            <div className="relative">
+              <div className="absolute inset-0 flex items-center">
+                <span className="w-full border-t" />
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-background px-2 text-muted-foreground">Or paste text</span>
+              </div>
+            </div>
             <div>
               <Label>Data (one per line)</Label>
               <Textarea 
                 value={importText}
                 onChange={(e) => setImportText(e.target.value)}
                 placeholder={"+1234567890\n9876543210\n@username\nusername2"}
-                rows={8}
+                rows={6}
               />
               <p className="text-xs text-muted-foreground mt-1">
                 Phone numbers (with or without +) and usernames (with or without @)
@@ -953,7 +1116,7 @@ const Material: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsImportDataOpen(false)}>Cancel</Button>
-            <Button onClick={handleImportData}>Import</Button>
+            <Button onClick={handleImportData} disabled={!importText.trim()}>Import Text</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
