@@ -332,30 +332,110 @@ export const VPSControlPanel: React.FC = () => {
                 Clear
               </Button>
             </div>
-            <ScrollArea className="h-48 rounded border bg-muted/30 p-2">
-              {logs.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">No logs yet</p>
-              ) : (
-                <div className="space-y-1 font-mono text-xs">
-                  {logs.map(log => (
-                    <div key={log.id} className="flex gap-2">
-                      <span className="text-muted-foreground shrink-0">
-                        {new Date(log.created_at).toLocaleTimeString()}
-                      </span>
-                      <Badge variant={log.log_level === 'error' ? 'destructive' : log.log_level === 'warning' ? 'secondary' : 'outline'} className="h-4 text-[10px]">
-                        {log.runner_name}
-                      </Badge>
-                      <span className={cn(
-                        log.log_level === 'error' && 'text-destructive',
-                        log.log_level === 'warning' && 'text-yellow-500'
-                      )}>
-                        {log.message}
-                      </span>
+            
+            {/* Runner-specific log tabs */}
+            <Tabs defaultValue="all" className="w-full">
+              <TabsList className="w-full flex flex-wrap h-auto gap-1 bg-muted/50 p-1">
+                <TabsTrigger value="all" className="text-[10px] h-6 px-2">
+                  All
+                </TabsTrigger>
+                <TabsTrigger value="agent" className="text-[10px] h-6 px-2">
+                  Agent
+                </TabsTrigger>
+                {Object.entries(runnerConfig).map(([key, cfg]) => (
+                  <TabsTrigger key={key} value={key} className="text-[10px] h-6 px-2">
+                    <span className={cfg.color}>{cfg.icon}</span>
+                    <span className="ml-1">{cfg.label}</span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+              
+              {/* All logs */}
+              <TabsContent value="all" className="mt-2">
+                <ScrollArea className="h-48 rounded border bg-muted/30 p-2">
+                  {logs.length === 0 ? (
+                    <p className="text-xs text-muted-foreground text-center py-4">No logs yet</p>
+                  ) : (
+                    <div className="space-y-1 font-mono text-xs">
+                      {logs.map(log => (
+                        <div key={log.id} className="flex gap-2">
+                          <span className="text-muted-foreground shrink-0">
+                            {new Date(log.created_at).toLocaleTimeString()}
+                          </span>
+                          <Badge variant={log.log_level === 'error' ? 'destructive' : log.log_level === 'warning' ? 'secondary' : 'outline'} className="h-4 text-[10px]">
+                            {log.runner_name}
+                          </Badge>
+                          <span className={cn(
+                            log.log_level === 'error' && 'text-destructive',
+                            log.log_level === 'warning' && 'text-yellow-500'
+                          )}>
+                            {log.message}
+                          </span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-              )}
-            </ScrollArea>
+                  )}
+                </ScrollArea>
+              </TabsContent>
+              
+              {/* Agent logs */}
+              <TabsContent value="agent" className="mt-2">
+                <ScrollArea className="h-48 rounded border bg-muted/30 p-2">
+                  {(() => {
+                    const filteredLogs = logs.filter(l => l.runner_name === 'agent');
+                    return filteredLogs.length === 0 ? (
+                      <p className="text-xs text-muted-foreground text-center py-4">No agent logs</p>
+                    ) : (
+                      <div className="space-y-1 font-mono text-xs">
+                        {filteredLogs.map(log => (
+                          <div key={log.id} className="flex gap-2">
+                            <span className="text-muted-foreground shrink-0">
+                              {new Date(log.created_at).toLocaleTimeString()}
+                            </span>
+                            <span className={cn(
+                              log.log_level === 'error' && 'text-destructive',
+                              log.log_level === 'warning' && 'text-yellow-500'
+                            )}>
+                              {log.message}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                </ScrollArea>
+              </TabsContent>
+              
+              {/* Individual runner logs */}
+              {Object.entries(runnerConfig).map(([key, cfg]) => (
+                <TabsContent key={key} value={key} className="mt-2">
+                  <ScrollArea className="h-48 rounded border bg-muted/30 p-2">
+                    {(() => {
+                      const filteredLogs = logs.filter(l => l.runner_name === key);
+                      return filteredLogs.length === 0 ? (
+                        <p className="text-xs text-muted-foreground text-center py-4">No {cfg.label} logs</p>
+                      ) : (
+                        <div className="space-y-1 font-mono text-xs">
+                          {filteredLogs.map(log => (
+                            <div key={log.id} className="flex gap-2">
+                              <span className="text-muted-foreground shrink-0">
+                                {new Date(log.created_at).toLocaleTimeString()}
+                              </span>
+                              <span className={cn(
+                                log.log_level === 'error' && 'text-destructive',
+                                log.log_level === 'warning' && 'text-yellow-500'
+                              )}>
+                                {log.message}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </ScrollArea>
+                </TabsContent>
+              ))}
+            </Tabs>
           </TabsContent>
           
           <TabsContent value="commands" className="mt-2">

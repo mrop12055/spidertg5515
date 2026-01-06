@@ -165,8 +165,12 @@ async def update_command(client: httpx.AsyncClient, cmd_id: str, status: str, re
     )
 
 
-def start_runner(name: str) -> bool:
+async def start_runner(name: str, client: httpx.AsyncClient = None, fetch_first: bool = False) -> bool:
     """Start a specific runner process."""
+    # Optionally fetch latest scripts before starting
+    if fetch_first and client:
+        await update_scripts(client, restart_after=False)
+    
     if name in processes and processes[name].poll() is None:
         print(f"[RUNNER] {name} already running")
         return False
@@ -184,10 +188,12 @@ def start_runner(name: str) -> bool:
     
     try:
         proc = subprocess.Popen(
-            [sys.executable, script_path],
+            [sys.executable, "-u", script_path],  # -u for unbuffered output
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=SCRIPT_DIR,
+            bufsize=1,
+            universal_newlines=True,
         )
         processes[name] = proc
         print(f"[RUNNER] Started {name} (PID: {proc.pid})")
@@ -218,11 +224,15 @@ def stop_runner(name: str) -> bool:
     return True
 
 
-def start_all():
+async def start_all(client: httpx.AsyncClient = None, fetch_first: bool = True):
     """Start all runners."""
+    # Fetch latest scripts before starting all
+    if fetch_first and client:
+        await update_scripts(client, restart_after=False)
+    
     results = []
     for name in RUNNERS:
-        if start_runner(name):
+        if await start_runner(name, client, fetch_first=False):
             results.append(name)
     return results
 
@@ -236,13 +246,13 @@ def stop_all():
     return results
 
 
-def restart_all():
+async def restart_all(client: httpx.AsyncClient = None):
     """Restart all runners."""
     stop_all()
-    return start_all()
+    return await start_all(client, fetch_first=True)
 
 
-async def update_scripts(client: httpx.AsyncClient) -> bool:
+async def update_scripts(client: httpx.AsyncClient, restart_after: bool = False) -> bool:
     """Download latest scripts from Supabase storage."""
     try:
         # Download ZIP from storage
@@ -252,7 +262,7 @@ async def update_scripts(client: httpx.AsyncClient) -> bool:
         )
         
         if resp.status_code != 200:
-            print(f"[UPDATE] No update package found")
+            print(f"[UPDATE] No update package found (status: {resp.status_code})")
             return False
         
         # Stop all runners first
@@ -271,9 +281,13 @@ async def update_scripts(client: httpx.AsyncClient) -> bool:
                         target_path = os.path.join(SCRIPT_DIR, filename)
                         with open(target_path, 'wb') as target:
                             target.write(source.read())
-                        print(f"[UPDATE] Extracted: {filename} -> {target_path}")
+                        print(f"[UPDATE] Extracted: {filename}")
         
         print("[UPDATE] Scripts updated successfully")
+        
+        if restart_after:
+            await start_all(client, fetch_first=False)
+        
         return True
         
     except Exception as e:
@@ -295,7 +309,7 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
         result = ""
         
         if command == "start_all":
-            started = start_all()
+            started = await start_all(client, fetch_first=True)
             result = f"Started: {', '.join(started) if started else 'none'}"
             
         elif command == "stop_all":
@@ -303,11 +317,12 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
             result = f"Stopped: {', '.join(stopped) if stopped else 'none'}"
             
         elif command == "restart_all":
-            restarted = restart_all()
+            restarted = await restart_all(client)
             result = f"Restarted: {', '.join(restarted) if restarted else 'none'}"
             
         elif command == "start_runner" and target:
-            if start_runner(target):
+            # Fetch latest scripts before starting single runner too
+            if await start_runner(target, client, fetch_first=True):
                 result = f"Started {target}"
             else:
                 result = f"Failed to start {target}"
@@ -319,9 +334,8 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
                 result = f"{target} was not running"
                 
         elif command == "update":
-            if await update_scripts(client):
-                result = "Scripts updated, restarting..."
-                restart_all()
+            if await update_scripts(client, restart_after=True):
+                result = "Scripts updated and restarted"
             else:
                 result = "No updates available"
         else:
@@ -337,15 +351,47 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
 
 
 async def monitor_processes(client: httpx.AsyncClient):
-    """Monitor runner processes and restart if crashed."""
+    """Monitor runner processes, capture output, and restart if crashed."""
     for name, proc in list(processes.items()):
+        # Read available output lines (non-blocking)
+        try:
+            if proc.stdout:
+                import select
+                # Check if there's data to read (works on Unix)
+                if hasattr(select, 'select'):
+                    readable, _, _ = select.select([proc.stdout], [], [], 0)
+                    if readable:
+                        line = proc.stdout.readline()
+                        if line:
+                            line = line.strip()
+                            # Determine log level from content
+                            level = "info"
+                            if "[ERROR]" in line or "error" in line.lower():
+                                level = "error"
+                            elif "[WARNING]" in line or "warning" in line.lower():
+                                level = "warning"
+                            await send_log(client, name, level, f"[PID:{proc.pid}] {line}")
+                else:
+                    # Windows fallback - try readline with short timeout
+                    line = proc.stdout.readline()
+                    if line:
+                        line = line.strip()
+                        level = "info"
+                        if "[ERROR]" in line or "error" in line.lower():
+                            level = "error"
+                        elif "[WARNING]" in line or "warning" in line.lower():
+                            level = "warning"
+                        await send_log(client, name, level, f"[PID:{proc.pid}] {line}")
+        except Exception as e:
+            pass  # Ignore read errors
+        
         if proc.poll() is not None:
             # Process has exited
             exit_code = proc.returncode
-            await send_log(client, name, "warning", f"Process exited with code {exit_code}, restarting...")
+            await send_log(client, name, "warning", f"[PID:{proc.pid}] Process exited with code {exit_code}, restarting...")
             del processes[name]
             # Auto-restart
-            start_runner(name)
+            await start_runner(name, client, fetch_first=False)
 
 
 async def main_loop():
