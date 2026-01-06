@@ -219,6 +219,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             return None
         
         # Check if account is deleted/banned
+        me = None  # Initialize to avoid UnboundLocalError
         try:
             me = await asyncio.wait_for(client.get_me(), timeout=15)
             if not me:
@@ -235,6 +236,13 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                 print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
                 await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)})
                 return None
+            elif "database" in err_str and "locked" in err_str:
+                print(f"  [WARN] Database locked, retrying get_me...")
+                await asyncio.sleep(1)
+                try:
+                    me = await asyncio.wait_for(client.get_me(), timeout=15)
+                except:
+                    pass
         
         if setup_handler:
             await setup_handler(client, account_id)
