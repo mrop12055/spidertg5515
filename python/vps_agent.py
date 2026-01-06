@@ -1,6 +1,6 @@
 """
 TelegramCRM VPS Agent
-Manages all Python runners remotely - start/stop/restart/update
+Manages the master runner remotely - start/stop/restart/update
 Polls Supabase for commands and reports status back
 """
 
@@ -25,13 +25,9 @@ VPS_API_KEY = "YOUR_VPS_API_KEY"  # Generated when VPS is registered
 # Get the directory where this script lives
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Runner definitions
+# Runner definitions - now just the master runner
 RUNNERS = {
-    "campaign": "campaign_runner.py",
-    "livechat": "livechat_runner.py",
-    "account": "account_runner.py",
-    "warmup": "warmup_runner.py",
-    "block": "block_runner.py",
+    "master": "master_runner.py",
 }
 
 # Global state
@@ -125,7 +121,7 @@ async def send_log(client: httpx.AsyncClient, runner: str, level: str, message: 
             "vps_id": vps_id,
             "runner_name": runner,
             "log_level": level,
-            "message": message[:500],  # Limit message length
+            "message": message[:500],
         }
     )
 
@@ -165,9 +161,8 @@ async def update_command(client: httpx.AsyncClient, cmd_id: str, status: str, re
     )
 
 
-async def start_runner(name: str, client: httpx.AsyncClient = None, fetch_first: bool = False) -> bool:
-    """Start a specific runner process."""
-    # Optionally fetch latest scripts before starting
+async def start_runner(name: str = "master", client: httpx.AsyncClient = None, fetch_first: bool = False) -> bool:
+    """Start the master runner process."""
     if fetch_first and client:
         await update_scripts(client, restart_after=False)
     
@@ -175,20 +170,16 @@ async def start_runner(name: str, client: httpx.AsyncClient = None, fetch_first:
         print(f"[RUNNER] {name} already running")
         return False
     
-    script = RUNNERS.get(name)
-    if not script:
-        print(f"[ERROR] Unknown runner: {name}")
-        return False
-    
-    # Use absolute path from script directory
+    script = RUNNERS.get(name, "master_runner.py")
     script_path = os.path.join(SCRIPT_DIR, script)
+    
     if not os.path.exists(script_path):
         print(f"[ERROR] Script not found: {script_path}")
         return False
     
     try:
         proc = subprocess.Popen(
-            [sys.executable, "-u", script_path],  # -u for unbuffered output
+            [sys.executable, "-u", script_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=SCRIPT_DIR,
@@ -203,8 +194,8 @@ async def start_runner(name: str, client: httpx.AsyncClient = None, fetch_first:
         return False
 
 
-def stop_runner(name: str) -> bool:
-    """Stop a specific runner process."""
+def stop_runner(name: str = "master") -> bool:
+    """Stop the master runner process."""
     if name not in processes:
         return False
     
@@ -225,16 +216,13 @@ def stop_runner(name: str) -> bool:
 
 
 async def start_all(client: httpx.AsyncClient = None, fetch_first: bool = True):
-    """Start all runners."""
-    # Fetch latest scripts before starting all
+    """Start the master runner."""
     if fetch_first and client:
         await update_scripts(client, restart_after=False)
     
-    results = []
-    for name in RUNNERS:
-        if await start_runner(name, client, fetch_first=False):
-            results.append(name)
-    return results
+    if await start_runner("master", client, fetch_first=False):
+        return ["master"]
+    return []
 
 
 def stop_all():
@@ -247,7 +235,7 @@ def stop_all():
 
 
 async def restart_all(client: httpx.AsyncClient = None):
-    """Restart all runners."""
+    """Restart the master runner."""
     stop_all()
     return await start_all(client, fetch_first=True)
 
@@ -255,7 +243,6 @@ async def restart_all(client: httpx.AsyncClient = None):
 async def update_scripts(client: httpx.AsyncClient, restart_after: bool = False) -> bool:
     """Download latest scripts from Supabase storage."""
     try:
-        # Download ZIP from storage
         resp = await client.get(
             f"{SUPABASE_URL}/storage/v1/object/public/python-scripts/runners.zip",
             timeout=60
@@ -265,17 +252,13 @@ async def update_scripts(client: httpx.AsyncClient, restart_after: bool = False)
             print(f"[UPDATE] No update package found (status: {resp.status_code})")
             return False
         
-        # Stop all runners first
         stop_all()
         
-        # Extract ZIP to script directory
         with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
             for info in zf.infolist():
                 if info.filename.endswith('.py') and not info.filename.startswith('__'):
                     with zf.open(info) as source:
-                        # Get just the filename, extract to SCRIPT_DIR
                         filename = os.path.basename(info.filename)
-                        # Don't overwrite vps_agent.py or config.py
                         if filename in ['vps_agent.py', 'config.py']:
                             continue
                         target_path = os.path.join(SCRIPT_DIR, filename)
@@ -320,18 +303,17 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
             restarted = await restart_all(client)
             result = f"Restarted: {', '.join(restarted) if restarted else 'none'}"
             
-        elif command == "start_runner" and target:
-            # Fetch latest scripts before starting single runner too
-            if await start_runner(target, client, fetch_first=True):
-                result = f"Started {target}"
+        elif command == "start_runner":
+            if await start_runner(target or "master", client, fetch_first=True):
+                result = f"Started {target or 'master'}"
             else:
-                result = f"Failed to start {target}"
+                result = f"Failed to start {target or 'master'}"
                 
-        elif command == "stop_runner" and target:
-            if stop_runner(target):
-                result = f"Stopped {target}"
+        elif command == "stop_runner":
+            if stop_runner(target or "master"):
+                result = f"Stopped {target or 'master'}"
             else:
-                result = f"{target} was not running"
+                result = f"{target or 'master'} was not running"
                 
         elif command == "update":
             if await update_scripts(client, restart_after=True):
@@ -353,18 +335,15 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
 async def monitor_processes(client: httpx.AsyncClient):
     """Monitor runner processes, capture output, and restart if crashed."""
     for name, proc in list(processes.items()):
-        # Read available output lines (non-blocking)
         try:
             if proc.stdout:
                 import select
-                # Check if there's data to read (works on Unix)
                 if hasattr(select, 'select'):
                     readable, _, _ = select.select([proc.stdout], [], [], 0)
                     if readable:
                         line = proc.stdout.readline()
                         if line:
                             line = line.strip()
-                            # Determine log level from content
                             level = "info"
                             if "[ERROR]" in line or "error" in line.lower():
                                 level = "error"
@@ -372,25 +351,20 @@ async def monitor_processes(client: httpx.AsyncClient):
                                 level = "warning"
                             await send_log(client, name, level, f"[PID:{proc.pid}] {line}")
                 else:
-                    # Windows fallback - try readline with short timeout
                     line = proc.stdout.readline()
                     if line:
                         line = line.strip()
                         level = "info"
                         if "[ERROR]" in line or "error" in line.lower():
                             level = "error"
-                        elif "[WARNING]" in line or "warning" in line.lower():
-                            level = "warning"
                         await send_log(client, name, level, f"[PID:{proc.pid}] {line}")
-        except Exception as e:
-            pass  # Ignore read errors
+        except:
+            pass
         
         if proc.poll() is not None:
-            # Process has exited
             exit_code = proc.returncode
             await send_log(client, name, "warning", f"[PID:{proc.pid}] Process exited with code {exit_code}, restarting...")
             del processes[name]
-            # Auto-restart
             await start_runner(name, client, fetch_first=False)
 
 
@@ -399,16 +373,15 @@ async def main_loop():
     global RUNNING
     
     print("=" * 50)
-    print("  TelegramCRM VPS Agent")
+    print("  TelegramCRM VPS Agent (Master Runner)")
     print("=" * 50)
     
     async with httpx.AsyncClient() as client:
-        # Register VPS
         if not await register_vps(client):
             print("[FATAL] Could not register VPS")
             return
         
-        await send_log(client, "agent", "info", "VPS Agent started")
+        await send_log(client, "agent", "info", "VPS Agent started (Master Runner mode)")
         
         last_heartbeat = 0
         
@@ -416,17 +389,14 @@ async def main_loop():
             try:
                 now = asyncio.get_event_loop().time()
                 
-                # Send heartbeat
                 if now - last_heartbeat >= HEARTBEAT_INTERVAL:
                     await send_heartbeat(client)
                     last_heartbeat = now
                 
-                # Poll for commands
                 commands = await poll_commands(client)
                 for cmd in commands:
                     await process_command(client, cmd)
                 
-                # Monitor processes
                 await monitor_processes(client)
                 
                 await asyncio.sleep(POLL_INTERVAL)
@@ -435,7 +405,6 @@ async def main_loop():
                 print(f"[ERROR] Main loop: {e}")
                 await asyncio.sleep(5)
         
-        # Cleanup
         print("[VPS] Shutting down...")
         stop_all()
         await send_log(client, "agent", "info", "VPS Agent stopped")
