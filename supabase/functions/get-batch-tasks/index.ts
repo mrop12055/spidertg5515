@@ -504,9 +504,12 @@ serve(async (req) => {
         }
       }
       
-      // For livechat, also return accounts for initial connection
-      // This helps the runner connect accounts that need message handlers
-      const accountsForConnection = usableAccounts.map((a: any) => ({
+      // For livechat, return ALL accounts with active proxies for message listening
+      // We use accountsWithActiveProxy (not usableAccounts) because:
+      // - Receiving messages doesn't count towards daily limit
+      // - Even accounts at daily limit should still RECEIVE and LISTEN for messages
+      // - Only SENDING is limited by daily quota
+      const accountsForConnection = accountsWithActiveProxy.map((a: any) => ({
         id: a.id,
         phone_number: a.phone_number,
         session_data: a.session_data,
@@ -528,11 +531,13 @@ serve(async (req) => {
         } : null,
       }));
       
+      console.log(`[get-batch-tasks] Livechat: returning ${accountsForConnection.length} accounts for connection`);
+      
       return new Response(JSON.stringify({
         tasks,
         accounts: accountsForConnection,
         delay_after: 1, // 1-second polling for livechat
-        accounts_available: usableAccounts.length,
+        accounts_available: accountsWithActiveProxy.length,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
