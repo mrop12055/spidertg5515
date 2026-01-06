@@ -3,7 +3,7 @@
 TelegramCRM - Campaign Runner (PARALLEL BATCH MODE)
 =====================================================
 Handles campaign messages with PARALLEL execution across multiple accounts.
-Each account processes its message with proper delays independently.
+Batch size is controlled by the server (per-campaign setting from database).
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
@@ -20,7 +20,6 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-PARALLEL_BATCH_SIZE = 50  # Process up to 50 messages simultaneously
 
 
 def signal_handler(sig, frame):
@@ -134,13 +133,17 @@ async def process_single_task(task: dict, settings: dict) -> dict:
 
 
 async def main_loop():
-    """Main campaign task execution loop - PARALLEL BATCH MODE"""
+    """Main campaign task execution loop - PARALLEL BATCH MODE
+    
+    Batch size is now controlled by the server (per-campaign setting).
+    No hardcoded PARALLEL_BATCH_SIZE needed.
+    """
     global RUNNING
     
     print("=" * 60)
     print("  TelegramCRM - Campaign Runner (PARALLEL BATCH MODE)")
     print("=" * 60)
-    print(f"  📨 Processing up to {PARALLEL_BATCH_SIZE} messages SIMULTANEOUSLY")
+    print("  📨 Processing with DYNAMIC batch size per campaign")
     print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
     print("\n✓ Starting parallel campaign loop...\n")
@@ -155,8 +158,8 @@ async def main_loop():
     
     while RUNNING:
         try:
-            # Get batch of campaign tasks
-            batch_result = await get_batch_tasks(runner="campaign", batch_size=PARALLEL_BATCH_SIZE)
+            # Get batch of campaign tasks - server controls batch size
+            batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
             delay_after = batch_result.get("delay_after", 5)
             

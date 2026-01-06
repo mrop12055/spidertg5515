@@ -10,7 +10,7 @@ Handles 14-day account warm-up tasks with PARALLEL processing:
 - Build activity history
 - 1-to-1 warmup chat between paired accounts (PARALLEL across pairs)
 
-Each account maintains human-like timing independently.
+Batch size is controlled by the server (from app_settings.warmup_batch_size).
 
 Run: python warmup_runner.py
 Stop: Ctrl+C
@@ -27,7 +27,6 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-PARALLEL_BATCH_SIZE = 100  # Process up to 100 pairs simultaneously (no limit)
 
 # Warmup channels (safe public channels for building history)
 WARMUP_CHANNELS = [
@@ -398,13 +397,17 @@ async def process_single_task(task: dict) -> dict:
 
 
 async def main_loop():
-    """Main warmup loop with PARALLEL BATCH processing"""
+    """Main warmup loop with PARALLEL BATCH processing
+    
+    Batch size is now controlled by the server (from app_settings.warmup_batch_size).
+    No hardcoded PARALLEL_BATCH_SIZE needed.
+    """
     global RUNNING
     
     print("=" * 60)
     print("  TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)")
     print("=" * 60)
-    print(f"  🔥 Processing up to {PARALLEL_BATCH_SIZE} pairs SIMULTANEOUSLY")
+    print("  🔥 Processing with DYNAMIC batch size from settings")
     print("  📌 Each account maintains human-like timing independently")
     print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
@@ -414,8 +417,8 @@ async def main_loop():
     
     while RUNNING:
         try:
-            # Fetch batch of warmup tasks
-            batch_result = await get_batch_tasks(runner="warmup_chat", batch_size=PARALLEL_BATCH_SIZE)
+            # Fetch batch of warmup tasks - server controls batch size
+            batch_result = await get_batch_tasks(runner="warmup_chat")
             tasks = batch_result.get("tasks", [])
             delay_after = batch_result.get("delay_after", 5)
             
@@ -484,86 +487,72 @@ async def process_regular_warmup_task(task: dict):
     
     phone = account.get("phone_number", "Unknown")
     
-    if task_type == "warmup_join_channel":
-        channel = task_data.get("channel_username") or task.get("channel_username")
-        print(f"  📺 Joining channel for {phone}...")
-        success, channel_name, error = await join_channel(client, channel)
+    try:
+        if task_type == "join_channel":
+            channel = task_data.get("channel") or random.choice(WARMUP_CHANNELS)
+            print(f"  📢 [{phone}] Joining channel: {channel}")
+            success, channel_name, error = await join_channel(client, channel)
+            await report_result("warmup", {
+                "task_id": task_id,
+                "account_id": account.get("id"),
+                "success": success,
+                "channel": channel_name,
+                "error": error
+            })
+        
+        elif task_type == "view_messages":
+            channel = task_data.get("channel")
+            print(f"  👀 [{phone}] Viewing messages in channel...")
+            success, channel_name, count = await view_channel_messages(client, channel)
+            await report_result("warmup", {
+                "task_id": task_id,
+                "account_id": account.get("id"),
+                "success": success,
+                "channel": channel_name,
+                "messages_viewed": count if success else None,
+                "error": count if not success else None
+            })
+        
+        elif task_type == "send_reaction":
+            channel = task_data.get("channel")
+            print(f"  ❤️ [{phone}] Sending reaction...")
+            success, channel_name, reaction = await send_reaction(client, channel)
+            await report_result("warmup", {
+                "task_id": task_id,
+                "account_id": account.get("id"),
+                "success": success,
+                "channel": channel_name,
+                "reaction": reaction if success else None,
+                "error": reaction if not success else None
+            })
+        
+        elif task_type == "update_bio":
+            bio = task_data.get("bio")
+            print(f"  ✏️ [{phone}] Updating bio...")
+            success, new_bio, error = await update_profile_bio(client, bio)
+            await report_result("warmup", {
+                "task_id": task_id,
+                "account_id": account.get("id"),
+                "success": success,
+                "bio": new_bio,
+                "error": error
+            })
+        
+        else:
+            print(f"  ❓ Unknown regular warmup task: {task_type}")
+    
+    except Exception as e:
+        print(f"  ⚠ Task error [{phone}]: {e}")
         await report_result("warmup", {
             "task_id": task_id,
-            "task_type": "join_channel",
             "account_id": account.get("id"),
-            "success": success,
-            "channel": channel_name,
-            "error": error
+            "success": False,
+            "error": str(e)
         })
-        print(f"    {'✓' if success else '✗'} {channel_name} - {error or 'Joined'}")
-    
-    elif task_type == "warmup_view_content":
-        channel = task_data.get("channel_username") or task.get("channel_username")
-        print(f"  👁 Viewing content for {phone}...")
-        success, channel_name, count = await view_channel_messages(client, channel)
-        await report_result("warmup", {
-            "task_id": task_id,
-            "task_type": "view_content",
-            "account_id": account.get("id"),
-            "success": success,
-            "channel": channel_name,
-            "messages_viewed": count if isinstance(count, int) else 0,
-            "error": count if not isinstance(count, int) else None
-        })
-        print(f"    {'✓' if success else '✗'} Viewed {count} messages in {channel_name}")
-    
-    elif task_type == "warmup_send_reaction":
-        channel = task_data.get("channel_username") or task.get("channel_username")
-        print(f"  ❤️ Sending reaction for {phone}...")
-        success, channel_name, reaction = await send_reaction(client, channel)
-        await report_result("warmup", {
-            "task_id": task_id,
-            "task_type": "send_reaction",
-            "account_id": account.get("id"),
-            "success": success,
-            "channel": channel_name,
-            "reaction": reaction if success else None,
-            "error": reaction if not success else None
-        })
-        print(f"    {'✓' if success else '✗'} {reaction}")
-    
-    elif task_type == "warmup_profile_update":
-        bio = task_data.get("bio")
-        print(f"  ✏️ Updating profile for {phone}...")
-        success, new_bio, error = await update_profile_bio(client, bio)
-        await report_result("warmup", {
-            "task_id": task_id,
-            "task_type": "profile_update",
-            "account_id": account.get("id"),
-            "success": success,
-            "bio": new_bio,
-            "error": error
-        })
-        print(f"    {'✓' if success else '✗'} Bio: {new_bio or 'cleared'}")
-    
-    elif task_type == "warmup_interaction":
-        recipient_phone = task_data.get("recipient_phone")
-        message = task_data.get("message", "Hey! 👋")
-        print(f"  💬 Sending interaction from {phone} to {recipient_phone}...")
-        success, error = await send_interaction_message(client, recipient_phone, message)
-        await report_result("warmup", {
-            "task_id": task_id,
-            "task_type": "interaction",
-            "account_id": account.get("id"),
-            "recipient_phone": recipient_phone,
-            "success": success,
-            "error": error
-        })
-        print(f"    {'✓' if success else '✗'} {error or 'Sent'}")
-    
-    else:
-        print(f"  ❓ Unknown regular warmup task: {task_type}")
 
 
 if __name__ == "__main__":
-    print("Starting Warmup Runner (PARALLEL MODE)... Press Ctrl+C to stop.")
-    print(f"Processing up to {PARALLEL_BATCH_SIZE} pairs simultaneously.")
+    print("Starting Warmup Runner (Parallel)... Press Ctrl+C to stop.")
     print("Required: pip install telethon httpx")
     try:
         asyncio.run(main_loop())

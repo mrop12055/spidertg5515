@@ -43,6 +43,10 @@ serve(async (req) => {
       .from("app_settings")
       .select("key, value");
 
+    // Dynamic batch sizes from settings
+    let warmupBatchSize = 100; // Default for warmup
+    let campaignBatchSize = 50; // Default for campaign (will be overridden per-campaign)
+
     if (settingsData) {
       for (const setting of settingsData) {
         const value = setting.value as Record<string, unknown>;
@@ -51,6 +55,9 @@ serve(async (req) => {
           MESSAGE_DELAY_MAX_SECONDS = (value.maxDelaySeconds as number) || MESSAGE_DELAY_MAX_SECONDS;
         } else if (setting.key === "account_limits" && value) {
           DAILY_MESSAGE_LIMIT = (value.dailyMessageLimit as number) || DAILY_MESSAGE_LIMIT;
+        } else if (setting.key === "warmup_batch_size" && value) {
+          // Read warmup batch size from app_settings
+          warmupBatchSize = (value.batchSize as number) || warmupBatchSize;
         }
       }
     }
@@ -122,10 +129,13 @@ serve(async (req) => {
 
     const tasks: any[] = [];
     const usedAccountIds = new Set<string>();
-    const actualBatchSize = Math.min(batch_size, usableAccounts.length);
 
     // WARMUP_CHAT RUNNER: Get pending warmup messages (PARALLEL BATCH)
     if (runner === "warmup_chat") {
+      // Use dynamic warmup batch size from settings
+      const actualBatchSize = Math.min(warmupBatchSize, usableAccounts.length);
+      console.log(`[get-batch-tasks] Warmup using batch size: ${actualBatchSize} (from settings: ${warmupBatchSize})`);
+      
       // First: Auto-fail stuck tasks (claimed > 1 minute ago but still "sending")
       const oneMinuteAgo = new Date(Date.now() - 60 * 1000).toISOString();
       const { data: stuckMessages } = await supabase
@@ -305,10 +315,31 @@ serve(async (req) => {
 
     // CAMPAIGN RUNNER: Get pending campaign recipients
     if (runner === "campaign") {
+      // Get running campaigns with their batch_size settings
+      const { data: runningCampaigns } = await supabase
+        .from("campaigns")
+        .select("id, batch_size, message_template")
+        .eq("status", "running");
+
+      if (!runningCampaigns || runningCampaigns.length === 0) {
+        return new Response(JSON.stringify({
+          tasks: [],
+          delay_after: 5,
+          reason: "No running campaigns"
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Use the max batch_size from running campaigns (or default 50)
+      const maxCampaignBatchSize = Math.max(...runningCampaigns.map(c => c.batch_size || 50));
+      const actualBatchSize = Math.min(maxCampaignBatchSize, usableAccounts.length);
+      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (from campaigns: ${maxCampaignBatchSize})`);
+
       // Get pending recipients from running campaigns (include unassigned ones too)
       const { data: pendingRecipients } = await supabase
         .from("campaign_recipients")
-        .select("*, campaigns!inner(id, status, message_template)")
+        .select("*, campaigns!inner(id, status, message_template, batch_size)")
         .eq("status", "pending")
         .eq("campaigns.status", "running")
         .limit(actualBatchSize * 2); // Fetch extra in case some accounts are already used
@@ -395,6 +426,8 @@ serve(async (req) => {
 
     // LIVECHAT RUNNER: Get pending outgoing messages
     if (runner === "livechat") {
+      const actualBatchSize = Math.min(batch_size || 50, usableAccounts.length);
+      
       const { data: pendingMessages } = await supabase
         .from("messages")
         .select(`
@@ -440,6 +473,7 @@ serve(async (req) => {
             },
             recipient: conv.recipient_telegram_id?.toString() || conv.recipient_phone,
             recipient_name: conv.recipient_name,
+            recipient_telegram_id: conv.recipient_telegram_id,
             account: {
               id: account.id,
               phone_number: account.phone_number,
@@ -469,6 +503,39 @@ serve(async (req) => {
           usedAccountIds.add(account.id);
         }
       }
+      
+      // For livechat, also return accounts for initial connection
+      // This helps the runner connect accounts that need message handlers
+      const accountsForConnection = usableAccounts.map((a: any) => ({
+        id: a.id,
+        phone_number: a.phone_number,
+        session_data: a.session_data,
+        device_model: a.device_model,
+        system_version: a.system_version,
+        app_version: a.app_version,
+        lang_code: a.lang_code,
+        system_lang_code: a.system_lang_code,
+        api_id: a.telegram_api_credentials?.api_id || a.api_id,
+        api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
+        proxy_id: a.proxy_id,
+        proxy: a.proxies ? {
+          host: a.proxies.host,
+          port: a.proxies.port,
+          username: a.proxies.username,
+          password: a.proxies.password,
+          proxy_type: a.proxies.proxy_type,
+          type: a.proxies.proxy_type,
+        } : null,
+      }));
+      
+      return new Response(JSON.stringify({
+        tasks,
+        accounts: accountsForConnection,
+        delay_after: 1, // 1-second polling for livechat
+        accounts_available: usableAccounts.length,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // Calculate delay for next batch

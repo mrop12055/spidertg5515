@@ -583,6 +583,22 @@ async def validate_contact(client: TelegramClient, phone: str):
         raise e
 
 
+async def disconnect_idle_clients(keep_ids: set = None):
+    """Disconnect clients not in active use"""
+    disconnected_count = 0
+    for acc_id, client in list(active_clients.items()):
+        if keep_ids and acc_id in keep_ids:
+            continue
+        try:
+            await asyncio.wait_for(client.disconnect(), timeout=5)
+        except:
+            pass
+        del active_clients[acc_id]
+        disconnected_count += 1
+    if disconnected_count > 0:
+        print(f"[CLEANUP] Disconnected {disconnected_count} idle clients")
+
+
 async def shutdown_all():
     """Cleanup all clients on shutdown"""
     print("\n[SHUTDOWN] Disconnecting all clients...")

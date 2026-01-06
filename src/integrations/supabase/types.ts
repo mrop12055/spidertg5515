@@ -257,6 +257,7 @@ export type Database = {
       }
       campaigns: {
         Row: {
+          batch_size: number | null
           created_at: string | null
           failed_count: number | null
           id: string
@@ -271,6 +272,7 @@ export type Database = {
           updated_at: string | null
         }
         Insert: {
+          batch_size?: number | null
           created_at?: string | null
           failed_count?: number | null
           id?: string
@@ -285,6 +287,7 @@ export type Database = {
           updated_at?: string | null
         }
         Update: {
+          batch_size?: number | null
           created_at?: string | null
           failed_count?: number | null
           id?: string

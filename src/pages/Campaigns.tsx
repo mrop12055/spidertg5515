@@ -150,7 +150,8 @@ const Campaigns: React.FC = () => {
     messageTemplate: '',
     recipientCount: 0,
     accountIds: [] as string[],
-    recipientsText: '' // Recipients input during creation
+    recipientsText: '', // Recipients input during creation
+    batchSize: 50, // Batch size for parallel sends
   });
 
   // Fetch campaign reports + auto-sync pending recipients based on already-sent messages
@@ -604,19 +605,21 @@ const Campaigns: React.FC = () => {
       accountIds: newCampaign.accountIds
     });
     
-    // Upload recipients and set seat_id immediately after campaign creation
+    // Upload recipients, set seat_id and batch_size immediately after campaign creation
     if (createdCampaign) {
       await uploadRecipients(createdCampaign.id, parsedRecipients);
-      // Set seat_id on the campaign
+      // Set seat_id and batch_size on the campaign
+      const updateData: any = { batch_size: newCampaign.batchSize };
       if (selectedSeatId) {
-        await supabase.from('campaigns').update({ seat_id: selectedSeatId }).eq('id', createdCampaign.id);
+        updateData.seat_id = selectedSeatId;
       }
+      await supabase.from('campaigns').update(updateData).eq('id', createdCampaign.id);
     }
     
     // Settings are now saved to the database when the campaign is started via handleStartCampaign
     // No need to save to localStorage anymore
     
-    setNewCampaign({ name: '', messageTemplate: '', recipientCount: 0, accountIds: [], recipientsText: '' });
+    setNewCampaign({ name: '', messageTemplate: '', recipientCount: 0, accountIds: [], recipientsText: '', batchSize: 50 });
     setMessageTemplates([{ id: '1', message: '', accountCount: 10 }]);
     setIsCreateOpen(false);
     refreshData();
