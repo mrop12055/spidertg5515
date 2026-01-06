@@ -1421,15 +1421,50 @@ serve(async (req) => {
 
     // RUNNER: account - Only account management tasks
     if (runner === "account") {
+      // Check if livechat runner is online (active within last 2 minutes)
+      // If so, we need to skip accounts that livechat might have connected to avoid SQLite session file conflicts
+      const livechatCutoff = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      const { data: livechatHeartbeat } = await supabase
+        .from("runner_heartbeats")
+        .select("id, last_seen")
+        .eq("runner_name", "livechat")
+        .gte("last_seen", livechatCutoff)
+        .limit(1);
+      
+      const isLivechatOnline = livechatHeartbeat && livechatHeartbeat.length > 0;
+      
+      // Get IDs of accounts that livechat would have connected (active accounts with proxy)
+      // These are the accounts we must skip if livechat is running to avoid session conflicts
+      let livechatConnectedAccountIds: Set<string> = new Set();
+      if (isLivechatOnline) {
+        // Livechat connects ALL active accounts with active proxies
+        const activeAccountIds = accounts.map((a: { id: string }) => a.id);
+        livechatConnectedAccountIds = new Set(activeAccountIds);
+        console.log(`[get-next-task] Livechat is ONLINE - skipping ${livechatConnectedAccountIds.size} accounts to avoid session conflicts`);
+      }
+      
       const { data: checkTasks } = await supabase
         .from("account_check_tasks")
         .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(*))")
         .eq("status", "pending")
         .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "sync_profile", "verify_session"])
-        .limit(1);
+        .limit(10);  // Get more tasks to filter
+      
+      // Filter out tasks for accounts that livechat might have connected
+      const eligibleTasks = (checkTasks || []).filter((task: any) => {
+        if (!isLivechatOnline) return true;  // No conflict if livechat is offline
+        
+        // Skip tasks for accounts that livechat has connected
+        if (livechatConnectedAccountIds.has(task.account_id)) {
+          console.log(`[get-next-task] SKIPPING task ${task.task_type} for ${task.account_id.slice(0,8)}... (livechat has it connected)`);
+          return false;
+        }
+        return true;
+      });
+      
+      const task = eligibleTasks[0];
 
-      if (checkTasks && checkTasks.length > 0) {
-        const task = checkTasks[0];
+      if (task && task.telegram_accounts) {
         const accountData = task.telegram_accounts;
         const taskType = task.task_type;
 
