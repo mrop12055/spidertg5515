@@ -509,23 +509,9 @@ serve(async (req) => {
       // - Receiving messages doesn't count towards daily limit
       // - Even accounts at daily limit should still RECEIVE and LISTEN for messages
       // - Only SENDING is limited by daily quota
+      // Note: Multiple accounts can share the same proxy - that's intentional
       
-      // IMPORTANT: Only connect ONE account per proxy to avoid detection
-      // Multiple accounts on same proxy at same time looks suspicious
-      const usedProxyIds = new Set<string>();
-      const uniqueProxyAccounts = accountsWithActiveProxy.filter((a: any) => {
-        if (!a.proxy_id) return false;
-        if (usedProxyIds.has(a.proxy_id)) {
-          console.log(`[get-batch-tasks] Skipping ${a.phone_number} - proxy already in use by another account`);
-          return false;
-        }
-        usedProxyIds.add(a.proxy_id);
-        return true;
-      });
-      
-      console.log(`[get-batch-tasks] Livechat: ${uniqueProxyAccounts.length} accounts with unique proxies (from ${accountsWithActiveProxy.length} total)`);
-      
-      const accountsForConnection = uniqueProxyAccounts.map((a: any) => ({
+      const accountsForConnection = accountsWithActiveProxy.map((a: any) => ({
         id: a.id,
         phone_number: a.phone_number,
         session_data: a.session_data,
@@ -547,13 +533,13 @@ serve(async (req) => {
         } : null,
       }));
       
+      console.log(`[get-batch-tasks] Livechat: returning ${accountsForConnection.length} accounts for connection`);
+      
       return new Response(JSON.stringify({
         tasks,
         accounts: accountsForConnection,
-        delay_after: 1, // 1-second polling for livechat
-        accounts_available: uniqueProxyAccounts.length,
-        total_accounts: accountsWithActiveProxy.length,
-        skipped_duplicate_proxy: accountsWithActiveProxy.length - uniqueProxyAccounts.length,
+        delay_after: 1,
+        accounts_available: accountsWithActiveProxy.length,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
