@@ -22,7 +22,7 @@ import random
 
 from client_manager import (
     get_or_create_client, get_next_task, get_batch_tasks, report_result,
-    shutdown_all
+    shutdown_all, release_client
 )
 
 # ========== GLOBAL STATE ==========
@@ -292,9 +292,9 @@ async def process_single_task(task: dict) -> dict:
     phone = account.get("phone_number", "Unknown")
     
     try:
-        # Get or create client
+        # Get or create client with runner="warmup" for priority locking
         task_proxy = account.get("proxy")
-        client = await get_or_create_client(account, task_proxy=task_proxy)
+        client = await get_or_create_client(account, task_proxy=task_proxy, runner="warmup")
         
         if not client:
             # Client connection failed - report with pair_id so warmup can be stopped
@@ -474,7 +474,8 @@ async def process_regular_warmup_task(task: dict):
     task_data = task.get("task_data", {})
     task_proxy = task.get("proxy")
     
-    client = await get_or_create_client(account, task_proxy=task_proxy)
+    # Use runner="warmup" for priority locking
+    client = await get_or_create_client(account, task_proxy=task_proxy, runner="warmup")
     if not client:
         await report_result("warmup", {
             "task_id": task_id,

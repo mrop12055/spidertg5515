@@ -2,6 +2,14 @@
 TelegramCRM - Client Manager
 =============================
 Shared Telegram client logic for all runners with optimized connection speed
+and priority-based locking to prevent SQLite "database is locked" errors.
+
+Priority order:
+1. livechat  - HIGHEST (real-time user interactions)
+2. campaign  - HIGH (time-sensitive outreach)
+3. warmup    - MEDIUM (background warming)
+4. account   - LOW (management tasks)
+5. block     - LOWEST (cleanup tasks)
 """
 
 import os
@@ -18,6 +26,10 @@ from telethon.network.connection import ConnectionTcpFull
 
 from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
 from fingerprint_generator import generate_fingerprint
+from priority_lock import lock_account, unlock_account, get_priority
+
+# Track which runner is currently using each account
+_current_runner: Dict[str, str] = {}
 
 # Temp folder for session files
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
@@ -123,10 +135,11 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
     return (False, last_error)
 
 
-async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False, task_proxy: dict = None) -> Optional[TelegramClient]:
+async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False, task_proxy: dict = None, runner: str = "unknown") -> Optional[TelegramClient]:
     """
     Get existing client or create new one with unique device fingerprint.
     Optimized for fast connection with retry logic and proxy support.
+    Uses priority-based locking to prevent SQLite "database is locked" errors.
     
     Args:
         account: Account data from edge function (must include fingerprint fields)
@@ -134,8 +147,18 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         skip_avatar: Skip avatar download during profile sync
         force_profile_sync: Force a full profile sync
         task_proxy: Proxy data from task-level (priority over account.proxy)
+        runner: Runner name for priority locking (livechat, campaign, warmup, account, block)
     """
     account_id = account["id"]
+    
+    # Acquire priority-based lock for this account
+    lock_acquired = await lock_account(account_id, runner)
+    if not lock_acquired:
+        print(f"  [LOCK] Could not acquire lock for {account.get('phone_number', 'unknown')} ({runner})")
+        return None
+    
+    # Track which runner owns this account
+    _current_runner[account_id] = runner
     
     # Return cached client if connected
     if account_id in active_clients:
@@ -608,6 +631,12 @@ async def validate_contact(client: TelegramClient, phone: str):
         raise e
 
 
+def release_client(account_id: str):
+    """Release priority lock for an account when done with operations"""
+    runner = _current_runner.pop(account_id, "unknown")
+    unlock_account(account_id, runner)
+
+
 async def shutdown_all():
     """Cleanup all clients on shutdown"""
     print("\n[SHUTDOWN] Disconnecting all clients...")
@@ -616,5 +645,8 @@ async def shutdown_all():
             await asyncio.wait_for(client.disconnect(), timeout=5)
         except:
             pass
+        # Release any locks
+        release_client(account_id)
     active_clients.clear()
+    _current_runner.clear()
     print("[OK] All clients disconnected.")
