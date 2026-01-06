@@ -261,6 +261,7 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             return None
         
         # Test if account is still active by getting user info
+        me = None  # Initialize to avoid UnboundLocalError
         try:
             me = await asyncio.wait_for(client.get_me(), timeout=15)
             if not me:
@@ -285,6 +286,14 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
                 print(f"  [EXPIRED] Session revoked: {account['phone_number']} - {me_error}")
                 await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
                 return None
+            elif "database" in error_str and "locked" in error_str:
+                # SQLite lock - retry once after short delay
+                print(f"  [WARN] Database locked, retrying get_me...")
+                await asyncio.sleep(1)
+                try:
+                    me = await asyncio.wait_for(client.get_me(), timeout=15)
+                except:
+                    pass  # Continue with me=None, profile sync will handle it
             else:
                 # Other error, try to continue
                 print(f"  [WARN] get_me error: {me_error}")
