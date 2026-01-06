@@ -1979,98 +1979,96 @@ const Accounts: React.FC = () => {
           ))}
         </div>
 
-        {/* Bulk Actions Bar */}
-        {selectedIds.size > 0 && (
-          <Card className="border-primary/30 bg-primary/5">
-            <CardContent className="p-3">
-              <div className="flex items-center gap-3 flex-wrap">
-                <Badge variant="secondary" className="font-medium">
-                  {selectedIds.size} selected
-                </Badge>
-                
-                <Separator orientation="vertical" className="h-6" />
-                
-                <Button variant="outline" size="sm" onClick={handleBulkCheck} disabled={isBulkChecking} className="gap-1.5">
-                  {isBulkChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
-                  Session Check
-                </Button>
-                
-                
-                <Button variant="outline" size="sm" onClick={handleSpamBotCheck} disabled={isSpamBotChecking} className="gap-1.5">
-                  <Shield className="w-3.5 h-3.5" />
-                  SpamBot
-                </Button>
-                
-                <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting} className="gap-1.5">
-                  {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                  Export
-                </Button>
-                
+        {/* Bulk Actions Bar - Always visible */}
+        <Card className={cn("transition-colors", selectedIds.size > 0 ? "border-primary/30 bg-primary/5" : "")}>
+          <CardContent className="p-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <Badge variant="secondary" className="font-medium">
+                {selectedIds.size} selected
+              </Badge>
+              
+              <Separator orientation="vertical" className="h-6" />
+              
+              <Button variant="outline" size="sm" onClick={handleBulkCheck} disabled={isBulkChecking || selectedIds.size === 0} className="gap-1.5">
+                {isBulkChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
+                Session Check
+              </Button>
+              
+              
+              <Button variant="outline" size="sm" onClick={handleSpamBotCheck} disabled={isSpamBotChecking || selectedIds.size === 0} className="gap-1.5">
+                <Shield className="w-3.5 h-3.5" />
+                SpamBot
+              </Button>
+              
+              <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting || selectedIds.size === 0} className="gap-1.5">
+                {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                Export
+              </Button>
+              
 
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm" className="gap-1.5">
-                      <Settings className="w-3.5 h-3.5" />
-                      Actions
-                      <ChevronDown className="w-3 h-3" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-52">
-                    <DropdownMenuItem onClick={() => { setIsBulkNameOpen(true); fetchNameTags(); }}>
-                      <UserCircle className="w-4 h-4 mr-2" />
-                      Change Name
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => { setIsProfilePicOpen(true); fetchPictureTags(); }}>
-                      <Image className="w-4 h-4 mr-2" />
-                      Change Profile Picture
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
-                      <EyeOff className="w-4 h-4 mr-2" />
-                      Privacy Settings
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setIsPasswordDialogOpen(true)}>
-                      <Lock className="w-4 h-4 mr-2" />
-                      Change Password
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={handleLogoutOtherSessions}>
-                      <LogOut className="w-4 h-4 mr-2" />
-                      Logout Other Sessions
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
-                      <Tag className="w-4 h-4 mr-2" />
-                      Assign Tags
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setIsGroupDialogOpen(true)}>
-                      <FolderPlus className="w-4 h-4 mr-2" />
-                      Create Groups
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setIsBulkProxyOpen(true)}>
-                      <Globe className="w-4 h-4 mr-2" />
-                      Assign Proxy
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={() => setShowAccountTaskLogs(!showAccountTaskLogs)}>
-                      <ClipboardList className="w-4 h-4 mr-2" />
-                      {showAccountTaskLogs ? 'Hide' : 'Show'} Task Logs
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem onClick={handleBulkDelete} className="text-destructive">
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Delete Selected
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5" disabled={selectedIds.size === 0}>
+                    <Settings className="w-3.5 h-3.5" />
+                    Actions
+                    <ChevronDown className="w-3 h-3" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-52">
+                  <DropdownMenuItem onClick={() => { setIsBulkNameOpen(true); fetchNameTags(); }}>
+                    <UserCircle className="w-4 h-4 mr-2" />
+                    Change Name
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => { setIsProfilePicOpen(true); fetchPictureTags(); }}>
+                    <Image className="w-4 h-4 mr-2" />
+                    Change Profile Picture
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
+                    <EyeOff className="w-4 h-4 mr-2" />
+                    Privacy Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setIsPasswordDialogOpen(true)}>
+                    <Lock className="w-4 h-4 mr-2" />
+                    Change Password
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleLogoutOtherSessions}>
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Logout Other Sessions
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
+                    <Tag className="w-4 h-4 mr-2" />
+                    Assign Tags
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setIsGroupDialogOpen(true)}>
+                    <FolderPlus className="w-4 h-4 mr-2" />
+                    Create Groups
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setIsBulkProxyOpen(true)}>
+                    <Globe className="w-4 h-4 mr-2" />
+                    Assign Proxy
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => setShowAccountTaskLogs(!showAccountTaskLogs)}>
+                    <ClipboardList className="w-4 h-4 mr-2" />
+                    {showAccountTaskLogs ? 'Hide' : 'Show'} Task Logs
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleBulkDelete} className="text-destructive">
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete Selected
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
 
-                <div className="flex-1" />
-                
-                <Button variant="ghost" size="sm" onClick={() => { setSelectedIds(new Set()); setVerifyResults(new Map()); }}>
-                  Clear
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+              <div className="flex-1" />
+              
+              <Button variant="ghost" size="sm" onClick={() => { setSelectedIds(new Set()); setVerifyResults(new Map()); }} disabled={selectedIds.size === 0}>
+                Clear
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* SpamBot Progress */}
         {isSpamBotChecking && (
