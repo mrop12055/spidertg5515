@@ -1286,7 +1286,8 @@ import signal
 import random
 
 from client_manager import (
-    get_or_create_client, get_next_task, get_batch_tasks, report_result, shutdown_all
+    get_or_create_client, get_next_task, get_batch_tasks, report_result, shutdown_all,
+    release_client, active_clients
 )
 
 # ========== GLOBAL STATE ==========
@@ -1547,6 +1548,21 @@ async def process_single_task(task: dict) -> dict:
             pass
         
         return {"task_id": task_id, "success": False, "error": error_str}
+    
+    finally:
+        # CRITICAL: Always release client and lock after each task
+        account_id = account.get("id")
+        if account_id:
+            try:
+                if account_id in active_clients:
+                    try:
+                        await active_clients[account_id].disconnect()
+                    except:
+                        pass
+                    active_clients.pop(account_id, None)
+                release_client(account_id)
+            except:
+                pass
 
 
 async def process_regular_warmup_task(task: dict):
@@ -1591,6 +1607,20 @@ async def process_regular_warmup_task(task: dict):
         print(f"  ✏️ Updating profile for {phone}...")
         success, new_bio, error = await update_profile_bio(client, bio)
         await report_result("warmup", {"task_id": task_id, "task_type": "profile_update", "account_id": account.get("id"), "success": success, "error": error})
+    
+    # CRITICAL: Always release client and lock after each task
+    account_id = account.get("id")
+    if account_id:
+        try:
+            if account_id in active_clients:
+                try:
+                    await active_clients[account_id].disconnect()
+                except:
+                    pass
+                active_clients.pop(account_id, None)
+            release_client(account_id)
+        except:
+            pass
 
 
 async def main_loop():
