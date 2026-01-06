@@ -468,7 +468,7 @@ PARALLEL_BATCH_SIZE = 5  # Process up to 5 messages simultaneously
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
     global RUNNING
-    print("\n⏹ Stop signal received. Finishing current batch...")
+    print("\\n[STOP] Stop signal received. Finishing current batch...")
     RUNNING = False
 
 
@@ -577,10 +577,10 @@ async def main_loop():
     print("=" * 60)
     print("  TelegramCRM - Campaign Runner (PARALLEL BATCH MODE)")
     print("=" * 60)
-    print(f"  📨 Processing up to {PARALLEL_BATCH_SIZE} messages SIMULTANEOUSLY")
-    print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
+    print(f"  Processing up to {PARALLEL_BATCH_SIZE} messages SIMULTANEOUSLY")
+    print("  Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
-    print("\n✓ Starting parallel campaign loop...\n")
+    print("\\nStarting parallel campaign loop...\\n")
 
     consecutive_empty = 0
 
@@ -599,7 +599,7 @@ async def main_loop():
 
             # Check for stop signal
             if batch_result.get("stop_signal"):
-                print("⏹ Campaign paused from dashboard. Stopping...")
+                print("[STOP] Campaign paused from dashboard. Stopping...")
                 break
 
             # Handle no tasks
@@ -609,17 +609,17 @@ async def main_loop():
 
                 if consecutive_empty == 1:
                     if reason:
-                        print(f"  ⏳ {reason}")
+                        print(f"  [WAIT] {reason}")
                     else:
-                        print("  ⏳ No pending campaign tasks, waiting...")
+                        print("  [WAIT] No pending campaign tasks, waiting...")
                 elif consecutive_empty % 12 == 0:
-                    print("  ⏳ Still waiting for campaign tasks...")
+                    print("  [WAIT] Still waiting for campaign tasks...")
 
                 await asyncio.sleep(delay_after)
                 continue
 
             consecutive_empty = 0
-            print(f"\n  📦 Processing batch of {len(tasks)} messages in PARALLEL...")
+            print(f"\\n  [BATCH] Processing batch of {len(tasks)} messages in PARALLEL...")
 
             # Process all tasks in parallel
             results = await asyncio.gather(
@@ -641,18 +641,18 @@ async def main_loop():
                 await report_result("send", result)
 
             fail_count = len(results) - success_count
-            print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
+            print(f"  [RESULT] Batch complete: {success_count} success, {fail_count} failed")
 
             # Wait between batches
             if RUNNING and delay_after > 0:
-                print(f"  ⏳ Waiting {delay_after}s before next batch...")
+                print(f"  [WAIT] Waiting {delay_after}s before next batch...")
                 await asyncio.sleep(delay_after)
 
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
             await asyncio.sleep(5)
 
-    print("\n⏹ Campaign loop stopped.")
+    print("\\n[STOP] Campaign loop stopped.")
     await shutdown_all()
 
 
@@ -662,7 +662,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
-        print("\n⏹ Keyboard interrupt.")
+        print("\\n[STOP] Keyboard interrupt.")
     finally:
         print("Goodbye!")
 `;
