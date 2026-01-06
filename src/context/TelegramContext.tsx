@@ -99,6 +99,7 @@ interface TelegramContextType {
   refreshData: () => Promise<void>;
 }
 
+// Context for Telegram functionality
 const TelegramContext = createContext<TelegramContextType | undefined>(undefined);
 
 export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
