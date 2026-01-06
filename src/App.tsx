@@ -16,7 +16,7 @@ import Campaigns from "./pages/Campaigns";
 import Settings from "./pages/Settings";
 import SetupGuide from "./pages/SetupGuide";
 import Reports from "./pages/Reports";
-import Data from "./pages/Data";
+import Material from "./pages/Material";
 import Seats from "./pages/Seats";
 import SeatChat from "./pages/SeatChat";
 import DatabaseHealth from "./pages/DatabaseHealth";
@@ -49,7 +49,7 @@ const App = () => (
                 <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                 <Route path="/setup" element={<ProtectedRoute><SetupGuide /></ProtectedRoute>} />
                 <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
-                <Route path="/data" element={<ProtectedRoute><Data /></ProtectedRoute>} />
+                <Route path="/material" element={<ProtectedRoute><Material /></ProtectedRoute>} />
                 <Route path="/seats" element={<ProtectedRoute><Seats /></ProtectedRoute>} />
                 <Route path="/database" element={<ProtectedRoute><DatabaseHealth /></ProtectedRoute>} />
                 <Route path="/warmup" element={<ProtectedRoute><Warmup /></ProtectedRoute>} />
