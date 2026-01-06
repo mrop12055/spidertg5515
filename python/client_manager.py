@@ -16,7 +16,7 @@ import tempfile
 import asyncio
 import httpx
 import socks
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from telethon import TelegramClient, events
 from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
@@ -119,7 +119,7 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
         return (ptype, host, int(port))
 
 
-async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> tuple[bool, str]:
+async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> Tuple[bool, str]:
     """Connect with retry logic and exponential backoff.
     Returns (success, error_reason) tuple."""
     last_error = ""
