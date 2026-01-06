@@ -22,6 +22,9 @@ SUPABASE_URL = "YOUR_SUPABASE_URL"
 SUPABASE_KEY = "YOUR_SUPABASE_KEY"
 VPS_API_KEY = "YOUR_VPS_API_KEY"  # Generated when VPS is registered
 
+# Get the directory where this script lives
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # Runner definitions
 RUNNERS = {
     "campaign": "campaign_runner.py",
@@ -169,16 +172,22 @@ def start_runner(name: str) -> bool:
         return False
     
     script = RUNNERS.get(name)
-    if not script or not os.path.exists(script):
-        print(f"[ERROR] Script not found: {script}")
+    if not script:
+        print(f"[ERROR] Unknown runner: {name}")
+        return False
+    
+    # Use absolute path from script directory
+    script_path = os.path.join(SCRIPT_DIR, script)
+    if not os.path.exists(script_path):
+        print(f"[ERROR] Script not found: {script_path}")
         return False
     
     try:
         proc = subprocess.Popen(
-            [sys.executable, script],
+            [sys.executable, script_path],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=os.path.dirname(os.path.abspath(__file__)) or ".",
+            cwd=SCRIPT_DIR,
         )
         processes[name] = proc
         print(f"[RUNNER] Started {name} (PID: {proc.pid})")
@@ -249,19 +258,20 @@ async def update_scripts(client: httpx.AsyncClient) -> bool:
         # Stop all runners first
         stop_all()
         
-        # Extract ZIP
+        # Extract ZIP to script directory
         with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
             for info in zf.infolist():
                 if info.filename.endswith('.py') and not info.filename.startswith('__'):
-                    # Extract to current directory
                     with zf.open(info) as source:
-                        target_path = os.path.basename(info.filename)
+                        # Get just the filename, extract to SCRIPT_DIR
+                        filename = os.path.basename(info.filename)
                         # Don't overwrite vps_agent.py or config.py
-                        if target_path in ['vps_agent.py', 'config.py']:
+                        if filename in ['vps_agent.py', 'config.py']:
                             continue
+                        target_path = os.path.join(SCRIPT_DIR, filename)
                         with open(target_path, 'wb') as target:
                             target.write(source.read())
-                        print(f"[UPDATE] Extracted: {target_path}")
+                        print(f"[UPDATE] Extracted: {filename} -> {target_path}")
         
         print("[UPDATE] Scripts updated successfully")
         return True
