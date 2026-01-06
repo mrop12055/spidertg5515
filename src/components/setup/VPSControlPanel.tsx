@@ -60,13 +60,29 @@ export const VPSControlPanel: React.FC = () => {
   const { runners } = useRunnerStatus();
 
   const fetchVPS = useCallback(async () => {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from('vps_connections')
       .select('*')
+      // Pick the most recently seen VPS (prevents showing an old/stale row as "Stopped")
+      .order('last_seen', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
+
+    if (error) {
+      console.error('Failed to fetch VPS connection:', error);
+    }
+
     setVps(data);
     setLoading(false);
+
+    // Keep status in sync even if realtime misses updates
+    if (data?.last_seen) {
+      const lastSeen = new Date(data.last_seen).getTime();
+      setVpsOnline(Date.now() - lastSeen < VPS_ONLINE_THRESHOLD_MS);
+    } else {
+      setVpsOnline(false);
+    }
   }, []);
 
   const fetchLogs = useCallback(async () => {
@@ -109,7 +125,11 @@ export const VPSControlPanel: React.FC = () => {
       fetchLogs();
       fetchCommands();
       checkVpsStatus();
-      statusCheckRef.current = setInterval(checkVpsStatus, 5000);
+      statusCheckRef.current = setInterval(() => {
+        // Ensure we don't rely only on realtime delivery for last_seen
+        fetchVPS();
+        checkVpsStatus();
+      }, 5000);
       
       const channel = supabase
         .channel('vps-control-panel')
@@ -136,7 +156,8 @@ export const VPSControlPanel: React.FC = () => {
     });
 
     if (error) {
-      toast.error('Failed to send command');
+      console.error('Failed to send VPS command:', error);
+      toast.error(error.message || 'Failed to send command');
     } else {
       toast.success(`Command sent: ${command}${targetRunner ? ` (${targetRunner})` : ''}`);
     }
