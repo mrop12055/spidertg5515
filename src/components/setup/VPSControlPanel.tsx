@@ -293,7 +293,8 @@ export const VPSControlPanel: React.FC = () => {
                     variant="ghost" 
                     className="h-6 px-2 text-xs flex-1"
                     onClick={() => sendCommand('start_runner', key)}
-                    disabled={!!sendingCommand || isRunning || !vpsOnline}
+                    disabled={!!sendingCommand || !vpsOnline}
+                    title={isRunning ? 'Start (already running will be ignored by agent)' : 'Start'}
                   >
                     <Play className="h-3 w-3" />
                   </Button>
@@ -302,7 +303,8 @@ export const VPSControlPanel: React.FC = () => {
                     variant="ghost" 
                     className="h-6 px-2 text-xs flex-1"
                     onClick={() => sendCommand('stop_runner', key)}
-                    disabled={!!sendingCommand || !isRunning || !vpsOnline}
+                    disabled={!!sendingCommand || !vpsOnline}
+                    title={isRunning ? 'Stop' : 'Stop (already stopped will be ignored)'}
                   >
                     <Square className="h-3 w-3" />
                   </Button>
