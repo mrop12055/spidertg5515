@@ -462,7 +462,7 @@ from client_manager import (
 RUNNING = True
 
 # Parallelism: one message per account in each batch
-PARALLEL_BATCH_SIZE = 5  # Process up to 5 messages simultaneously
+PARALLEL_BATCH_SIZE = 20  # Process up to 20 messages simultaneously
 
 
 def signal_handler(sig, frame):
