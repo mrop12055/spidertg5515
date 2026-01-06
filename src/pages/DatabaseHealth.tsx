@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -8,9 +8,10 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { StatCard } from '@/components/ui/stat-card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from '@/hooks/use-toast';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { 
   RefreshCw, 
   Trash2, 
@@ -22,14 +23,11 @@ import {
   Users,
   MessageSquare,
   Shield,
-  Zap,
   Send,
   UserCheck,
   Phone,
   ListTodo,
-  Ban,
   Upload,
-  Flame,
   AlertTriangle
 } from 'lucide-react';
 import { format } from 'date-fns';
@@ -584,6 +582,31 @@ const DatabaseHealth = () => {
 
   
 
+  // Loading skeleton
+  if (loading) {
+    return (
+      <DashboardLayout>
+        <PageHeader
+          title="Database Health"
+          description="Monitor system health and manage pending tasks (real-time updates)"
+          icon={Database}
+        />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-28 rounded-2xl" />
+          ))}
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-20 rounded-xl" />
+          ))}
+        </div>
+        <Skeleton className="h-96 rounded-xl mb-6" />
+        <Skeleton className="h-64 rounded-xl" />
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout>
       <PageHeader
@@ -591,15 +614,22 @@ const DatabaseHealth = () => {
         description="Monitor system health and manage pending tasks (real-time updates)"
         icon={Database}
         action={
-          <Button onClick={handleRefresh} disabled={refreshing}>
+          <Button onClick={handleRefresh} disabled={refreshing} size="sm">
             <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
         }
       />
 
-      {/* System Overview - Main Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <AnimatePresence mode="wait">
+        <motion.div
+          key="content"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.3 }}
+        >
+          {/* System Overview - Main Stats */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <StatCard
           title="Active Accounts"
           value={health?.active_accounts || 0}
@@ -643,17 +673,15 @@ const DatabaseHealth = () => {
           </div>
           <h2 className="text-lg font-semibold">Pending Queue</h2>
           <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/30">
-            {(health?.pending_account_tasks || 0) + (health?.pending_block_tasks || 0) + 
-             (health?.pending_import_tasks || 0) + warmupTasks.length + (health?.pending_messages || 0)} total
+            {(health?.pending_account_tasks || 0) + (health?.pending_import_tasks || 0) + 
+             (health?.pending_recipients || 0) + (health?.pending_messages || 0)} total
           </Badge>
         </div>
         
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           {[
             { label: 'Account', value: health?.pending_account_tasks || 0, icon: UserCheck, color: 'yellow' },
-            { label: 'Block', value: health?.pending_block_tasks || 0, icon: Ban, color: 'yellow' },
             { label: 'Import', value: health?.pending_import_tasks || 0, icon: Upload, color: 'yellow' },
-            { label: 'Warmup', value: warmupTasks.length, icon: Flame, color: 'orange' },
             { label: 'Recipients', value: health?.pending_recipients || 0, icon: Send, color: 'blue' },
             { label: 'Stuck', value: health?.stuck_messages || 0, icon: AlertTriangle, color: 'red' },
           ].map((item, idx) => (
@@ -664,7 +692,6 @@ const DatabaseHealth = () => {
               transition={{ duration: 0.3, delay: 0.4 + idx * 0.05 }}
               className={`relative overflow-hidden rounded-xl border p-4 bg-card hover:shadow-md transition-all duration-200 ${
                 item.color === 'red' ? 'border-red-500/30' : 
-                item.color === 'orange' ? 'border-orange-500/30' : 
                 item.color === 'blue' ? 'border-blue-500/30' : 
                 'border-yellow-500/30'
               }`}
@@ -673,7 +700,6 @@ const DatabaseHealth = () => {
                 <div>
                   <p className={`text-2xl font-bold ${
                     item.color === 'red' ? 'text-red-500' : 
-                    item.color === 'orange' ? 'text-orange-500' : 
                     item.color === 'blue' ? 'text-blue-500' : 
                     'text-yellow-500'
                   }`}>
@@ -683,13 +709,11 @@ const DatabaseHealth = () => {
                 </div>
                 <div className={`p-2 rounded-lg ${
                   item.color === 'red' ? 'bg-red-500/10' : 
-                  item.color === 'orange' ? 'bg-orange-500/10' : 
                   item.color === 'blue' ? 'bg-blue-500/10' : 
                   'bg-yellow-500/10'
                 }`}>
                   <item.icon className={`w-4 h-4 ${
                     item.color === 'red' ? 'text-red-500' : 
-                    item.color === 'orange' ? 'text-orange-500' : 
                     item.color === 'blue' ? 'text-blue-500' : 
                     'text-yellow-500'
                   }`} />
@@ -1120,6 +1144,8 @@ const DatabaseHealth = () => {
           </CardContent>
         </Card>
       </motion.div>
+        </motion.div>
+      </AnimatePresence>
     </DashboardLayout>
   );
 };
