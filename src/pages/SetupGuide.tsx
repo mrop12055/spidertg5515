@@ -9,6 +9,7 @@ import { Download, Loader2, Server, Monitor, Upload, CheckCircle2 } from 'lucide
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
+import { VPSControlPanel } from '@/components/setup/VPSControlPanel';
 
 const SetupGuide: React.FC = () => {
   const [uploading, setUploading] = useState(false);
@@ -2225,18 +2226,20 @@ if __name__ == "__main__":
           {/* VPS Mode */}
           <TabsContent value="vps">
             <div className="space-y-4">
+              {/* VPS Control Panel */}
+              <VPSControlPanel />
+
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <Server className="h-5 w-5 text-primary" />
-                    VPS Remote Control
+                    VPS Setup
                     <Badge variant="outline" className="ml-2">Recommended</Badge>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="text-sm text-muted-foreground">
-                    Control your runners remotely from the Dashboard. Start, stop, restart, 
-                    view logs, and auto-update scripts - all from your browser!
+                    Control your runners remotely. Start, stop, restart, view logs, and auto-update scripts - all from your browser!
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -2274,7 +2277,7 @@ if __name__ == "__main__":
                       What you get with VPS mode
                     </div>
                     <ul className="text-sm text-muted-foreground space-y-1 ml-6">
-                      <li>• Start/stop individual runners from Dashboard</li>
+                      <li>• Start/stop individual runners remotely</li>
                       <li>• View real-time logs in your browser</li>
                       <li>• Auto-restart on crash</li>
                       <li>• One-click script updates (auto-sync)</li>
@@ -2293,8 +2296,7 @@ if __name__ == "__main__":
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <p className="text-sm text-muted-foreground">
-                    Upload the latest scripts here. Then click "Update Scripts" in the VPS Manager 
-                    on your Dashboard to push updates to your VPS.
+                    Upload new scripts and they will automatically deploy to your VPS. Old scripts stop, new ones start.
                   </p>
                   <Button 
                     onClick={uploadForAutoSync} 
@@ -2307,7 +2309,7 @@ if __name__ == "__main__":
                     ) : (
                       <Upload className="h-4 w-4" />
                     )}
-                    Upload Scripts for Auto-Sync
+                    Upload & Deploy Scripts
                   </Button>
                 </CardContent>
               </Card>
