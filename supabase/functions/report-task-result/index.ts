@@ -835,15 +835,30 @@ serve(async (req) => {
           }
 
           if (message_id) {
-            // Non-campaign message: update existing message as failed
-            await supabase
-              .from("messages")
-              .update({
-                status: "failed",
-                failed_reason: error,
-              })
-              .eq("id", message_id)
-              .in("status", ["pending", "sending"]);
+            // Non-campaign message:
+            // - If this is a rate limit / temporary restriction, keep it queued (pending) so it can retry later
+            // - Otherwise mark as failed
+            if ((isImmediateRestriction || isTemporaryRestriction) && !isSkipOnly) {
+              await supabase
+                .from("messages")
+                .update({
+                  status: "pending",
+                  failed_reason: error || "Temporarily rate limited - will retry",
+                })
+                .eq("id", message_id)
+                .in("status", ["pending", "sending"]);
+
+              console.log(`[report-task-result] Live message ${message_id.slice(0, 8)} requeued due to restriction: ${error}`);
+            } else {
+              await supabase
+                .from("messages")
+                .update({
+                  status: "failed",
+                  failed_reason: error,
+                })
+                .eq("id", message_id)
+                .in("status", ["pending", "sending"]);
+            }
           }
 
           console.log(`[report-task-result] Message failed for recipient ${campaign_recipient_id || message_id}: ${error}`);
