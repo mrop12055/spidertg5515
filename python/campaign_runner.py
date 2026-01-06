@@ -84,9 +84,11 @@ async def process_single_task(task: dict, settings: dict) -> dict:
             msg.get("media_url")
         )
         
-        # Check if this is a sender-side privacy restriction
-        is_privacy_error = error and any(x in error.lower() for x in [
-            "privacyrestricted", "privacy restricted", "userprivacyrestricted"
+        # Check if this is a sender-side issue (should retry with different account)
+        # Privacy restrictions AND rate limits are sender problems, NOT recipient problems
+        is_sender_error = error and any(x in error.lower() for x in [
+            "privacyrestricted", "privacy restricted", "userprivacyrestricted",
+            "too many requests", "sendmessagerequest"  # Rate limits = sender issue
         ])
         
         # Get API credential ID
@@ -105,10 +107,10 @@ async def process_single_task(task: dict, settings: dict) -> dict:
             "recipient_name": recipient_name,
         }
         
-        if is_privacy_error:
+        if is_sender_error:
             result["skip_account"] = True
             result["retry_with_different_account"] = True
-            print(f"    ⚠ [{account_phone}] Privacy restricted")
+            print(f"    ⚠ [{account_phone}] Sender error (will retry with different account)")
         elif success:
             print(f"    ✓ [{account_phone}] Sent")
         else:

@@ -303,10 +303,10 @@ serve(async (req) => {
             'floodwaiterror'     // Telegram flood wait error
           ];
           
-          // CRITICAL: "Too many requests" = IMMEDIATE 12h restriction + FAIL recipient (no retries)
-          // This is a severe rate limit - must not retry
-          const immediateRestrictionErrors = [
-            'too many requests'  // Rate limit - immediate 12h cooldown, NO retries
+          // NOTE: "Too many requests" moved to retryWithDifferentAccountErrors
+          // It's a sender-side rate limit, not a recipient problem
+          const immediateRestrictionErrors: string[] = [
+            // Currently empty - all rate limits now retry with different account
           ];
           
           // Errors that should just SKIP the recipient (don't affect account status)
@@ -320,10 +320,12 @@ serve(async (req) => {
           ];
           
           // Errors that should RETRY with a different account (max 5 attempts)
-          // Privacy errors may be account-specific - recipient blocked THIS account but might accept others
+          // These are SENDER-SIDE issues - the recipient is fine, just try with another account
           const retryWithDifferentAccountErrors = [
             'privacy',           // Recipient has privacy settings blocking THIS account
-            'privacy restricted' // Recipient blocked messages from THIS unknown user
+            'privacy restricted', // Recipient blocked messages from THIS unknown user
+            'too many requests', // Rate limit on THIS account - try another
+            'sendmessagerequest' // Rate limit error variant
           ];
           
           const MAX_ACCOUNT_RETRIES = 5;  // Try up to 5 different accounts
