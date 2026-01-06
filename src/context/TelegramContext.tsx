@@ -956,10 +956,23 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const sendMessage = useCallback(async (accountId: string, recipientPhone: string, content: string, mediaUrl?: string, mediaType?: string) => {
     try {
+      const account = accounts.find(a => a.id === accountId);
+      const canSendStatuses: TelegramAccount['status'][] = ['active', 'restricted', 'cooldown'];
+      if (!account) {
+        toast.error('Account not found');
+        return;
+      }
+      if (!canSendStatuses.includes(account.status)) {
+        toast.error('Message not sent: account is disconnected', {
+          description: 'Reconnect/verify the session on the Accounts page, then try again.',
+        });
+        return;
+      }
+
       // Find or create conversation
       let conv = conversations.find(c => c.recipientPhone === recipientPhone && c.accountId === accountId);
       let conversationId = conv?.id;
-      
+
       if (!conversationId) {
         // Create conversation in database
         const { data: newConv, error: convError } = await supabase
@@ -972,7 +985,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           })
           .select()
           .single();
-        
+
         if (convError) throw convError;
         conversationId = newConv.id;
       }
@@ -1022,7 +1035,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.error('Error sending message:', error);
       toast.error('Failed to send message');
     }
-  }, [conversations, refreshData]);
+  }, [accounts, conversations, refreshData]);
 
   const sendMediaMessage = useCallback(async (accountId: string, recipientPhone: string, file: File, caption?: string) => {
     try {

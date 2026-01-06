@@ -17,7 +17,8 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, active_clients, cleanup_idle_clients, client_last_used
+    send_message, shutdown_all, active_clients, cleanup_idle_clients, client_last_used,
+    ensure_client_lock,
 )
 
 # ========== GLOBAL STATE ==========
@@ -288,9 +289,10 @@ async def keepalive_task():
         for account_id, client in clients_to_check:
             try:
                 if client.is_connected():
-                    # Ping the server to keep connection alive
-                    # GetState is a lightweight call that keeps the connection active
-                    await asyncio.wait_for(client.get_me(), timeout=10)
+                    # Serialize keepalive with any concurrent send to avoid session DB locks
+                    lock = ensure_client_lock(client)
+                    async with lock:
+                        await asyncio.wait_for(client.get_me(), timeout=10)
                 else:
                     # Client disconnected, remove from cache so it reconnects
                     print(f"  ⚠ Client {account_id[:8]}... disconnected, will reconnect")
