@@ -1,18 +1,17 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Download, Loader2, Server, Monitor, Upload, CheckCircle2 } from 'lucide-react';
+import { Download, Loader2, Server, Monitor, Upload, CheckCircle2, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
 import { VPSControlPanel } from '@/components/setup/VPSControlPanel';
 
 const SetupGuide: React.FC = () => {
-  const [uploading, setUploading] = useState(false);
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
@@ -1827,7 +1826,60 @@ async def update_command(client: httpx.AsyncClient, cmd_id: str, status: str, re
     )
 
 
-def start_runner(name: str) -> bool:
+async def fetch_single_script(client: httpx.AsyncClient, script_name: str) -> bool:
+    """Fetch a single script from storage and overwrite local copy."""
+    try:
+        resp = await client.get(
+            f"{SUPABASE_URL}/storage/v1/object/public/python-scripts/{script_name}",
+            timeout=30
+        )
+        if resp.status_code == 200:
+            with open(script_name, 'wb') as f:
+                f.write(resp.content)
+            print(f"[SYNC] Updated: {script_name}")
+            return True
+        else:
+            print(f"[SYNC] {script_name} not in storage (using local)")
+            return False
+    except Exception as e:
+        print(f"[SYNC] Failed to fetch {script_name}: {e}")
+        return False
+
+
+async def fetch_scripts_from_zip(client: httpx.AsyncClient, target_scripts: list = None) -> bool:
+    """Fetch runners.zip and extract scripts. If target_scripts provided, only extract those."""
+    try:
+        resp = await client.get(
+            f"{SUPABASE_URL}/storage/v1/object/public/python-scripts/runners.zip",
+            timeout=60
+        )
+        
+        if resp.status_code != 200:
+            print(f"[SYNC] No runners.zip in storage (using local scripts)")
+            return False
+        
+        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
+            for info in zf.infolist():
+                if info.filename.endswith('.py') and not info.filename.startswith('__'):
+                    target_path = os.path.basename(info.filename)
+                    # Skip protected files
+                    if target_path in ['vps_agent.py', 'config.py']:
+                        continue
+                    # If filtering, only extract requested scripts
+                    if target_scripts and target_path not in target_scripts:
+                        continue
+                    with zf.open(info) as source:
+                        with open(target_path, 'wb') as target:
+                            target.write(source.read())
+                    print(f"[SYNC] Extracted: {target_path}")
+        return True
+    except Exception as e:
+        print(f"[SYNC] ZIP fetch failed: {e}")
+        return False
+
+
+def start_runner_sync(name: str) -> bool:
+    """Start runner without fetching (internal use after sync)."""
     if name in processes and processes[name].poll() is None:
         print(f"[RUNNER] {name} already running")
         return False
@@ -1852,6 +1904,19 @@ def start_runner(name: str) -> bool:
         return False
 
 
+async def start_runner(client: httpx.AsyncClient, name: str) -> bool:
+    """Stop old runner, fetch latest script, then start."""
+    # Stop existing instance first
+    stop_runner(name)
+    
+    # Fetch latest script from storage
+    script = RUNNERS.get(name)
+    if script:
+        await fetch_scripts_from_zip(client, [script])
+    
+    return start_runner_sync(name)
+
+
 def stop_runner(name: str) -> bool:
     if name not in processes:
         return False
@@ -1872,10 +1937,13 @@ def stop_runner(name: str) -> bool:
     return True
 
 
-def start_all():
+async def start_all(client: httpx.AsyncClient):
+    """Stop all, fetch all scripts, start all."""
+    stop_all()
+    await fetch_scripts_from_zip(client)
     results = []
     for name in RUNNERS:
-        if start_runner(name):
+        if start_runner_sync(name):
             results.append(name)
     return results
 
@@ -1888,41 +1956,9 @@ def stop_all():
     return results
 
 
-def restart_all():
+async def restart_all(client: httpx.AsyncClient):
     stop_all()
-    return start_all()
-
-
-async def update_scripts(client: httpx.AsyncClient) -> bool:
-    try:
-        resp = await client.get(
-            f"{SUPABASE_URL}/storage/v1/object/public/python-scripts/runners.zip",
-            timeout=60
-        )
-        
-        if resp.status_code != 200:
-            print(f"[UPDATE] No update package found")
-            return False
-        
-        stop_all()
-        
-        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-            for info in zf.infolist():
-                if info.filename.endswith('.py') and not info.filename.startswith('__'):
-                    with zf.open(info) as source:
-                        target_path = os.path.basename(info.filename)
-                        if target_path in ['vps_agent.py', 'config.py']:
-                            continue
-                        with open(target_path, 'wb') as target:
-                            target.write(source.read())
-                        print(f"[UPDATE] Extracted: {target_path}")
-        
-        print("[UPDATE] Scripts updated successfully")
-        return True
-        
-    except Exception as e:
-        print(f"[ERROR] Update failed: {e}")
-        return False
+    return await start_all(client)
 
 
 async def process_command(client: httpx.AsyncClient, cmd: dict):
@@ -1938,7 +1974,7 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
         result = ""
         
         if command == "start_all":
-            started = start_all()
+            started = await start_all(client)
             result = f"Started: {', '.join(started) if started else 'none'}"
             
         elif command == "stop_all":
@@ -1946,11 +1982,11 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
             result = f"Stopped: {', '.join(stopped) if stopped else 'none'}"
             
         elif command == "restart_all":
-            restarted = restart_all()
+            restarted = await restart_all(client)
             result = f"Restarted: {', '.join(restarted) if restarted else 'none'}"
             
         elif command == "start_runner" and target:
-            if start_runner(target):
+            if await start_runner(client, target):
                 result = f"Started {target}"
             else:
                 result = f"Failed to start {target}"
@@ -1962,9 +1998,8 @@ async def process_command(client: httpx.AsyncClient, cmd: dict):
                 result = f"{target} was not running"
                 
         elif command == "update":
-            if await update_scripts(client):
-                result = "Scripts updated, restarting..."
-                restart_all()
+            if await fetch_scripts_from_zip(client):
+                result = "Scripts updated (use Start All to run new versions)"
             else:
                 result = "No updates available"
         else:
@@ -1985,7 +2020,7 @@ async def monitor_processes(client: httpx.AsyncClient):
             exit_code = proc.returncode
             await send_log(client, name, "warning", f"Process exited with code {exit_code}, restarting...")
             del processes[name]
-            start_runner(name)
+            start_runner_sync(name)
 
 
 async def main_loop():
@@ -2107,55 +2142,36 @@ if __name__ == "__main__":
     toast.success("VPS ZIP downloaded! Run vps_agent.py on your server.");
   };
 
-  const uploadForAutoSync = async () => {
-    setUploading(true);
-    try {
-      const zip = new JSZip();
-      
-      // Only include runner files (not config or vps_agent)
-      zip.file("campaign_runner.py", campaignRunnerPy);
-      zip.file("livechat_runner.py", livechatRunnerPy);
-      zip.file("account_runner.py", accountRunnerPy);
-      zip.file("warmup_runner.py", warmupRunnerPy);
-      zip.file("block_runner.py", blockRunnerPy);
-      zip.file("client_manager.py", clientManagerPy);
-      zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
-      
-      const blob = await zip.generateAsync({ type: "blob" });
-      
-      const { error: uploadError } = await supabase.storage
-        .from('python-scripts')
-        .upload('runners.zip', blob, { 
-          upsert: true,
-          contentType: 'application/zip'
-        });
-      
-      if (uploadError) throw uploadError;
-      
-      // Find connected VPS and send update command automatically
-      const { data: vps } = await supabase
-        .from('vps_connections')
-        .select('id')
-        .limit(1)
-        .maybeSingle();
-      
-      if (vps) {
-        // Send update command - VPS agent will stop old scripts, download new ones, and restart
-        await supabase.from('vps_commands').insert({
-          vps_id: vps.id,
-          command: 'update',
-        });
-        toast.success("Scripts uploaded and update command sent! VPS will restart with new scripts.");
-      } else {
-        toast.success("Scripts uploaded! Connect a VPS to enable auto-updates.");
+  // Auto-sync scripts to storage on page load
+  React.useEffect(() => {
+    const syncScriptsToStorage = async () => {
+      try {
+        const zip = new JSZip();
+        zip.file("campaign_runner.py", campaignRunnerPy);
+        zip.file("livechat_runner.py", livechatRunnerPy);
+        zip.file("account_runner.py", accountRunnerPy);
+        zip.file("warmup_runner.py", warmupRunnerPy);
+        zip.file("block_runner.py", blockRunnerPy);
+        zip.file("client_manager.py", clientManagerPy);
+        zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
+        
+        const blob = await zip.generateAsync({ type: "blob" });
+        
+        await supabase.storage
+          .from('python-scripts')
+          .upload('runners.zip', blob, { 
+            upsert: true,
+            contentType: 'application/zip'
+          });
+        
+        console.log('[Auto-Sync] Scripts synced to storage');
+      } catch (error) {
+        console.error('[Auto-Sync] Failed to sync scripts:', error);
       }
-    } catch (error) {
-      console.error('Upload error:', error);
-      toast.error("Failed to upload scripts");
-    } finally {
-      setUploading(false);
-    }
-  };
+    };
+    
+    syncScriptsToStorage();
+  }, [campaignRunnerPy, livechatRunnerPy, accountRunnerPy, warmupRunnerPy, blockRunnerPy, clientManagerPy, fingerprintGeneratorPy]);
 
   return (
     <DashboardLayout>
@@ -2286,31 +2302,19 @@ if __name__ == "__main__":
                 </CardContent>
               </Card>
 
-              {/* Auto-Sync Card */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-base">
-                    <Upload className="h-5 w-5 text-primary" />
-                    Auto-Sync Updates
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    Upload new scripts and they will automatically deploy to your VPS. Old scripts stop, new ones start.
-                  </p>
-                  <Button 
-                    onClick={uploadForAutoSync} 
-                    disabled={uploading}
-                    variant="outline"
-                    className="gap-2"
-                  >
-                    {uploading ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Upload className="h-4 w-4" />
-                    )}
-                    Upload & Deploy Scripts
-                  </Button>
+              {/* Auto-Sync Info */}
+              <Card className="border-blue-500/30 bg-blue-500/5">
+                <CardContent className="py-4">
+                  <div className="flex items-start gap-3">
+                    <RefreshCw className="h-5 w-5 text-blue-500 mt-0.5" />
+                    <div className="space-y-1">
+                      <p className="text-sm font-medium text-blue-600 dark:text-blue-400">Auto-Sync Enabled</p>
+                      <p className="text-xs text-muted-foreground">
+                        Scripts automatically sync to storage when you open this page. When you click "Start All" or start any runner, 
+                        the VPS fetches the latest scripts, stops old processes, and runs the new version.
+                      </p>
+                    </div>
+                  </div>
                 </CardContent>
               </Card>
             </div>
