@@ -239,7 +239,7 @@ const Accounts: React.FC = () => {
   }, [isSpamBotChecking, refreshData]);
   
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
-  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions'];
+  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
   
   useEffect(() => {
     if (!isAccountTaskRunning) return;
@@ -675,12 +675,16 @@ const Accounts: React.FC = () => {
       switch (taskType) {
         case 'Change Name':
           return 'change_name';
+        case 'Change Photo':
+          return 'change_photo';
         case 'Privacy Settings':
           return 'privacy_settings';
         case 'Change Password':
           return 'change_password';
         case 'Logout Sessions':
           return 'logout_sessions';
+        case 'Sync Profile':
+          return 'sync_profile';
         default:
           return undefined;
       }
@@ -974,6 +978,31 @@ const Accounts: React.FC = () => {
     } catch (error) {
       console.error('Error queuing logout:', error);
       toast.error('Failed to queue logout');
+    }
+  };
+
+  // Sync profile - fetches latest name, username, avatar from Telegram
+  const handleSyncProfile = async () => {
+    if (selectedIds.size === 0) return;
+    
+    try {
+      const tasks = Array.from(selectedIds).map(accountId => ({
+        account_id: accountId,
+        task_type: 'sync_profile',
+        status: 'pending',
+      }));
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasks);
+      
+      if (error) throw error;
+      
+      startAccountTaskTracking('Sync Profile', selectedIds.size);
+      toast.info(`Syncing profile for ${selectedIds.size} account(s). This will fetch latest name, username, and avatar from Telegram.`);
+    } catch (error) {
+      console.error('Error queuing sync profile:', error);
+      toast.error('Failed to queue sync profile');
     }
   };
 
@@ -1988,6 +2017,11 @@ const Accounts: React.FC = () => {
               </Badge>
               
               <Separator orientation="vertical" className="h-6" />
+              
+              <Button variant="outline" size="sm" onClick={handleSyncProfile} disabled={isAccountTaskRunning || selectedIds.size === 0} className="gap-1.5">
+                {isAccountTaskRunning && accountTasksProgress.taskType === 'Sync Profile' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                Sync Profile
+              </Button>
               
               <Button variant="outline" size="sm" onClick={handleBulkCheck} disabled={isBulkChecking || selectedIds.size === 0} className="gap-1.5">
                 {isBulkChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
