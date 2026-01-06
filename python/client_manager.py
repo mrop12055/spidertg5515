@@ -583,20 +583,37 @@ async def validate_contact(client: TelegramClient, phone: str):
         raise e
 
 
-async def disconnect_idle_clients(keep_ids: set = None):
-    """Disconnect clients not in active use"""
-    disconnected_count = 0
-    for acc_id, client in list(active_clients.items()):
-        if keep_ids and acc_id in keep_ids:
-            continue
+async def disconnect_client(account_id: str):
+    """Disconnect a single client after task completion.
+    
+    Use for campaign/warmup runners that only need temporary connections.
+    DO NOT use for live chat - those need to stay connected to receive messages.
+    """
+    if account_id in active_clients:
         try:
-            await asyncio.wait_for(client.disconnect(), timeout=5)
+            await asyncio.wait_for(active_clients[account_id].disconnect(), timeout=5)
+            print(f"  [DISCONNECT] {account_id[:8]}...")
         except:
             pass
-        del active_clients[acc_id]
-        disconnected_count += 1
-    if disconnected_count > 0:
-        print(f"[CLEANUP] Disconnected {disconnected_count} idle clients")
+        del active_clients[account_id]
+
+
+async def disconnect_batch(account_ids: list):
+    """Disconnect multiple clients after batch completion.
+    
+    Use for campaign/warmup runners after processing a batch.
+    """
+    disconnected = 0
+    for acc_id in account_ids:
+        if acc_id in active_clients:
+            try:
+                await asyncio.wait_for(active_clients[acc_id].disconnect(), timeout=5)
+            except:
+                pass
+            del active_clients[acc_id]
+            disconnected += 1
+    if disconnected > 0:
+        print(f"  [CLEANUP] Disconnected {disconnected} clients after batch")
 
 
 async def shutdown_all():

@@ -15,7 +15,7 @@ import random
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all
+    send_message, shutdown_all, disconnect_batch
 )
 
 # ========== GLOBAL STATE ==========
@@ -208,6 +208,15 @@ async def main_loop():
             
             fail_count = len(results) - success_count
             print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
+            
+            # Disconnect clients after batch (on-demand pattern)
+            # This saves memory and reduces Telegram connection count
+            batch_account_ids = list(set(
+                task.get("account", {}).get("id") 
+                for task in tasks 
+                if task.get("account", {}).get("id")
+            ))
+            await disconnect_batch(batch_account_ids)
             
             # Wait between batches
             if RUNNING and delay_after > 0:
