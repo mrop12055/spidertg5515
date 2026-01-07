@@ -31,6 +31,72 @@ CONNECTION_TIMEOUT = 30
 CONNECTION_RETRIES = 3
 RETRY_DELAY = 2
 
+# Shared HTTP clients
+# - Prevents socket exhaustion from creating a new client for every request
+# - Also surfaces real connection/SSL errors instead of silently "waiting"
+_BACKEND_HTTP: Optional[httpx.AsyncClient] = None
+_BACKEND_HTTP_LOOP = None
+
+_MEDIA_HTTP: Optional[httpx.AsyncClient] = None
+_MEDIA_HTTP_LOOP = None
+
+
+def _http_limits() -> httpx.Limits:
+    return httpx.Limits(max_connections=40, max_keepalive_connections=20, keepalive_expiry=30.0)
+
+
+async def _get_backend_http() -> httpx.AsyncClient:
+    global _BACKEND_HTTP, _BACKEND_HTTP_LOOP
+    loop = asyncio.get_running_loop()
+    if (
+        _BACKEND_HTTP is None
+        or getattr(_BACKEND_HTTP, "is_closed", False)
+        or _BACKEND_HTTP_LOOP is not loop
+    ):
+        if _BACKEND_HTTP is not None and not getattr(_BACKEND_HTTP, "is_closed", False):
+            try:
+                await _BACKEND_HTTP.aclose()
+            except Exception:
+                pass
+        _BACKEND_HTTP = httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0, connect=15.0),
+            limits=_http_limits(),
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+        )
+        _BACKEND_HTTP_LOOP = loop
+    return _BACKEND_HTTP
+
+
+async def _get_media_http() -> httpx.AsyncClient:
+    global _MEDIA_HTTP, _MEDIA_HTTP_LOOP
+    loop = asyncio.get_running_loop()
+    if _MEDIA_HTTP is None or getattr(_MEDIA_HTTP, "is_closed", False) or _MEDIA_HTTP_LOOP is not loop:
+        if _MEDIA_HTTP is not None and not getattr(_MEDIA_HTTP, "is_closed", False):
+            try:
+                await _MEDIA_HTTP.aclose()
+            except Exception:
+                pass
+        _MEDIA_HTTP = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=20.0), limits=_http_limits())
+        _MEDIA_HTTP_LOOP = loop
+    return _MEDIA_HTTP
+
+
+async def _close_http_clients():
+    global _BACKEND_HTTP, _BACKEND_HTTP_LOOP, _MEDIA_HTTP, _MEDIA_HTTP_LOOP
+    if _BACKEND_HTTP is not None and not getattr(_BACKEND_HTTP, "is_closed", False):
+        try:
+            await _BACKEND_HTTP.aclose()
+        except Exception:
+            pass
+    if _MEDIA_HTTP is not None and not getattr(_MEDIA_HTTP, "is_closed", False):
+        try:
+            await _MEDIA_HTTP.aclose()
+        except Exception:
+            pass
+    _BACKEND_HTTP = None
+    _BACKEND_HTTP_LOOP = None
+    _MEDIA_HTTP = None
+    _MEDIA_HTTP_LOOP = None
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
     """Decode base64 session data and save to temp file"""
@@ -321,48 +387,44 @@ async def _sync_profile(client: TelegramClient, account_id: str, skip_avatar: bo
 
 
 async def get_next_task(runner: str = None) -> dict:
-    """Ask backend for next task"""
+    """Ask backend for next task."""
     try:
         body = {"runner": runner} if runner else {}
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{BACKEND_URL}/get-next-task",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json=body
-            )
-            return resp.json()
+        http = await _get_backend_http()
+        resp = await http.post(f"{BACKEND_URL}/get-next-task", json=body)
+        return resp.json()
     except Exception as e:
-        return {"task": "wait", "seconds": 1}
+        # IMPORTANT: Surface errors (SSL/time/firewall) instead of silently returning "wait"
+        print(f"  [BACKEND ERROR] get-next-task: {type(e).__name__}: {e}")
+        return {"task": "wait", "seconds": 3, "reason": f"backend_error:{type(e).__name__}"}
 
 
 async def get_batch_tasks(runner: str = None) -> dict:
-    """Ask backend for batch of tasks - server controls batch size"""
+    """Ask backend for batch of tasks - server controls batch size."""
     try:
-        body = {}
-        if runner:
-            body["runner"] = runner
-        async with httpx.AsyncClient(timeout=20) as client:
-            resp = await client.post(
-                f"{BACKEND_URL}/get-batch-tasks",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json=body
-            )
-            return resp.json()
+        body = {"runner": runner} if runner else {}
+        http = await _get_backend_http()
+        resp = await http.post(f"{BACKEND_URL}/get-batch-tasks", json=body)
+        return resp.json()
     except Exception as e:
-        return {"tasks": [], "delay_after": 7}
+        print(f"  [BACKEND ERROR] get-batch-tasks: {type(e).__name__}: {e}")
+        return {
+            "tasks": [],
+            "delay_after": 7,
+            "reason": f"Backend unreachable ({type(e).__name__})",
+        }
 
 
 async def report_result(task_type: str, result: dict):
-    """Report task result to backend"""
+    """Report task result to backend."""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(
-                f"{BACKEND_URL}/report-task-result",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json={"task_type": task_type, "result": result}
-            )
+        http = await _get_backend_http()
+        await http.post(
+            f"{BACKEND_URL}/report-task-result",
+            json={"task_type": task_type, "result": result},
+        )
     except Exception as e:
-        print(f"  [WARN] Failed to report result: {e}")
+        print(f"  [WARN] Failed to report result: {type(e).__name__}: {e}")
 
 
 async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
@@ -458,9 +520,9 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
         if media_url:
             try:
                 import io
-                async with httpx.AsyncClient(timeout=30) as http:
-                    media_resp = await http.get(media_url)
-                    if media_resp.status_code == 200:
+                http = await _get_media_http()
+                media_resp = await http.get(media_url)
+                if media_resp.status_code == 200:
                         from urllib.parse import urlparse, unquote
                         url_path = urlparse(media_url).path
                         filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
