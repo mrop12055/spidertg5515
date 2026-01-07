@@ -277,12 +277,12 @@ const handleDeleteSeat = async (seatId: string) => {
           </Card>
         </div>
 
-        {/* Seats Table */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
+        {/* Seats Grid */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
             <div>
-              <CardTitle>Worker Seats</CardTitle>
-              <CardDescription>Share seat links with your workers for chat operations</CardDescription>
+              <h2 className="text-xl font-semibold">Worker Seats</h2>
+              <p className="text-sm text-muted-foreground">Share seat links with your workers for chat operations</p>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={fetchSeats}>
@@ -326,16 +326,19 @@ const handleDeleteSeat = async (seatId: string) => {
                 </DialogContent>
               </Dialog>
             </div>
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : seats.length === 0 ? (
-              <div className="text-center py-8">
-                <Users className="w-12 h-12 mx-auto text-muted-foreground/50 mb-4" />
-                <p className="text-lg font-medium">No seats created yet</p>
+          </div>
+
+          {isLoading ? (
+            <div className="flex items-center justify-center py-12">
+              <RefreshCw className="w-8 h-8 animate-spin text-muted-foreground" />
+            </div>
+          ) : seats.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="flex flex-col items-center justify-center py-12">
+                <div className="w-16 h-16 rounded-full bg-muted flex items-center justify-center mb-4">
+                  <Users className="w-8 h-8 text-muted-foreground" />
+                </div>
+                <p className="text-lg font-medium mb-1">No seats created yet</p>
                 <p className="text-sm text-muted-foreground mb-4">
                   Create your first seat to share with workers
                 </p>
@@ -343,95 +346,127 @@ const handleDeleteSeat = async (seatId: string) => {
                   <Plus className="w-4 h-4 mr-2" />
                   Create First Seat
                 </Button>
-              </div>
-            ) : (
-              <ScrollArea className="h-[400px]">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Conversations</TableHead>
-                      <TableHead>Sent Today</TableHead>
-                      <TableHead>Responses</TableHead>
-                      <TableHead>Created</TableHead>
-                      <TableHead className="text-right">Actions</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {seats.map((seat) => {
-                      const stats = seatStats.get(seat.id);
-                      return (
-                        <TableRow key={seat.id}>
-                          <TableCell className="font-medium">{seat.name}</TableCell>
-                          <TableCell>
-                            <div className="flex items-center gap-2">
-                              <Switch
-                                checked={seat.is_active}
-                                onCheckedChange={() => handleToggleActive(seat)}
-                              />
-                              <Badge variant={seat.is_active ? "default" : "secondary"}>
-                                {seat.is_active ? 'Active' : 'Inactive'}
-                              </Badge>
-                            </div>
-                          </TableCell>
-                          <TableCell>{stats?.total_conversations || 0}</TableCell>
-                          <TableCell>{stats?.messages_sent_today || 0}</TableCell>
-                          <TableCell>{stats?.responses_received || 0}</TableCell>
-                          <TableCell className="text-muted-foreground text-sm">
-                            {format(new Date(seat.created_at), 'MMM d, yyyy')}
-                          </TableCell>
-                          <TableCell className="text-right">
-                            <div className="flex items-center justify-end gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => copyToClipboard(getSeatLink(seat), seat.id)}
-                                title="Copy link"
-                              >
-                                {copiedToken === seat.id ? (
-                                  <CheckCircle className="w-4 h-4 text-green-500" />
-                                ) : (
-                                  <Copy className="w-4 h-4" />
-                                )}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => openSeatPreview(seat)}
-                                title="Open in new tab"
-                              >
-                                <ExternalLink className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleResetLink(seat)}
-                                className="text-orange-500 hover:text-orange-600"
-                                title="Reset link"
-                              >
-                                <RotateCcw className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleDeleteSeat(seat.id)}
-                                className="text-destructive hover:text-destructive"
-                                title="Delete seat"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
-                            </div>
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </ScrollArea>
-            )}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {seats.map((seat) => {
+                const stats = seatStats.get(seat.id);
+                return (
+                  <Card 
+                    key={seat.id} 
+                    className={`relative overflow-hidden transition-all hover:shadow-lg ${
+                      seat.is_active 
+                        ? 'border-primary/30 bg-gradient-to-br from-primary/5 to-transparent' 
+                        : 'opacity-60'
+                    }`}
+                  >
+                    {/* Status indicator bar */}
+                    <div className={`absolute top-0 left-0 right-0 h-1 ${
+                      seat.is_active ? 'bg-gradient-to-r from-green-500 to-emerald-400' : 'bg-muted'
+                    }`} />
+                    
+                    <CardContent className="pt-6">
+                      {/* Header */}
+                      <div className="flex items-start justify-between mb-4">
+                        <div className="flex items-center gap-3">
+                          <div className={`w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold ${
+                            seat.is_active 
+                              ? 'bg-gradient-to-br from-primary to-primary/70 text-primary-foreground' 
+                              : 'bg-muted text-muted-foreground'
+                          }`}>
+                            {seat.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <h3 className="font-semibold text-lg">{seat.name}</h3>
+                            <p className="text-xs text-muted-foreground">
+                              Created {format(new Date(seat.created_at), 'MMM d, yyyy')}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Switch
+                            checked={seat.is_active}
+                            onCheckedChange={() => handleToggleActive(seat)}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Stats Grid */}
+                      <div className="grid grid-cols-3 gap-2 mb-4">
+                        <div className="bg-muted/50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-bold">{stats?.total_conversations || 0}</p>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Chats</p>
+                        </div>
+                        <div className="bg-muted/50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-bold">{stats?.messages_sent_today || 0}</p>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Sent</p>
+                        </div>
+                        <div className="bg-muted/50 rounded-lg p-3 text-center">
+                          <p className="text-lg font-bold">{stats?.responses_received || 0}</p>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Replies</p>
+                        </div>
+                      </div>
+
+                      {/* Link section */}
+                      <div className="bg-muted/30 rounded-lg p-3 mb-4">
+                        <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-2">Seat Link</p>
+                        <div className="flex items-center gap-2">
+                          <code className="flex-1 text-xs bg-background rounded px-2 py-1.5 truncate border">
+                            {getSeatLink(seat)}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0"
+                            onClick={() => copyToClipboard(getSeatLink(seat), seat.id)}
+                          >
+                            {copiedToken === seat.id ? (
+                              <CheckCircle className="w-4 h-4 text-green-500" />
+                            ) : (
+                              <Copy className="w-4 h-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => openSeatPreview(seat)}
+                        >
+                          <ExternalLink className="w-4 h-4 mr-2" />
+                          Open
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
+                          onClick={() => handleResetLink(seat)}
+                          title="Reset link"
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10"
+                          onClick={() => handleDeleteSeat(seat.id)}
+                          title="Delete seat"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* How it works */}
         <Card>
