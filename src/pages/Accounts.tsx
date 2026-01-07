@@ -150,6 +150,7 @@ const Accounts: React.FC = () => {
   // Tags state
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string>('all');
+  const [proxyFilter, setProxyFilter] = useState<string>('all'); // 'all' | 'with_proxy' | 'without_proxy'
   const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [selectedTagsForBulk, setSelectedTagsForBulk] = useState<string[]>([]);
@@ -1067,11 +1068,36 @@ const Accounts: React.FC = () => {
         );
         toast.success(`Assigned proxy to ${selectedAccountIds.length} account(s)`);
       } else {
-        // Auto-rotate: pre-calculate assignments, then parallel update
-        const assignments = selectedAccountIds.map((accountId, index) => {
-          const proxyIndex = Math.floor(index / ratio) % activeProxies.length;
-          return { accountId, proxyId: activeProxies[proxyIndex].id };
+        // Auto-rotate: prioritize proxies with fewer connected accounts (load balancing)
+        // Count current connections for each proxy
+        const proxyUsageCount = new Map<string, number>();
+        activeProxies.forEach(p => {
+          const count = accounts.filter(a => a.proxyId === p.id).length;
+          proxyUsageCount.set(p.id, count);
         });
+        
+        // Sort proxies by usage count (least used first)
+        const sortedProxies = [...activeProxies].sort((a, b) => 
+          (proxyUsageCount.get(a.id) || 0) - (proxyUsageCount.get(b.id) || 0)
+        );
+        
+        // Assign accounts to proxies, maintaining the ratio and prioritizing least used
+        const assignments: { accountId: string; proxyId: string }[] = [];
+        const tempUsageCount = new Map(proxyUsageCount);
+        
+        for (const accountId of selectedAccountIds) {
+          // Re-sort based on current temp usage to always pick least used
+          sortedProxies.sort((a, b) => 
+            (tempUsageCount.get(a.id) || 0) - (tempUsageCount.get(b.id) || 0)
+          );
+          
+          // Pick the proxy with least connections
+          const targetProxy = sortedProxies[0];
+          assignments.push({ accountId, proxyId: targetProxy.id });
+          
+          // Update temp count
+          tempUsageCount.set(targetProxy.id, (tempUsageCount.get(targetProxy.id) || 0) + 1);
+        }
         
         await Promise.all(
           assignments.map(({ accountId, proxyId }) =>
@@ -1083,7 +1109,7 @@ const Accounts: React.FC = () => {
         );
         
         const uniqueProxiesUsed = new Set(assignments.map(a => a.proxyId)).size;
-        toast.success(`Auto-assigned ${uniqueProxiesUsed} proxy(s) to ${selectedAccountIds.length} account(s)`);
+        toast.success(`Auto-assigned ${uniqueProxiesUsed} proxy(s) to ${selectedAccountIds.length} account(s) (least-used first)`);
       }
       
       setIsBulkProxyOpen(false);
@@ -1417,7 +1443,12 @@ const Accounts: React.FC = () => {
     
     const matchesTag = tagFilter === 'all' || (acc.tags || []).includes(tagFilter);
     
-    return matchesSearch && matchesStatus && matchesTag;
+    const matchesProxy = 
+      proxyFilter === 'all' || 
+      (proxyFilter === 'with_proxy' && acc.proxyId) ||
+      (proxyFilter === 'without_proxy' && !acc.proxyId);
+    
+    return matchesSearch && matchesStatus && matchesTag && matchesProxy;
   });
 
   // Split accounts by status
@@ -2392,6 +2423,29 @@ const Accounts: React.FC = () => {
               </SelectContent>
             </Select>
           )}
+          
+          {/* Proxy Filter */}
+          <Select value={proxyFilter} onValueChange={setProxyFilter}>
+            <SelectTrigger className="w-44 h-9">
+              <Globe className="w-4 h-4 mr-2" />
+              <SelectValue placeholder="Proxy" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Accounts</SelectItem>
+              <SelectItem value="with_proxy">
+                <span className="flex items-center gap-2">
+                  <Link2 className="w-3 h-3 text-green-500" />
+                  With Proxy
+                </span>
+              </SelectItem>
+              <SelectItem value="without_proxy">
+                <span className="flex items-center gap-2">
+                  <Unlink className="w-3 h-3 text-red-500" />
+                  Without Proxy
+                </span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
         </div>
 
         {/* Account Tabs */}
