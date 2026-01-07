@@ -1484,7 +1484,7 @@ async def main_loop():
     
     while RUNNING:
         try:
-            batch_result = await get_batch_tasks(runner="warmup", batch_size=50)
+            batch_result = await get_batch_tasks(runner="warmup_chat", batch_size=50)
             tasks = batch_result.get("tasks", [])
             delay_after = batch_result.get("delay_after", POLL_INTERVAL)
             
@@ -2264,7 +2264,7 @@ if __name__ == "__main__":
                     <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + validation</li>
                     <li><code className="text-purple-500">livechat_runner.py</code> - Incoming messages + replies</li>
                     <li><code className="text-yellow-500">account_runner.py</code> - SpamBot, name, photo, privacy, import</li>
-                    <li><code className="text-orange-500">warmup_runner.py</code> - Join channels, view, react, bio</li>
+                    <li><code className="text-orange-500">warmup_runner.py</code> - Warmup chat (pairs) + join/view/react/bio</li>
                     <li><code className="text-red-500">block_runner.py</code> - Block/unblock contacts</li>
                     <li><code>config.py</code> - Backend settings</li>
                     <li><code>client_manager.py</code> - Shared Telegram logic</li>
