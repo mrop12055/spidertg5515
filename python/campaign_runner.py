@@ -96,9 +96,14 @@ async def process_single_task(task: dict) -> dict:
             success, error, meta = False, f"Unexpected send_message return: {type(send_res)}", None
         
         # Check if this is a sender-side issue (should retry with different account)
+        # Includes: privacy restrictions, rate limits, AND proxy errors
         is_sender_error = error and any(x in error.lower() for x in [
             "privacyrestricted", "privacy restricted", "userprivacyrestricted",
-            "too many requests", "sendmessagerequest"
+            "too many requests", "sendmessagerequest",
+            # Proxy/network errors - retry with different account that has working proxy
+            "winerror 64", "winerror 121", "network name", "no longer available",
+            "server closed", "connection refused", "proxy", "socks",
+            "timeout", "unreachable", "connection reset", "semaphore"
         ])
         
         # Get API credential ID

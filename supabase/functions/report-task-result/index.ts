@@ -333,7 +333,18 @@ serve(async (req) => {
             'privacy',           // Recipient has privacy settings blocking THIS account
             'privacy restricted', // Recipient blocked messages from THIS unknown user
             'too many requests', // Rate limit on THIS account - try another (applies 12h restriction to account)
-            'sendmessagerequest' // Rate limit error from SendMessageRequest
+            'sendmessagerequest', // Rate limit error from SendMessageRequest
+            // Proxy/network errors - the proxy is dead, retry with different account that has working proxy
+            'winerror 64',       // Network name no longer available (proxy died)
+            'winerror 121',      // Semaphore timeout (proxy slow/dead)
+            'network name',      // Network name error
+            'server closed',     // Server closed connection
+            'connection refused', // Proxy refusing connections
+            'connection reset',  // Connection reset by peer
+            'proxy',             // Generic proxy error
+            'socks',             // SOCKS proxy error
+            'unreachable',       // Network unreachable
+            'semaphore',         // Semaphore timeout
           ];
           
           const MAX_ACCOUNT_RETRIES = 5;  // Try up to 5 different accounts
@@ -428,13 +439,77 @@ serve(async (req) => {
             }
           } else if (isRetryable && campaign_recipient_id && account_id) {
             // RETRYABLE ERROR - try with a different account (up to 5 attempts)
-            // Includes: privacy restricted, too many requests (rate limit)
+            // Includes: privacy restricted, too many requests (rate limit), AND proxy/network errors
             // Takes priority over temporary restriction since "privacy restricted" contains "restricted"
             
-            // Check if this is a "too many requests" error - apply 12h restriction to the account
+            // Check if this is a rate-limit error - apply 12h restriction to the account
             const isTooManyRequests = errorLower.includes('too many requests') || errorLower.includes('sendmessagerequest');
             
-            if (isTooManyRequests) {
+            // Check if this is a proxy/network error - mark proxy as failed and try to reassign account
+            const isProxyError = [
+              'winerror 64', 'winerror 121', 'network name', 'server closed',
+              'connection refused', 'connection reset', 'proxy', 'socks', 'unreachable', 'semaphore'
+            ].some(err => errorLower.includes(err));
+            
+            if (isProxyError) {
+              // Mark the proxy as error and try to reassign account to a working proxy
+              console.log(`[report-task-result] Account ${account_id} PROXY ERROR - will retry with different account: ${error}`);
+              
+              // Get the account's current proxy
+              const { data: accountData } = await supabase
+                .from("telegram_accounts")
+                .select("proxy_id, proxies(id, host, port)")
+                .eq("id", account_id)
+                .single();
+              
+              if (accountData?.proxy_id) {
+                // Mark current proxy as error
+                await supabase
+                  .from("proxies")
+                  .update({ 
+                    status: "error",
+                    last_checked: new Date().toISOString()
+                  })
+                  .eq("id", accountData.proxy_id);
+                
+                console.log(`[report-task-result] Marked proxy ${accountData.proxy_id} as error`);
+                
+                // Try to find a working proxy and reassign the account
+                const { data: workingProxies } = await supabase
+                  .from("proxies")
+                  .select("id")
+                  .eq("status", "active")
+                  .neq("id", accountData.proxy_id)
+                  .limit(1);
+                
+                if (workingProxies && workingProxies.length > 0) {
+                  // Reassign account to a working proxy
+                  await supabase
+                    .from("telegram_accounts")
+                    .update({ 
+                      proxy_id: workingProxies[0].id,
+                      status: "active", // Keep active so it can be used again
+                      disabled_reason: null,
+                      geo_mismatch: false
+                    })
+                    .eq("id", account_id);
+                  
+                  console.log(`[report-task-result] Reassigned account ${account_id} to working proxy ${workingProxies[0].id}`);
+                } else {
+                  // No working proxies - mark account as disconnected
+                  await supabase
+                    .from("telegram_accounts")
+                    .update({ 
+                      status: "disconnected",
+                      disabled_reason: `Proxy error: ${error}`,
+                      geo_mismatch: true
+                    })
+                    .eq("id", account_id);
+                  
+                  console.log(`[report-task-result] No working proxies available - account ${account_id} disconnected`);
+                }
+              }
+            } else if (isTooManyRequests) {
               // Apply 12h restriction to the account but still retry with different account
               console.log(`[report-task-result] Account ${account_id} hit rate limit (Too many requests) - applying 12h restriction and retrying with different account`);
               
