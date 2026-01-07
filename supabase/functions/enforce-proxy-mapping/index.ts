@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "npm:@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -86,7 +86,7 @@ serve(async (req) => {
     const shuffledProxies = [...proxies].sort(() => Math.random() - 0.5);
     
     // Step 4: Create distribution map - which proxies get extra accounts
-    const proxyDistribution: { proxy: typeof proxies[0]; targetCount: number }[] = shuffledProxies.map((proxy, index) => ({
+    const proxyDistribution = shuffledProxies.map((proxy, index) => ({
       proxy,
       targetCount: baseAccountsPerProxy + (index < extraAccounts ? 1 : 0),
     }));
