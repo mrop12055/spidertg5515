@@ -914,6 +914,38 @@ export type Database = {
           },
         ]
       }
+      proxy_errors: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          error_type: string | null
+          id: string
+          proxy_id: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          error_type?: string | null
+          id?: string
+          proxy_id: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          error_type?: string | null
+          id?: string
+          proxy_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "proxy_errors_proxy_id_fkey"
+            columns: ["proxy_id"]
+            isOneToOne: false
+            referencedRelation: "proxies"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       runner_heartbeats: {
         Row: {
           created_at: string

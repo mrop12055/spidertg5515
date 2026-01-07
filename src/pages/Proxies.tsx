@@ -118,6 +118,33 @@ const Proxies: React.FC = () => {
   const [autoHealthCheck, setAutoHealthCheck] = useState(false);
   const [healthCheckInterval, setHealthCheckInterval] = useState(30); // minutes
   const [lastHealthCheck, setLastHealthCheck] = useState<Date | null>(null);
+  
+  // Today's errors per proxy
+  const [proxyErrors, setProxyErrors] = useState<Map<string, number>>(new Map());
+  
+  // Fetch proxy errors for today
+  useEffect(() => {
+    const fetchProxyErrors = async () => {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const { data, error } = await supabase
+        .from('proxy_errors')
+        .select('proxy_id')
+        .gte('created_at', today.toISOString());
+      
+      if (!error && data) {
+        const errorCounts = new Map<string, number>();
+        data.forEach(row => {
+          const count = errorCounts.get(row.proxy_id) || 0;
+          errorCounts.set(row.proxy_id, count + 1);
+        });
+        setProxyErrors(errorCounts);
+      }
+    };
+    
+    fetchProxyErrors();
+  }, [proxies]);
 
   // Load settings from localStorage
   useEffect(() => {
@@ -1033,6 +1060,7 @@ const Proxies: React.FC = () => {
             const accountsUsing = getAccountsUsingProxy(proxy.id);
             const proxyCountry = proxy.country;
             const isCredentialsVisible = showCredentials.has(proxy.id);
+            const todayErrors = proxyErrors.get(proxy.id) || 0;
             
             return (
               <Card 
@@ -1125,13 +1153,27 @@ const Proxies: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Accounts Using */}
-                    {accountsUsing.length > 0 && (
-                      <div className="text-center px-3 py-1 bg-secondary/50 rounded-lg">
-                        <div className="font-medium">{accountsUsing.length}</div>
-                        <div className="text-xs text-muted-foreground">Accounts</div>
+                    {/* Today's Errors */}
+                    <div className={cn(
+                      "text-center px-3 py-1 rounded-lg",
+                      todayErrors === 0 ? "bg-green-500/10" : "bg-destructive/10"
+                    )}>
+                      <div className={cn(
+                        "font-medium",
+                        todayErrors === 0 ? "text-green-600" : "text-destructive"
+                      )}>
+                        {todayErrors === 0 ? '✓' : todayErrors}
                       </div>
-                    )}
+                      <div className="text-xs text-muted-foreground">
+                        {todayErrors === 0 ? 'Healthy' : 'Errors'}
+                      </div>
+                    </div>
+
+                    {/* Accounts Using */}
+                    <div className="text-center px-3 py-1 bg-secondary/50 rounded-lg">
+                      <div className="font-medium">{accountsUsing.length}</div>
+                      <div className="text-xs text-muted-foreground">Accounts</div>
+                    </div>
 
                     {/* Status Select */}
                     <Select
