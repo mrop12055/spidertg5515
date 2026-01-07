@@ -1655,8 +1655,17 @@ const Accounts: React.FC = () => {
               </span>
             )}
             
-            {/* Restricted Badge - Rate limited (24h cooldown) or has active restrictedUntil */}
-            {(account.status === 'restricted' || (account.restrictedUntil && (account.restrictedUntil instanceof Date ? account.restrictedUntil.getTime() : new Date(account.restrictedUntil).getTime()) > Date.now())) && (
+            {/* Frozen Badge - Account frozen by Telegram */}
+            {account.status === 'frozen' && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-500 text-white text-[10px] font-semibold">
+                <AlertTriangle className="w-3 h-3" />
+                FROZEN
+              </span>
+            )}
+            
+            {/* Restricted Badge - Rate limited (24h cooldown) or has active restrictedUntil - but NOT for frozen/banned/disconnected */}
+            {account.status !== 'frozen' && account.status !== 'banned' && account.status !== 'disconnected' && 
+             (account.status === 'restricted' || (account.restrictedUntil && (account.restrictedUntil instanceof Date ? account.restrictedUntil.getTime() : new Date(account.restrictedUntil).getTime()) > Date.now())) && (
               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-restricted text-white text-[10px] font-semibold">
                 <AlertTriangle className="w-3 h-3" />
                 RESTRICTED
