@@ -121,6 +121,7 @@ const Campaigns: React.FC = () => {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [contactTags, setContactTags] = useState<ContactTag[]>([]);
   const [selectedTagFilter, setSelectedTagFilter] = useState<string>('all');
+  const [selectedAccountTagFilter, setSelectedAccountTagFilter] = useState<string>('all');
   
   // Bulk messaging settings - synced with database via useAppSettings
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
@@ -1159,12 +1160,49 @@ username123
                 </TabsContent>
                 
                 <TabsContent value="accounts" className="space-y-4 mt-4">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <Label>Select Accounts ({newCampaign.accountIds.length} selected)</Label>
                     <Button variant="outline" size="sm" onClick={distributeAccounts}>
                       Auto-Distribute
                     </Button>
                   </div>
+                  
+                  {/* Account Tag Filter */}
+                  {(() => {
+                    // Get unique tags from all eligible accounts
+                    const allAccountTags = new Set<string>();
+                    warmedUpAccounts.forEach(acc => {
+                      if (acc.tags && acc.tags.length > 0) {
+                        acc.tags.forEach(tag => allAccountTags.add(tag));
+                      }
+                    });
+                    const accountTagsList = Array.from(allAccountTags).sort();
+                    
+                    return accountTagsList.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        <Badge
+                          variant={selectedAccountTagFilter === 'all' ? 'default' : 'outline'}
+                          className="cursor-pointer text-xs"
+                          onClick={() => setSelectedAccountTagFilter('all')}
+                        >
+                          All ({warmedUpAccounts.length})
+                        </Badge>
+                        {accountTagsList.map(tag => {
+                          const count = warmedUpAccounts.filter(a => a.tags?.includes(tag)).length;
+                          return (
+                            <Badge
+                              key={tag}
+                              variant={selectedAccountTagFilter === tag ? 'default' : 'outline'}
+                              className="cursor-pointer text-xs"
+                              onClick={() => setSelectedAccountTagFilter(tag)}
+                            >
+                              {tag} ({count})
+                            </Badge>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
                   
                   {warmedUpAccounts.length === 0 ? (
                     <div className="p-8 text-center text-muted-foreground border rounded-lg">
@@ -1173,39 +1211,63 @@ username123
                     </div>
                   ) : (
                     <div className="max-h-60 overflow-y-auto space-y-2 p-2 border rounded-lg bg-accent/30">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Checkbox
-                          checked={newCampaign.accountIds.length === warmedUpAccounts.length && warmedUpAccounts.length > 0}
-                          onCheckedChange={(checked) => {
-                            if (checked) {
-                              setNewCampaign(prev => ({ ...prev, accountIds: warmedUpAccounts.map(a => a.id) }));
-                            } else {
-                              setNewCampaign(prev => ({ ...prev, accountIds: [] }));
-                            }
-                          }}
-                        />
-                        <label className="text-sm font-medium">Select All Active ({warmedUpAccounts.length})</label>
-                      </div>
-                      {warmedUpAccounts.map(account => {
-                        const daysSinceCreation = Math.floor((now.getTime() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24));
-                        const uniqueRecipientsToday = accountUniqueRecipients.get(account.id) || 0;
+                      {(() => {
+                        const filteredAccounts = selectedAccountTagFilter === 'all' 
+                          ? warmedUpAccounts 
+                          : warmedUpAccounts.filter(a => a.tags?.includes(selectedAccountTagFilter));
+                        
                         return (
-                          <div key={account.id} className="flex items-center gap-2">
-                            <Checkbox
-                              id={account.id}
-                              checked={newCampaign.accountIds.includes(account.id)}
-                              onCheckedChange={() => handleAccountToggle(account.id)}
-                            />
-                            <label htmlFor={account.id} className="text-sm cursor-pointer flex-1">
-                              {account.firstName || account.phoneNumber} 
-                              <span className="text-muted-foreground ml-1">
-                                ({account.phoneNumber}) - {uniqueRecipientsToday}/{account.dailyLimit} recipients today • {daysSinceCreation}d old
-                              </span>
-                            </label>
-                          </div>
+                          <>
+                            <div className="flex items-center gap-2 mb-2">
+                              <Checkbox
+                                checked={filteredAccounts.length > 0 && filteredAccounts.every(a => newCampaign.accountIds.includes(a.id))}
+                                onCheckedChange={(checked) => {
+                                  if (checked) {
+                                    // Add all filtered accounts to selection
+                                    const filteredIds = filteredAccounts.map(a => a.id);
+                                    setNewCampaign(prev => ({
+                                      ...prev,
+                                      accountIds: [...new Set([...prev.accountIds, ...filteredIds])]
+                                    }));
+                                  } else {
+                                    // Remove all filtered accounts from selection
+                                    const filteredIds = new Set(filteredAccounts.map(a => a.id));
+                                    setNewCampaign(prev => ({
+                                      ...prev,
+                                      accountIds: prev.accountIds.filter(id => !filteredIds.has(id))
+                                    }));
+                                  }
+                                }}
+                              />
+                              <label className="text-sm font-medium">
+                                Select All {selectedAccountTagFilter !== 'all' ? `"${selectedAccountTagFilter}"` : 'Active'} ({filteredAccounts.length})
+                              </label>
+                            </div>
+                            {filteredAccounts.map(account => {
+                              const daysSinceCreation = Math.floor((now.getTime() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24));
+                              const uniqueRecipientsToday = accountUniqueRecipients.get(account.id) || 0;
+                              return (
+                                <div key={account.id} className="flex items-center gap-2">
+                                  <Checkbox
+                                    id={account.id}
+                                    checked={newCampaign.accountIds.includes(account.id)}
+                                    onCheckedChange={() => handleAccountToggle(account.id)}
+                                  />
+                                  <label htmlFor={account.id} className="text-sm cursor-pointer flex-1">
+                                    {account.firstName || account.phoneNumber} 
+                                    <span className="text-muted-foreground ml-1">
+                                      ({account.phoneNumber}) - {uniqueRecipientsToday}/{account.dailyLimit} today • {daysSinceCreation}d
+                                      {account.tags && account.tags.length > 0 && (
+                                        <span className="ml-1 text-primary/70">• {account.tags.join(', ')}</span>
+                                      )}
+                                    </span>
+                                  </label>
+                                </div>
+                              );
+                            })}
+                          </>
                         );
-                      })}
-                      
+                      })()}
                     </div>
                   )}
 
