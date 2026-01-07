@@ -47,7 +47,12 @@ serve(async (req) => {
 
     // Dynamic batch sizes from settings
     let warmupBatchSize = 100; // Default for warmup
-    let campaignBatchSize = 50; // Default for campaign (will be overridden per-campaign)
+    let campaignBatchSize = 100; // Default for campaign
+    
+    // Campaign speed settings (server-controlled)
+    let campaignStaggerMin = 0.3;
+    let campaignStaggerMax = 1.5;
+    let campaignPollingInterval = 3;
 
     if (settingsData) {
       for (const setting of settingsData) {
@@ -60,6 +65,12 @@ serve(async (req) => {
         } else if (setting.key === "warmup_batch_size" && value) {
           // Read warmup batch size from app_settings
           warmupBatchSize = (value.batchSize as number) || warmupBatchSize;
+        } else if (setting.key === "campaign_speed" && value) {
+          // Campaign speed settings
+          campaignStaggerMin = (value.staggerMin as number) ?? campaignStaggerMin;
+          campaignStaggerMax = (value.staggerMax as number) ?? campaignStaggerMax;
+          campaignPollingInterval = (value.pollingInterval as number) ?? campaignPollingInterval;
+          campaignBatchSize = (value.batchSize as number) ?? campaignBatchSize;
         }
       }
     }
@@ -326,17 +337,25 @@ serve(async (req) => {
       if (!runningCampaigns || runningCampaigns.length === 0) {
         return new Response(JSON.stringify({
           tasks: [],
-          delay_after: 5,
+          delay_after: campaignPollingInterval,
+          stagger_min: campaignStaggerMin,
+          stagger_max: campaignStaggerMax,
           reason: "No running campaigns"
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // Use the max batch_size from running campaigns (or default 50)
-      const maxCampaignBatchSize = Math.max(...runningCampaigns.map(c => c.batch_size || 50));
-      const actualBatchSize = Math.min(maxCampaignBatchSize, usableAccounts.length);
-      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (from campaigns: ${maxCampaignBatchSize})`);
+      // Use campaignBatchSize from settings, limited by available accounts
+      const actualBatchSize = Math.min(campaignBatchSize, usableAccounts.length);
+      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (from settings: ${campaignBatchSize})`);
+
+      // Count total pending recipients to determine if immediate repoll needed
+      const { count: pendingCount } = await supabase
+        .from("campaign_recipients")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending")
+        .in("campaign_id", runningCampaigns.map(c => c.id));
 
       // Get pending recipients from running campaigns (include unassigned ones too)
       const { data: pendingRecipients } = await supabase
@@ -424,6 +443,23 @@ serve(async (req) => {
           console.log(`[get-batch-tasks] Added task for ${recipient.phone_number} via ${account.phone_number}`);
         }
       }
+      
+      // Calculate if more tasks are pending (for immediate repoll)
+      const morePending = (pendingCount || 0) > tasks.length;
+      const delayAfter = morePending && tasks.length > 0 ? 0 : campaignPollingInterval;
+      
+      console.log(`[get-batch-tasks] Campaign returning ${tasks.length} tasks, more pending: ${morePending}, delay: ${delayAfter}s`);
+      
+      return new Response(JSON.stringify({
+        tasks,
+        delay_after: delayAfter,
+        stagger_min: campaignStaggerMin,
+        stagger_max: campaignStaggerMax,
+        more_pending: morePending,
+        accounts_available: usableAccounts.length,
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // LIVECHAT RUNNER: Get pending outgoing messages

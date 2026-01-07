@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-TelegramCRM - Campaign Runner (Server-Controlled)
-===================================================
-Simple task executor - all settings controlled by admin side.
+TelegramCRM - Campaign Runner (Server-Controlled Speed)
+=========================================================
+All speed settings controlled by admin dashboard.
 
-- Polls server every 7 seconds for batch of tasks
+- Polls server for batch of tasks
+- Speed settings (stagger, polling) controlled by server
 - Executes ALL tasks in parallel
 - Reports results back to server
-- Server controls: batch size (polling interval is fixed at 7s)
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
@@ -19,12 +19,12 @@ import random
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all, disconnect_batch
+    send_message, shutdown_all
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-POLL_INTERVAL = 7  # Poll server every 7 seconds
+DEFAULT_POLL_INTERVAL = 3  # Default polling (server can override)
 
 
 def signal_handler(sig, frame):
@@ -38,7 +38,7 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def process_single_task(task: dict) -> dict:
+async def process_single_task(task: dict, stagger_min: float, stagger_max: float) -> dict:
     """Process a single campaign send task.
     
     IMPORTANT: This function is fully isolated - any exception here
@@ -77,8 +77,8 @@ async def process_single_task(task: dict) -> dict:
             print(f"    ✗ [{account_phone}] No client")
             return result
         
-        # Add small random delay to stagger sends (human-like)
-        stagger_delay = random.uniform(0.5, 3)
+        # Server-controlled stagger delay
+        stagger_delay = random.uniform(stagger_min, stagger_max)
         await asyncio.sleep(stagger_delay)
         
         print(f"  📨 [{account_phone}] → {recipient}")
@@ -144,22 +144,21 @@ async def process_single_task(task: dict) -> dict:
 
 
 async def main_loop():
-    """Main campaign loop - Server-controlled batch processing
+    """Main campaign loop - Server-controlled speed settings
     
     Simple loop:
-    1. Request tasks from server (server decides batch size)
-    2. Execute ALL tasks in parallel
+    1. Request tasks from server (server decides batch size + speed)
+    2. Execute ALL tasks in parallel with server-controlled stagger
     3. Report ALL results
-    4. Wait delay_after seconds (server-controlled)
+    4. Wait delay_after seconds (server-controlled, can be 0)
     5. Repeat
     """
     global RUNNING
     
     print("=" * 60)
-    print("  TelegramCRM - Campaign Runner (Server-Controlled)")
+    print("  TelegramCRM - Campaign Runner (Server-Controlled Speed)")
     print("=" * 60)
-    print(f"  📨 Polling server every {POLL_INTERVAL} seconds")
-    print("  🔧 All settings controlled by admin dashboard")
+    print("  🚀 Speed settings from admin dashboard")
     print("  ♾️  RUNS FOREVER - auto-restarts on errors")
     print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
@@ -172,10 +171,12 @@ async def main_loop():
             # Request batch of tasks from server
             batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
-
-            # NOTE: We intentionally poll on a fixed interval (7s) so the runner
-            # always re-checks for new campaign work quickly.
-            # (delay_after from backend is treated as advisory and ignored here)
+            
+            # Get server-controlled speed settings
+            stagger_min = batch_result.get("stagger_min", 0.3)
+            stagger_max = batch_result.get("stagger_max", 1.5)
+            delay_after = batch_result.get("delay_after", DEFAULT_POLL_INTERVAL)
+            more_pending = batch_result.get("more_pending", False)
 
             # Check for stop signal from server
             if batch_result.get("stop_signal"):
@@ -192,18 +193,18 @@ async def main_loop():
                         print(f"  ⏳ {reason}")
                     else:
                         print("  ⏳ No pending campaign tasks, waiting...")
-                elif consecutive_empty % 6 == 0:  # Every ~42s at 7s interval
+                elif consecutive_empty % 10 == 0:
                     print("  ⏳ Still waiting for campaign tasks...")
 
-                await asyncio.sleep(POLL_INTERVAL)
+                await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
                 continue
             
             consecutive_empty = 0
-            print(f"\n  📦 Processing batch of {len(tasks)} messages in PARALLEL...")
+            print(f"\n  📦 Processing {len(tasks)} messages (stagger: {stagger_min:.1f}-{stagger_max:.1f}s)...")
             
-            # Execute ALL tasks in parallel
+            # Execute ALL tasks in parallel with server-controlled stagger
             results = await asyncio.gather(
-                *[process_single_task(task) for task in tasks],
+                *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
                 return_exceptions=True
             )
             
@@ -222,23 +223,16 @@ async def main_loop():
             fail_count = len(results) - success_count
             print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
             
-            # Disconnect clients after batch to save memory
-            batch_account_ids = list(set(
-                task.get("account", {}).get("id") 
-                for task in tasks 
-                if task.get("account", {}).get("id")
-            ))
-            await disconnect_batch(batch_account_ids)
-            
-            # Wait a fixed delay before next poll (always re-check every 7s)
-            wait_time = POLL_INTERVAL
-            if RUNNING and wait_time > 0:
-                print(f"  ⏳ Waiting {wait_time}s before next poll...")
-                await asyncio.sleep(wait_time)
+            # Use server-controlled delay (can be 0 for immediate repoll if more pending)
+            if RUNNING and delay_after > 0:
+                print(f"  ⏳ Next batch in {delay_after}s...")
+                await asyncio.sleep(delay_after)
+            elif RUNNING and more_pending:
+                print("  🚀 More pending, immediate repoll...")
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(POLL_INTERVAL)
+            await asyncio.sleep(DEFAULT_POLL_INTERVAL)
     
     print("\n⏹ Campaign loop stopped.")
     await shutdown_all()
@@ -246,8 +240,8 @@ async def main_loop():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  Starting Campaign Runner - RUNS FOREVER")
-    print("  Polls server every 7 seconds for tasks")
+    print("  Starting Campaign Runner - Server-Controlled Speed")
+    print("  Speed & batch settings from admin dashboard")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
     print("Required: pip install telethon httpx pysocks")
