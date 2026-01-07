@@ -1243,7 +1243,16 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const deleteCampaign = useCallback(async (id: string) => {
     try {
-      // First, get all campaign_recipient IDs for this campaign
+      // First get the campaign name for preservation
+      const { data: campaignData } = await supabase
+        .from('campaigns')
+        .select('name')
+        .eq('id', id)
+        .single();
+      
+      const campaignName = campaignData?.name || 'Deleted Campaign';
+
+      // Get all campaign_recipient IDs for this campaign
       const { data: recipientIds } = await supabase
         .from('campaign_recipients')
         .select('id')
@@ -1258,6 +1267,13 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           .eq('status', 'pending');
       }
 
+      // Preserve campaign name on conversations before deleting
+      // This ensures conversations keep the campaign name even after campaign is deleted
+      await supabase
+        .from('conversations')
+        .update({ campaign_name: campaignName })
+        .eq('campaign_id', id);
+
       // Delete campaign accounts
       await supabase
         .from('campaign_accounts')
@@ -1270,7 +1286,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         .delete()
         .eq('campaign_id', id);
 
-      // Delete campaign
+      // Delete campaign (conversations.campaign_id will be set to NULL via ON DELETE SET NULL)
       const { error } = await supabase
         .from('campaigns')
         .delete()

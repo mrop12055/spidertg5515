@@ -473,6 +473,8 @@ export type Database = {
         Row: {
           account_id: string
           blocked_by_recipient: boolean | null
+          campaign_id: string | null
+          campaign_name: string | null
           created_at: string | null
           first_message_sent: boolean | null
           has_prior_contact: boolean | null
@@ -496,6 +498,8 @@ export type Database = {
         Insert: {
           account_id: string
           blocked_by_recipient?: boolean | null
+          campaign_id?: string | null
+          campaign_name?: string | null
           created_at?: string | null
           first_message_sent?: boolean | null
           has_prior_contact?: boolean | null
@@ -519,6 +523,8 @@ export type Database = {
         Update: {
           account_id?: string
           blocked_by_recipient?: boolean | null
+          campaign_id?: string | null
+          campaign_name?: string | null
           created_at?: string | null
           first_message_sent?: boolean | null
           has_prior_contact?: boolean | null
@@ -545,6 +551,13 @@ export type Database = {
             columns: ["account_id"]
             isOneToOne: false
             referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_campaign_id_fkey"
+            columns: ["campaign_id"]
+            isOneToOne: false
+            referencedRelation: "campaigns"
             referencedColumns: ["id"]
           },
           {

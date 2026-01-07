@@ -36,21 +36,26 @@ serve(async (req) => {
             
             const { data: recipientData } = await supabase
               .from("campaign_recipients")
-              .select("phone_number, name, campaign_id, campaigns(message_template, seat_id)")
+              .select("phone_number, name, campaign_id, campaigns(id, name, message_template, seat_id)")
               .eq("id", campaign_recipient_id)
               .single();
+            
+            let campaignId: string | null = null;
+            let campaignName: string | null = null;
             
             if (recipientData) {
               recipient_phone = recipient_phone || recipientData.phone_number;
               recipient_name = recipient_name || recipientData.name;
               campaignSeatId = (recipientData.campaigns as any)?.seat_id || null;
+              campaignId = (recipientData.campaigns as any)?.id || null;
+              campaignName = (recipientData.campaigns as any)?.name || null;
               if (!content) {
                 const template = (recipientData.campaigns as any)?.message_template || '';
                 content = template
                   .replace(/{name}/g, recipientData.name || 'there')
                   .replace(/{phone}/g, recipientData.phone_number);
               }
-              console.log(`[report-task-result] Fetched recipient data: phone=${recipient_phone}, seat_id=${campaignSeatId}`);
+              console.log(`[report-task-result] Fetched recipient data: phone=${recipient_phone}, seat_id=${campaignSeatId}, campaign=${campaignName}`);
             }
             
             // Get or create conversation
@@ -69,6 +74,7 @@ serve(async (req) => {
             } else {
               // Create new conversation only on successful delivery
               // Include seat_id from campaign for proper workspace routing
+              // Also include campaign_id and campaign_name for history preservation
               isNewConversation = true;
               const { data: newConv, error: convError } = await supabase
                 .from("conversations")
@@ -80,6 +86,8 @@ serve(async (req) => {
                   first_message_sent: true,
                   last_message_at: new Date().toISOString(),
                   seat_id: campaignSeatId,  // Route to correct seat workspace
+                  campaign_id: campaignId,  // Link to campaign for reference
+                  campaign_name: campaignName,  // Store name for history display after deletion
                 })
                 .select()
                 .single();
@@ -89,7 +97,7 @@ serve(async (req) => {
                 isNewConversation = false;
               } else {
                 conversationId = newConv.id;
-                console.log(`[report-task-result] Created new conversation ${conversationId}`);
+                console.log(`[report-task-result] Created new conversation ${conversationId} for campaign ${campaignName}`);
               }
             }
 
