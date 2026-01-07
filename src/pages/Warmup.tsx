@@ -112,6 +112,7 @@ export default function Warmup() {
     estimatedMinutesRemaining: 0
   });
   const [loading, setLoading] = useState(false);
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
   const [messagesPerPair, setMessagesPerPair] = useState([20, 30]);
   const [isStarting, setIsStarting] = useState(false);
   const [startingPairId, setStartingPairId] = useState<string | null>(null);
@@ -120,8 +121,11 @@ export default function Warmup() {
   const [warmupBatchSize, setWarmupBatchSize] = useState(100);
   const [isSavingBatchSize, setIsSavingBatchSize] = useState(false);
 
-  const fetchData = async () => {
-    setLoading(true);
+  const fetchData = async (isInitial = false) => {
+    // Only show loading spinner on manual refresh, not on realtime/polling updates
+    if (isInitial || !initialLoadDone) {
+      setLoading(true);
+    }
     try {
       // Fetch active session
       const { data: sessionData } = await supabase
@@ -353,6 +357,7 @@ export default function Warmup() {
       console.error("Error fetching warmup data:", error);
     } finally {
       setLoading(false);
+      if (!initialLoadDone) setInitialLoadDone(true);
     }
   };
 
@@ -385,7 +390,7 @@ export default function Warmup() {
   }, []);
 
   useEffect(() => {
-    fetchData();
+    fetchData(true); // Initial load
 
     // Subscribe to realtime updates for all warmup tables with debounced refresh
     const channel = supabase
@@ -615,7 +620,7 @@ export default function Warmup() {
               <Button
                 variant="outline"
                 size="icon"
-                onClick={fetchData}
+                onClick={() => fetchData(true)}
                 disabled={loading}
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
