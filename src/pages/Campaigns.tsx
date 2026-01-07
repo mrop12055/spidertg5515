@@ -137,7 +137,7 @@ const Campaigns: React.FC = () => {
     staggerMax: 1.5,
     pollingInterval: 3,
     batchSize: 100,
-    messagesPerAccountPerDay: 25,
+    messagesPerAccountPerDay: 10,
   });
   
   // Sync campaign speed settings with database settings when they load
@@ -148,7 +148,7 @@ const Campaigns: React.FC = () => {
         staggerMax: appSettings.campaign_speed.staggerMax ?? 1.5,
         pollingInterval: appSettings.campaign_speed.pollingInterval ?? 3,
         batchSize: appSettings.campaign_speed.batchSize ?? 100,
-        messagesPerAccountPerDay: appSettings.campaign_speed.messagesPerAccountPerDay ?? 25,
+        messagesPerAccountPerDay: appSettings.campaign_speed.messagesPerAccountPerDay ?? 10,
       });
     }
   }, [isLoadingSettings, appSettings]);
@@ -1691,21 +1691,21 @@ username123
                         {/* Messages per Account per Day - Most Important */}
                         <div className="space-y-2 md:col-span-2 lg:col-span-1">
                           <Label className="flex items-center gap-2">
-                            Messages per Account/Day
-                            <Badge variant="secondary" className="text-xs">Per Account</Badge>
+                            Messages per Account Today
+                            <Badge variant="secondary" className="text-xs">Resets Daily</Badge>
                           </Label>
                           <div className="flex items-center gap-4">
-                            <Slider
+                          <Slider
                               value={[campaignSpeed.messagesPerAccountPerDay]}
                               onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, messagesPerAccountPerDay: v }))}
                               min={1}
-                              max={50}
+                              max={10}
                               step={1}
                               className="flex-1"
                             />
                             <span className="w-12 text-center font-medium">{campaignSpeed.messagesPerAccountPerDay}</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">Daily limit per sender account (1-50)</p>
+                          <p className="text-xs text-muted-foreground">Messages each account can send today (resets at midnight)</p>
                         </div>
                         
                         <div className="space-y-2">
