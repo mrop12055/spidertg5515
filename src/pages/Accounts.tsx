@@ -1326,31 +1326,65 @@ const Accounts: React.FC = () => {
   const handleRenameTag = async () => {
     if (!editingTagName || !editedTagValue.trim() || editedTagValue === editingTagName) return;
     
+    const oldTagName = editingTagName;
+    const newTagValue = editedTagValue.trim();
+    
     try {
       // Find all accounts that have this tag
-      const accountsWithTag = accounts.filter(a => (a.tags || []).includes(editingTagName));
+      const accountsWithTag = accounts.filter(a => (a.tags || []).includes(oldTagName));
       
       if (accountsWithTag.length === 0) {
         toast.error('No accounts found with this tag');
         return;
       }
       
-      // Update each account's tags
+      // Update each account's tags - replace old tag with new tag
       for (const account of accountsWithTag) {
-        const newTags = (account.tags || []).map(t => t === editingTagName ? editedTagValue.trim() : t);
+        const updatedTags = (account.tags || []).map(t => t === oldTagName ? newTagValue : t);
         await supabase
           .from('telegram_accounts')
-          .update({ tags: newTags })
+          .update({ tags: updatedTags })
           .eq('id', account.id);
       }
       
-      toast.success(`Tag renamed from "${editingTagName}" to "${editedTagValue.trim()}" on ${accountsWithTag.length} account(s)`);
+      toast.success(`Tag renamed from "${oldTagName}" to "${newTagValue}" on ${accountsWithTag.length} account(s)`);
       setEditingTagName('');
       setEditedTagValue('');
       refreshData();
     } catch (error) {
       console.error('Error renaming tag:', error);
       toast.error('Failed to rename tag');
+    }
+  };
+
+  // Delete tag from all accounts
+  const handleDeleteTag = async (tagToDelete: string) => {
+    try {
+      // Find all accounts that have this tag
+      const accountsWithTag = accounts.filter(a => (a.tags || []).includes(tagToDelete));
+      
+      if (accountsWithTag.length === 0) {
+        toast.error('No accounts found with this tag');
+        return;
+      }
+      
+      // Remove tag from each account
+      for (const account of accountsWithTag) {
+        const updatedTags = (account.tags || []).filter(t => t !== tagToDelete);
+        await supabase
+          .from('telegram_accounts')
+          .update({ tags: updatedTags })
+          .eq('id', account.id);
+      }
+      
+      toast.success(`Tag "${tagToDelete}" removed from ${accountsWithTag.length} account(s)`);
+      setEditingTagName('');
+      setEditedTagValue('');
+      setSelectedTagsForBulk(prev => prev.filter(t => t !== tagToDelete));
+      refreshData();
+    } catch (error) {
+      console.error('Error deleting tag:', error);
+      toast.error('Failed to delete tag');
     }
   };
 
@@ -2979,7 +3013,7 @@ const Accounts: React.FC = () => {
               {/* Rename tag input */}
               {editingTagName && (
                 <div className="space-y-2 p-3 rounded-lg border bg-muted/30">
-                  <Label>Rename Tag: "{editingTagName}"</Label>
+                  <Label>Edit Tag: "{editingTagName}"</Label>
                   <div className="flex gap-2">
                     <Input
                       placeholder="New tag name..."
@@ -2993,6 +3027,13 @@ const Accounts: React.FC = () => {
                       disabled={!editedTagValue.trim() || editedTagValue === editingTagName}
                     >
                       Rename
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="destructive"
+                      onClick={() => handleDeleteTag(editingTagName)}
+                    >
+                      <Trash2 className="w-3 h-3" />
                     </Button>
                     <Button 
                       size="sm" 
