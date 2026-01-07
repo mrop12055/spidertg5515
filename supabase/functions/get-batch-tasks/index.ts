@@ -53,7 +53,7 @@ serve(async (req) => {
     let campaignStaggerMin = 0.3;
     let campaignStaggerMax = 1.5;
     let campaignPollingInterval = 3;
-
+    let campaignMessagesPerAccountPerDay = 25; // NEW: Messages per account per day for campaigns
     if (settingsData) {
       for (const setting of settingsData) {
         const value = setting.value as Record<string, unknown>;
@@ -71,6 +71,7 @@ serve(async (req) => {
           campaignStaggerMax = (value.staggerMax as number) ?? campaignStaggerMax;
           campaignPollingInterval = (value.pollingInterval as number) ?? campaignPollingInterval;
           campaignBatchSize = (value.batchSize as number) ?? campaignBatchSize;
+          campaignMessagesPerAccountPerDay = (value.messagesPerAccountPerDay as number) ?? campaignMessagesPerAccountPerDay;
         }
       }
     }
@@ -346,9 +347,28 @@ serve(async (req) => {
         });
       }
 
+      // Filter accounts for campaigns using campaign-specific per-account limit
+      const campaignUsableAccounts = usableAccounts.filter((a: any) => {
+        const sentToday = a.messages_sent_today ?? 0;
+        return sentToday < campaignMessagesPerAccountPerDay;
+      });
+
+      if (campaignUsableAccounts.length === 0) {
+        console.log(`[get-batch-tasks] All accounts at campaign daily limit (${campaignMessagesPerAccountPerDay} msgs/account)`);
+        return new Response(JSON.stringify({
+          tasks: [],
+          delay_after: campaignPollingInterval,
+          stagger_min: campaignStaggerMin,
+          stagger_max: campaignStaggerMax,
+          reason: `All accounts at campaign daily limit (${campaignMessagesPerAccountPerDay} messages/account)`
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
       // Use campaignBatchSize from settings, limited by available accounts
-      const actualBatchSize = Math.min(campaignBatchSize, usableAccounts.length);
-      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (from settings: ${campaignBatchSize})`);
+      const actualBatchSize = Math.min(campaignBatchSize, campaignUsableAccounts.length);
+      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (from settings: ${campaignBatchSize}, accounts: ${campaignUsableAccounts.length}, limit: ${campaignMessagesPerAccountPerDay}/account)`);
 
       // Count total pending recipients to determine if immediate repoll needed
       const { count: pendingCount } = await supabase
@@ -375,15 +395,15 @@ serve(async (req) => {
           let account = null;
           
           if (recipient.sent_by_account_id) {
-            // Use pre-assigned account if available and not already used
-            account = usableAccounts.find((a: any) => 
+            // Use pre-assigned account if available, under campaign limit, and not already used in this batch
+            account = campaignUsableAccounts.find((a: any) => 
               a.id === recipient.sent_by_account_id && !usedAccountIds.has(a.id)
             );
           }
 
           // If no assigned account or it's already used, find any available account
           if (!account) {
-            account = usableAccounts.find((a: any) => !usedAccountIds.has(a.id));
+            account = campaignUsableAccounts.find((a: any) => !usedAccountIds.has(a.id));
           }
 
           if (!account) {

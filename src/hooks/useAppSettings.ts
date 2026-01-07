@@ -43,6 +43,7 @@ export interface CampaignSpeedSettings {
   staggerMax: number;
   pollingInterval: number;
   batchSize: number;
+  messagesPerAccountPerDay: number;
 }
 
 export interface AllSettings {
@@ -90,6 +91,7 @@ const defaultSettings: AllSettings = {
     staggerMax: 1.5,
     pollingInterval: 3,
     batchSize: 100,
+    messagesPerAccountPerDay: 25,
   },
 };
 
