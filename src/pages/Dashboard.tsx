@@ -18,36 +18,82 @@ import {
   Loader2,
   Globe,
   Users,
-  TrendingUp
+  TrendingUp,
+  Clock,
+  Infinity,
+  Reply
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
+interface DashboardStats {
+  totalAccounts: number;
+  activeAccounts: number;
+  activeProxies: number;
+  messagesToday: number;
+  messagesLifetime: number;
+  repliesLifetime: number;
+}
+
 const Dashboard: React.FC = () => {
-  const { campaigns, accounts, proxies, refreshData } = useTelegram();
+  const { campaigns, proxies, refreshData } = useTelegram();
   const navigate = useNavigate();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [messages24h, setMessages24h] = useState(0);
-  const [replies24h, setReplies24h] = useState(0);
-
-  // Active accounts: status is 'active' AND no restriction timer
-  const activeAccounts = accounts.filter(a => 
-    a.status === 'active' && !a.restrictedUntil
-  ).length;
+  const [stats, setStats] = useState<DashboardStats>({
+    totalAccounts: 0,
+    activeAccounts: 0,
+    activeProxies: 0,
+    messagesToday: 0,
+    messagesLifetime: 0,
+    repliesLifetime: 0,
+  });
 
   const fetchStats = async () => {
     try {
-      const yesterday = new Date();
-      yesterday.setHours(yesterday.getHours() - 24);
+      // Fetch account stats directly from database
+      const { data: accountStats } = await supabase
+        .from('telegram_accounts')
+        .select('status');
+      
+      const totalAccounts = accountStats?.length || 0;
+      const activeAccounts = accountStats?.filter(a => a.status === 'active').length || 0;
 
-      const [msgs24hRes, replies24hRes] = await Promise.all([
-        supabase.from('messages').select('id', { count: 'exact', head: true })
-          .eq('direction', 'outgoing').gte('created_at', yesterday.toISOString()),
-        supabase.from('messages').select('id', { count: 'exact', head: true })
-          .eq('direction', 'incoming').gte('created_at', yesterday.toISOString()),
-      ]);
+      // Fetch proxy stats
+      const { data: proxyStats } = await supabase
+        .from('proxies')
+        .select('status');
+      
+      const activeProxies = proxyStats?.filter(p => p.status === 'active').length || 0;
 
-      setMessages24h(msgs24hRes.count || 0);
-      setReplies24h(replies24hRes.count || 0);
+      // Fetch message stats - today
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      const { count: messagesToday } = await supabase
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('direction', 'outgoing')
+        .gte('created_at', today.toISOString());
+
+      // Fetch lifetime message stats
+      const { count: messagesLifetime } = await supabase
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('direction', 'outgoing');
+
+      // Fetch lifetime replies
+      const { count: repliesLifetime } = await supabase
+        .from('messages')
+        .select('id', { count: 'exact', head: true })
+        .eq('direction', 'incoming');
+
+      setStats({
+        totalAccounts,
+        activeAccounts,
+        activeProxies,
+        messagesToday: messagesToday || 0,
+        messagesLifetime: messagesLifetime || 0,
+        repliesLifetime: repliesLifetime || 0,
+      });
     } catch (error) {
       console.error('Error fetching stats:', error);
     }
@@ -66,7 +112,6 @@ const Dashboard: React.FC = () => {
   };
 
   const runningCampaigns = campaigns.filter(c => c.status === 'running').length;
-  const activeProxies = proxies.filter(p => p.status === 'active').length;
 
   return (
     <DashboardLayout>
@@ -86,42 +131,53 @@ const Dashboard: React.FC = () => {
         }
       />
       
-      {/* Main Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+      {/* Account & Proxy Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <StatCard
           title="Total Accounts"
-          value={accounts.length}
+          value={stats.totalAccounts}
           icon={Phone}
           variant="primary"
           index={0}
         />
         <StatCard
           title="Active Accounts"
-          value={activeAccounts}
+          value={stats.activeAccounts}
           icon={Users}
           variant="success"
           index={1}
         />
         <StatCard
           title="Active Proxies"
-          value={activeProxies}
+          value={stats.activeProxies}
           icon={Globe}
           variant="default"
           index={2}
         />
+      </div>
+
+      {/* Message Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
         <StatCard
-          title="Messages (24h)"
-          value={messages24h}
-          icon={Send}
+          title="Messages Today"
+          value={stats.messagesToday}
+          icon={Clock}
           variant="warning"
           index={3}
         />
         <StatCard
-          title="Replies (24h)"
-          value={replies24h}
-          icon={MessageSquare}
+          title="Lifetime Messages"
+          value={stats.messagesLifetime}
+          icon={Send}
           variant="default"
           index={4}
+        />
+        <StatCard
+          title="Lifetime Replies"
+          value={stats.repliesLifetime}
+          icon={MessageSquare}
+          variant="success"
+          index={5}
         />
       </div>
 
