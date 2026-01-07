@@ -163,17 +163,25 @@ const Chat: React.FC = () => {
   // Filter conversations by time - based on when conversation was CREATED (campaign start)
   const getTimeFilterCutoff = () => {
     const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    
     switch (timeFilter) {
       case 'today': {
-        // Start of today (midnight)
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
         return startOfToday;
       }
-      case '3d': return subDays(now, 3);
-      case '5d': return subDays(now, 5);
+      case '3d': {
+        // Start of 3 days ago (includes today, yesterday, and 2 days before)
+        const threeDaysAgo = new Date(startOfToday);
+        threeDaysAgo.setDate(threeDaysAgo.getDate() - 2);
+        return threeDaysAgo;
+      }
+      case '5d': {
+        // Start of 5 days ago
+        const fiveDaysAgo = new Date(startOfToday);
+        fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 4);
+        return fiveDaysAgo;
+      }
       default: {
-        // Start of today as default
-        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
         return startOfToday;
       }
     }
@@ -722,22 +730,26 @@ const Chat: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* Time Filter Tabs */}
-                <div className="flex gap-1 mb-3 p-1 bg-secondary/30 rounded-lg">
-                  {(['today', '3d', '5d'] as TimeFilter[]).map((filter) => (
-                    <button
-                      key={filter}
-                      onClick={() => setTimeFilter(filter)}
-                      className={cn(
-                        "flex-1 px-2 py-1.5 text-[10px] font-medium rounded-md transition-all",
-                        timeFilter === filter 
-                          ? "bg-primary text-primary-foreground shadow-sm" 
-                          : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                      )}
-                    >
-                      {filter === 'today' ? 'Today' : filter}
-                    </button>
-                  ))}
+                {/* Time Filter Tabs - Improved UI */}
+                <div className="flex gap-1.5 mb-3">
+                  {(['today', '3d', '5d'] as TimeFilter[]).map((filter) => {
+                    const isActive = timeFilter === filter;
+                    const label = filter === 'today' ? 'Today' : filter === '3d' ? 'Last 3 Days' : 'Last 5 Days';
+                    return (
+                      <button
+                        key={filter}
+                        onClick={() => setTimeFilter(filter)}
+                        className={cn(
+                          "flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200",
+                          isActive 
+                            ? "bg-primary text-primary-foreground shadow-md shadow-primary/25" 
+                            : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary border border-border/50"
+                        )}
+                      >
+                        {label}
+                      </button>
+                    );
+                  })}
                 </div>
                 
                 <div className="relative">
@@ -789,9 +801,10 @@ const Chat: React.FC = () => {
                     <div
                       key={conv.id}
                       className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 transition-all duration-150 text-left hover:bg-accent/50 group",
-                        isSelected && !isSelectionMode && "bg-primary/10",
-                        isChecked && isSelectionMode && "bg-primary/10"
+                        "w-full flex items-center gap-3 px-4 py-3.5 transition-all duration-200 text-left group border-b border-border/30 last:border-b-0",
+                        isSelected && !isSelectionMode && "bg-primary/10 border-l-2 border-l-primary",
+                        isChecked && isSelectionMode && "bg-primary/10",
+                        !isSelected && "hover:bg-accent/50"
                       )}
                     >
                       {isSelectionMode && (
@@ -814,64 +827,69 @@ const Chat: React.FC = () => {
                         className="flex-1 flex items-center gap-3 text-left"
                       >
                         <div className="relative flex-shrink-0">
-                          <Avatar className="h-12 w-12">
+                          <Avatar className="h-11 w-11 ring-2 ring-background shadow-sm">
                             {conv.recipientAvatar && (
                               <AvatarImage src={conv.recipientAvatar} alt={conv.recipientName || 'Contact'} />
                             )}
-                            <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-medium text-lg">
+                            <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-semibold text-sm">
                               {avatarInitial}
                             </AvatarFallback>
                           </Avatar>
                           {conv.isActive && (
-                            <span className="absolute bottom-0 right-0 w-3.5 h-3.5 bg-[#31A24C] rounded-full ring-2 ring-card" />
+                            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full ring-2 ring-card" />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between mb-0.5">
-                            <div className="flex flex-col min-w-0">
-                              <div className="flex items-center gap-2 truncate">
-                                <span className={cn(
-                                  "font-medium truncate",
-                                  conv.unreadCount > 0 ? "text-foreground" : "text-foreground"
-                                )}>
-                                  {displayName}
-                                </span>
-                                {conv.blockedByRecipient && (
-                                  <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5">
-                                    <Ban className="w-2.5 h-2.5" />
-                                    Blocked
-                                  </Badge>
-                                )}
-                              </div>
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className={cn(
+                                "font-semibold truncate text-sm",
+                                conv.unreadCount > 0 ? "text-foreground" : "text-foreground/90"
+                              )}>
+                                {displayName}
+                              </span>
+                              {conv.blockedByRecipient && (
+                                <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5 flex-shrink-0">
+                                  <Ban className="w-2.5 h-2.5" />
+                                  Blocked
+                                </Badge>
+                              )}
                             </div>
                             <span className={cn(
-                              "text-xs flex-shrink-0 ml-2",
-                              conv.unreadCount > 0 ? "text-primary font-medium" : "text-muted-foreground"
+                              "text-[11px] flex-shrink-0 ml-2",
+                              conv.unreadCount > 0 ? "text-primary font-semibold" : "text-muted-foreground"
                             )}>
                               {formatMessageDate(conv.updatedAt)}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between">
+                          <div className="flex items-center justify-between gap-2">
                             <p className={cn(
-                              "text-sm truncate max-w-[180px] flex items-center gap-1",
-                              conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
+                              "text-[13px] truncate flex items-center gap-1.5",
+                              conv.unreadCount > 0 ? "text-foreground font-medium" : "text-muted-foreground"
                             )}>
                               {isUserTyping ? (
-                                <span className="text-primary italic">typing...</span>
+                                <span className="text-primary italic flex items-center gap-1">
+                                  <span className="flex gap-0.5">
+                                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                                  </span>
+                                  typing
+                                </span>
                               ) : (
                                 <>
                                   {lastMsg?.direction === 'outgoing' && (
-                                    <span className="flex-shrink-0">{getMessageStatus(lastMsg.status)}</span>
+                                    <span className="flex-shrink-0 opacity-70">{getMessageStatus(lastMsg.status)}</span>
                                   )}
                                   {isCampaignMessage && (
-                                    <span className="text-[10px] px-1 py-0.5 bg-primary/20 text-primary rounded mr-1 flex-shrink-0">Campaign</span>
+                                    <span className="text-[9px] px-1.5 py-0.5 bg-primary/15 text-primary font-medium rounded flex-shrink-0">Campaign</span>
                                   )}
                                   <span className="truncate">{messagePreview}</span>
                                 </>
                               )}
                             </p>
                             {conv.unreadCount > 0 && (
-                              <Badge className="h-5 min-w-5 flex items-center justify-center text-xs bg-primary rounded-full ml-2">
+                              <Badge className="h-5 min-w-5 flex items-center justify-center text-[10px] font-bold bg-primary rounded-full flex-shrink-0">
                                 {conv.unreadCount}
                               </Badge>
                             )}
