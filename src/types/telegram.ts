@@ -84,6 +84,7 @@ export interface Conversation {
   recipientAvatar?: string;
   lastMessage?: Message;
   lastMessageAt?: Date;
+  lastMessageContent?: string;
   unreadCount: number;
   isActive: boolean;
   createdAt: Date;
