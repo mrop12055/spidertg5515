@@ -91,7 +91,7 @@ const defaultSettings: AllSettings = {
     staggerMax: 1.5,
     pollingInterval: 3,
     batchSize: 100,
-    messagesPerAccountPerDay: 25,
+    messagesPerAccountPerDay: 10,
   },
 };
 
