@@ -70,7 +70,7 @@ export const Sidebar: React.FC = () => {
             <Send className="w-5 h-5 text-primary-foreground" strokeWidth={1.5} />
           </div>
           {!collapsed && (
-            <div className="animate-fade-in flex items-center gap-2">
+            <div className="flex items-center gap-2">
               <div>
                 <h1 className="font-bold text-lg text-sidebar-foreground tracking-tight">TGxOP</h1>
                 <p className="text-xs text-muted-foreground">Dashboard</p>
@@ -122,7 +122,7 @@ export const Sidebar: React.FC = () => {
                 )}
               </div>
               {!collapsed && (
-                <span className="text-sm animate-fade-in">{item.label}</span>
+                <span className="text-sm">{item.label}</span>
               )}
               {showBadge && !collapsed && (
                 <span className="ml-auto min-w-[20px] h-[20px] rounded-full bg-destructive text-destructive-foreground text-xs font-bold flex items-center justify-center animate-pulse">
@@ -155,7 +155,7 @@ export const Sidebar: React.FC = () => {
             A
           </div>
           {!collapsed && (
-            <div className="flex-1 min-w-0 animate-fade-in">
+            <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-sidebar-foreground truncate">Admin</p>
             </div>
           )}

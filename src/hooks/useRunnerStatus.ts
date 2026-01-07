@@ -121,6 +121,13 @@ export const useRunnerStatus = () => {
     // Initial check
     checkRunnerStatus();
 
+    // Debounce ref for realtime updates
+    let debounceTimer: NodeJS.Timeout | null = null;
+    const debouncedCheck = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(checkRunnerStatus, 1000);
+    };
+
     // Subscribe to realtime updates on runner_heartbeats
     const channel = supabase
       .channel('runner-heartbeats-live')
@@ -132,18 +139,19 @@ export const useRunnerStatus = () => {
           table: 'runner_heartbeats'
         },
         () => {
-          // On any change, re-check status
-          checkRunnerStatus();
+          // On any change, re-check status (debounced)
+          debouncedCheck();
         }
       )
       .subscribe();
 
-    // Also check every 5 seconds to update "offline" status when heartbeats stop
-    const interval = setInterval(checkRunnerStatus, 5000);
+    // Check every 15 seconds to update "offline" status when heartbeats stop
+    const interval = setInterval(checkRunnerStatus, 15000);
 
     return () => {
       supabase.removeChannel(channel);
       clearInterval(interval);
+      if (debounceTimer) clearTimeout(debounceTimer);
     };
   }, [checkRunnerStatus]);
 
