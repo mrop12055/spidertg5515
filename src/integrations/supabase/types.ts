@@ -1706,6 +1706,7 @@ export type Database = {
           messages_read: number | null
           messages_sent_today: number | null
           responses_received: number | null
+          responses_today: number | null
           seat_id: string | null
           seat_name: string | null
           total_conversations: number | null

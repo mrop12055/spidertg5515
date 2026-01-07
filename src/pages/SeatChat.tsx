@@ -80,6 +80,7 @@ interface SeatStats {
   messages_sent_today: number;
   messages_read: number;
   responses_received: number;
+  responses_today: number;
 }
 
 // Generate consistent colors for avatars based on phone number
@@ -128,7 +129,8 @@ const SeatChat: React.FC = () => {
     conversations_started: 0,
     messages_sent_today: 0,
     messages_read: 0,
-    responses_received: 0
+    responses_received: 0,
+    responses_today: 0
   });
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -379,7 +381,8 @@ const SeatChat: React.FC = () => {
           conversations_started: data.conversations_started || 0,
           messages_sent_today: data.messages_sent_today || 0,
           messages_read: data.messages_read || 0,
-          responses_received: data.responses_received || 0
+          responses_received: data.responses_received || 0,
+          responses_today: data.responses_today || 0
         });
       }
     } catch (err) {
@@ -1689,21 +1692,21 @@ const SeatChat: React.FC = () => {
                     <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
                       <MessageSquare className="w-6 h-6 text-primary" />
                     </div>
-                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Started</span>
+                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Lifetime</span>
                   </div>
                   <p className="text-3xl font-bold text-foreground tracking-tight">{stats.conversations_started}</p>
-                  <p className="text-sm text-muted-foreground mt-1">New Contacts</p>
+                  <p className="text-sm text-muted-foreground mt-1">Total Conversations</p>
                 </div>
 
                 <div className="bg-card rounded-xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-center justify-between mb-4">
-                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-slate-500/20 to-slate-500/5 flex items-center justify-center">
-                      <Users className="w-6 h-6 text-slate-500" />
+                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-green-500/20 to-green-500/5 flex items-center justify-center">
+                      <CheckCheck className="w-6 h-6 text-green-500" />
                     </div>
-                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Total</span>
+                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Lifetime</span>
                   </div>
-                  <p className="text-3xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
-                  <p className="text-sm text-muted-foreground mt-1">Conversations</p>
+                  <p className="text-3xl font-bold text-foreground tracking-tight">{stats.responses_received}</p>
+                  <p className="text-sm text-muted-foreground mt-1">Total Responses</p>
                 </div>
                 
                 <div className="bg-card rounded-xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
@@ -1711,10 +1714,21 @@ const SeatChat: React.FC = () => {
                     <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-blue-500/20 to-blue-500/5 flex items-center justify-center">
                       <Send className="w-6 h-6 text-blue-500" />
                     </div>
-                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">24h</span>
+                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Today</span>
                   </div>
                   <p className="text-3xl font-bold text-foreground tracking-tight">{stats.messages_sent_today}</p>
                   <p className="text-sm text-muted-foreground mt-1">Messages Sent</p>
+                </div>
+                
+                <div className="bg-card rounded-xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-emerald-500/20 to-emerald-500/5 flex items-center justify-center">
+                      <Users className="w-6 h-6 text-emerald-500" />
+                    </div>
+                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Today</span>
+                  </div>
+                  <p className="text-3xl font-bold text-foreground tracking-tight">{stats.responses_today}</p>
+                  <p className="text-sm text-muted-foreground mt-1">Responses Today</p>
                 </div>
                 
                 <div className="bg-card rounded-xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
@@ -1727,30 +1741,19 @@ const SeatChat: React.FC = () => {
                   <p className="text-3xl font-bold text-foreground tracking-tight">{stats.messages_read}</p>
                   <p className="text-sm text-muted-foreground mt-1">Messages Read</p>
                 </div>
-                
-                <div className="bg-card rounded-xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-green-500/20 to-green-500/5 flex items-center justify-center">
-                      <CheckCheck className="w-6 h-6 text-green-500" />
-                    </div>
-                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Replies</span>
-                  </div>
-                  <p className="text-3xl font-bold text-foreground tracking-tight">{stats.responses_received}</p>
-                  <p className="text-sm text-muted-foreground mt-1">Responses</p>
-                </div>
               </div>
               
               {/* Response Rate Card */}
               <div className="bg-card rounded-xl p-6 border border-border shadow-sm">
                 <div className="flex items-center justify-between mb-5">
                   <div>
-                    <h3 className="text-lg font-semibold text-foreground">Response Rate</h3>
-                    <p className="text-sm text-muted-foreground mt-1">Percentage of started conversations with replies</p>
+                    <h3 className="text-lg font-semibold text-foreground">Today's Response Rate</h3>
+                    <p className="text-sm text-muted-foreground mt-1">Responses received vs messages sent today</p>
                   </div>
                   <div className="text-right">
                     <p className="text-4xl font-bold text-primary">
-                      {stats.conversations_started > 0 
-                        ? Math.round((stats.responses_received / stats.conversations_started) * 100) 
+                      {stats.messages_sent_today > 0 
+                        ? Math.round((stats.responses_today / stats.messages_sent_today) * 100) 
                         : 0}%
                     </p>
                   </div>
@@ -1759,15 +1762,15 @@ const SeatChat: React.FC = () => {
                   <div 
                     className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary to-primary/70 rounded-full transition-all duration-700 ease-out"
                     style={{ 
-                      width: `${stats.conversations_started > 0 
-                        ? Math.round((stats.responses_received / stats.conversations_started) * 100) 
+                      width: `${stats.messages_sent_today > 0 
+                        ? Math.min(Math.round((stats.responses_today / stats.messages_sent_today) * 100), 100)
                         : 0}%` 
                     }}
                   />
                 </div>
                 <div className="flex justify-between mt-3 text-sm text-muted-foreground">
-                  <span>{stats.responses_received} responses</span>
-                  <span>{stats.conversations_started} started</span>
+                  <span>{stats.responses_today} responses today</span>
+                  <span>{stats.messages_sent_today} sent today</span>
                 </div>
               </div>
               
