@@ -24,7 +24,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-POLL_INTERVAL = 10  # Fixed 10-second polling interval
+POLL_INTERVAL = 7  # Poll server every 7 seconds
 
 
 def signal_handler(sig, frame):
@@ -151,8 +151,9 @@ async def main_loop():
     print("=" * 60)
     print("  TelegramCRM - Campaign Runner (Server-Controlled)")
     print("=" * 60)
-    print(f"  📨 Polling every {POLL_INTERVAL} seconds")
+    print(f"  📨 Polling server every {POLL_INTERVAL} seconds")
     print("  🔧 All settings controlled by admin dashboard")
+    print("  ♾️  RUNS FOREVER - auto-restarts on errors")
     print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
     print("\n✓ Starting campaign runner...\n")
@@ -235,11 +236,23 @@ async def main_loop():
 
 
 if __name__ == "__main__":
-    print("Starting Campaign Runner... Press Ctrl+C to stop.")
+    print("=" * 60)
+    print("  Starting Campaign Runner - RUNS FOREVER")
+    print("  Polls server every 7 seconds for tasks")
+    print("  Press Ctrl+C to stop")
+    print("=" * 60)
     print("Required: pip install telethon httpx python-socks")
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("\n⏹ Keyboard interrupt.")
-    finally:
-        print("Goodbye!")
+    
+    while True:
+        try:
+            asyncio.run(main_loop())
+        except KeyboardInterrupt:
+            print("\n⏹ Keyboard interrupt - stopping...")
+            break
+        except Exception as e:
+            print(f"\n⚠ Runner crashed: {e}")
+            print("  Restarting in 5 seconds...")
+            import time
+            time.sleep(5)
+    
+    print("Goodbye!")
