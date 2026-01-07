@@ -1255,25 +1255,6 @@ const SeatChat: React.FC = () => {
                               </span>
                             )}
                           </div>
-                          {/* Sender Account Info */}
-                          {senderAccounts.get(conv.account_id) && (
-                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border/30">
-                              <Avatar className="w-5 h-5">
-                                <AvatarImage src={senderAccounts.get(conv.account_id)?.avatar_url || undefined} />
-                                <AvatarFallback className={cn(
-                                  "text-[9px] font-semibold text-white bg-gradient-to-br",
-                                  getAvatarColor(senderAccounts.get(conv.account_id)?.phone_number || null)
-                                )}>
-                                  {senderAccounts.get(conv.account_id)?.first_name?.[0] || 'S'}
-                                </AvatarFallback>
-                              </Avatar>
-                              <span className="text-[10px] text-muted-foreground truncate">
-                                Sent by: <span className="font-medium text-foreground/80">
-                                  {senderAccounts.get(conv.account_id)?.first_name || senderAccounts.get(conv.account_id)?.username || 'Unknown'}
-                                </span>
-                              </span>
-                            </div>
-                          )}
                         </div>
 
                         {/* Actions Menu */}
@@ -1701,6 +1682,39 @@ const SeatChat: React.FC = () => {
                         )}
                       </div>
                     </div>
+
+                    {/* Sender Account Section */}
+                    {senderAccounts.get(selectedConversation.account_id) && (
+                      <div className="bg-gradient-to-br from-primary/5 to-transparent rounded-xl p-4 border border-primary/20">
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider mb-3">Sent By</p>
+                        <div className="flex items-center gap-3">
+                          <Avatar className="w-12 h-12 ring-2 ring-primary/20 ring-offset-2 ring-offset-card">
+                            <AvatarImage src={senderAccounts.get(selectedConversation.account_id)?.avatar_url || undefined} />
+                            <AvatarFallback className={cn(
+                              "text-base font-semibold text-white bg-gradient-to-br",
+                              getAvatarColor(senderAccounts.get(selectedConversation.account_id)?.phone_number || null)
+                            )}>
+                              {senderAccounts.get(selectedConversation.account_id)?.first_name?.[0] || 'S'}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className="flex-1 min-w-0">
+                            <p className="text-foreground font-semibold text-sm truncate">
+                              {senderAccounts.get(selectedConversation.account_id)?.first_name || 'Unknown'}
+                              {senderAccounts.get(selectedConversation.account_id)?.last_name ? ` ${senderAccounts.get(selectedConversation.account_id)?.last_name}` : ''}
+                            </p>
+                            {senderAccounts.get(selectedConversation.account_id)?.username && (
+                              <p className="text-xs text-muted-foreground truncate">
+                                @{senderAccounts.get(selectedConversation.account_id)?.username}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1 text-[10px] text-green-500 bg-green-500/10 px-2 py-1 rounded-full">
+                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                            <span>Active</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Quick Actions */}
                     <div className="pt-4 space-y-2">
