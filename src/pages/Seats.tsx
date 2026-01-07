@@ -6,13 +6,14 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Copy, Trash2, Users, MessageSquare, Send, Eye, 
-  ExternalLink, RefreshCw, CheckCircle, RotateCcw 
+  ExternalLink, RefreshCw, CheckCircle, RotateCcw, Sparkles, Link2, AlertTriangle
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -44,6 +45,8 @@ const Seats: React.FC = () => {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newSeatName, setNewSeatName] = useState('');
   const [copiedToken, setCopiedToken] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<Seat | null>(null);
+  const [resetConfirm, setResetConfirm] = useState<Seat | null>(null);
 
   const fetchSeats = useCallback(async () => {
     try {
@@ -141,20 +144,17 @@ const Seats: React.FC = () => {
     }
   };
 
-const handleDeleteSeat = async (seatId: string) => {
-    if (!confirm('Are you sure you want to delete this seat? This cannot be undone.')) {
-      return;
-    }
-
+const handleDeleteSeat = async (seat: Seat) => {
     try {
       const { error } = await supabase
         .from('seats')
         .delete()
-        .eq('id', seatId);
+        .eq('id', seat.id);
 
       if (error) throw error;
       
-      toast.success('Seat deleted');
+      toast.success('Seat deleted successfully');
+      setDeleteConfirm(null);
       fetchSeats();
     } catch (error) {
       console.error('Error deleting seat:', error);
@@ -163,10 +163,6 @@ const handleDeleteSeat = async (seatId: string) => {
   };
 
   const handleResetLink = async (seat: Seat) => {
-    if (!confirm(`Reset link for "${seat.name}"? The old link will stop working immediately.`)) {
-      return;
-    }
-
     try {
       // Generate a new UUID for access_token
       const newToken = crypto.randomUUID();
@@ -178,7 +174,8 @@ const handleDeleteSeat = async (seatId: string) => {
 
       if (error) throw error;
       
-      toast.success('Link reset successfully. Share the new link with your worker.');
+      toast.success('Link reset successfully');
+      setResetConfirm(null);
       fetchSeats();
     } catch (error) {
       console.error('Error resetting link:', error);
@@ -359,30 +356,49 @@ const handleDeleteSeat = async (seatId: string) => {
                     Create Seat
                   </Button>
                 </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Create New Seat</DialogTitle>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader className="text-center sm:text-center">
+                    <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-violet-600 flex items-center justify-center mb-4">
+                      <motion.div
+                        animate={{ rotate: [0, 10, -10, 0] }}
+                        transition={{ duration: 2, repeat: Infinity }}
+                      >
+                        <Sparkles className="w-8 h-8 text-white" />
+                      </motion.div>
+                    </div>
+                    <DialogTitle className="text-xl">Create New Seat</DialogTitle>
+                    <DialogDescription>
+                      Set up a workspace for your team member
+                    </DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="seatName">Seat Name</Label>
+                    <div className="space-y-3">
+                      <Label htmlFor="seatName" className="text-sm font-medium">Seat Name</Label>
                       <Input
                         id="seatName"
                         placeholder="e.g., Worker 1, Sales Team, Support"
                         value={newSeatName}
                         onChange={(e) => setNewSeatName(e.target.value)}
                         onKeyDown={(e) => e.key === 'Enter' && handleCreateSeat()}
+                        className="h-11"
                       />
+                    </div>
+                    <div className="bg-muted/50 rounded-lg p-4 space-y-2">
+                      <div className="flex items-center gap-2 text-sm">
+                        <Link2 className="w-4 h-4 text-primary" />
+                        <span className="font-medium">Unique access link generated</span>
+                      </div>
                       <p className="text-xs text-muted-foreground">
-                        A unique link will be generated for this seat
+                        Share this link with your worker to give them access to their chat workspace
                       </p>
                     </div>
                   </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
+                  <DialogFooter className="gap-2 sm:gap-0">
+                    <Button variant="outline" onClick={() => setIsCreateOpen(false)} className="flex-1 sm:flex-none">
                       Cancel
                     </Button>
-                    <Button onClick={handleCreateSeat}>
+                    <Button onClick={handleCreateSeat} className="flex-1 sm:flex-none bg-gradient-to-r from-primary to-violet-600 hover:from-primary/90 hover:to-violet-600/90">
+                      <Plus className="w-4 h-4 mr-2" />
                       Create Seat
                     </Button>
                   </DialogFooter>
@@ -508,7 +524,7 @@ const handleDeleteSeat = async (seatId: string) => {
                           variant="ghost"
                           size="icon"
                           className="h-9 w-9 text-orange-500 hover:text-orange-600 hover:bg-orange-500/10"
-                          onClick={() => handleResetLink(seat)}
+                          onClick={() => setResetConfirm(seat)}
                           title="Reset link"
                         >
                           <RotateCcw className="w-4 h-4" />
@@ -517,7 +533,7 @@ const handleDeleteSeat = async (seatId: string) => {
                           variant="ghost"
                           size="icon"
                           className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10"
-                          onClick={() => handleDeleteSeat(seat.id)}
+                          onClick={() => setDeleteConfirm(seat)}
                           title="Delete seat"
                         >
                           <Trash2 className="w-4 h-4" />
@@ -569,6 +585,68 @@ const handleDeleteSeat = async (seatId: string) => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
+        <AlertDialogContent className="sm:max-w-md">
+          <AlertDialogHeader className="text-center sm:text-center">
+            <div className="mx-auto w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
+              <motion.div
+                animate={{ scale: [1, 1.1, 1] }}
+                transition={{ duration: 1.5, repeat: Infinity }}
+              >
+                <AlertTriangle className="w-8 h-8 text-destructive" />
+              </motion.div>
+            </div>
+            <AlertDialogTitle className="text-xl">Delete Seat?</AlertDialogTitle>
+            <AlertDialogDescription className="text-center">
+              Are you sure you want to delete <span className="font-semibold text-foreground">"{deleteConfirm?.name}"</span>? 
+              This action cannot be undone and the access link will stop working immediately.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0 mt-4">
+            <AlertDialogCancel className="flex-1 sm:flex-none">Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => deleteConfirm && handleDeleteSeat(deleteConfirm)}
+              className="flex-1 sm:flex-none bg-destructive hover:bg-destructive/90"
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Delete Seat
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Reset Link Confirmation Dialog */}
+      <AlertDialog open={!!resetConfirm} onOpenChange={(open) => !open && setResetConfirm(null)}>
+        <AlertDialogContent className="sm:max-w-md">
+          <AlertDialogHeader className="text-center sm:text-center">
+            <div className="mx-auto w-16 h-16 rounded-full bg-orange-500/10 flex items-center justify-center mb-4">
+              <motion.div
+                animate={{ rotate: [0, -20, 0] }}
+                transition={{ duration: 1, repeat: Infinity }}
+              >
+                <RotateCcw className="w-8 h-8 text-orange-500" />
+              </motion.div>
+            </div>
+            <AlertDialogTitle className="text-xl">Reset Access Link?</AlertDialogTitle>
+            <AlertDialogDescription className="text-center">
+              The current link for <span className="font-semibold text-foreground">"{resetConfirm?.name}"</span> will stop working immediately. 
+              You'll need to share the new link with your worker.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-0 mt-4">
+            <AlertDialogCancel className="flex-1 sm:flex-none">Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={() => resetConfirm && handleResetLink(resetConfirm)}
+              className="flex-1 sm:flex-none bg-orange-500 hover:bg-orange-600"
+            >
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Reset Link
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 };
