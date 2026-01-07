@@ -521,15 +521,8 @@ async def process_single_task(task: dict, settings: dict) -> dict:
         else:
             success, error = False, f"Unexpected send_message return: {type(send_res)}"
 
-        # Check if this is a sender-side issue (should retry with different account)
-        # Includes: privacy restrictions, rate limits, AND proxy errors
-        is_sender_error = error and any(x in error.lower() for x in [
-            "privacyrestricted", "privacy restricted", "userprivacyrestricted",
-            "too many requests", "sendmessagerequest",
-            # Proxy/network errors - retry with different account that has working proxy
-            "winerror 64", "winerror 121", "network name", "no longer available",
-            "server closed", "connection refused", "proxy", "socks",
-            "timeout", "unreachable", "connection reset", "semaphore"
+        is_privacy_error = error and any(x in error.lower() for x in [
+            "privacyrestricted", "privacy restricted", "userprivacyrestricted"
         ])
 
         api_creds = account.get("telegram_api_credentials")
@@ -547,10 +540,10 @@ async def process_single_task(task: dict, settings: dict) -> dict:
             "recipient_name": recipient_name,
         }
 
-        if is_sender_error:
+        if is_privacy_error:
             result["skip_account"] = True
             result["retry_with_different_account"] = True
-            print(f"    ⚠ [{account_phone}] Sender error (will retry with different account)")
+            print(f"    ⚠ [{account_phone}] Privacy restricted")
         elif success:
             print(f"    ✓ [{account_phone}] Sent")
         else:
