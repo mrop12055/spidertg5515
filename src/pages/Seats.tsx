@@ -463,12 +463,31 @@ const handleDeleteSeat = async (seat: Seat) => {
                             </p>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Switch
-                            checked={seat.is_active}
-                            onCheckedChange={() => handleToggleActive(seat)}
+                        <motion.button
+                          onClick={() => handleToggleActive(seat)}
+                          className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300 ${
+                            seat.is_active 
+                              ? 'bg-green-500/15 text-green-600 hover:bg-green-500/25' 
+                              : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                          }`}
+                          whileTap={{ scale: 0.95 }}
+                        >
+                          <motion.div
+                            className={`w-2 h-2 rounded-full ${
+                              seat.is_active ? 'bg-green-500' : 'bg-muted-foreground/50'
+                            }`}
+                            animate={seat.is_active ? {
+                              scale: [1, 1.3, 1],
+                              opacity: [1, 0.7, 1],
+                            } : {}}
+                            transition={{
+                              duration: 2,
+                              repeat: Infinity,
+                              ease: "easeInOut"
+                            }}
                           />
-                        </div>
+                          <span>{seat.is_active ? 'Active' : 'Inactive'}</span>
+                        </motion.button>
                       </div>
 
                       {/* Stats Grid */}
