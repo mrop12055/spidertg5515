@@ -76,6 +76,7 @@ interface Message {
 
 interface SeatStats {
   total_conversations: number;
+  conversations_started: number;
   messages_sent_today: number;
   messages_read: number;
   responses_received: number;
@@ -124,6 +125,7 @@ const SeatChat: React.FC = () => {
   const [chatTab, setChatTab] = useState<ChatTab>('all');
   const [stats, setStats] = useState<SeatStats>({
     total_conversations: 0,
+    conversations_started: 0,
     messages_sent_today: 0,
     messages_read: 0,
     responses_received: 0
@@ -374,6 +376,7 @@ const SeatChat: React.FC = () => {
       if (!error && data) {
         setStats({
           total_conversations: data.total_conversations || 0,
+          conversations_started: data.conversations_started || 0,
           messages_sent_today: data.messages_sent_today || 0,
           messages_read: data.messages_read || 0,
           responses_received: data.responses_received || 0
@@ -1680,11 +1683,22 @@ const SeatChat: React.FC = () => {
               </div>
               
               {/* Stats Cards */}
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-5">
                 <div className="bg-card rounded-xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-center justify-between mb-4">
                     <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center">
                       <MessageSquare className="w-6 h-6 text-primary" />
+                    </div>
+                    <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Started</span>
+                  </div>
+                  <p className="text-3xl font-bold text-foreground tracking-tight">{stats.conversations_started}</p>
+                  <p className="text-sm text-muted-foreground mt-1">New Contacts</p>
+                </div>
+
+                <div className="bg-card rounded-xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-slate-500/20 to-slate-500/5 flex items-center justify-center">
+                      <Users className="w-6 h-6 text-slate-500" />
                     </div>
                     <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Total</span>
                   </div>
@@ -1717,7 +1731,7 @@ const SeatChat: React.FC = () => {
                 <div className="bg-card rounded-xl p-5 border border-border shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-center justify-between mb-4">
                     <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-green-500/20 to-green-500/5 flex items-center justify-center">
-                      <Users className="w-6 h-6 text-green-500" />
+                      <CheckCheck className="w-6 h-6 text-green-500" />
                     </div>
                     <span className="text-[10px] font-medium text-muted-foreground bg-muted px-2 py-1 rounded-full uppercase">Replies</span>
                   </div>
@@ -1731,12 +1745,12 @@ const SeatChat: React.FC = () => {
                 <div className="flex items-center justify-between mb-5">
                   <div>
                     <h3 className="text-lg font-semibold text-foreground">Response Rate</h3>
-                    <p className="text-sm text-muted-foreground mt-1">Percentage of conversations with replies</p>
+                    <p className="text-sm text-muted-foreground mt-1">Percentage of started conversations with replies</p>
                   </div>
                   <div className="text-right">
                     <p className="text-4xl font-bold text-primary">
-                      {stats.total_conversations > 0 
-                        ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
+                      {stats.conversations_started > 0 
+                        ? Math.round((stats.responses_received / stats.conversations_started) * 100) 
                         : 0}%
                     </p>
                   </div>
@@ -1745,15 +1759,15 @@ const SeatChat: React.FC = () => {
                   <div 
                     className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary to-primary/70 rounded-full transition-all duration-700 ease-out"
                     style={{ 
-                      width: `${stats.total_conversations > 0 
-                        ? Math.round((stats.responses_received / stats.total_conversations) * 100) 
+                      width: `${stats.conversations_started > 0 
+                        ? Math.round((stats.responses_received / stats.conversations_started) * 100) 
                         : 0}%` 
                     }}
                   />
                 </div>
                 <div className="flex justify-between mt-3 text-sm text-muted-foreground">
                   <span>{stats.responses_received} responses</span>
-                  <span>{stats.total_conversations} total</span>
+                  <span>{stats.conversations_started} started</span>
                 </div>
               </div>
               

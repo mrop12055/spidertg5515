@@ -1702,6 +1702,7 @@ export type Database = {
     Views: {
       seat_stats: {
         Row: {
+          conversations_started: number | null
           messages_read: number | null
           messages_sent_today: number | null
           responses_received: number | null
