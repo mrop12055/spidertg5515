@@ -22,7 +22,7 @@ import {
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
   AlertCircle, RotateCcw, Eye, TrendingUp, Database, Search, Megaphone
 } from 'lucide-react';
-import AccountScheduler from '@/components/campaigns/AccountScheduler';
+
 import { format } from 'date-fns';
 import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
@@ -128,20 +128,8 @@ const Campaigns: React.FC = () => {
     { id: '1', message: '', accountCount: 10 }
   ]);
   
-  // Local state for campaign settings (initialized from DB settings)
-  const [messagesPerAccount, setMessagesPerAccount] = useState(10);
-  const [messageInterval, setMessageInterval] = useState(5);
-  const [accountSwitchDelay, setAccountSwitchDelay] = useState(30);
-  const [showScheduler, setShowScheduler] = useState(false);
+  // Local state for UI
   const [showSpeedSettings, setShowSpeedSettings] = useState(false);
-  const [schedulerSettings, setSchedulerSettings] = useState({
-    enabled: true,
-    maxMessagesBeforeRotation: 10,
-    cooldownDuration: 300, // seconds
-    prioritizeHighMaturity: true,
-    autoSkipRestricted: true,
-    balanceLoad: true
-  });
   
   // Campaign speed settings (local state synced from DB)
   const [campaignSpeed, setCampaignSpeed] = useState({
@@ -149,31 +137,19 @@ const Campaigns: React.FC = () => {
     staggerMax: 1.5,
     pollingInterval: 3,
     batchSize: 100,
+    messagesPerAccountPerDay: 25,
   });
   
-  // Sync local settings with database settings when they load
+  // Sync campaign speed settings with database settings when they load
   useEffect(() => {
-    if (!isLoadingSettings) {
-      setMessagesPerAccount(appSettings.account_limits.messagesPerAccount);
-      setMessageInterval(appSettings.message_timing.minDelaySeconds);
-      setAccountSwitchDelay(appSettings.message_timing.accountSwitchDelaySeconds);
-      setSchedulerSettings({
-        enabled: appSettings.scheduler.enabled,
-        maxMessagesBeforeRotation: appSettings.scheduler.maxMessagesBeforeRotation,
-        cooldownDuration: appSettings.scheduler.cooldownDuration,
-        prioritizeHighMaturity: appSettings.scheduler.prioritizeHighMaturity,
-        autoSkipRestricted: appSettings.scheduler.autoSkipRestricted,
-        balanceLoad: appSettings.scheduler.balanceLoad,
+    if (!isLoadingSettings && appSettings.campaign_speed) {
+      setCampaignSpeed({
+        staggerMin: appSettings.campaign_speed.staggerMin ?? 0.3,
+        staggerMax: appSettings.campaign_speed.staggerMax ?? 1.5,
+        pollingInterval: appSettings.campaign_speed.pollingInterval ?? 3,
+        batchSize: appSettings.campaign_speed.batchSize ?? 100,
+        messagesPerAccountPerDay: appSettings.campaign_speed.messagesPerAccountPerDay ?? 25,
       });
-      // Sync campaign speed settings
-      if (appSettings.campaign_speed) {
-        setCampaignSpeed({
-          staggerMin: appSettings.campaign_speed.staggerMin ?? 0.3,
-          staggerMax: appSettings.campaign_speed.staggerMax ?? 1.5,
-          pollingInterval: appSettings.campaign_speed.pollingInterval ?? 3,
-          batchSize: appSettings.campaign_speed.batchSize ?? 100,
-        });
-      }
     }
   }, [isLoadingSettings, appSettings]);
   
@@ -756,31 +732,6 @@ const Campaigns: React.FC = () => {
   const handleStartCampaign = async (campaignId: string) => {
     setIsStarting(campaignId);
     
-    // Save current settings to database BEFORE starting the campaign
-    // This ensures the Python runner uses the exact settings shown in UI
-    try {
-      await saveSetting('message_timing', {
-        minDelaySeconds: messageInterval,
-        maxDelaySeconds: Math.max(messageInterval * 2, 15),
-        accountSwitchDelaySeconds: accountSwitchDelay,
-      });
-      await saveSetting('account_limits', {
-        ...appSettings.account_limits,
-        messagesPerAccount,
-      });
-      await saveSetting('scheduler', {
-        enabled: schedulerSettings.enabled,
-        maxMessagesBeforeRotation: schedulerSettings.maxMessagesBeforeRotation,
-        cooldownDuration: schedulerSettings.cooldownDuration,
-        prioritizeHighMaturity: schedulerSettings.prioritizeHighMaturity,
-        autoSkipRestricted: schedulerSettings.autoSkipRestricted,
-        balanceLoad: schedulerSettings.balanceLoad,
-      });
-      console.log('Campaign settings saved to database');
-    } catch (error) {
-      console.error('Failed to save campaign settings:', error);
-    }
-    
     await startCampaign(campaignId);
     // Refresh counts quickly after queueing
     await fetchReports();
@@ -1050,12 +1001,10 @@ const Campaigns: React.FC = () => {
               </DialogHeader>
               
               <Tabs defaultValue="recipients" className="mt-4">
-                <TabsList className="grid w-full grid-cols-5">
+                <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="recipients">1. Recipients</TabsTrigger>
                   <TabsTrigger value="messages">2. Messages</TabsTrigger>
                   <TabsTrigger value="accounts">3. Accounts</TabsTrigger>
-                  <TabsTrigger value="scheduler">4. Scheduler</TabsTrigger>
-                  <TabsTrigger value="settings">5. Settings</TabsTrigger>
                 </TabsList>
 
                 {/* STEP 1: Recipients - Ask for data FIRST */}
@@ -1351,107 +1300,6 @@ username123
                       </ul>
                     </div>
                   )}
-                </TabsContent>
-
-                <TabsContent value="scheduler" className="mt-4">
-                  <AccountScheduler
-                    accounts={accounts}
-                    selectedAccountIds={newCampaign.accountIds}
-                    onAccountRotation={(accountId) => {
-                      console.log('Rotated to account:', accountId);
-                    }}
-                    onSettingsChange={(newSettings) => setSchedulerSettings(newSettings)}
-                    accountUniqueRecipients={accountUniqueRecipients}
-                    initialSettings={schedulerSettings}
-                  />
-                </TabsContent>
-                
-                <TabsContent value="settings" className="space-y-6 mt-4">
-                  <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label>Batch Size (parallel sends)</Label>
-                      <div className="flex items-center gap-4">
-                        <Slider
-                          value={[newCampaign.batchSize]}
-                          onValueChange={([v]) => setNewCampaign(prev => ({ ...prev, batchSize: v }))}
-                          min={10}
-                          max={200}
-                          step={10}
-                          className="flex-1"
-                        />
-                        <span className="w-12 text-center font-medium">{newCampaign.batchSize}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Number of messages to send simultaneously per batch (10-200)
-                      </p>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label>Messages per Account per Day</Label>
-                      <div className="flex items-center gap-4">
-                        <Slider
-                          value={[messagesPerAccount]}
-                          onValueChange={([v]) => setMessagesPerAccount(v)}
-                          min={1}
-                          max={25}
-                          step={1}
-                          className="flex-1"
-                        />
-                        <span className="w-12 text-center font-medium">{messagesPerAccount}</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Recommended: 5-10 messages per account per day to avoid restrictions
-                      </p>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label>Delay Between Messages (seconds)</Label>
-                      <div className="flex items-center gap-4">
-                        <Slider
-                          value={[messageInterval]}
-                          onValueChange={([v]) => setMessageInterval(v)}
-                          min={1}
-                          max={120}
-                          step={1}
-                          className="flex-1"
-                        />
-                        <span className="w-12 text-center font-medium">{messageInterval}s</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Wait time between each message. Lower = faster but higher risk.
-                      </p>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label>Account Switch Delay (seconds)</Label>
-                      <div className="flex items-center gap-4">
-                        <Slider
-                          value={[accountSwitchDelay]}
-                          onValueChange={([v]) => setAccountSwitchDelay(v)}
-                          min={1}
-                          max={120}
-                          step={1}
-                          className="flex-1"
-                        />
-                        <span className="w-12 text-center font-medium">{accountSwitchDelay}s</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Wait time before switching to the next account
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
-                    <div className="flex items-start gap-2">
-                      <AlertCircle className="w-5 h-5 text-yellow-600 mt-0.5" />
-                      <div>
-                        <h4 className="text-sm font-medium text-yellow-600">Important</h4>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          These settings help avoid Telegram restrictions. Lower values = faster but higher risk.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
                 </TabsContent>
               </Tabs>
 
@@ -1822,7 +1670,7 @@ username123
                       <div>
                         <h3 className="font-semibold">Campaign Speed Settings</h3>
                         <p className="text-xs text-muted-foreground">
-                          Stagger: {campaignSpeed.staggerMin}s - {campaignSpeed.staggerMax}s • Polling: {campaignSpeed.pollingInterval}s • Batch: {campaignSpeed.batchSize}
+                          {campaignSpeed.messagesPerAccountPerDay} msgs/account • Stagger: {campaignSpeed.staggerMin}s - {campaignSpeed.staggerMax}s • Batch: {campaignSpeed.batchSize}
                         </p>
                       </div>
                     </div>
@@ -1839,21 +1687,41 @@ username123
                   
                   {showSpeedSettings && (
                     <div className="mt-4 pt-4 border-t border-border/50 space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {/* Messages per Account per Day - Most Important */}
+                        <div className="space-y-2 md:col-span-2 lg:col-span-1">
+                          <Label className="flex items-center gap-2">
+                            Messages per Account/Day
+                            <Badge variant="secondary" className="text-xs">Per Account</Badge>
+                          </Label>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[campaignSpeed.messagesPerAccountPerDay]}
+                              onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, messagesPerAccountPerDay: v }))}
+                              min={1}
+                              max={50}
+                              step={1}
+                              className="flex-1"
+                            />
+                            <span className="w-12 text-center font-medium">{campaignSpeed.messagesPerAccountPerDay}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">Daily limit per sender account (1-50)</p>
+                        </div>
+                        
                         <div className="space-y-2">
                           <Label>Stagger Min (seconds)</Label>
                           <div className="flex items-center gap-4">
                             <Slider
                               value={[campaignSpeed.staggerMin]}
                               onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, staggerMin: v }))}
-                              min={0.1}
+                              min={0}
                               max={3}
                               step={0.1}
                               className="flex-1"
                             />
                             <span className="w-12 text-center font-medium">{campaignSpeed.staggerMin}s</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">Minimum delay between parallel sends</p>
+                          <p className="text-xs text-muted-foreground">Min delay (0 = instant)</p>
                         </div>
                         
                         <div className="space-y-2">
@@ -1862,14 +1730,14 @@ username123
                             <Slider
                               value={[campaignSpeed.staggerMax]}
                               onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, staggerMax: v }))}
-                              min={0.5}
+                              min={0}
                               max={5}
                               step={0.1}
                               className="flex-1"
                             />
                             <span className="w-12 text-center font-medium">{campaignSpeed.staggerMax}s</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">Maximum delay between parallel sends</p>
+                          <p className="text-xs text-muted-foreground">Max delay between sends</p>
                         </div>
                         
                         <div className="space-y-2">
@@ -1885,7 +1753,7 @@ username123
                             />
                             <span className="w-12 text-center font-medium">{campaignSpeed.pollingInterval}s</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">Wait between batches (0 = immediate if more pending)</p>
+                          <p className="text-xs text-muted-foreground">Wait between batches (0 = immediate)</p>
                         </div>
                         
                         <div className="space-y-2">
