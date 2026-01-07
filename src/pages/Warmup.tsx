@@ -62,6 +62,7 @@ interface PrePairedAccount {
   pairIsInactive: boolean;
   hasConnectionTimeout: boolean; // Either account has connection timeout
   timeoutAccountPhone: string | null; // Which account has the timeout
+  todayMessagesCount: number; // Messages exchanged today
 }
 
 interface WarmupMessage {
@@ -250,6 +251,25 @@ export default function Warmup() {
         return false;
       };
       
+      // Fetch today's messages count per pair
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      
+      const { data: todayMessagesData } = await supabase
+        .from("warmup_messages")
+        .select("sender_account_id, receiver_account_id")
+        .eq("status", "sent")
+        .gte("sent_at", todayStart.toISOString());
+      
+      // Count messages per account pair
+      const pairMessageCounts = new Map<string, number>();
+      if (todayMessagesData) {
+        for (const msg of todayMessagesData) {
+          const pairKey = [msg.sender_account_id, msg.receiver_account_id].sort().join("-");
+          pairMessageCounts.set(pairKey, (pairMessageCounts.get(pairKey) || 0) + 1);
+        }
+      }
+      
       if (allPairedData) {
         for (const account of allPairedData) {
           // Skip if this account is not usable
@@ -272,6 +292,9 @@ export default function Warmup() {
             const timeoutPhone = accountHasTimeout ? account.phone_number : 
               (pairHasTimeout ? pairedAccount.phone_number : null);
             
+            // Get today's message count for this pair
+            const todayMsgCount = pairMessageCounts.get(pairKey) || 0;
+            
             // Both accounts are usable - valid pair
             uniquePairs.push({
               id: account.id,
@@ -285,6 +308,7 @@ export default function Warmup() {
               pairIsInactive: false,
               hasConnectionTimeout: hasTimeout,
               timeoutAccountPhone: timeoutPhone,
+              todayMessagesCount: todayMsgCount,
             });
           } else {
             // Partner is truly inactive (session expired, banned, etc.) - needs re-pairing
@@ -902,105 +926,118 @@ export default function Warmup() {
           </Card>
         </div>
 
-        {/* Settings */}
-        {!session?.status || session.status !== "active" ? (
-          <Card className="overflow-hidden">
-            <CardHeader className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-b border-border/50">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Settings className="h-5 w-5 text-orange-500" />
-                Warmup Settings
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                {/* Messages per Pair */}
-                <div className="space-y-4 p-4 rounded-lg bg-muted/30 border border-border/50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 rounded-full bg-primary/10">
-                        <MessageCircle className="h-4 w-4 text-primary" />
-                      </div>
-                      <Label className="font-medium">Messages per Pair</Label>
+        {/* Settings - Always visible */}
+        <Card className="overflow-hidden">
+          <CardHeader className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-b border-border/50 py-4">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Settings className="h-5 w-5 text-orange-500" />
+              Warmup Settings
+              {session?.status === "active" && (
+                <Badge variant="secondary" className="ml-2 text-xs">Read-only while running</Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Messages per Pair */}
+              <div className="space-y-4 p-4 rounded-lg bg-muted/30 border border-border/50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-full bg-primary/10">
+                      <MessageCircle className="h-4 w-4 text-primary" />
                     </div>
-                    <Badge variant="secondary" className="font-mono">
-                      {messagesPerPair[0]} - {messagesPerPair[1]}
-                    </Badge>
+                    <Label className="font-medium">Messages per Pair</Label>
                   </div>
-                  <Slider
-                    value={messagesPerPair}
-                    onValueChange={setMessagesPerPair}
-                    min={10}
-                    max={30}
-                    step={1}
-                    className="w-full"
-                  />
-                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <Clock className="h-3 w-3" />
-                    ~{Math.ceil(messagesPerPair[1] * 0.5)} min per conversation
-                  </p>
+                  <Badge variant="secondary" className="font-mono">
+                    {messagesPerPair[0]} - {messagesPerPair[1]}
+                  </Badge>
                 </div>
-                
-                {/* Batch Size */}
-                <div className="space-y-4 p-4 rounded-lg bg-muted/30 border border-border/50">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 rounded-full bg-blue-500/10">
-                        <Layers className="h-4 w-4 text-blue-500" />
-                      </div>
-                      <Label className="font-medium">Batch Size</Label>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary" className="font-mono">
-                        {warmupBatchSize}
-                      </Badge>
-                      <Button 
-                        onClick={handleSaveBatchSize}
-                        disabled={isSavingBatchSize}
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2"
-                      >
-                        {isSavingBatchSize ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                      </Button>
-                    </div>
-                  </div>
-                  <Slider
-                    value={[warmupBatchSize]}
-                    onValueChange={([v]) => setWarmupBatchSize(v)}
-                    min={10}
-                    max={500}
-                    step={10}
-                    className="w-full"
-                  />
-                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                    <Users className="h-3 w-3" />
-                    Parallel pairs: 10-500
-                  </p>
-                </div>
+                <Slider
+                  value={messagesPerPair}
+                  onValueChange={setMessagesPerPair}
+                  min={10}
+                  max={30}
+                  step={1}
+                  className="w-full"
+                  disabled={session?.status === "active"}
+                />
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Clock className="h-3 w-3" />
+                  ~{Math.ceil(messagesPerPair[1] * 0.5)} min per conversation
+                </p>
               </div>
-            </CardContent>
-          </Card>
-        ) : null}
+              
+              {/* Batch Size */}
+              <div className="space-y-4 p-4 rounded-lg bg-muted/30 border border-border/50">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="p-2 rounded-full bg-blue-500/10">
+                      <Layers className="h-4 w-4 text-blue-500" />
+                    </div>
+                    <Label className="font-medium">Batch Size</Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="font-mono">
+                      {warmupBatchSize}
+                    </Badge>
+                    <Button 
+                      onClick={handleSaveBatchSize}
+                      disabled={isSavingBatchSize || session?.status === "active"}
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2"
+                    >
+                      {isSavingBatchSize ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                    </Button>
+                  </div>
+                </div>
+                <Slider
+                  value={[warmupBatchSize]}
+                  onValueChange={([v]) => setWarmupBatchSize(v)}
+                  min={10}
+                  max={500}
+                  step={10}
+                  className="w-full"
+                  disabled={session?.status === "active"}
+                />
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Users className="h-3 w-3" />
+                  Parallel pairs: 10-500
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="space-y-6">
           {/* Paired Accounts - Always show all pairs */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Paired Accounts ({prePairedAccounts.length})
-                {session?.status === "active" && pairs.filter(p => p.status === "active").length > 0 && (
-                  <Badge className="ml-2 bg-green-500">{pairs.filter(p => p.status === "active").length} running</Badge>
-                )}
-              </CardTitle>
+          <Card className="overflow-hidden">
+            <CardHeader className="bg-gradient-to-r from-primary/5 to-primary/10 border-b border-border/50 py-4">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Users className="h-5 w-5 text-primary" />
+                  Paired Accounts
+                  <Badge variant="secondary" className="font-mono">{prePairedAccounts.length}</Badge>
+                </CardTitle>
+                <div className="flex items-center gap-2">
+                  {session?.status === "active" && pairs.filter(p => p.status === "active").length > 0 && (
+                    <Badge className="bg-green-500 text-white">
+                      <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      {pairs.filter(p => p.status === "active").length} running
+                    </Badge>
+                  )}
+                </div>
+              </div>
             </CardHeader>
-            <CardContent>
-              <ScrollArea className="h-[350px]">
-                <div className="space-y-2">
+            <CardContent className="p-0">
+              <ScrollArea className="h-[400px]">
+                <div className="divide-y divide-border/50">
                   {prePairedAccounts.length === 0 ? (
-                    <p className="text-muted-foreground text-center py-8">
-                      No paired accounts yet. Pairs are created when accounts become active.
-                    </p>
+                    <div className="text-muted-foreground text-center py-12">
+                      <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
+                      <p className="font-medium">No paired accounts yet</p>
+                      <p className="text-sm">Pairs are created when accounts become active</p>
+                    </div>
                   ) : (
                     prePairedAccounts.map((account, index) => {
                       // Check if this pair is currently running in active session
@@ -1014,60 +1051,96 @@ export default function Warmup() {
                              p.account_b?.phone_number === account.phone_number
                       );
                       
+                      // Get cycle count for today
+                      const today = new Date().toLocaleDateString('en-CA');
+                      const pairCycles = activePair?.last_cycle_date === today 
+                        ? (activePair?.cycles_completed_today || 0) 
+                        : 0;
+                      
                       return (
                         <div
                           key={account.id}
-                          className={`flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-lg gap-2 ${
-                            isRunning ? "bg-green-500/10 border border-green-500/30" : "bg-muted/50"
+                          className={`flex flex-col sm:flex-row sm:items-center justify-between px-4 py-3 gap-3 transition-colors hover:bg-muted/30 ${
+                            isRunning ? "bg-green-500/5" : ""
                           }`}
                         >
-                          <div className="flex items-center gap-3 min-w-0 flex-1">
-                            <Badge variant="outline" className="h-6 w-8 justify-center font-semibold shrink-0">
-                              #{index + 1}
-                            </Badge>
-                            <div className="flex items-center gap-2 min-w-0">
-                              <div className="text-left min-w-0">
-                                <span className={`font-mono text-sm block truncate ${account.timeoutAccountPhone === account.phone_number ? 'text-blue-500' : ''}`}>
+                          {/* Pair Number */}
+                          <div className="flex items-center gap-4 min-w-0 flex-1">
+                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                              isRunning 
+                                ? "bg-green-500 text-white" 
+                                : activePair?.status === "completed" 
+                                  ? "bg-primary/20 text-primary"
+                                  : activePair?.status === "failed"
+                                    ? "bg-red-500/20 text-red-500"
+                                    : "bg-muted text-muted-foreground"
+                            }`}>
+                              {index + 1}
+                            </div>
+                            
+                            {/* Account Pair Info */}
+                            <div className="flex items-center gap-3 min-w-0 flex-1">
+                              {/* Account A */}
+                              <div className="text-left min-w-0 flex-1">
+                                <span className={`font-mono text-sm block truncate ${
+                                  account.timeoutAccountPhone === account.phone_number ? 'text-blue-500' : ''
+                                }`}>
                                   {formatPhone(account.phone_number)}
                                 </span>
-                                {account.first_name && (
-                                  <span className="text-xs text-muted-foreground truncate block">{account.first_name}</span>
-                                )}
+                                <span className="text-xs text-muted-foreground truncate block">
+                                  {account.first_name || "—"}
+                                </span>
                               </div>
-                              <ArrowLeftRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                              <div className="text-left min-w-0">
-                                <span className={`font-mono text-sm block truncate ${account.timeoutAccountPhone === account.pair_phone ? 'text-blue-500' : ''}`}>
+                              
+                              {/* Arrow */}
+                              <div className={`shrink-0 p-1.5 rounded-full ${isRunning ? 'bg-green-500/20' : 'bg-muted'}`}>
+                                <ArrowLeftRight className={`h-3.5 w-3.5 ${isRunning ? 'text-green-500' : 'text-muted-foreground'}`} />
+                              </div>
+                              
+                              {/* Account B */}
+                              <div className="text-left min-w-0 flex-1">
+                                <span className={`font-mono text-sm block truncate ${
+                                  account.timeoutAccountPhone === account.pair_phone ? 'text-blue-500' : ''
+                                }`}>
                                   {formatPhone(account.pair_phone)}
                                 </span>
-                                {account.pair_first_name && (
-                                  <span className="text-xs text-muted-foreground truncate block">{account.pair_first_name}</span>
-                                )}
+                                <span className="text-xs text-muted-foreground truncate block">
+                                  {account.pair_first_name || "—"}
+                                </span>
                               </div>
-                              {account.hasConnectionTimeout && (
-                                <Badge variant="outline" className="shrink-0 text-xs px-1.5 bg-blue-500/10 text-blue-500 border-blue-500/30">
-                                  <Clock className="h-3 w-3 mr-1" />
-                                  Timeout
-                                </Badge>
-                              )}
                             </div>
                           </div>
-                          <div className="flex items-center gap-1.5 shrink-0">
-                            {/* Show cycle count (today's completed warmup rounds) */}
-                            {(() => {
-                              const today = new Date().toLocaleDateString('en-CA'); // YYYY-MM-DD format
-                              const pairCycles = activePair?.last_cycle_date === today 
-                                ? (activePair?.cycles_completed_today || 0) 
-                                : 0;
-                              return pairCycles > 0 ? (
-                                <Badge variant="outline" className="shrink-0 text-xs px-1.5 bg-blue-500/10 text-blue-600 border-blue-500/30">
-                                  {pairCycles} cycle{pairCycles !== 1 ? 's' : ''}
-                                </Badge>
-                              ) : null;
-                            })()}
+                          
+                          {/* Stats & Actions */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            {/* Today's Messages Count */}
+                            {account.todayMessagesCount > 0 && (
+                              <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-primary/10 text-primary text-xs">
+                                <MessageCircle className="h-3 w-3" />
+                                <span className="font-medium">{account.todayMessagesCount}</span>
+                                <span className="text-muted-foreground">today</span>
+                              </div>
+                            )}
                             
+                            {/* Cycles Count */}
+                            {pairCycles > 0 && (
+                              <Badge variant="outline" className="text-xs px-1.5 bg-blue-500/10 text-blue-600 border-blue-500/30">
+                                {pairCycles} cycle{pairCycles !== 1 ? 's' : ''}
+                              </Badge>
+                            )}
+                            
+                            {/* Timeout Badge */}
+                            {account.hasConnectionTimeout && (
+                              <Badge variant="outline" className="text-xs px-1.5 bg-blue-500/10 text-blue-500 border-blue-500/30">
+                                <Clock className="h-3 w-3 mr-1" />
+                                Timeout
+                              </Badge>
+                            )}
+                            
+                            {/* Status & Action Buttons */}
                             {isRunning ? (
                               <>
-                                <Badge variant="secondary" className="shrink-0 text-xs px-1.5">
+                                <Badge variant="secondary" className="text-xs px-1.5">
                                   {activePair?.messages_exchanged || 0} msgs
                                 </Badge>
                                 <Button
@@ -1075,7 +1148,7 @@ export default function Warmup() {
                                   variant="destructive"
                                   onClick={() => activePair && handleStopSinglePair(activePair.id)}
                                   disabled={stoppingPairId === activePair?.id}
-                                  className="h-7 w-7 shrink-0"
+                                  className="h-7 w-7"
                                 >
                                   {stoppingPairId === activePair?.id ? (
                                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -1083,14 +1156,14 @@ export default function Warmup() {
                                     <Square className="h-3 w-3" />
                                   )}
                                 </Button>
-                                <div className="flex items-center gap-1 bg-green-500 text-white px-2 py-1 rounded-md text-xs shrink-0">
-                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                <Badge className="bg-green-500 text-white text-xs px-2">
+                                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
                                   Running
-                                </div>
+                                </Badge>
                               </>
                             ) : activePair?.status === "failed" ? (
                               <>
-                                <Badge variant="destructive" className="shrink-0 text-xs px-1.5">
+                                <Badge variant="destructive" className="text-xs px-1.5 truncate max-w-[100px]">
                                   {activePair.failed_reason || "Failed"}
                                 </Badge>
                                 <Button
@@ -1110,8 +1183,8 @@ export default function Warmup() {
                               </>
                             ) : activePair?.status === "completed" ? (
                               <>
-                                <Badge className="shrink-0 text-xs px-1.5 bg-green-500 text-white">
-                                  Done
+                                <Badge className="bg-green-500/20 text-green-600 text-xs px-2">
+                                  ✓ Done
                                 </Badge>
                                 <Button
                                   size="sm"
