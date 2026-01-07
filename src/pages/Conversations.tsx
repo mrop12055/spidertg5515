@@ -774,9 +774,11 @@ const Chat: React.FC = () => {
                   const displayName = conv.recipientPhone || 'Unknown';
                   const avatarInitial = conv.recipientPhone?.startsWith('+') ? conv.recipientPhone.slice(1, 3) : '?';
                   
-                  // Get message preview - handle empty content + campaign indicator
+                  // Get message preview - prioritize conversation's lastMessageContent if messages not loaded yet
                   const isCampaignMessage = !!lastMsg?.campaignRecipientId;
-                  const messagePreview = lastMsg?.content?.trim() || (lastMsg ? 'Message sent' : 'No messages');
+                  const messagePreview = lastMsg?.content?.trim() 
+                    || conv.lastMessageContent?.trim() 
+                    || (lastMsg || conv.lastMessageContent ? 'Message sent' : 'No messages');
 
                   return (
                     <div
