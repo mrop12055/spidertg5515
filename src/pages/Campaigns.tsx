@@ -1161,6 +1161,52 @@ username123
                         </p>
                       )}
                     </div>
+                    
+                    {/* Distribution Preview for Multiple Seats */}
+                    {(() => {
+                      const recipientCount = newCampaign.recipientsText.split('\n').filter(l => l.trim()).length;
+                      if (selectedSeatIds.length > 1 && recipientCount > 0) {
+                        const perSeat = Math.ceil(recipientCount / selectedSeatIds.length);
+                        const distribution: { seatName: string; count: number }[] = [];
+                        let remaining = recipientCount;
+                        
+                        selectedSeatIds.forEach((seatId, index) => {
+                          const seatName = seats.find(s => s.id === seatId)?.name || `Seat ${index + 1}`;
+                          const count = Math.min(perSeat, remaining);
+                          if (count > 0) {
+                            distribution.push({ seatName, count });
+                            remaining -= count;
+                          }
+                        });
+                        
+                        return (
+                          <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">
+                            <div className="flex items-center gap-2 mb-3">
+                              <Users className="w-4 h-4 text-primary" />
+                              <h4 className="text-sm font-medium text-primary">Distribution Preview</h4>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 mb-2">
+                              {distribution.map((d, idx) => (
+                                <div key={idx} className="flex items-center gap-1">
+                                  <Badge variant="secondary" className="bg-primary/20 text-primary">
+                                    {d.count}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground">{d.seatName}</span>
+                                  {idx < distribution.length - 1 && (
+                                    <span className="text-muted-foreground mx-1">+</span>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {recipientCount} recipients will be randomly shuffled and distributed equally across {selectedSeatIds.length} seats. 
+                              Each recipient appears in only one campaign.
+                            </p>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 </TabsContent>
                 
