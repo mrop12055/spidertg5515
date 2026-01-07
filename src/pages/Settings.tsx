@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { cn } from '@/lib/utils';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Bell, 
   Calendar,
@@ -25,7 +26,8 @@ import {
   Plus,
   X,
   Trash2,
-  Save
+  Save,
+  Settings as SettingsIcon
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -291,39 +293,54 @@ const Settings: React.FC = () => {
     <DashboardLayout>
       <PageHeader
         title="Settings"
-        description="Configure your Telegram Hub preferences"
-        icon={Key}
+        description="Configure your system preferences"
+        icon={SettingsIcon}
       />
 
-      <div className="max-w-3xl space-y-6">
+      <div className="max-w-4xl">
         {/* Loading indicator for database settings */}
         {isLoadingSettings && (
-          <Card className="border-primary/30">
+          <Card className="border-primary/30 mb-6">
             <CardContent className="flex items-center justify-center py-8">
               <div className="flex items-center gap-3">
                 <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                <span className="text-muted-foreground">Loading settings from database...</span>
+                <span className="text-muted-foreground">Loading settings...</span>
               </div>
             </CardContent>
           </Card>
         )}
 
-        {/* API Credentials Distribution */}
-        <Card className="border-primary/30">
-          <CardHeader>
+        <Tabs defaultValue="api" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-3 h-11">
+            <TabsTrigger value="api" className="gap-2">
+              <Key className="w-4 h-4" />
+              API Credentials
+            </TabsTrigger>
+            <TabsTrigger value="cleanup" className="gap-2">
+              <Calendar className="w-4 h-4" />
+              Cleanup
+            </TabsTrigger>
+            <TabsTrigger value="notifications" className="gap-2">
+              <Bell className="w-4 h-4" />
+              Notifications
+            </TabsTrigger>
+          </TabsList>
+
+          {/* API Credentials Tab */}
+          <TabsContent value="api" className="space-y-4 mt-0">
+
+        <Card>
+          <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <Key className="w-5 h-5 text-primary" />
-                  API Credentials Distribution
-                </CardTitle>
+              <div className="space-y-1">
+                <CardTitle className="text-lg">API Credentials Distribution</CardTitle>
                 <CardDescription>
-                  Accounts are distributed across multiple Telegram API IDs to reduce ban risk
+                  Distribute accounts across multiple API IDs to reduce ban risk
                 </CardDescription>
               </div>
               <Dialog open={isAddApiOpen} onOpenChange={setIsAddApiOpen}>
                 <DialogTrigger asChild>
-                  <Button size="sm" variant="outline" className="gap-2">
+                  <Button size="sm" className="gap-2">
                     <Plus className="w-4 h-4" />
                     Add API
                   </Button>
@@ -393,14 +410,20 @@ const Settings: React.FC = () => {
               </Dialog>
             </div>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="pt-0">
             {isLoadingCredentials ? (
-              <div className="flex items-center justify-center py-8">
+              <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : apiCredentials.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <Key className="w-12 h-12 text-muted-foreground/50 mb-3" />
+                <p className="text-muted-foreground">No API credentials configured</p>
+                <p className="text-sm text-muted-foreground/70">Add your first API to get started</p>
               </div>
             ) : (
               <>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {apiCredentials.map((cred) => {
                     const iconMap: Record<string, React.ReactNode> = {
                       android: <Smartphone className="w-4 h-4 text-green-500" />,
@@ -412,36 +435,36 @@ const Settings: React.FC = () => {
                     return (
                       <div 
                         key={cred.id} 
-                        className="p-4 rounded-lg border bg-card/50 space-y-2 group relative"
+                        className="p-4 rounded-xl border bg-card hover:bg-accent/5 transition-colors group relative"
                       >
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="absolute top-2 right-2 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="absolute top-3 right-3 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
                           onClick={() => handleDeleteApiCredential(cred.id)}
                         >
-                          <X className="w-3 h-3 text-destructive" />
+                          <X className="w-4 h-4" />
                         </Button>
-                        <div className="flex items-center justify-between pr-6">
-                          <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="p-2 rounded-lg bg-muted">
                             {iconMap[cred.client_type] || <Smartphone className="w-4 h-4" />}
-                            <span className="font-medium text-sm">{cred.name}</span>
                           </div>
-                          <Badge variant="outline" className="text-xs">
+                          <div className="flex-1 min-w-0 pr-6">
+                            <p className="font-medium text-sm truncate">{cred.name}</p>
+                            <p className="text-xs text-muted-foreground">{cred.accounts_count} accounts</p>
+                          </div>
+                          <Badge variant="secondary" className="text-xs capitalize shrink-0">
                             {cred.client_type}
                           </Badge>
                         </div>
                         <div className="space-y-3">
-                          {/* 24h Send Stats - Primary display */}
-                          <div className="space-y-1">
+                          <div className="space-y-1.5">
                             <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">
-                                Sent (24h)
-                              </span>
+                              <span className="text-muted-foreground">24h Usage</span>
                               <span className={cn(
                                 "font-medium",
                                 (cred.sent_24h || 0) >= API_DAILY_LIMIT ? "text-destructive" : 
-                                (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "text-yellow-500" : "text-green-500"
+                                (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "text-yellow-500" : "text-muted-foreground"
                               )}>
                                 {cred.sent_24h || 0}/{API_DAILY_LIMIT}
                               </span>
@@ -449,70 +472,57 @@ const Settings: React.FC = () => {
                             <Progress 
                               value={Math.min(((cred.sent_24h || 0) / API_DAILY_LIMIT) * 100, 100)} 
                               className={cn(
-                                "h-2",
+                                "h-1.5",
                                 (cred.sent_24h || 0) >= API_DAILY_LIMIT ? "[&>div]:bg-destructive" : 
-                                (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "[&>div]:bg-yellow-500" : "[&>div]:bg-green-500"
+                                (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "[&>div]:bg-yellow-500" : "[&>div]:bg-primary"
                               )}
                             />
                           </div>
-                          
-                          {/* 24h Success Rate */}
-                          <div className="flex items-center justify-between text-xs">
-                            <span className="text-muted-foreground">Success Rate (24h)</span>
-                            {cred.success_rate_24h !== null && cred.success_rate_24h !== undefined ? (
-                              <Badge 
-                                variant="outline" 
-                                className={cn(
-                                  "text-xs font-medium",
-                                  cred.success_rate_24h >= 90 ? "border-green-500 text-green-500" : 
-                                  cred.success_rate_24h >= 70 ? "border-yellow-500 text-yellow-500" : "border-destructive text-destructive"
-                                )}
-                              >
-                                {cred.success_rate_24h.toFixed(1)}% ({cred.sent_count_24h}/{(cred.sent_count_24h || 0) + (cred.failed_count_24h || 0)})
-                              </Badge>
-                            ) : (
-                              <span className="text-muted-foreground">No data</span>
-                            )}
-                          </div>
+                          {cred.success_rate_24h !== null && cred.success_rate_24h !== undefined && (
+                            <div className="flex items-center justify-between text-xs pt-1">
+                              <span className="text-muted-foreground">Success Rate</span>
+                              <span className={cn(
+                                "font-medium",
+                                cred.success_rate_24h >= 90 ? "text-green-500" : 
+                                cred.success_rate_24h >= 70 ? "text-yellow-500" : "text-destructive"
+                              )}>
+                                {cred.success_rate_24h.toFixed(0)}%
+                              </span>
+                            </div>
+                          )}
                         </div>
                       </div>
                     );
                   })}
                 </div>
 
-                {apiCredentials.length > 0 && (
-                  <div className="pt-2 space-y-2">
-                    <Separator />
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-muted-foreground">Daily Limit per API</span>
-                      <span className="font-medium">{API_DAILY_LIMIT} messages</span>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      System automatically selects accounts from least-used APIs
-                    </p>
-                  </div>
-                )}
+                <div className="pt-4 mt-4 border-t">
+                  <p className="text-xs text-muted-foreground text-center">
+                    Daily limit: {API_DAILY_LIMIT} messages per API • System auto-selects least-used APIs
+                  </p>
+                </div>
               </>
             )}
           </CardContent>
         </Card>
+      </TabsContent>
 
-        {/* Auto Cleanup */}
+      {/* Cleanup Tab */}
+      <TabsContent value="cleanup" className="mt-0">
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Calendar className="w-5 h-5" />
-              Auto Cleanup
-            </CardTitle>
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg">Auto Cleanup</CardTitle>
             <CardDescription>
-              Automatically delete old conversations to reduce ban risk
+              Automatically delete old conversations to reduce storage and ban risk
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <Label>Auto-delete chats older than</Label>
-                <span className="text-sm font-medium">{dbSettings.cleanup.retentionDays} days</span>
+          <CardContent className="space-y-6">
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <Label className="text-base">Delete chats older than</Label>
+                <Badge variant="secondary" className="text-sm font-medium">
+                  {dbSettings.cleanup.retentionDays} days
+                </Badge>
               </div>
               <Slider
                 value={[dbSettings.cleanup.retentionDays]}
@@ -520,46 +530,59 @@ const Settings: React.FC = () => {
                 min={3}
                 max={30}
                 step={1}
+                className="py-2"
               />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>3 days</span>
+                <span>30 days</span>
+              </div>
             </div>
             
             <Separator />
             
-            <Button 
-              variant="destructive" 
-              onClick={handleManualCleanup}
-              disabled={isCleaningUp}
-              className="w-full"
-            >
-              {isCleaningUp ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Cleaning up...
-                </>
-              ) : (
-                <>
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Run Cleanup Now
-                </>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
-
-        {/* Notifications */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Bell className="w-5 h-5" />
-              Notifications
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
-                <Label>Notify on reply</Label>
+                <p className="font-medium">Manual Cleanup</p>
+                <p className="text-sm text-muted-foreground">Run cleanup immediately</p>
+              </div>
+              <Button 
+                variant="outline" 
+                onClick={handleManualCleanup}
+                disabled={isCleaningUp}
+                className="gap-2"
+              >
+                {isCleaningUp ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Cleaning...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Run Now
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      {/* Notifications Tab */}
+      <TabsContent value="notifications" className="mt-0">
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg">Notification Preferences</CardTitle>
+            <CardDescription>
+              Configure how you want to be notified about events
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between py-2">
+              <div className="space-y-0.5">
+                <Label className="text-base">Reply Notifications</Label>
                 <p className="text-sm text-muted-foreground">
-                  Get notified when someone replies
+                  Get notified when someone replies to your messages
                 </p>
               </div>
               <Switch
@@ -568,11 +591,11 @@ const Settings: React.FC = () => {
               />
             </div>
             <Separator />
-            <div className="flex items-center justify-between">
-              <div>
-                <Label>Notify on ban</Label>
+            <div className="flex items-center justify-between py-2">
+              <div className="space-y-0.5">
+                <Label className="text-base">Ban Alerts</Label>
                 <p className="text-sm text-muted-foreground">
-                  Get notified when an account gets banned
+                  Get notified when an account gets banned or restricted
                 </p>
               </div>
               <Switch
@@ -582,11 +605,23 @@ const Settings: React.FC = () => {
             </div>
           </CardContent>
         </Card>
+      </TabsContent>
+    </Tabs>
 
-        <div className="flex justify-end">
-          <Button onClick={handleSave} className="gap-2">
-            <Save className="w-4 h-4" />
-            Save Settings
+        {/* Save Button */}
+        <div className="flex justify-end pt-4">
+          <Button onClick={handleSave} disabled={isSaving} size="lg" className="gap-2">
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                Save Changes
+              </>
+            )}
           </Button>
         </div>
       </div>
