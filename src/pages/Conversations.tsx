@@ -93,6 +93,7 @@ const Chat: React.FC = () => {
   
   // Time filter state
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
+  const [showRepliesOnly, setShowRepliesOnly] = useState(false);
   
   // Block list state
   const [isBlockListOpen, setIsBlockListOpen] = useState(false);
@@ -245,8 +246,10 @@ const Chat: React.FC = () => {
       const hasSuccess = hasSuccessfulMessages(c);
       // Hide locally blocked contacts
       const isBlocked = blockedContacts.some(b => b.phone_number === c.recipientPhone);
+      // Filter by replies if enabled
+      const matchesReplyFilter = !showRepliesOnly || c.hasReply === true;
 
-      return matchesTime && matchesSearch && isNotSpamBot && showConv && hasSuccess && !isBlocked;
+      return matchesTime && matchesSearch && isNotSpamBot && showConv && hasSuccess && !isBlocked && matchesReplyFilter;
     })
     // Sort by actual last message time, not updatedAt
     .sort((a, b) => getLastMessageTime(b) - getLastMessageTime(a));
@@ -751,6 +754,19 @@ const Chat: React.FC = () => {
                       </button>
                     );
                   })}
+                  {/* Replies Filter Toggle */}
+                  <button
+                    onClick={() => setShowRepliesOnly(!showRepliesOnly)}
+                    className={cn(
+                      "px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 flex items-center gap-1.5",
+                      showRepliesOnly 
+                        ? "bg-green-500 text-white shadow-md shadow-green-500/25" 
+                        : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary border border-border/50"
+                    )}
+                  >
+                    <Reply className="w-3.5 h-3.5" />
+                    Replies
+                  </button>
                 </div>
                 
                 <div className="relative">
@@ -849,12 +865,6 @@ const Chat: React.FC = () => {
                               )}>
                                 {displayName}
                               </span>
-                              {conv.hasReply && (
-                                <Badge className="h-4 px-1.5 text-[10px] flex items-center gap-0.5 flex-shrink-0 bg-green-500/15 text-green-600 dark:text-green-400 border-0">
-                                  <Reply className="w-2.5 h-2.5" />
-                                  Replied
-                                </Badge>
-                              )}
                               {conv.blockedByRecipient && (
                                 <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5 flex-shrink-0">
                                   <Ban className="w-2.5 h-2.5" />
