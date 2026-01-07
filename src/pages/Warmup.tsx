@@ -23,7 +23,10 @@ import {
   AlertTriangle,
   UserX,
   Timer,
-  XCircle
+  XCircle,
+  Settings,
+  Layers,
+  Save
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -901,49 +904,79 @@ export default function Warmup() {
 
         {/* Settings */}
         {!session?.status || session.status !== "active" ? (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Warmup Settings</CardTitle>
+          <Card className="overflow-hidden">
+            <CardHeader className="bg-gradient-to-r from-orange-500/10 to-amber-500/10 border-b border-border/50">
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Settings className="h-5 w-5 text-orange-500" />
+                Warmup Settings
+              </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="space-y-2">
-                <Label>Messages per pair: {messagesPerPair[0]} - {messagesPerPair[1]}</Label>
-                <Slider
-                  value={messagesPerPair}
-                  onValueChange={setMessagesPerPair}
-                  min={10}
-                  max={30}
-                  step={1}
-                  className="w-full max-w-md"
-                />
-                <p className="text-sm text-muted-foreground">
-                  Each pair will exchange {messagesPerPair[0]}-{messagesPerPair[1]} messages (~{Math.ceil(messagesPerPair[1] * 0.5)} min per conversation)
-                </p>
-              </div>
-              
-              <div className="space-y-2">
-                <Label>Batch Size (parallel pairs): {warmupBatchSize}</Label>
-                <div className="flex items-center gap-4">
+            <CardContent className="pt-6">
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Messages per Pair */}
+                <div className="space-y-4 p-4 rounded-lg bg-muted/30 border border-border/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-full bg-primary/10">
+                        <MessageCircle className="h-4 w-4 text-primary" />
+                      </div>
+                      <Label className="font-medium">Messages per Pair</Label>
+                    </div>
+                    <Badge variant="secondary" className="font-mono">
+                      {messagesPerPair[0]} - {messagesPerPair[1]}
+                    </Badge>
+                  </div>
+                  <Slider
+                    value={messagesPerPair}
+                    onValueChange={setMessagesPerPair}
+                    min={10}
+                    max={30}
+                    step={1}
+                    className="w-full"
+                  />
+                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <Clock className="h-3 w-3" />
+                    ~{Math.ceil(messagesPerPair[1] * 0.5)} min per conversation
+                  </p>
+                </div>
+                
+                {/* Batch Size */}
+                <div className="space-y-4 p-4 rounded-lg bg-muted/30 border border-border/50">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <div className="p-2 rounded-full bg-blue-500/10">
+                        <Layers className="h-4 w-4 text-blue-500" />
+                      </div>
+                      <Label className="font-medium">Batch Size</Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="font-mono">
+                        {warmupBatchSize}
+                      </Badge>
+                      <Button 
+                        onClick={handleSaveBatchSize}
+                        disabled={isSavingBatchSize}
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2"
+                      >
+                        {isSavingBatchSize ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                      </Button>
+                    </div>
+                  </div>
                   <Slider
                     value={[warmupBatchSize]}
                     onValueChange={([v]) => setWarmupBatchSize(v)}
                     min={10}
                     max={500}
                     step={10}
-                    className="w-full max-w-md"
+                    className="w-full"
                   />
-                  <Button 
-                    onClick={handleSaveBatchSize}
-                    disabled={isSavingBatchSize}
-                    size="sm"
-                    variant="outline"
-                  >
-                    {isSavingBatchSize ? <Loader2 className="h-4 w-4 animate-spin" /> : "Save"}
-                  </Button>
+                  <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                    <Users className="h-3 w-3" />
+                    Parallel pairs: 10-500
+                  </p>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  Number of pairs to process simultaneously (10-500)
-                </p>
               </div>
             </CardContent>
           </Card>
