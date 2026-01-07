@@ -600,13 +600,32 @@ export default function Warmup() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case "sent": return "bg-green-500";
-      case "pending": return "bg-yellow-500";
-      case "failed": return "bg-red-500";
-      case "cancelled": return "bg-gray-500";
-      default: return "bg-muted";
+      case "sent":
+        return "bg-green-500";
+      case "pending":
+        return "bg-yellow-500";
+      case "failed":
+        return "bg-red-500";
+      case "cancelled":
+        return "bg-gray-500";
+      default:
+        return "bg-muted";
     }
   };
+
+  const sessionExpiredAccounts = useMemo(() => {
+    return orphanedAccounts.filter((a) => a.inactive_pair_reason?.toLowerCase().includes("session"));
+  }, [orphanedAccounts]);
+
+  const otherInactiveAccounts = useMemo(() => {
+    return orphanedAccounts.filter((a) => !a.inactive_pair_reason?.toLowerCase().includes("session"));
+  }, [orphanedAccounts]);
+
+  // Avoid showing the same account in both warnings if data is inconsistent
+  const dedupedUnpairedAccounts = useMemo(() => {
+    const orphanedIds = new Set(orphanedAccounts.map((o) => o.id));
+    return unpairedAccounts.filter((u) => !orphanedIds.has(u.id));
+  }, [orphanedAccounts, unpairedAccounts]);
 
   return (
     <DashboardLayout>
@@ -656,106 +675,115 @@ export default function Warmup() {
           }
         />
 
-        {/* Orphaned Accounts - Active accounts paired with session-expired accounts */}
-        {orphanedAccounts.length > 0 && (() => {
-          // Session expired accounts need repairing
-          const sessionExpiredAccounts = orphanedAccounts.filter(a => 
-            a.inactive_pair_reason?.toLowerCase().includes('session')
-          );
-          const otherInactiveAccounts = orphanedAccounts.filter(a => 
-            !a.inactive_pair_reason?.toLowerCase().includes('session')
-          );
-          
-          return (
-            <>
-              {/* Session Expired - Needs re-pairing */}
-              {sessionExpiredAccounts.length > 0 && (
-                <Card className="border-orange-500/50 bg-orange-500/5">
-                  <CardContent className="pt-6">
-                    <div className="flex items-start gap-3">
-                      <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="font-medium">Accounts Need Re-pairing ({sessionExpiredAccounts.length})</p>
-                        <p className="text-sm text-muted-foreground mb-3">
-                          These accounts are paired with accounts that have expired sessions and need to be re-paired.
-                        </p>
-                        <div className="space-y-2">
-                          {sessionExpiredAccounts.map((account) => (
-                            <div key={account.id} className="flex items-center justify-between bg-background/50 p-2 rounded">
-                              <div className="text-sm">
-                                <span className="font-mono">{formatPhone(account.phone_number)}</span>
-                                {account.first_name && <span className="text-muted-foreground ml-2">({account.first_name})</span>}
-                                <span className="text-muted-foreground mx-2">↔</span>
-                                <span className="font-mono text-red-400 line-through">{formatPhone(account.inactive_pair_phone)}</span>
-                                <span className="text-xs text-red-400 ml-1">(session expired)</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        {sessionExpiredAccounts.length >= 2 && (
-                          <Button 
-                            size="sm" 
-                            className="mt-3"
-                            onClick={handleRepairOrphanedAccounts}
-                          >
-                            Re-pair All ({Math.floor(sessionExpiredAccounts.length / 2)} pairs)
-                          </Button>
-                        )}
-                        {sessionExpiredAccounts.length === 1 && (
-                          <p className="text-xs text-muted-foreground mt-2">
-                            Waiting for another orphaned account to pair with
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-              
-              {/* Other inactive accounts (banned, etc.) */}
-              {otherInactiveAccounts.length > 0 && (
-                <Card className="border-gray-500/50 bg-gray-500/5">
-                  <CardContent className="pt-6">
-                    <div className="flex items-start gap-3">
-                      <XCircle className="h-5 w-5 text-gray-500 mt-0.5" />
-                      <div className="flex-1">
-                        <p className="font-medium">Inactive Partners ({otherInactiveAccounts.length})</p>
-                        <p className="text-sm text-muted-foreground mb-3">
-                          These accounts have inactive partners.
-                        </p>
-                        <div className="space-y-2">
-                          {otherInactiveAccounts.map((account) => (
-                            <div key={account.id} className="flex items-center justify-between bg-background/50 p-2 rounded">
-                              <div className="text-sm">
-                                <span className="font-mono">{formatPhone(account.phone_number)}</span>
-                                {account.first_name && <span className="text-muted-foreground ml-2">({account.first_name})</span>}
-                                <span className="text-muted-foreground mx-2">↔</span>
-                                <span className="font-mono text-gray-400 line-through">{formatPhone(account.inactive_pair_phone)}</span>
-                                <span className="text-xs text-gray-400 ml-1">(inactive)</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
-            </>
-          );
-        })()}
-
-        {/* Unpaired Accounts Warning */}
-        {unpairedAccounts.length > 0 && (
-          <Card className="border-yellow-500/50 bg-yellow-500/5">
+        {/* Pairing Alerts (Needs re-pairing + Unpaired) */}
+        {(sessionExpiredAccounts.length > 0 || dedupedUnpairedAccounts.length > 0) && (
+          <Card
+            className={
+              sessionExpiredAccounts.length > 0
+                ? "border-orange-500/50 bg-orange-500/5"
+                : "border-yellow-500/50 bg-yellow-500/5"
+            }
+          >
             <CardContent className="pt-6">
-              <div className="flex items-center gap-3">
-                <UserX className="h-5 w-5 text-yellow-500" />
-                <div>
-                  <p className="font-medium">Unpaired Accounts</p>
-                  <p className="text-sm text-muted-foreground">
-                    {unpairedAccounts.map(a => formatPhone(a.phone_number)).join(", ")} waiting for new accounts to pair with
+              <div className="flex items-start gap-3">
+                {sessionExpiredAccounts.length > 0 ? (
+                  <AlertTriangle className="h-5 w-5 text-orange-500 mt-0.5" />
+                ) : (
+                  <UserX className="h-5 w-5 text-yellow-500 mt-0.5" />
+                )}
+                <div className="flex-1">
+                  <p className="font-medium">
+                    Pairing Alerts ({sessionExpiredAccounts.length + dedupedUnpairedAccounts.length})
                   </p>
+
+                  {sessionExpiredAccounts.length > 0 && (
+                    <div className="mt-1">
+                      <p className="text-sm text-muted-foreground mb-3">
+                        These accounts are paired with accounts that have expired sessions and need to be re-paired.
+                      </p>
+                      <div className="space-y-2">
+                        {sessionExpiredAccounts.map((account) => (
+                          <div
+                            key={account.id}
+                            className="flex items-center justify-between bg-background/50 p-2 rounded"
+                          >
+                            <div className="text-sm">
+                              <span className="font-mono">{formatPhone(account.phone_number)}</span>
+                              {account.first_name && (
+                                <span className="text-muted-foreground ml-2">({account.first_name})</span>
+                              )}
+                              <span className="text-muted-foreground mx-2">↔</span>
+                              <span className="font-mono text-red-400 line-through">
+                                {formatPhone(account.inactive_pair_phone)}
+                              </span>
+                              <span className="text-xs text-red-400 ml-1">(session expired)</span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {sessionExpiredAccounts.length >= 2 ? (
+                        <Button size="sm" className="mt-3" onClick={handleRepairOrphanedAccounts}>
+                          Re-pair All ({Math.floor(sessionExpiredAccounts.length / 2)} pairs)
+                        </Button>
+                      ) : (
+                        <p className="text-xs text-muted-foreground mt-2">
+                          Add one more orphaned account to create a new pair.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {dedupedUnpairedAccounts.length > 0 && (
+                    <div
+                      className={
+                        sessionExpiredAccounts.length > 0
+                          ? "mt-4 pt-4 border-t border-border/50"
+                          : "mt-1"
+                      }
+                    >
+                      <p className="font-medium text-sm">Unpaired Accounts</p>
+                      <p className="text-sm text-muted-foreground">
+                        {dedupedUnpairedAccounts.map((a) => formatPhone(a.phone_number)).join(", ")}
+                        {" — waiting for another active account to pair."}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Other inactive accounts (banned, etc.) */}
+        {otherInactiveAccounts.length > 0 && (
+          <Card className="border-gray-500/50 bg-gray-500/5">
+            <CardContent className="pt-6">
+              <div className="flex items-start gap-3">
+                <XCircle className="h-5 w-5 text-gray-500 mt-0.5" />
+                <div className="flex-1">
+                  <p className="font-medium">Inactive Partners ({otherInactiveAccounts.length})</p>
+                  <p className="text-sm text-muted-foreground mb-3">These accounts have inactive partners.</p>
+                  <div className="space-y-2">
+                    {otherInactiveAccounts.map((account) => (
+                      <div
+                        key={account.id}
+                        className="flex items-center justify-between bg-background/50 p-2 rounded"
+                      >
+                        <div className="text-sm">
+                          <span className="font-mono">{formatPhone(account.phone_number)}</span>
+                          {account.first_name && (
+                            <span className="text-muted-foreground ml-2">({account.first_name})</span>
+                          )}
+                          <span className="text-muted-foreground mx-2">↔</span>
+                          <span className="font-mono text-gray-400 line-through">
+                            {formatPhone(account.inactive_pair_phone)}
+                          </span>
+                          <span className="text-xs text-gray-400 ml-1">(inactive)</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </CardContent>
