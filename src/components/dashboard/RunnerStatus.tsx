@@ -25,11 +25,6 @@ const runnerIcons: Record<string, { icon: React.ReactNode; color: string; functi
     color: 'text-orange-500',
     functions: ['Join channels', 'View content', 'Reactions', 'Pair chat'],
   },
-  block: {
-    icon: <Ban className="h-4 w-4" />,
-    color: 'text-red-500',
-    functions: ['Block contacts', 'Unblock contacts'],
-  },
 };
 
 export const RunnerStatusCard: React.FC = () => {
