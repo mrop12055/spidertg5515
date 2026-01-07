@@ -108,9 +108,9 @@ const Campaigns: React.FC = () => {
   // Track which campaign detail dialogs have loaded their reports
   const [loadedReportIds, setLoadedReportIds] = useState<Set<string>>(new Set());
   
-  // Seats for campaign assignment
+  // Seats for campaign assignment (supports multiple seats)
   const [seats, setSeats] = useState<Seat[]>([]);
-  const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
+  const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   
   // Data selection for campaigns
   const [isDataSelectOpen, setIsDataSelectOpen] = useState(false);
@@ -636,37 +636,88 @@ const Campaigns: React.FC = () => {
       return;
     }
 
-    // Use first message as main template, store others in metadata
+    // Use first message as main template
     const mainMessage = allMessages[0];
     
-    // Create the campaign first
-    const createdCampaign = await createCampaign({
-      name: newCampaign.name,
-      messageTemplate: mainMessage,
-      recipientCount: parsedRecipients.length,
-      accountIds: newCampaign.accountIds
-    });
-    
-    // Upload recipients, set seat_id and batch_size immediately after campaign creation
-    if (createdCampaign) {
-      await uploadRecipients(createdCampaign.id, parsedRecipients);
-      // Set seat_id and batch_size on the campaign
-      const updateData: any = { batch_size: newCampaign.batchSize };
-      if (selectedSeatId) {
-        updateData.seat_id = selectedSeatId;
+    // Helper to shuffle array randomly
+    const shuffleArray = <T,>(array: T[]): T[] => {
+      const shuffled = [...array];
+      for (let i = shuffled.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
       }
-      await supabase.from('campaigns').update(updateData).eq('id', createdCampaign.id);
+      return shuffled;
+    };
+
+    // If multiple seats selected, create separate campaigns with distributed recipients
+    if (selectedSeatIds.length > 1) {
+      // Shuffle recipients randomly
+      const shuffledRecipients = shuffleArray(parsedRecipients);
+      
+      // Divide recipients equally among seats
+      const recipientsPerSeat = Math.ceil(shuffledRecipients.length / selectedSeatIds.length);
+      const recipientChunks: typeof parsedRecipients[] = [];
+      
+      for (let i = 0; i < selectedSeatIds.length; i++) {
+        const start = i * recipientsPerSeat;
+        const end = Math.min(start + recipientsPerSeat, shuffledRecipients.length);
+        if (start < shuffledRecipients.length) {
+          recipientChunks.push(shuffledRecipients.slice(start, end));
+        }
+      }
+      
+      // Create a campaign for each seat with its chunk of recipients
+      const createPromises = selectedSeatIds.map(async (seatId, index) => {
+        const chunk = recipientChunks[index] || [];
+        if (chunk.length === 0) return null;
+        
+        const seatName = seats.find(s => s.id === seatId)?.name || `Seat ${index + 1}`;
+        const createdCampaign = await createCampaign({
+          name: `${newCampaign.name} - ${seatName}`,
+          messageTemplate: mainMessage,
+          recipientCount: chunk.length,
+          accountIds: newCampaign.accountIds
+        });
+        
+        if (createdCampaign) {
+          await uploadRecipients(createdCampaign.id, chunk);
+          await supabase.from('campaigns').update({ 
+            batch_size: newCampaign.batchSize,
+            seat_id: seatId 
+          }).eq('id', createdCampaign.id);
+        }
+        
+        return createdCampaign;
+      });
+      
+      await Promise.all(createPromises);
+      toast.success(`Created ${selectedSeatIds.length} campaigns with ${parsedRecipients.length} recipients distributed equally!`);
+    } else {
+      // Single seat or no seat - original behavior
+      const createdCampaign = await createCampaign({
+        name: newCampaign.name,
+        messageTemplate: mainMessage,
+        recipientCount: parsedRecipients.length,
+        accountIds: newCampaign.accountIds
+      });
+      
+      if (createdCampaign) {
+        await uploadRecipients(createdCampaign.id, parsedRecipients);
+        const updateData: any = { batch_size: newCampaign.batchSize };
+        if (selectedSeatIds.length === 1) {
+          updateData.seat_id = selectedSeatIds[0];
+        }
+        await supabase.from('campaigns').update(updateData).eq('id', createdCampaign.id);
+      }
+      
+      toast.success('Campaign created! Start it to begin sending.');
     }
-    
-    // Settings are now saved to the database when the campaign is started via handleStartCampaign
-    // No need to save to localStorage anymore
     
     setNewCampaign({ name: '', messageTemplate: '', recipientCount: 0, accountIds: [], recipientsText: '', batchSize: 50 });
     setMessageTemplates([{ id: '1', message: '', accountCount: 10 }]);
+    setSelectedSeatIds([]);
     setIsCreateOpen(false);
     refreshData();
-    
-    toast.success('Campaign created! Start it to begin sending.');
   };
 
   // Normalize recipient - handles phone numbers OR usernames
@@ -1019,19 +1070,55 @@ const Campaigns: React.FC = () => {
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Assign to Seat (Worker)</Label>
-                      <Select value={selectedSeatId || 'none'} onValueChange={(v) => setSelectedSeatId(v === 'none' ? null : v)}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select a seat (optional)" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">No seat (admin only)</SelectItem>
-                          {seats.map(seat => (
-                            <SelectItem key={seat.id} value={seat.id}>{seat.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-xs text-muted-foreground">Conversations will appear in this seat's chat</p>
+                      <Label>Assign to Seats (Workers) {selectedSeatIds.length > 0 && `(${selectedSeatIds.length} selected)`}</Label>
+                      <div className="border rounded-lg p-3 space-y-2 max-h-40 overflow-y-auto bg-accent/30">
+                        <div 
+                          className={cn(
+                            "flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-accent transition-colors",
+                            selectedSeatIds.length === 0 && "bg-primary/10"
+                          )}
+                          onClick={() => setSelectedSeatIds([])}
+                        >
+                          <Checkbox 
+                            checked={selectedSeatIds.length === 0} 
+                            onCheckedChange={() => setSelectedSeatIds([])}
+                          />
+                          <span className="text-sm">No seat (admin only)</span>
+                        </div>
+                        {seats.map(seat => (
+                          <div 
+                            key={seat.id}
+                            className={cn(
+                              "flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-accent transition-colors",
+                              selectedSeatIds.includes(seat.id) && "bg-primary/10"
+                            )}
+                            onClick={() => {
+                              setSelectedSeatIds(prev => 
+                                prev.includes(seat.id) 
+                                  ? prev.filter(id => id !== seat.id)
+                                  : [...prev, seat.id]
+                              );
+                            }}
+                          >
+                            <Checkbox 
+                              checked={selectedSeatIds.includes(seat.id)} 
+                              onCheckedChange={() => {
+                                setSelectedSeatIds(prev => 
+                                  prev.includes(seat.id) 
+                                    ? prev.filter(id => id !== seat.id)
+                                    : [...prev, seat.id]
+                                );
+                              }}
+                            />
+                            <span className="text-sm">{seat.name}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {selectedSeatIds.length > 1 
+                          ? `Recipients will be divided equally across ${selectedSeatIds.length} seats (separate campaigns created)`
+                          : 'Conversations will appear in this seat\'s chat'}
+                      </p>
                     </div>
                   </div>
                   
