@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
@@ -17,6 +17,7 @@ import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { CountdownTimer } from '@/components/ui/countdown-timer';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { CreateCampaignDialog } from '@/components/campaigns/CreateCampaignDialog';
 import { 
   Plus, Play, Pause, Trash2, Edit, Send, Users, CheckCircle, XCircle, 
   Upload, FileText, Loader2, Download, Clock, MessageSquare, Settings,
@@ -110,7 +111,6 @@ const Campaigns: React.FC = () => {
   
   // Seats for campaign assignment (supports multiple seats)
   const [seats, setSeats] = useState<Seat[]>([]);
-  const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   
   // Data selection for campaigns
   const [isDataSelectOpen, setIsDataSelectOpen] = useState(false);
@@ -121,12 +121,6 @@ const Campaigns: React.FC = () => {
   const [isLoadingData, setIsLoadingData] = useState(false);
   const [contactTags, setContactTags] = useState<ContactTag[]>([]);
   const [selectedTagFilter, setSelectedTagFilter] = useState<string>('all');
-  const [selectedAccountTagFilter, setSelectedAccountTagFilter] = useState<string>('all');
-  
-  // Bulk messaging settings - synced with database via useAppSettings
-  const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
-    { id: '1', message: '', accountCount: 10 }
-  ]);
   
   // Local state for UI
   const [showSpeedSettings, setShowSpeedSettings] = useState(false);
@@ -606,40 +600,37 @@ const Campaigns: React.FC = () => {
     }
   }, [isCreateOpen, contactsData.length, fetchContactsData]);
 
-  const handleCreateCampaign = async () => {
-    if (!newCampaign.name) {
-      toast.error('Please enter a campaign name');
-      return;
-    }
-    
-    // Collect all message templates
-    const allMessages = messageTemplates.filter(t => t.message.trim()).map(t => t.message);
+  // Handler for the new CreateCampaignDialog component
+  const handleCreateCampaignFromDialog = useCallback(async (data: {
+    name: string;
+    recipientsText: string;
+    batchSize: number;
+    accountIds: string[];
+    messageTemplates: { id: string; message: string; accountCount: number }[];
+    selectedSeatIds: string[];
+  }) => {
+    const allMessages = data.messageTemplates.filter(t => t.message.trim()).map(t => t.message);
     if (allMessages.length === 0) {
       toast.error('Please enter at least one message');
       return;
     }
     
-    // Parse recipients from the text input
-    const recipientLines = newCampaign.recipientsText.split('\n').filter(l => l.trim());
+    // Parse recipients
+    const recipientLines = data.recipientsText.split('\n').filter(l => l.trim());
     const parsedRecipients = recipientLines.map(line => {
       const parts = line.split(/[,\t]/).map(p => p.trim());
       const rawInput = parts[0];
-      const { identifier, isUsername } = normalizeRecipient(rawInput);
-      return {
-        phone_number: identifier, // Can be phone or @username
-        name: parts[1] || undefined
-      };
-    }).filter(r => r.phone_number && r.phone_number.length >= 3); // Min 3 chars for usernames
+      const { identifier } = normalizeRecipient(rawInput);
+      return { phone_number: identifier, name: parts[1] || undefined };
+    }).filter(r => r.phone_number && r.phone_number.length >= 3);
 
     if (parsedRecipients.length === 0) {
       toast.error('Please add at least one valid phone number or username');
       return;
     }
 
-    // Use first message as main template
     const mainMessage = allMessages[0];
     
-    // Helper to shuffle array randomly
     const shuffleArray = <T,>(array: T[]): T[] => {
       const shuffled = [...array];
       for (let i = shuffled.length - 1; i > 0; i--) {
@@ -649,16 +640,12 @@ const Campaigns: React.FC = () => {
       return shuffled;
     };
 
-    // If multiple seats selected, create separate campaigns with distributed recipients
-    if (selectedSeatIds.length > 1) {
-      // Shuffle recipients randomly
+    if (data.selectedSeatIds.length > 1) {
       const shuffledRecipients = shuffleArray(parsedRecipients);
-      
-      // Divide recipients equally among seats
-      const recipientsPerSeat = Math.ceil(shuffledRecipients.length / selectedSeatIds.length);
+      const recipientsPerSeat = Math.ceil(shuffledRecipients.length / data.selectedSeatIds.length);
       const recipientChunks: typeof parsedRecipients[] = [];
       
-      for (let i = 0; i < selectedSeatIds.length; i++) {
+      for (let i = 0; i < data.selectedSeatIds.length; i++) {
         const start = i * recipientsPerSeat;
         const end = Math.min(start + recipientsPerSeat, shuffledRecipients.length);
         if (start < shuffledRecipients.length) {
@@ -666,46 +653,42 @@ const Campaigns: React.FC = () => {
         }
       }
       
-      // Create a campaign for each seat with its chunk of recipients
-      const createPromises = selectedSeatIds.map(async (seatId, index) => {
+      await Promise.all(data.selectedSeatIds.map(async (seatId, index) => {
         const chunk = recipientChunks[index] || [];
         if (chunk.length === 0) return null;
         
         const seatName = seats.find(s => s.id === seatId)?.name || `Seat ${index + 1}`;
         const createdCampaign = await createCampaign({
-          name: `${newCampaign.name} - ${seatName}`,
+          name: `${data.name} - ${seatName}`,
           messageTemplate: mainMessage,
           recipientCount: chunk.length,
-          accountIds: newCampaign.accountIds
+          accountIds: data.accountIds
         });
         
         if (createdCampaign) {
           await uploadRecipients(createdCampaign.id, chunk);
           await supabase.from('campaigns').update({ 
-            batch_size: newCampaign.batchSize,
+            batch_size: data.batchSize,
             seat_id: seatId 
           }).eq('id', createdCampaign.id);
         }
-        
         return createdCampaign;
-      });
+      }));
       
-      await Promise.all(createPromises);
-      toast.success(`Created ${selectedSeatIds.length} campaigns with ${parsedRecipients.length} recipients distributed equally!`);
+      toast.success(`Created ${data.selectedSeatIds.length} campaigns with ${parsedRecipients.length} recipients distributed equally!`);
     } else {
-      // Single seat or no seat - original behavior
       const createdCampaign = await createCampaign({
-        name: newCampaign.name,
+        name: data.name,
         messageTemplate: mainMessage,
         recipientCount: parsedRecipients.length,
-        accountIds: newCampaign.accountIds
+        accountIds: data.accountIds
       });
       
       if (createdCampaign) {
         await uploadRecipients(createdCampaign.id, parsedRecipients);
-        const updateData: any = { batch_size: newCampaign.batchSize };
-        if (selectedSeatIds.length === 1) {
-          updateData.seat_id = selectedSeatIds[0];
+        const updateData: any = { batch_size: data.batchSize };
+        if (data.selectedSeatIds.length === 1) {
+          updateData.seat_id = data.selectedSeatIds[0];
         }
         await supabase.from('campaigns').update(updateData).eq('id', createdCampaign.id);
       }
@@ -713,12 +696,8 @@ const Campaigns: React.FC = () => {
       toast.success('Campaign created! Start it to begin sending.');
     }
     
-    setNewCampaign({ name: '', messageTemplate: '', recipientCount: 0, accountIds: [], recipientsText: '', batchSize: 50 });
-    setMessageTemplates([{ id: '1', message: '', accountCount: 10 }]);
-    setSelectedSeatIds([]);
-    setIsCreateOpen(false);
     refreshData();
-  };
+  }, [seats, createCampaign, uploadRecipients, refreshData]);
 
   // Normalize recipient - handles phone numbers OR usernames
   const normalizeRecipient = (input: string): { identifier: string; isUsername: boolean } => {
@@ -965,38 +944,7 @@ const Campaigns: React.FC = () => {
     }));
   };
 
-  const addMessageTemplate = () => {
-    if (messageTemplates.length >= 10) {
-      toast.error('Maximum 10 message templates allowed');
-      return;
-    }
-    setMessageTemplates(prev => [
-      ...prev,
-      { id: String(Date.now()), message: '', accountCount: 10 }
-    ]);
-  };
-
-  const removeMessageTemplate = (id: string) => {
-    if (messageTemplates.length <= 1) return;
-    setMessageTemplates(prev => prev.filter(t => t.id !== id));
-  };
-
-  const updateMessageTemplate = (id: string, field: 'message' | 'accountCount', value: string | number) => {
-    setMessageTemplates(prev => prev.map(t => 
-      t.id === id ? { ...t, [field]: value } : t
-    ));
-  };
-
-  // Auto-distribute accounts among message templates
-  const distributeAccounts = () => {
-    const totalAccounts = newCampaign.accountIds.length;
-    const perTemplate = Math.ceil(totalAccounts / messageTemplates.length);
-    
-    setMessageTemplates(prev => prev.map((t, i) => ({
-      ...t,
-      accountCount: Math.min(perTemplate, totalAccounts - (i * perTemplate))
-    })));
-  };
+  // Message template functions moved to CreateCampaignDialog component
 
   // Filter out accounts that have a future restricted_until (temporarily restricted)
   // These can still chat with existing contacts but CANNOT be used for campaigns (new contacts = ban risk)
@@ -1036,416 +984,22 @@ const Campaigns: React.FC = () => {
         description="Create and manage bulk messaging campaigns with multiple message templates"
         icon={Megaphone}
         action={
-          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2">
-                <Plus className="w-4 h-4" />
-                New Campaign
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Create Bulk Messaging Campaign</DialogTitle>
-                <DialogDescription>
-                  Configure multiple message templates and distribute across accounts
-                </DialogDescription>
-              </DialogHeader>
-              
-              <Tabs defaultValue="recipients" className="mt-4">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="recipients">1. Recipients</TabsTrigger>
-                  <TabsTrigger value="messages">2. Messages</TabsTrigger>
-                  <TabsTrigger value="accounts">3. Accounts</TabsTrigger>
-                </TabsList>
-
-                {/* STEP 1: Recipients - Ask for data FIRST */}
-                <TabsContent value="recipients" className="space-y-4 mt-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Campaign Name</Label>
-                      <Input
-                        placeholder="Enter campaign name"
-                        value={newCampaign.name}
-                        onChange={(e) => setNewCampaign(prev => ({ ...prev, name: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Assign to Seats (Workers) {selectedSeatIds.length > 0 && `(${selectedSeatIds.length} selected)`}</Label>
-                      <div className="border rounded-lg p-3 space-y-2 max-h-40 overflow-y-auto bg-accent/30">
-                        <div 
-                          className={cn(
-                            "flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-accent transition-colors",
-                            selectedSeatIds.length === 0 && "bg-primary/10"
-                          )}
-                          onClick={() => setSelectedSeatIds([])}
-                        >
-                          <Checkbox 
-                            checked={selectedSeatIds.length === 0} 
-                            onCheckedChange={() => setSelectedSeatIds([])}
-                          />
-                          <span className="text-sm">No seat (admin only)</span>
-                        </div>
-                        {seats.map(seat => (
-                          <div 
-                            key={seat.id}
-                            className={cn(
-                              "flex items-center gap-2 p-2 rounded cursor-pointer hover:bg-accent transition-colors",
-                              selectedSeatIds.includes(seat.id) && "bg-primary/10"
-                            )}
-                            onClick={() => {
-                              setSelectedSeatIds(prev => 
-                                prev.includes(seat.id) 
-                                  ? prev.filter(id => id !== seat.id)
-                                  : [...prev, seat.id]
-                              );
-                            }}
-                          >
-                            <Checkbox 
-                              checked={selectedSeatIds.includes(seat.id)} 
-                              onCheckedChange={() => {
-                                setSelectedSeatIds(prev => 
-                                  prev.includes(seat.id) 
-                                    ? prev.filter(id => id !== seat.id)
-                                    : [...prev, seat.id]
-                                );
-                              }}
-                            />
-                            <span className="text-sm">{seat.name}</span>
-                          </div>
-                        ))}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {selectedSeatIds.length > 1 
-                          ? `Recipients will be divided equally across ${selectedSeatIds.length} seats (separate campaigns created)`
-                          : 'Conversations will appear in this seat\'s chat'}
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="p-4 rounded-lg bg-accent/30 border border-border">
-                    <p className="text-xs font-semibold text-muted-foreground mb-2">Format (one per line) - Phone OR Username:</p>
-                    <pre className="text-xs font-mono text-foreground">
-{`+14155551234,John Doe
-@telegram_user,Jane Smith
-username123
-14155550000`}
-                    </pre>
-                    <p className="text-xs text-muted-foreground mt-2">
-                      • Phone numbers: + added automatically if missing<br/>
-                      • Usernames: @ added automatically if missing
-                    </p>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label>Phone Numbers or Telegram Usernames</Label>
-                      <Button variant="outline" size="sm" onClick={handleOpenDataSelect}>
-                        <Database className="w-4 h-4 mr-2" />
-                        Select from Data
-                      </Button>
-                    </div>
-                    <Textarea
-                      placeholder={`+14155551234,John Doe\n@telegram_user\nusername123\n14155550000`}
-                      value={newCampaign.recipientsText}
-                      onChange={(e) => setNewCampaign(prev => ({ ...prev, recipientsText: e.target.value }))}
-                      rows={8}
-                      className="font-mono text-sm"
-                    />
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs text-muted-foreground">
-                        {newCampaign.recipientsText.split('\n').filter(l => l.trim()).length} recipients
-                      </p>
-                      {dataStats.unused > 0 && (
-                        <p className="text-xs text-primary">
-                          You have {dataStats.unused} unused contacts in Data
-                        </p>
-                      )}
-                    </div>
-                    
-                    {/* Distribution Preview for Multiple Seats */}
-                    {(() => {
-                      const recipientCount = newCampaign.recipientsText.split('\n').filter(l => l.trim()).length;
-                      if (selectedSeatIds.length > 1 && recipientCount > 0) {
-                        const perSeat = Math.ceil(recipientCount / selectedSeatIds.length);
-                        const distribution: { seatName: string; count: number }[] = [];
-                        let remaining = recipientCount;
-                        
-                        selectedSeatIds.forEach((seatId, index) => {
-                          const seatName = seats.find(s => s.id === seatId)?.name || `Seat ${index + 1}`;
-                          const count = Math.min(perSeat, remaining);
-                          if (count > 0) {
-                            distribution.push({ seatName, count });
-                            remaining -= count;
-                          }
-                        });
-                        
-                        return (
-                          <div className="p-4 rounded-lg bg-primary/10 border border-primary/30">
-                            <div className="flex items-center gap-2 mb-3">
-                              <Users className="w-4 h-4 text-primary" />
-                              <h4 className="text-sm font-medium text-primary">Distribution Preview</h4>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-2 mb-2">
-                              {distribution.map((d, idx) => (
-                                <div key={idx} className="flex items-center gap-1">
-                                  <Badge variant="secondary" className="bg-primary/20 text-primary">
-                                    {d.count}
-                                  </Badge>
-                                  <span className="text-xs text-muted-foreground">{d.seatName}</span>
-                                  {idx < distribution.length - 1 && (
-                                    <span className="text-muted-foreground mx-1">+</span>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                            <p className="text-xs text-muted-foreground">
-                              {recipientCount} recipients will be randomly shuffled and distributed equally across {selectedSeatIds.length} seats. 
-                              Each recipient appears in only one campaign.
-                            </p>
-                          </div>
-                        );
-                      }
-                      return null;
-                    })()}
-                  </div>
-                </TabsContent>
-                
-                {/* STEP 2: Messages */}
-                <TabsContent value="messages" className="space-y-4 mt-4">
-                  
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <Label>Message Templates ({messageTemplates.length}/10)</Label>
-                      <Button variant="outline" size="sm" onClick={addMessageTemplate}>
-                        <Plus className="w-4 h-4 mr-1" />
-                        Add Message
-                      </Button>
-                    </div>
-                    
-                    {messageTemplates.map((template, index) => (
-                      <Card key={template.id} className="p-4">
-                        <div className="flex items-start gap-4">
-                          <Badge variant="outline" className="mt-2">#{index + 1}</Badge>
-                          <div className="flex-1 space-y-3">
-                            <Textarea
-                              placeholder={`Message template ${index + 1}... Use {name} and {phone} for personalization`}
-                              value={template.message}
-                              onChange={(e) => updateMessageTemplate(template.id, 'message', e.target.value)}
-                              rows={3}
-                            />
-                            <div className="flex items-center gap-4">
-                              <div className="flex items-center gap-2">
-                                <Label className="text-xs">Accounts to use:</Label>
-                                <Input
-                                  type="number"
-                                  min={1}
-                                  max={100}
-                                  value={template.accountCount}
-                                  onChange={(e) => updateMessageTemplate(template.id, 'accountCount', parseInt(e.target.value) || 10)}
-                                  className="w-20 h-8"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                          {messageTemplates.length > 1 && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => removeMessageTemplate(template.id)}
-                              className="text-muted-foreground hover:text-destructive"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </Card>
-                    ))}
-                    
-                    <p className="text-xs text-muted-foreground">
-                      Use {'{name}'} and {'{phone}'} for personalization. Each template will be sent by different accounts.
-                    </p>
-                  </div>
-                </TabsContent>
-                
-                <TabsContent value="accounts" className="space-y-4 mt-4">
-                  <div className="flex items-center justify-between gap-2">
-                    <Label>Select Accounts ({newCampaign.accountIds.length} selected)</Label>
-                    <Button variant="outline" size="sm" onClick={distributeAccounts}>
-                      Auto-Distribute
-                    </Button>
-                  </div>
-                  
-                  {/* Account Tag Filter */}
-                  {(() => {
-                    // Get unique tags from all eligible accounts
-                    const allAccountTags = new Set<string>();
-                    warmedUpAccounts.forEach(acc => {
-                      if (acc.tags && acc.tags.length > 0) {
-                        acc.tags.forEach(tag => allAccountTags.add(tag));
-                      }
-                    });
-                    const accountTagsList = Array.from(allAccountTags).sort();
-                    
-                    return accountTagsList.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        <Badge
-                          variant={selectedAccountTagFilter === 'all' ? 'default' : 'outline'}
-                          className="cursor-pointer text-xs"
-                          onClick={() => setSelectedAccountTagFilter('all')}
-                        >
-                          All ({warmedUpAccounts.length})
-                        </Badge>
-                        {accountTagsList.map(tag => {
-                          const count = warmedUpAccounts.filter(a => a.tags?.includes(tag)).length;
-                          return (
-                            <Badge
-                              key={tag}
-                              variant={selectedAccountTagFilter === tag ? 'default' : 'outline'}
-                              className="cursor-pointer text-xs"
-                              onClick={() => setSelectedAccountTagFilter(tag)}
-                            >
-                              {tag} ({count})
-                            </Badge>
-                          );
-                        })}
-                      </div>
-                    );
-                  })()}
-                  
-                  {warmedUpAccounts.length === 0 ? (
-                    <div className="p-8 text-center text-muted-foreground border rounded-lg">
-                      <p className="font-medium">No active accounts available</p>
-                      <p className="text-sm mt-2">Add accounts in the Accounts page first.</p>
-                    </div>
-                  ) : (
-                    <div className="max-h-60 overflow-y-auto space-y-2 p-2 border rounded-lg bg-accent/30">
-                      {(() => {
-                        const filteredAccounts = selectedAccountTagFilter === 'all' 
-                          ? warmedUpAccounts 
-                          : warmedUpAccounts.filter(a => a.tags?.includes(selectedAccountTagFilter));
-                        
-                        return (
-                          <>
-                            <div className="flex items-center gap-2 mb-2">
-                              <Checkbox
-                                checked={filteredAccounts.length > 0 && filteredAccounts.every(a => newCampaign.accountIds.includes(a.id))}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    // Add all filtered accounts to selection
-                                    const filteredIds = filteredAccounts.map(a => a.id);
-                                    setNewCampaign(prev => ({
-                                      ...prev,
-                                      accountIds: [...new Set([...prev.accountIds, ...filteredIds])]
-                                    }));
-                                  } else {
-                                    // Remove all filtered accounts from selection
-                                    const filteredIds = new Set(filteredAccounts.map(a => a.id));
-                                    setNewCampaign(prev => ({
-                                      ...prev,
-                                      accountIds: prev.accountIds.filter(id => !filteredIds.has(id))
-                                    }));
-                                  }
-                                }}
-                              />
-                              <label className="text-sm font-medium">
-                                Select All {selectedAccountTagFilter !== 'all' ? `"${selectedAccountTagFilter}"` : 'Active'} ({filteredAccounts.length})
-                              </label>
-                            </div>
-                            {filteredAccounts.map(account => {
-                              const daysSinceCreation = Math.floor((now.getTime() - new Date(account.createdAt).getTime()) / (1000 * 60 * 60 * 24));
-                              const uniqueRecipientsToday = accountUniqueRecipients.get(account.id) || 0;
-                              return (
-                                <div key={account.id} className="flex items-center gap-2">
-                                  <Checkbox
-                                    id={account.id}
-                                    checked={newCampaign.accountIds.includes(account.id)}
-                                    onCheckedChange={() => handleAccountToggle(account.id)}
-                                  />
-                                  <label htmlFor={account.id} className="text-sm cursor-pointer flex-1">
-                                    {account.firstName || account.phoneNumber} 
-                                    <span className="text-muted-foreground ml-1">
-                                      ({account.phoneNumber}) - {uniqueRecipientsToday}/{account.dailyLimit} today • {daysSinceCreation}d
-                                      {account.tags && account.tags.length > 0 && (
-                                        <span className="ml-1 text-primary/70">• {account.tags.join(', ')}</span>
-                                      )}
-                                    </span>
-                                  </label>
-                                </div>
-                              );
-                            })}
-                          </>
-                        );
-                      })()}
-                    </div>
-                  )}
-
-                  {/* Show all restricted accounts in one unified section */}
-                  {allRestrictedAccounts.length > 0 && (
-                    <div className="p-4 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
-                      <div className="flex items-start gap-2">
-                        <AlertCircle className="w-4 h-4 text-yellow-600 mt-0.5" />
-                        <div className="flex-1">
-                          <p className="text-sm font-medium text-yellow-600">
-                            {allRestrictedAccounts.length} Account(s) Restricted
-                          </p>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            These accounts cannot be used for new campaigns. They can still reply to existing conversations.
-                          </p>
-                          <div className="mt-2 space-y-1 max-h-48 overflow-y-auto">
-                            {allRestrictedAccounts.map((acc) => {
-                              // Determine reason for restriction
-                              const reason = acc.status === 'restricted' || acc.status === 'cooldown' 
-                                ? acc.status 
-                                : isSpambotLimited(acc) 
-                                  ? acc.spambotStatus 
-                                  : 'cooldown';
-                              
-                              return (
-                                <div key={acc.id} className="flex items-center justify-between text-xs text-yellow-600 bg-yellow-500/5 rounded px-2 py-1">
-                                  <span>• {acc.firstName || acc.phoneNumber} <span className="text-yellow-500/70">({reason})</span></span>
-                                  {acc.restrictedUntil && new Date(acc.restrictedUntil) > now && (
-                                    <CountdownTimer 
-                                      targetDate={new Date(acc.restrictedUntil)} 
-                                      className="text-yellow-600"
-                                    />
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  
-                  {newCampaign.accountIds.length > 0 && messageTemplates.length > 1 && (
-                    <div className="p-4 rounded-lg bg-accent/50 border">
-                      <h4 className="text-sm font-medium mb-2">Account Distribution</h4>
-                      <p className="text-xs text-muted-foreground">
-                        {newCampaign.accountIds.length} accounts will be distributed across {messageTemplates.length} message templates:
-                      </p>
-                      <ul className="mt-2 space-y-1">
-                        {messageTemplates.map((t, i) => (
-                          <li key={t.id} className="text-xs">
-                            Message #{i + 1}: {t.accountCount} account(s)
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </TabsContent>
-              </Tabs>
-
-              <div className="flex justify-end gap-2 pt-4 border-t mt-4">
-                <Button variant="outline" onClick={() => setIsCreateOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={handleCreateCampaign} disabled={!newCampaign.name || !newCampaign.recipientsText.trim()}>
-                  Create Campaign
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+          <>
+            <Button className="gap-2" onClick={() => setIsCreateOpen(true)}>
+              <Plus className="w-4 h-4" />
+              New Campaign
+            </Button>
+            <CreateCampaignDialog
+              open={isCreateOpen}
+              onOpenChange={setIsCreateOpen}
+              seats={seats}
+              accounts={accounts}
+              dataStats={dataStats}
+              accountUniqueRecipients={accountUniqueRecipients}
+              onOpenDataSelect={handleOpenDataSelect}
+              onCreateCampaign={handleCreateCampaignFromDialog}
+            />
+          </>
         }
       />
 
