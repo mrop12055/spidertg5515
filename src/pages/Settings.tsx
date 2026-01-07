@@ -497,6 +497,135 @@ const Settings: React.FC = () => {
           </CardContent>
         </Card>
 
+        {/* Message Timing Settings */}
+        <Card className="border-primary/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="w-5 h-5 text-primary" />
+              Message Timing (Server-Controlled)
+            </CardTitle>
+            <CardDescription>
+              Control delays between messages - these settings are read by Python runners from the server
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Minimum delay between messages</Label>
+                <span className="text-sm font-medium">{dbSettings.message_timing.minDelaySeconds}s</span>
+              </div>
+              <Slider
+                value={[dbSettings.message_timing.minDelaySeconds]}
+                onValueChange={([value]) => updateDbSettings('message_timing', { minDelaySeconds: value })}
+                min={1}
+                max={60}
+                step={1}
+              />
+            </div>
+            <Separator />
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Maximum delay between messages</Label>
+                <span className="text-sm font-medium">{dbSettings.message_timing.maxDelaySeconds}s</span>
+              </div>
+              <Slider
+                value={[dbSettings.message_timing.maxDelaySeconds]}
+                onValueChange={([value]) => updateDbSettings('message_timing', { maxDelaySeconds: value })}
+                min={5}
+                max={120}
+                step={1}
+              />
+            </div>
+            <Separator />
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Account switch delay</Label>
+                <span className="text-sm font-medium">{dbSettings.message_timing.accountSwitchDelaySeconds}s</span>
+              </div>
+              <Slider
+                value={[dbSettings.message_timing.accountSwitchDelaySeconds]}
+                onValueChange={([value]) => updateDbSettings('message_timing', { accountSwitchDelaySeconds: value })}
+                min={5}
+                max={120}
+                step={5}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Account Limits Settings */}
+        <Card className="border-primary/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Smartphone className="w-5 h-5 text-primary" />
+              Account Limits (Server-Controlled)
+            </CardTitle>
+            <CardDescription>
+              Daily limits and account settings - Python runners respect these limits
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Daily message limit per account</Label>
+                <span className="text-sm font-medium">{dbSettings.account_limits.dailyMessageLimit}</span>
+              </div>
+              <Slider
+                value={[dbSettings.account_limits.dailyMessageLimit]}
+                onValueChange={([value]) => updateDbSettings('account_limits', { dailyMessageLimit: value })}
+                min={5}
+                max={100}
+                step={5}
+              />
+            </div>
+            <Separator />
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Warmup duration (days)</Label>
+                <span className="text-sm font-medium">{dbSettings.account_limits.warmupDays} days</span>
+              </div>
+              <Slider
+                value={[dbSettings.account_limits.warmupDays]}
+                onValueChange={([value]) => updateDbSettings('account_limits', { warmupDays: value })}
+                min={7}
+                max={30}
+                step={1}
+              />
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Warmup Batch Size */}
+        <Card className="border-primary/30">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Monitor className="w-5 h-5 text-primary" />
+              Warmup Runner Settings
+            </CardTitle>
+            <CardDescription>
+              Batch size for warmup runner - how many warmup tasks to process per cycle
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <div className="flex items-center justify-between mb-2">
+                <Label>Warmup batch size (tasks per cycle)</Label>
+                <span className="text-sm font-medium">{dbSettings.warmup_batch_size.batchSize}</span>
+              </div>
+              <Slider
+                value={[dbSettings.warmup_batch_size.batchSize]}
+                onValueChange={([value]) => updateDbSettings('warmup_batch_size', { batchSize: value })}
+                min={10}
+                max={200}
+                step={10}
+              />
+              <p className="text-xs text-muted-foreground mt-2">
+                Higher values = faster warmup, but may increase Telegram rate limits
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+
         {/* Auto Cleanup */}
         <Card>
           <CardHeader>
