@@ -19,7 +19,7 @@ import {
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
   Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock, 
   LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone, 
-  Flame, Bot, MapPin, Key, Tag, X, History, ClipboardList
+  Flame, Bot, MapPin, Key, Tag, X, History, ClipboardList, Shuffle
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
@@ -2908,26 +2908,50 @@ const Accounts: React.FC = () => {
             </DialogHeader>
             <div className="space-y-4 pt-4">
               <div className="space-y-2">
-                <Label>Select Proxy</Label>
-                <Select value={selectedProxyId} onValueChange={setSelectedProxyId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Choose a proxy" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">
-                      <span className="flex items-center gap-2">
-                        <Globe className="w-4 h-4" />
-                        Auto-rotate proxies
-                      </span>
-                    </SelectItem>
-                    {proxies.filter(p => p.status === 'active').map(proxy => (
-                      <SelectItem key={proxy.id} value={proxy.id}>
-                        {proxy.host}:{proxy.port} {proxy.country && `(${proxy.country})`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Assignment Method</Label>
+                <RadioGroup value={selectedProxyId === 'auto' ? 'random' : 'select'} onValueChange={(v) => {
+                  if (v === 'random') setSelectedProxyId('auto');
+                  else setSelectedProxyId('');
+                }}>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="random" id="proxy-random" />
+                    <Label htmlFor="proxy-random" className="flex items-center gap-2 cursor-pointer">
+                      <Shuffle className="w-4 h-4" />
+                      Randomly assign from available proxies
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="select" id="proxy-select" />
+                    <Label htmlFor="proxy-select" className="cursor-pointer">Select specific proxy</Label>
+                  </div>
+                </RadioGroup>
               </div>
+              
+              {selectedProxyId !== 'auto' && (
+                <div className="space-y-2">
+                  <Label>Select Proxy</Label>
+                  <Select value={selectedProxyId} onValueChange={setSelectedProxyId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Choose a proxy" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {proxies.filter(p => p.status === 'active').map(proxy => {
+                        const accountCount = accounts.filter(a => a.proxyId === proxy.id).length;
+                        return (
+                          <SelectItem key={proxy.id} value={proxy.id}>
+                            <div className="flex items-center justify-between w-full gap-4">
+                              <span>{proxy.host}:{proxy.port} {proxy.country && `(${proxy.country})`}</span>
+                              <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                                {accountCount} account{accountCount !== 1 ? 's' : ''}
+                              </span>
+                            </div>
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
               
               {selectedProxyId === 'auto' && (
                 <div className="space-y-2">
