@@ -247,23 +247,24 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent' as const;
 
       const fetchConversations = async () => {
-        // Prefer sorting by last_message_at and filtering out nulls for better query performance.
-        // Reduced limit to 100 to prevent statement timeouts under load.
+        // Fetch campaign conversations (first_message_sent = true) with higher limit for multi-day filtering
         const primary = await supabase
           .from('conversations')
           .select(conversationsSelect)
+          .eq('first_message_sent', true)
           .not('last_message_at', 'is', null)
-          .order('last_message_at', { ascending: false })
-          .limit(100);
+          .order('created_at', { ascending: false })
+          .limit(500);
 
         if (!primary.error) return primary;
 
-        // Fallback if the DB is under load/timeouts - minimal limit
+        // Fallback if the DB is under load/timeouts
         const fallback = await supabase
           .from('conversations')
           .select(conversationsSelect)
+          .eq('first_message_sent', true)
           .order('created_at', { ascending: false })
-          .limit(30);
+          .limit(100);
 
         return fallback;
       };
