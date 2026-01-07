@@ -112,7 +112,7 @@ export default function Warmup() {
     estimatedMinutesRemaining: 0
   });
   const [loading, setLoading] = useState(false);
-  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  const initialLoadDoneRef = useRef(false);
   const [messagesPerPair, setMessagesPerPair] = useState([20, 30]);
   const [isStarting, setIsStarting] = useState(false);
   const [startingPairId, setStartingPairId] = useState<string | null>(null);
@@ -121,9 +121,9 @@ export default function Warmup() {
   const [warmupBatchSize, setWarmupBatchSize] = useState(100);
   const [isSavingBatchSize, setIsSavingBatchSize] = useState(false);
 
-  const fetchData = async (isInitial = false) => {
-    // Only show loading spinner on manual refresh, not on realtime/polling updates
-    if (isInitial || !initialLoadDone) {
+  const fetchData = useCallback(async (isInitial = false) => {
+    // Only show loading spinner on first load / manual refresh (avoid flicker during polling)
+    if (isInitial || !initialLoadDoneRef.current) {
       setLoading(true);
     }
     try {
@@ -346,7 +346,7 @@ export default function Warmup() {
       }
 
       setStats({
-        totalPairs: session ? (activePairsInSession || 0) : prePairedCount,
+        totalPairs: sessionData ? (activePairsInSession || 0) : prePairedCount,
         messagesScheduled: messagesScheduled || 0,
         messagesSent: messagesSent || 0,
         pendingMessages: pendingMessages || 0,
@@ -357,9 +357,9 @@ export default function Warmup() {
       console.error("Error fetching warmup data:", error);
     } finally {
       setLoading(false);
-      if (!initialLoadDone) setInitialLoadDone(true);
+      initialLoadDoneRef.current = true;
     }
-  };
+  }, []);
 
   // Load warmup batch size from settings
   useEffect(() => {
@@ -387,7 +387,7 @@ export default function Warmup() {
     debounceRef.current = setTimeout(() => {
       fetchData();
     }, 2000); // Wait 2 seconds after last change before fetching
-  }, []);
+  }, [fetchData]);
 
   useEffect(() => {
     fetchData(true); // Initial load
@@ -430,7 +430,7 @@ export default function Warmup() {
         clearTimeout(debounceRef.current);
       }
     };
-  }, [debouncedFetchData]);
+  }, [debouncedFetchData, fetchData]);
 
   const handleSaveBatchSize = async () => {
     setIsSavingBatchSize(true);
