@@ -496,13 +496,10 @@ serve(async (req) => {
               .single();
             
             if (recipientData) {
-              // Privacy restricted = 2 retries with different accounts (same recipient)
-              const MAX_PRIVACY_RETRIES = 2;
-              
               // Get current failed_account_ids
               const { data: currentRecipient } = await supabase
                 .from("campaign_recipients")
-                .select("failed_account_ids")
+                .select("failed_account_ids, retry_count")
                 .eq("id", campaign_recipient_id)
                 .single();
               
@@ -511,24 +508,14 @@ serve(async (req) => {
                 failedAccountIds.push(account_id);
               }
               
-              if (failedAccountIds.length > MAX_PRIVACY_RETRIES) {
-                // 3 total attempts (1 original + 2 retries) - now mark as failed
-                await supabase
-                  .from("campaign_recipients")
-                  .update({
-                    status: "failed",
-                    failed_reason: `Privacy restricted (tried ${failedAccountIds.length} accounts)`,
-                    sent_at: new Date().toISOString(),
-                    failed_account_ids: failedAccountIds,
-                  })
-                  .eq("id", campaign_recipient_id);
-                
-                // Increment campaign failed count
-                await supabase.rpc("increment_campaign_failed_count", { cid: recipientData.campaign_id });
-                
-                console.log(`[report-task-result] Privacy restricted - recipient marked as failed after ${failedAccountIds.length} attempts`);
-              } else {
-                // Reset to pending with updated failed_account_ids - will be picked up by different account
+              // IMPORTANT: Different retry limits for different error types
+              // - Rate limit errors (too many requests): UNLIMITED retries - these are sender-side issues
+              //   The recipient is fine, we just need a different sender account
+              // - Privacy errors: Limited to 3 attempts - recipient may have blocked unknown users
+              
+              if (isTooManyRequests) {
+                // RATE LIMIT ERROR: Always retry with different account (no limit)
+                // The recipient is NOT at fault - only the sender account hit rate limits
                 await supabase
                   .from("campaign_recipients")
                   .update({
@@ -536,10 +523,45 @@ serve(async (req) => {
                     sent_by_account_id: null,  // Clear so different account picks it up
                     failed_account_ids: failedAccountIds,
                     failed_reason: null,
+                    retry_count: (currentRecipient?.retry_count || 0) + 1
                   })
                   .eq("id", campaign_recipient_id);
                 
-                console.log(`[report-task-result] Privacy restricted - retry ${failedAccountIds.length}/${MAX_PRIVACY_RETRIES + 1} with different account`);
+                console.log(`[report-task-result] Rate limit - recipient reset to pending, will retry with different account (attempt ${failedAccountIds.length})`);
+              } else {
+                // PRIVACY ERROR: Limited retries (recipient may have privacy settings)
+                const MAX_PRIVACY_RETRIES = 2;  // 3 total attempts
+                
+                if (failedAccountIds.length > MAX_PRIVACY_RETRIES) {
+                  // 3 total attempts (1 original + 2 retries) - now mark as failed
+                  await supabase
+                    .from("campaign_recipients")
+                    .update({
+                      status: "failed",
+                      failed_reason: `Privacy restricted (tried ${failedAccountIds.length} accounts)`,
+                      sent_at: new Date().toISOString(),
+                      failed_account_ids: failedAccountIds,
+                    })
+                    .eq("id", campaign_recipient_id);
+                  
+                  // Increment campaign failed count
+                  await supabase.rpc("increment_campaign_failed_count", { cid: recipientData.campaign_id });
+                  
+                  console.log(`[report-task-result] Privacy restricted - recipient marked as failed after ${failedAccountIds.length} attempts`);
+                } else {
+                  // Reset to pending with updated failed_account_ids - will be picked up by different account
+                  await supabase
+                    .from("campaign_recipients")
+                    .update({
+                      status: "pending",
+                      sent_by_account_id: null,  // Clear so different account picks it up
+                      failed_account_ids: failedAccountIds,
+                      failed_reason: null,
+                    })
+                    .eq("id", campaign_recipient_id);
+                  
+                  console.log(`[report-task-result] Privacy restricted - retry ${failedAccountIds.length}/${MAX_PRIVACY_RETRIES + 1} with different account`);
+                }
               }
             }
           } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
