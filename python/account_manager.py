@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-TelegramCRM - Account Manager
-==============================
+TelegramCRM - Account Manager (Server-Controlled)
+===================================================
 Handles account management tasks:
 - SpamBot check
 - Change name
@@ -9,6 +9,10 @@ Handles account management tasks:
 - Privacy settings
 - Change password
 - Logout other sessions
+- Sync profile
+- Verify session
+
+Polls server for tasks - all scheduling controlled by admin.
 
 Run: python account_manager.py
 Stop: Ctrl+C
@@ -44,28 +48,24 @@ async def check_spambot(client):
     try:
         spambot = await client.get_entity("@SpamBot")
         await client.send_message(spambot, "/start")
-        await asyncio.sleep(2)  # Wait longer for response
+        await asyncio.sleep(2)
         messages = await client.get_messages(spambot, limit=1)
         response = messages[0].text if messages else "No response"
         
         response_lower = response.lower()
         
-        # Check for BANNED/DELETED state  
         if "banned" in response_lower or "deleted" in response_lower or "заблокирован" in response_lower:
             return "banned", response[:200], response
         
-        # Check for LIMITED/RESTRICTED state (including frozen)
         if "limited" in response_lower or "restricted" in response_lower or "ограничен" in response_lower or "frozen" in response_lower or "заморожен" in response_lower:
             return "restricted", "Limited by Telegram", response
             
-        # Check for CLEAN state
         if "no limits" in response_lower or "good news" in response_lower or "нет ограничений" in response_lower:
             return "active", None, response
             
         return "active", None, response
     except Exception as e:
         error_str = str(e).lower()
-        # Detect ban from connection errors
         if "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
             return "banned", str(e), f"Connection error: {e}"
         if "auth" in error_str or "session" in error_str or "revoked" in error_str:
@@ -91,9 +91,7 @@ async def change_profile_photo(client, photo_source: str):
         
         temp_path = os.path.join(SESSION_FOLDER, "temp_photo.jpg")
         
-        # Check if it's a URL or base64
         if photo_source.startswith("http://") or photo_source.startswith("https://"):
-            # Download from URL
             async with aiohttp.ClientSession() as session:
                 async with session.get(photo_source) as resp:
                     if resp.status == 200:
@@ -103,7 +101,6 @@ async def change_profile_photo(client, photo_source: str):
                     else:
                         return False, f"Failed to download image: HTTP {resp.status}"
         else:
-            # Assume base64
             photo_bytes = base64.b64decode(photo_source)
             with open(temp_path, "wb") as f:
                 f.write(photo_bytes)
@@ -164,16 +161,13 @@ async def logout_other_sessions(client):
     try:
         from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
         
-        # Get all active sessions
         result = await client(GetAuthorizationsRequest())
         
         terminated_count = 0
         for auth in result.authorizations:
-            # Skip the current session (the one we're using)
             if auth.current:
                 continue
             
-            # Terminate this other session
             try:
                 await client(ResetAuthorizationRequest(hash=auth.hash))
                 terminated_count += 1
@@ -186,13 +180,12 @@ async def logout_other_sessions(client):
 
 
 async def verify_session(client, account_id: str):
-    """Verify if session is active using SAFE methods only (no SpamBot to avoid triggering bans)"""
+    """Verify if session is active using SAFE methods only"""
     try:
         me = await asyncio.wait_for(client.get_me(), timeout=10)
         if not me:
             return "disconnected", "Could not get user info", None
         
-        # Try to get dialogs - this fails for deleted accounts
         try:
             dialogs = await asyncio.wait_for(client.get_dialogs(limit=1), timeout=10)
         except Exception as dialog_err:
@@ -202,7 +195,6 @@ async def verify_session(client, account_id: str):
             if "frozen" in error_str:
                 return "restricted", f"Account restricted: {dialog_err}", None
         
-        # Try to get contacts - restricted accounts often fail this
         try:
             from telethon.tl.functions.contacts import GetContactsRequest
             await asyncio.wait_for(client(GetContactsRequest(hash=0)), timeout=10)
@@ -233,20 +225,21 @@ async def verify_session(client, account_id: str):
 
 
 async def main_loop():
-    """Main account management loop"""
+    """Main account management loop - polls server for tasks"""
     global RUNNING
     
     print("=" * 60)
-    print("  TelegramCRM - Account Manager")
+    print("  TelegramCRM - Account Manager (Server-Controlled)")
     print("=" * 60)
     print("  🔧 Handles: SpamBot check, Name change, Photo, Privacy")
+    print("  📡 Polls server for tasks")
     print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
     print("\n✓ Starting account manager...\n")
     
     while RUNNING:
         try:
-            # Get next task - ONLY account tasks
+            # Get next task from server
             task = await get_next_task(runner="account")
             task_type = task.get("task", "wait")
             
@@ -257,7 +250,7 @@ async def main_loop():
             elif task_type == "spambot_check":
                 task_id = task.get("task_id")
                 account = task.get("account", {})
-                task_proxy = task.get("proxy")  # Task-level proxy for consistency
+                task_proxy = task.get("proxy")
                 
                 client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
@@ -301,7 +294,6 @@ async def main_loop():
                 client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     print(f"  📷 Changing photo for {account.get('phone_number')}...")
-                    # Support both photo_url and photo_base64
                     photo_source = task_data.get("photo_url") or task_data.get("photo_base64", "")
                     success, error = await change_profile_photo(client, photo_source)
                     await report_result("change_photo", {
@@ -380,7 +372,6 @@ async def main_loop():
                 task_proxy = task.get("proxy")
                 
                 print(f"  🔄 Syncing profile for {account.get('phone_number')}...")
-                # Force full profile sync including avatar
                 client = await get_or_create_client(account, skip_avatar=False, force_profile_sync=True, task_proxy=task_proxy)
                 if client:
                     await report_result("sync_profile", {
@@ -415,35 +406,31 @@ async def main_loop():
                             "error": error,
                             "user_data": user_data
                         })
-                        print(f"    Status: {status}" + (f" ({error})" if error else ""))
+                        print(f"    Result: {status}")
                     else:
-                        # get_or_create_client already reported account_banned/disconnected
-                        # Just update the task status, don't override account status
                         await report_result("verify_session", {
                             "task_id": task_id,
                             "account_id": account.get("id"),
-                            "status": "skip",  # Special flag: don't update account status
-                            "error": "Connection handled by get_or_create_client"
+                            "status": "disconnected",
+                            "error": "Could not connect"
                         })
-                        print(f"    ✗ Could not connect (status already reported)")
+                        print(f"    ✗ Could not connect")
                 except Exception as e:
-                    error_str = str(e).lower()
-                    # Detect banned status from exception
-                    if any(x in error_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
-                        status = "banned"
-                    else:
-                        status = "disconnected"
                     await report_result("verify_session", {
                         "task_id": task_id,
                         "account_id": account.get("id"),
-                        "status": status,
+                        "status": "disconnected",
                         "error": str(e)
                     })
                     print(f"    ✗ Error: {e}")
+            
+            else:
+                if task_type != "wait":
+                    print(f"  ❓ Unknown task type: {task_type}")
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(5)
     
     print("\n⏹ Account manager stopped.")
     await shutdown_all()
@@ -451,7 +438,7 @@ async def main_loop():
 
 if __name__ == "__main__":
     print("Starting Account Manager... Press Ctrl+C to stop.")
-    print("Required: pip install telethon httpx")
+    print("Required: pip install telethon httpx python-socks aiohttp")
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:

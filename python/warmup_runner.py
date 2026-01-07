@@ -1,16 +1,13 @@
 #!/usr/bin/env python3
 """
-TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)
-===================================================
-Handles 14-day account warm-up tasks with PARALLEL processing:
-- Join channels
-- View content
-- Send reactions
-- Profile updates
-- Build activity history
-- 1-to-1 warmup chat between paired accounts (PARALLEL across pairs)
+TelegramCRM - Warmup Runner (Server-Controlled)
+=================================================
+Simple task executor - all settings controlled by admin side.
 
-Batch size is controlled by the server (from app_settings.warmup_batch_size).
+- Polls server every 10 seconds for batch of tasks
+- Executes ALL tasks in parallel
+- Reports results back to server
+- Server controls: batch size, delays, pair scheduling
 
 Run: python warmup_runner.py
 Stop: Ctrl+C
@@ -27,6 +24,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
+POLL_INTERVAL = 10  # Fixed 10-second polling interval
 
 # Warmup channels (safe public channels for building history)
 WARMUP_CHANNELS = [
@@ -57,12 +55,10 @@ async def join_channel(client, channel_username: str = None):
     try:
         from telethon.tl.functions.channels import JoinChannelRequest
         
-        # Use provided channel or pick random
         channel = channel_username or random.choice(WARMUP_CHANNELS)
         entity = await client.get_entity(channel)
         await client(JoinChannelRequest(entity))
         
-        # Small delay to simulate human behavior
         await asyncio.sleep(random.uniform(1, 3))
         
         return True, channel, None
@@ -81,7 +77,6 @@ async def view_channel_messages(client, channel_username: str = None):
         channel = channel_username or random.choice(WARMUP_CHANNELS)
         entity = await client.get_entity(channel)
         
-        # Get recent messages
         history = await client(GetHistoryRequest(
             peer=entity,
             limit=20,
@@ -94,11 +89,10 @@ async def view_channel_messages(client, channel_username: str = None):
         ))
         
         if history.messages:
-            # Mark as read
             try:
                 await client(ReadHistoryRequest(peer=entity, max_id=history.messages[0].id))
             except:
-                pass  # Some channels don't support read marking
+                pass
         
         await asyncio.sleep(random.uniform(2, 5))
         
@@ -116,11 +110,9 @@ async def send_reaction(client, channel_username: str = None):
         channel = channel_username or random.choice(WARMUP_CHANNELS)
         entity = await client.get_entity(channel)
         
-        # Get recent messages
         messages = await client.get_messages(entity, limit=10)
         
         if messages:
-            # Pick a random recent message
             msg = random.choice(messages)
             reaction = random.choice(REACTIONS)
             
@@ -133,7 +125,6 @@ async def send_reaction(client, channel_username: str = None):
                 await asyncio.sleep(random.uniform(1, 2))
                 return True, channel, reaction
             except Exception as e:
-                # Reactions might not be allowed
                 return True, channel, f"Viewed (reactions disabled: {str(e)[:50]})"
         
         return True, channel, "No messages to react to"
@@ -146,14 +137,7 @@ async def update_profile_bio(client, bio: str = None):
     try:
         from telethon.tl.functions.account import UpdateProfileRequest
         
-        bios = [
-            "✨",
-            "🌟",
-            "Life is good",
-            "Happy days",
-            "Living my best life",
-            "",  # Clear bio
-        ]
+        bios = ["✨", "🌟", "Life is good", "Happy days", "Living my best life", ""]
         
         new_bio = bio or random.choice(bios)
         await client(UpdateProfileRequest(about=new_bio))
@@ -186,34 +170,6 @@ async def add_contact(client, phone: str, first_name: str, last_name: str = ""):
         return False, phone, str(e)
 
 
-async def send_interaction_message(client, recipient_phone: str, message: str):
-    """Send a message to another account (bidirectional interaction)"""
-    try:
-        # Try to find user by phone
-        from telethon.tl.functions.contacts import ImportContactsRequest
-        from telethon.tl.types import InputPhoneContact
-        
-        # Import as contact first
-        contact = InputPhoneContact(
-            client_id=random.randint(0, 999999),
-            phone=recipient_phone,
-            first_name="Friend",
-            last_name=""
-        )
-        
-        result = await client(ImportContactsRequest([contact]))
-        
-        if result.users:
-            user = result.users[0]
-            await client.send_message(user, message)
-            await asyncio.sleep(random.uniform(1, 3))
-            return True, None
-        else:
-            return False, "Could not find user"
-    except Exception as e:
-        return False, str(e)
-
-
 async def send_warmup_chat(client, recipient_phone: str, message: str, recipient_telegram_id: int = None, recipient_username: str = None, recipient_first_name: str = None):
     """Send warmup chat message with human-like typing simulation"""
     try:
@@ -236,7 +192,7 @@ async def send_warmup_chat(client, recipient_phone: str, message: str, recipient
             except:
                 pass
         
-        # Fallback to phone number - use actual name, not generic placeholder
+        # Fallback to phone number
         if not user:
             contact = InputPhoneContact(
                 client_id=random.randint(0, 999999),
@@ -252,22 +208,15 @@ async def send_warmup_chat(client, recipient_phone: str, message: str, recipient
             return False, "Could not find user"
         
         # Human-like typing simulation
-        # Base: 2-4 seconds minimum
-        # Plus: ~100ms per character (avg typing speed)
-        # Plus: random thinking pause (0-2 seconds)
         base_delay = random.uniform(2, 4)
-        typing_delay = len(message) * random.uniform(0.08, 0.15)  # 80-150ms per char
+        typing_delay = len(message) * random.uniform(0.08, 0.15)
         thinking_pause = random.uniform(0, 2)
-        total_typing_time = min(base_delay + typing_delay + thinking_pause, 15)  # Cap at 15s
+        total_typing_time = min(base_delay + typing_delay + thinking_pause, 15)
         
-        # Show typing indicator
         async with client.action(user, 'typing'):
             await asyncio.sleep(total_typing_time)
         
-        # Send message
         await client.send_message(user, message)
-        
-        # Small random delay after sending (reading response, etc.)
         await asyncio.sleep(random.uniform(0.5, 2))
         
         return True, None
@@ -296,7 +245,6 @@ async def process_single_task(task: dict) -> dict:
         client = await get_or_create_client(account, task_proxy=task_proxy)
         
         if not client:
-            # Client connection failed - report with pair_id so warmup can be stopped
             error_msg = "Could not connect client - proxy may be down or expired"
             await report_result("warmup_chat", {
                 "task_id": task_id,
@@ -323,7 +271,7 @@ async def process_single_task(task: dict) -> dict:
                 "account_id": account.get("id"),
                 "success": success,
                 "error": error,
-                "message_type": "add_contact",  # Important: tells backend to mark contacts_exchanged=true
+                "message_type": "add_contact",
                 "is_cycle_last": is_cycle_last,
             })
             print(f"    {'✓' if success else '✗'} Contact saved")
@@ -354,7 +302,7 @@ async def process_single_task(task: dict) -> dict:
                 "account_id": account.get("id"),
                 "success": success,
                 "error": error,
-                "message_type": "text",  # Regular chat message
+                "message_type": "text",
                 "is_cycle_last": is_cycle_last,
             })
             
@@ -370,7 +318,6 @@ async def process_single_task(task: dict) -> dict:
         error_str = str(e)
         error_type = "unknown"
         
-        # Detect error type for better reporting
         error_lower = error_str.lower()
         if any(x in error_lower for x in ["proxy", "socks", "connection refused", "unreachable"]):
             error_type = "proxy_error"
@@ -379,7 +326,6 @@ async def process_single_task(task: dict) -> dict:
         
         print(f"  ⚠ Task error [{phone}]: {e}")
         
-        # Always report result, even on exception
         try:
             await report_result("warmup_chat", {
                 "task_id": task_id,
@@ -394,84 +340,6 @@ async def process_single_task(task: dict) -> dict:
             print(f"  ⚠ Failed to report error: {report_error}")
         
         return {"task_id": task_id, "success": False, "error": error_str}
-
-
-async def main_loop():
-    """Main warmup loop with PARALLEL BATCH processing
-    
-    Batch size is now controlled by the server (from app_settings.warmup_batch_size).
-    No hardcoded PARALLEL_BATCH_SIZE needed.
-    """
-    global RUNNING
-    
-    print("=" * 60)
-    print("  TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)")
-    print("=" * 60)
-    print("  🔥 Processing with DYNAMIC batch size from settings")
-    print("  📌 Each account maintains human-like timing independently")
-    print("  ⏹ Stop: Press Ctrl+C")
-    print("=" * 60)
-    print("\n✓ Starting warmup runner...\n")
-    
-    consecutive_empty = 0
-    
-    while RUNNING:
-        try:
-            # Fetch batch of warmup tasks - server controls batch size
-            batch_result = await get_batch_tasks(runner="warmup_chat")
-            tasks = batch_result.get("tasks", [])
-            delay_after = batch_result.get("delay_after", 5)
-            
-            if not tasks:
-                consecutive_empty += 1
-                if consecutive_empty == 1:
-                    print("  ⏳ No pending warmup tasks, waiting...")
-                elif consecutive_empty % 12 == 0:  # Every ~minute
-                    print("  ⏳ Still waiting for warmup tasks...")
-                
-                # Also check for regular warmup tasks (channel joins, reactions, etc.)
-                regular_task = await get_next_task(runner="warmup")
-                if regular_task.get("task") != "wait":
-                    await process_regular_warmup_task(regular_task)
-                    consecutive_empty = 0
-                else:
-                    await asyncio.sleep(delay_after)
-                continue
-            
-            consecutive_empty = 0
-            print(f"\n  📦 Processing batch of {len(tasks)} warmup tasks in PARALLEL...")
-            
-            # Process all tasks in parallel using asyncio.gather
-            # Each task runs independently with its own human-like timing
-            results = await asyncio.gather(
-                *[process_single_task(task) for task in tasks],
-                return_exceptions=True
-            )
-            
-            # Summary
-            success_count = sum(1 for r in results if isinstance(r, dict) and r.get("success"))
-            fail_count = len(results) - success_count
-            print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
-            
-            # Disconnect clients after batch (on-demand pattern)
-            # This saves memory and reduces Telegram connection count
-            # Note: warmup tasks use "account" key (the sender), not sender_account/receiver_account
-            batch_account_ids = list(set(
-                task.get("account", {}).get("id") 
-                for task in tasks 
-                if task.get("account", {}).get("id")
-            ))
-            await disconnect_batch(batch_account_ids)
-            
-            # Short delay before next batch (tasks have their own timing)
-            await asyncio.sleep(delay_after)
-        
-        except Exception as e:
-            print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(2)
-    
-    print("\n⏹ Warmup runner stopped.")
-    await shutdown_all()
 
 
 async def process_regular_warmup_task(task: dict):
@@ -561,9 +429,90 @@ async def process_regular_warmup_task(task: dict):
         })
 
 
+async def main_loop():
+    """Main warmup loop - Server-controlled batch processing
+    
+    Simple loop:
+    1. Request tasks from server (server decides batch size)
+    2. Execute ALL tasks in parallel
+    3. Report ALL results
+    4. Wait delay_after seconds (server-controlled)
+    5. Repeat
+    """
+    global RUNNING
+    
+    print("=" * 60)
+    print("  TelegramCRM - Warmup Runner (Server-Controlled)")
+    print("=" * 60)
+    print(f"  🔥 Polling every {POLL_INTERVAL} seconds")
+    print("  🔧 All settings controlled by admin dashboard")
+    print("  ⏹ Stop: Press Ctrl+C")
+    print("=" * 60)
+    print("\n✓ Starting warmup runner...\n")
+    
+    consecutive_empty = 0
+    
+    while RUNNING:
+        try:
+            # Request batch of tasks from server
+            # Server controls: batch size, which tasks, timing
+            batch_result = await get_batch_tasks(runner="warmup_chat")
+            tasks = batch_result.get("tasks", [])
+            delay_after = batch_result.get("delay_after", POLL_INTERVAL)
+            
+            if not tasks:
+                consecutive_empty += 1
+                if consecutive_empty == 1:
+                    print("  ⏳ No pending warmup tasks, waiting...")
+                elif consecutive_empty % 6 == 0:  # Every ~minute at 10s interval
+                    print("  ⏳ Still waiting for warmup tasks...")
+                
+                # Also check for regular warmup tasks (channel joins, reactions, etc.)
+                regular_task = await get_next_task(runner="warmup")
+                if regular_task.get("task") != "wait":
+                    await process_regular_warmup_task(regular_task)
+                    consecutive_empty = 0
+                else:
+                    await asyncio.sleep(delay_after if delay_after > 0 else POLL_INTERVAL)
+                continue
+            
+            consecutive_empty = 0
+            print(f"\n  📦 Processing batch of {len(tasks)} warmup tasks in PARALLEL...")
+            
+            # Execute ALL tasks in parallel
+            results = await asyncio.gather(
+                *[process_single_task(task) for task in tasks],
+                return_exceptions=True
+            )
+            
+            # Summary
+            success_count = sum(1 for r in results if isinstance(r, dict) and r.get("success"))
+            fail_count = len(results) - success_count
+            print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
+            
+            # Disconnect clients after batch to save memory
+            batch_account_ids = list(set(
+                task.get("account", {}).get("id") 
+                for task in tasks 
+                if task.get("account", {}).get("id")
+            ))
+            await disconnect_batch(batch_account_ids)
+            
+            # Wait server-specified delay before next poll
+            wait_time = delay_after if delay_after > 0 else POLL_INTERVAL
+            await asyncio.sleep(wait_time)
+        
+        except Exception as e:
+            print(f"  ⚠ Loop error: {e}")
+            await asyncio.sleep(POLL_INTERVAL)
+    
+    print("\n⏹ Warmup runner stopped.")
+    await shutdown_all()
+
+
 if __name__ == "__main__":
-    print("Starting Warmup Runner (Parallel)... Press Ctrl+C to stop.")
-    print("Required: pip install telethon httpx")
+    print("Starting Warmup Runner... Press Ctrl+C to stop.")
+    print("Required: pip install telethon httpx python-socks")
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:

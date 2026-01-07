@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-TelegramCRM - Live Chat Listener
-=================================
+TelegramCRM - Live Chat Listener (Server-Controlled)
+======================================================
 Keeps all accounts connected and listens for incoming messages.
-Sends outgoing messages for active conversations with 1-second polling.
+Sends outgoing messages for active conversations.
 
-Features:
-- 1-second polling for send tasks (batch mode)
+- 1-second polling for INSTANT response (required for live chat)
 - Keep-alive mechanism to prevent disconnections
-- Parallel batch processing of send tasks
+- All batch sizes controlled by server
 
 Run: python live_chat_listener.py
 Stop: Ctrl+C
@@ -27,11 +26,8 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-POLL_INTERVAL = 1  # 1-second polling for send tasks
+POLL_INTERVAL = 1  # 1-second polling for live chat (must be fast!)
 KEEP_ALIVE_INTERVAL = 60  # Ping connections every 60 seconds
-
-# Reduce noise + avoid slowing the event loop with repeated DB checks for non-campaign senders
-LOG_IGNORED_NON_CAMPAIGN = False
 
 
 def signal_handler(sig, frame):
@@ -53,13 +49,11 @@ async def ping_connected_clients():
             if not client.is_connected():
                 disconnected.append(acc_id)
             else:
-                # Light ping - just check connection
                 await asyncio.wait_for(client.get_me(), timeout=5)
         except Exception as e:
             print(f"  ⚠ Client {acc_id[:8]}... ping failed: {e}")
             disconnected.append(acc_id)
     
-    # Remove disconnected from tracking
     for acc_id in disconnected:
         if acc_id in active_clients:
             try:
@@ -92,7 +86,6 @@ async def process_send_task(task: dict) -> dict:
         }
     
     try:
-        # Get or create client with task-level proxy
         client = await get_or_create_client(
             account, 
             setup_handler=setup_message_handler,
@@ -151,34 +144,28 @@ async def setup_message_handler(client, account_id: str):
     @client.on(events.NewMessage(incoming=True))
     async def handler(event):
         try:
-            # Get sender with error handling for forwarded messages from private channels
             try:
                 sender = await event.get_sender()
             except Exception as sender_error:
                 error_str = str(sender_error).lower()
-                # Skip forwarded messages from private channels/groups we can't access
                 if any(x in error_str for x in ["private", "banned", "channel", "permission"]):
-                    return  # Silently skip - this is a forwarded message from inaccessible source
-                raise  # Re-raise other errors
+                    return
+                raise
             
             if not sender:
                 return
             
-            # Skip channel/group messages - only handle private chats
             from telethon.tl.types import User
             if not isinstance(sender, User):
                 return
 
-            # Skip bots
             if getattr(sender, 'bot', False):
                 return
             
-            # FILTER: Only process messages from contacts (people in contact list)
-            # This is faster than database checks and ensures we only handle known contacts
+            # FILTER: Only process messages from contacts
             if not getattr(sender, 'contact', False):
-                return  # Skip - sender is not in contact list
+                return
             
-            # Get sender info
             first_name = getattr(sender, 'first_name', None) or ''
             last_name = getattr(sender, 'last_name', None) or ''
             sender_name = f"{first_name} {last_name}".strip() or str(sender.id)
@@ -191,14 +178,13 @@ async def setup_message_handler(client, account_id: str):
             media_url = None
             media_type = None
             
-            # Handle photos - download and upload to Supabase storage
+            # Handle photos
             if event.message.photo:
                 print(f"    📷 Receiving photo...")
                 content = "[Photo] " + (event.message.text or "")
                 media_type = "image"
                 
                 try:
-                    # Download the photo to bytes
                     photo_bytes = await client.download_media(event.message.photo, bytes)
                     if photo_bytes:
                         import base64
@@ -206,11 +192,9 @@ async def setup_message_handler(client, account_id: str):
                         import time as time_module
                         from config import SUPABASE_URL, SUPABASE_KEY
                         
-                        # Upload to Supabase storage using PUT with x-upsert
                         file_name = f"incoming_{account_id}_{int(time_module.time() * 1000)}.jpg"
                         file_path = f"{account_id}/{file_name}"
                         
-                        # Get mime type from message if available
                         mime_type = "image/jpeg"
                         if hasattr(event.message, 'file') and event.message.file:
                             mime_type = getattr(event.message.file, 'mime_type', None) or "image/jpeg"
@@ -235,11 +219,6 @@ async def setup_message_handler(client, account_id: str):
                                 print(f"    ⚠ Photo upload failed: {upload_response.status_code} - {error_text}")
                 except Exception as e:
                     print(f"    ⚠ Could not download/upload photo: {e}")
-            
-            # Get phone number if available
-            sender_phone = None
-            if hasattr(sender, 'phone') and sender.phone:
-                sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
             
             # Get profile photo
             avatar_base64 = None
@@ -270,34 +249,34 @@ async def setup_message_handler(client, account_id: str):
 
 
 async def main_loop():
-    """Main live chat loop with 1-second polling and keep-alive"""
+    """Main live chat loop - 1-second polling for instant response"""
     global RUNNING
     
     print("=" * 60)
-    print("  TelegramCRM - Live Chat Listener")
+    print("  TelegramCRM - Live Chat Listener (Server-Controlled)")
     print("=" * 60)
     print("  📥 Handles: Incoming messages, Live chat replies")
-    print(f"  ⚡ Polling: Every {POLL_INTERVAL} second(s)")
+    print(f"  ⚡ Polling: Every {POLL_INTERVAL} second(s) (instant response)")
     print(f"  💓 Keep-alive: Every {KEEP_ALIVE_INTERVAL} seconds")
+    print("  🔧 Batch sizes controlled by server")
     print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
     print("\n✓ Starting live chat listener...\n")
     
-    connected_ids = set()  # Track connected accounts to avoid redundant work
+    connected_ids = set()
     last_keep_alive = time.time()
     
     while RUNNING:
         try:
-            # 1. Poll for send tasks using batch endpoint (every 1 second)
-            batch_result = await get_batch_tasks(runner="livechat", batch_size=50)
+            # Poll for send tasks - server controls batch size
+            batch_result = await get_batch_tasks(runner="livechat")
             tasks = batch_result.get("tasks", [])
             accounts = batch_result.get("accounts", [])
             
-            # 2. Connect new accounts from response
+            # Connect new accounts from response
             new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
             if new_accounts:
                 print(f"  🔌 Connecting {len(new_accounts)} new accounts...")
-                # Connect in parallel for faster startup
                 results = await asyncio.gather(
                     *[get_or_create_client(
                         acc, 
@@ -310,7 +289,7 @@ async def main_loop():
                     if acc.get("id"):
                         connected_ids.add(acc["id"])
             
-            # 3. Process send tasks in parallel
+            # Process send tasks in parallel
             if tasks:
                 print(f"\n  📦 Processing {len(tasks)} send tasks in parallel...")
                 results = await asyncio.gather(
@@ -318,7 +297,6 @@ async def main_loop():
                     return_exceptions=True
                 )
                 
-                # Report all results
                 for result in results:
                     if isinstance(result, Exception):
                         print(f"  ⚠ Task exception: {result}")
@@ -326,13 +304,13 @@ async def main_loop():
                     if isinstance(result, dict):
                         await report_result("send", result)
             
-            # 4. Keep-alive ping every 60 seconds
+            # Keep-alive ping every 60 seconds
             if time.time() - last_keep_alive > KEEP_ALIVE_INTERVAL:
                 print("  💓 Keep-alive check...")
                 await ping_connected_clients()
                 last_keep_alive = time.time()
             
-            # 5. Fixed 1-second polling interval
+            # Fixed 1-second polling for instant response
             await asyncio.sleep(POLL_INTERVAL)
         
         except Exception as e:
@@ -345,7 +323,7 @@ async def main_loop():
 
 if __name__ == "__main__":
     print("Starting Live Chat Listener... Press Ctrl+C to stop.")
-    print("Required: pip install telethon httpx")
+    print("Required: pip install telethon httpx python-socks")
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:

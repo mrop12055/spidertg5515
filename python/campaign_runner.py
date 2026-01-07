@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-TelegramCRM - Campaign Runner (PARALLEL BATCH MODE)
-=====================================================
-Handles campaign messages with PARALLEL execution across multiple accounts.
-Batch size is controlled by the server (per-campaign setting from database).
+TelegramCRM - Campaign Runner (Server-Controlled)
+===================================================
+Simple task executor - all settings controlled by admin side.
+
+- Polls server every 10 seconds for batch of tasks
+- Executes ALL tasks in parallel
+- Reports results back to server
+- Server controls: batch size, delays, limits
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
@@ -20,6 +24,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
+POLL_INTERVAL = 10  # Fixed 10-second polling interval
 
 
 def signal_handler(sig, frame):
@@ -33,7 +38,7 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def process_single_task(task: dict, settings: dict) -> dict:
+async def process_single_task(task: dict) -> dict:
     """Process a single campaign send task.
     
     IMPORTANT: This function is fully isolated - any exception here
@@ -84,10 +89,9 @@ async def process_single_task(task: dict, settings: dict) -> dict:
         )
         
         # Check if this is a sender-side issue (should retry with different account)
-        # Privacy restrictions AND rate limits are sender problems, NOT recipient problems
         is_sender_error = error and any(x in error.lower() for x in [
             "privacyrestricted", "privacy restricted", "userprivacyrestricted",
-            "too many requests", "sendmessagerequest"  # Rate limits = sender issue
+            "too many requests", "sendmessagerequest"
         ])
         
         # Get API credential ID
@@ -133,37 +137,37 @@ async def process_single_task(task: dict, settings: dict) -> dict:
 
 
 async def main_loop():
-    """Main campaign task execution loop - PARALLEL BATCH MODE
+    """Main campaign loop - Server-controlled batch processing
     
-    Batch size is now controlled by the server (per-campaign setting).
-    No hardcoded PARALLEL_BATCH_SIZE needed.
+    Simple loop:
+    1. Request tasks from server (server decides batch size)
+    2. Execute ALL tasks in parallel
+    3. Report ALL results
+    4. Wait delay_after seconds (server-controlled)
+    5. Repeat
     """
     global RUNNING
     
     print("=" * 60)
-    print("  TelegramCRM - Campaign Runner (PARALLEL BATCH MODE)")
+    print("  TelegramCRM - Campaign Runner (Server-Controlled)")
     print("=" * 60)
-    print("  📨 Processing with DYNAMIC batch size per campaign")
+    print(f"  📨 Polling every {POLL_INTERVAL} seconds")
+    print("  🔧 All settings controlled by admin dashboard")
     print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
-    print("\n✓ Starting parallel campaign loop...\n")
+    print("\n✓ Starting campaign runner...\n")
     
     consecutive_empty = 0
     
-    # Default settings
-    settings = {
-        "minDelaySeconds": 5,
-        "maxDelaySeconds": 15,
-    }
-    
     while RUNNING:
         try:
-            # Get batch of campaign tasks - server controls batch size
+            # Request batch of tasks from server
+            # Server controls: batch size, which tasks, timing
             batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
-            delay_after = batch_result.get("delay_after", 5)
+            delay_after = batch_result.get("delay_after", POLL_INTERVAL)
             
-            # Check for stop signal
+            # Check for stop signal from server
             if batch_result.get("stop_signal"):
                 print("⏹ Campaign paused from dashboard. Stopping...")
                 break
@@ -178,22 +182,22 @@ async def main_loop():
                         print(f"  ⏳ {reason}")
                     else:
                         print("  ⏳ No pending campaign tasks, waiting...")
-                elif consecutive_empty % 12 == 0:  # Every ~minute
+                elif consecutive_empty % 6 == 0:  # Every ~minute at 10s interval
                     print("  ⏳ Still waiting for campaign tasks...")
                 
-                await asyncio.sleep(delay_after)
+                await asyncio.sleep(delay_after if delay_after > 0 else POLL_INTERVAL)
                 continue
             
             consecutive_empty = 0
             print(f"\n  📦 Processing batch of {len(tasks)} messages in PARALLEL...")
             
-            # Process all tasks in parallel
+            # Execute ALL tasks in parallel
             results = await asyncio.gather(
-                *[process_single_task(task, settings) for task in tasks],
+                *[process_single_task(task) for task in tasks],
                 return_exceptions=True
             )
             
-            # Report all results
+            # Report ALL results to server
             success_count = 0
             for result in results:
                 if isinstance(result, Exception):
@@ -203,14 +207,12 @@ async def main_loop():
                 if result.get("success"):
                     success_count += 1
                 
-                # Report each result to backend
                 await report_result("send", result)
             
             fail_count = len(results) - success_count
             print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
             
-            # Disconnect clients after batch (on-demand pattern)
-            # This saves memory and reduces Telegram connection count
+            # Disconnect clients after batch to save memory
             batch_account_ids = list(set(
                 task.get("account", {}).get("id") 
                 for task in tasks 
@@ -218,22 +220,23 @@ async def main_loop():
             ))
             await disconnect_batch(batch_account_ids)
             
-            # Wait between batches
-            if RUNNING and delay_after > 0:
-                print(f"  ⏳ Waiting {delay_after}s before next batch...")
-                await asyncio.sleep(delay_after)
+            # Wait server-specified delay before next poll
+            wait_time = delay_after if delay_after > 0 else POLL_INTERVAL
+            if RUNNING and wait_time > 0:
+                print(f"  ⏳ Waiting {wait_time}s before next poll...")
+                await asyncio.sleep(wait_time)
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(POLL_INTERVAL)
     
     print("\n⏹ Campaign loop stopped.")
     await shutdown_all()
 
 
 if __name__ == "__main__":
-    print("Starting Campaign Runner (Parallel)... Press Ctrl+C to stop.")
-    print("Required: pip install telethon httpx")
+    print("Starting Campaign Runner... Press Ctrl+C to stop.")
+    print("Required: pip install telethon httpx python-socks")
     try:
         asyncio.run(main_loop())
     except KeyboardInterrupt:
