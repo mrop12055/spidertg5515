@@ -635,7 +635,7 @@ if __name__ == "__main__":
     print("  Polls server every 7 seconds for tasks")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
-    print("Required: pip install telethon httpx python-socks")
+    print("Required: pip install telethon httpx pysocks")
     
     while True:
         try:
@@ -1542,7 +1542,7 @@ if __name__ == "__main__":
     print("  Polls server every 7 seconds for tasks")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
-    print("Required: pip install telethon httpx python-socks")
+    print("Required: pip install telethon httpx pysocks")
     
     while True:
         try:
