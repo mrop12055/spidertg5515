@@ -578,7 +578,9 @@ async def main_loop():
         try:
             batch_result = await get_batch_tasks(runner="campaign", batch_size=PARALLEL_BATCH_SIZE)
             tasks = batch_result.get("tasks", [])
-            delay_after = batch_result.get("delay_after", POLL_INTERVAL)
+
+            # NOTE: We intentionally poll on a fixed interval (7s) so the runner
+            # always re-checks for new campaign work quickly.
 
             if batch_result.get("stop_signal"):
                 print("[STOP] Campaign paused from dashboard. Stopping...")
@@ -591,7 +593,7 @@ async def main_loop():
                     print(f"  [WAIT] {reason or 'No pending campaign tasks, waiting...'}")
                 elif consecutive_empty % 8 == 0:  # Every ~56 seconds at 7s interval
                     print("  [WAIT] Still waiting for campaign tasks...")
-                await asyncio.sleep(delay_after if delay_after > 0 else POLL_INTERVAL)
+                await asyncio.sleep(POLL_INTERVAL)
                 continue
 
             consecutive_empty = 0
@@ -614,9 +616,10 @@ async def main_loop():
             fail_count = len(results) - success_count
             print(f"  [RESULT] Batch complete: {success_count} success, {fail_count} failed")
 
-            if RUNNING and delay_after > 0:
-                print(f"  [WAIT] Waiting {delay_after}s before next batch...")
-                await asyncio.sleep(delay_after)
+            # Always use fixed 7s poll interval
+            if RUNNING:
+                print(f"  [WAIT] Waiting {POLL_INTERVAL}s before next batch...")
+                await asyncio.sleep(POLL_INTERVAL)
 
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
