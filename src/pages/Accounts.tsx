@@ -406,26 +406,46 @@ const Accounts: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Fetch total lifetime conversations per account
+  // Fetch total lifetime conversations per account (using RPC to avoid 1000 row limit)
   useEffect(() => {
     const fetchTotalConversations = async () => {
-      const { data, error } = await supabase
-        .from('conversations')
-        .select('account_id');
+      // Fetch all account_ids first
+      const accountIds = accounts.map(a => a.id);
+      if (accountIds.length === 0) return;
       
-      if (data && !error) {
-        const counts = new Map<string, number>();
+      // Fetch conversation counts for each account using a single query with grouping
+      // We need to paginate to avoid the 1000 row limit
+      const counts = new Map<string, number>();
+      let offset = 0;
+      const pageSize = 1000;
+      let hasMore = true;
+      
+      while (hasMore) {
+        const { data, error } = await supabase
+          .from('conversations')
+          .select('account_id')
+          .range(offset, offset + pageSize - 1);
+        
+        if (error || !data) {
+          hasMore = false;
+          break;
+        }
+        
         data.forEach((conv: any) => {
           counts.set(conv.account_id, (counts.get(conv.account_id) || 0) + 1);
         });
-        setTotalConversations(counts);
+        
+        hasMore = data.length === pageSize;
+        offset += pageSize;
       }
+      
+      setTotalConversations(counts);
     };
     
     fetchTotalConversations();
     const interval = setInterval(fetchTotalConversations, 60000);
     return () => clearInterval(interval);
-  }, []);
+  }, [accounts]);
 
   // Extract unique tags from all accounts
   useEffect(() => {
