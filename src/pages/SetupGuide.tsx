@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import JSZip from 'jszip';
 import { supabase } from '@/integrations/supabase/client';
 import { VPSControlPanel } from '@/components/setup/VPSControlPanel';
+import { UnifiedLogConsole } from '@/components/setup/UnifiedLogConsole';
 
 const SetupGuide: React.FC = () => {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -2233,6 +2234,9 @@ if __name__ == "__main__":
             <div className="space-y-4">
               {/* VPS Control Panel */}
               <VPSControlPanel />
+
+              {/* Unified Live Log Console */}
+              <UnifiedLogConsole />
 
               <Card>
                 <CardHeader>
