@@ -265,57 +265,116 @@ async def main_loop():
     
     connected_ids = set()
     last_keep_alive = time.time()
+    consecutive_errors = 0
+    MAX_CONSECUTIVE_ERRORS = 10
     
     while RUNNING:
+        loop_start = time.time()
+        
         try:
             # Poll for send tasks - server controls batch size
-            batch_result = await get_batch_tasks(runner="livechat")
+            try:
+                batch_result = await asyncio.wait_for(
+                    get_batch_tasks(runner="livechat"),
+                    timeout=5.0  # 5 second timeout for API call
+                )
+                consecutive_errors = 0  # Reset on success
+            except asyncio.TimeoutError:
+                print(f"  ⚠ API timeout, retrying...")
+                consecutive_errors += 1
+                await asyncio.sleep(0.5)
+                continue
+            except Exception as api_err:
+                print(f"  ⚠ API error: {api_err}")
+                consecutive_errors += 1
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                    print(f"  ⚠ Too many errors ({consecutive_errors}), waiting 5s...")
+                    await asyncio.sleep(5)
+                    consecutive_errors = 0
+                else:
+                    await asyncio.sleep(0.5)
+                continue
+            
             tasks = batch_result.get("tasks", [])
             accounts = batch_result.get("accounts", [])
             
-            # Connect new accounts from response
+            # Connect new accounts from response (non-blocking)
             new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
             if new_accounts:
                 print(f"  🔌 Connecting {len(new_accounts)} new accounts...")
-                results = await asyncio.gather(
-                    *[get_or_create_client(
-                        acc, 
-                        setup_handler=setup_message_handler, 
-                        task_proxy=acc.get("proxy")
-                    ) for acc in new_accounts],
-                    return_exceptions=True
-                )
-                for acc in new_accounts:
-                    if acc.get("id"):
-                        connected_ids.add(acc["id"])
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(
+                            *[get_or_create_client(
+                                acc, 
+                                setup_handler=setup_message_handler, 
+                                task_proxy=acc.get("proxy")
+                            ) for acc in new_accounts],
+                            return_exceptions=True
+                        ),
+                        timeout=30.0  # 30 second timeout for connections
+                    )
+                    for acc in new_accounts:
+                        if acc.get("id"):
+                            connected_ids.add(acc["id"])
+                except asyncio.TimeoutError:
+                    print(f"  ⚠ Client connection timeout, will retry next loop")
+                except Exception as conn_err:
+                    print(f"  ⚠ Client connection error: {conn_err}")
             
-            # Process send tasks in parallel
+            # Process send tasks in parallel (with timeout)
             if tasks:
-                print(f"\n  📦 Processing {len(tasks)} send tasks in parallel...")
-                results = await asyncio.gather(
-                    *[process_send_task(task) for task in tasks],
-                    return_exceptions=True
-                )
-                
-                for result in results:
-                    if isinstance(result, Exception):
-                        print(f"  ⚠ Task exception: {result}")
-                        continue
-                    if isinstance(result, dict):
-                        await report_result("send", result)
+                print(f"\n  📦 Processing {len(tasks)} send tasks...")
+                try:
+                    results = await asyncio.wait_for(
+                        asyncio.gather(
+                            *[process_send_task(task) for task in tasks],
+                            return_exceptions=True
+                        ),
+                        timeout=30.0  # 30 second timeout for sending
+                    )
+                    
+                    # Report results (don't let this block the loop)
+                    for result in results:
+                        if isinstance(result, Exception):
+                            print(f"  ⚠ Task exception: {result}")
+                            continue
+                        if isinstance(result, dict):
+                            try:
+                                await asyncio.wait_for(
+                                    report_result("send", result),
+                                    timeout=5.0
+                                )
+                            except Exception as report_err:
+                                print(f"  ⚠ Failed to report result: {report_err}")
+                except asyncio.TimeoutError:
+                    print(f"  ⚠ Send tasks timeout, continuing...")
+                except Exception as send_err:
+                    print(f"  ⚠ Send tasks error: {send_err}")
             
-            # Keep-alive ping every 60 seconds
+            # Keep-alive ping every 60 seconds (non-blocking)
             if time.time() - last_keep_alive > KEEP_ALIVE_INTERVAL:
                 print("  💓 Keep-alive check...")
-                await ping_connected_clients()
+                try:
+                    await asyncio.wait_for(ping_connected_clients(), timeout=30.0)
+                except Exception as ping_err:
+                    print(f"  ⚠ Keep-alive error: {ping_err}")
                 last_keep_alive = time.time()
             
-            # Fixed 1-second polling for instant response
-            await asyncio.sleep(POLL_INTERVAL)
+            # Calculate remaining time to maintain 1-second loop
+            elapsed = time.time() - loop_start
+            sleep_time = max(0.1, POLL_INTERVAL - elapsed)  # Minimum 0.1s sleep
+            await asyncio.sleep(sleep_time)
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(1)
+            consecutive_errors += 1
+            if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                print(f"  ⚠ Too many consecutive errors, waiting 5s...")
+                await asyncio.sleep(5)
+                consecutive_errors = 0
+            else:
+                await asyncio.sleep(0.5)
     
     print("\n⏹ Live chat listener stopped.")
     await shutdown_all()
