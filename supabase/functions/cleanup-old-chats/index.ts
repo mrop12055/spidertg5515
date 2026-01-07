@@ -18,10 +18,10 @@ Deno.serve(async (req) => {
 
     console.log('Starting cleanup of old chats and warmup messages...');
 
-    // Calculate cutoff dates
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    const conversationCutoffDate = threeDaysAgo.toISOString();
+    // Calculate cutoff dates - keep conversations for 5 days
+    const fiveDaysAgo = new Date();
+    fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
+    const conversationCutoffDate = fiveDaysAgo.toISOString();
 
     // 30 minutes ago for warmup messages
     const thirtyMinutesAgo = new Date();
@@ -74,8 +74,8 @@ Deno.serve(async (req) => {
       console.log(`Deleted ${warmupDeleteCount || 0} warmup messages older than 30 minutes`);
     }
 
-    // ========== CONVERSATION CLEANUP (3 days) ==========
-    // Get conversations older than 3 days
+    // ========== CONVERSATION CLEANUP (5 days) ==========
+    // Get conversations older than 5 days
     const { data: oldConversations, error: fetchError } = await supabase
       .from('conversations')
       .select('id')
