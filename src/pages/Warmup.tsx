@@ -1715,6 +1715,10 @@ export default function Warmup() {
                     <span className="text-yellow-500 ml-1">(1 account will remain unpaired)</span>
                   )}
                 </p>
+                <div className="flex items-center gap-2 text-sm text-blue-500 bg-blue-500/10 px-3 py-2 rounded-md">
+                  <UserPlus className="h-4 w-4" />
+                  <span>Contacts will be added automatically when warmup starts</span>
+                </div>
                 
                 {filteredIdleAccounts.length > 0 && (
                   <ScrollArea className="h-[150px] border rounded-md p-2">
