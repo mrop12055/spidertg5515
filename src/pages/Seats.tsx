@@ -279,61 +279,14 @@ const handleDeleteSeat = async (seat: Seat) => {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
-              {/* Animated 3D-style Logo */}
+              {/* Static Logo - no animation to prevent blinking */}
               <div className="relative">
-                <motion.div
-                  className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary via-primary/80 to-violet-600 shadow-lg shadow-primary/25 flex items-center justify-center"
-                  animate={{
-                    rotateY: [0, 10, 0, -10, 0],
-                    rotateX: [0, -5, 0, 5, 0],
-                  }}
-                  transition={{
-                    duration: 6,
-                    repeat: Infinity,
-                    ease: "easeInOut"
-                  }}
-                  style={{ transformStyle: 'preserve-3d', perspective: 1000 }}
-                >
-                  <motion.div
-                    animate={{
-                      scale: [1, 1.1, 1],
-                    }}
-                    transition={{
-                      duration: 2,
-                      repeat: Infinity,
-                      ease: "easeInOut"
-                    }}
-                  >
-                    <Users className="w-7 h-7 text-white" />
-                  </motion.div>
-                  
-                  {/* Floating particles */}
-                  <motion.div
-                    className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-green-400"
-                    animate={{
-                      y: [0, -4, 0],
-                      opacity: [0.7, 1, 0.7],
-                    }}
-                    transition={{
-                      duration: 2,
-                      repeat: Infinity,
-                      ease: "easeInOut"
-                    }}
-                  />
-                  <motion.div
-                    className="absolute -bottom-1 -left-1 w-2 h-2 rounded-full bg-violet-400"
-                    animate={{
-                      y: [0, 3, 0],
-                      opacity: [0.5, 1, 0.5],
-                    }}
-                    transition={{
-                      duration: 2.5,
-                      repeat: Infinity,
-                      ease: "easeInOut",
-                      delay: 0.5
-                    }}
-                  />
-                </motion.div>
+                <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary via-primary/80 to-violet-600 shadow-lg shadow-primary/25 flex items-center justify-center">
+                  <Users className="w-7 h-7 text-white" />
+                  {/* Static particles */}
+                  <div className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-green-400 opacity-80" />
+                  <div className="absolute -bottom-1 -left-1 w-2 h-2 rounded-full bg-violet-400 opacity-70" />
+                </div>
                 
                 {/* Glow effect */}
                 <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-primary/40 to-violet-600/40 blur-xl -z-10" />
@@ -359,12 +312,7 @@ const handleDeleteSeat = async (seat: Seat) => {
                 <DialogContent className="sm:max-w-md">
                   <DialogHeader className="text-center sm:text-center">
                     <div className="mx-auto w-16 h-16 rounded-2xl bg-gradient-to-br from-primary to-violet-600 flex items-center justify-center mb-4">
-                      <motion.div
-                        animate={{ rotate: [0, 10, -10, 0] }}
-                        transition={{ duration: 2, repeat: Infinity }}
-                      >
-                        <Sparkles className="w-8 h-8 text-white" />
-                      </motion.div>
+                      <Sparkles className="w-8 h-8 text-white" />
                     </div>
                     <DialogTitle className="text-xl">Create New Seat</DialogTitle>
                     <DialogDescription>
@@ -472,19 +420,10 @@ const handleDeleteSeat = async (seat: Seat) => {
                           }`}
                           whileTap={{ scale: 0.95 }}
                         >
-                          <motion.div
+                          <div
                             className={`w-2 h-2 rounded-full ${
                               seat.is_active ? 'bg-green-500' : 'bg-muted-foreground/50'
                             }`}
-                            animate={seat.is_active ? {
-                              scale: [1, 1.3, 1],
-                              opacity: [1, 0.7, 1],
-                            } : {}}
-                            transition={{
-                              duration: 2,
-                              repeat: Infinity,
-                              ease: "easeInOut"
-                            }}
                           />
                           <span>{seat.is_active ? 'Active' : 'Inactive'}</span>
                         </motion.button>
@@ -610,12 +549,7 @@ const handleDeleteSeat = async (seat: Seat) => {
         <AlertDialogContent className="sm:max-w-md">
           <AlertDialogHeader className="text-center sm:text-center">
             <div className="mx-auto w-16 h-16 rounded-full bg-destructive/10 flex items-center justify-center mb-4">
-              <motion.div
-                animate={{ scale: [1, 1.1, 1] }}
-                transition={{ duration: 1.5, repeat: Infinity }}
-              >
-                <AlertTriangle className="w-8 h-8 text-destructive" />
-              </motion.div>
+              <AlertTriangle className="w-8 h-8 text-destructive" />
             </div>
             <AlertDialogTitle className="text-xl">Delete Seat?</AlertDialogTitle>
             <AlertDialogDescription className="text-center">
@@ -641,12 +575,7 @@ const handleDeleteSeat = async (seat: Seat) => {
         <AlertDialogContent className="sm:max-w-md">
           <AlertDialogHeader className="text-center sm:text-center">
             <div className="mx-auto w-16 h-16 rounded-full bg-orange-500/10 flex items-center justify-center mb-4">
-              <motion.div
-                animate={{ rotate: [0, -20, 0] }}
-                transition={{ duration: 1, repeat: Infinity }}
-              >
-                <RotateCcw className="w-8 h-8 text-orange-500" />
-              </motion.div>
+              <RotateCcw className="w-8 h-8 text-orange-500" />
             </div>
             <AlertDialogTitle className="text-xl">Reset Access Link?</AlertDialogTitle>
             <AlertDialogDescription className="text-center">
