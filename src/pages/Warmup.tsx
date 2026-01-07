@@ -524,15 +524,15 @@ export default function Warmup() {
         const account1 = orphanedAccounts[i];
         const account2 = orphanedAccounts[i + 1];
 
-        // Update both accounts to point to each other
+        // Update both accounts to point to each other and clear unpaired flag
         await supabase
           .from("telegram_accounts")
-          .update({ warmup_pair_id: account2.id })
+          .update({ warmup_pair_id: account2.id, warmup_unpaired: false })
           .eq("id", account1.id);
 
         await supabase
           .from("telegram_accounts")
-          .update({ warmup_pair_id: account1.id })
+          .update({ warmup_pair_id: account1.id, warmup_unpaired: false })
           .eq("id", account2.id);
       }
 
@@ -541,6 +541,47 @@ export default function Warmup() {
     } catch (error: any) {
       console.error("Error re-pairing accounts:", error);
       toast.error(error.message || "Failed to re-pair accounts");
+    }
+  };
+
+  // Pair orphaned accounts with unpaired accounts
+  const handlePairOrphanedWithUnpaired = async () => {
+    // Combine orphaned + unpaired, pair them up
+    const allToPair = [
+      ...sessionExpiredAccounts.map(a => ({ id: a.id, phone: a.phone_number })),
+      ...dedupedUnpairedAccounts.map(a => ({ id: a.id, phone: a.phone_number }))
+    ];
+
+    if (allToPair.length < 2) {
+      toast.error("Need at least 2 accounts to create a pair");
+      return;
+    }
+
+    try {
+      let pairsCreated = 0;
+      for (let i = 0; i < allToPair.length - 1; i += 2) {
+        const account1 = allToPair[i];
+        const account2 = allToPair[i + 1];
+
+        // Update both accounts to point to each other
+        await supabase
+          .from("telegram_accounts")
+          .update({ warmup_pair_id: account2.id, warmup_unpaired: false })
+          .eq("id", account1.id);
+
+        await supabase
+          .from("telegram_accounts")
+          .update({ warmup_pair_id: account1.id, warmup_unpaired: false })
+          .eq("id", account2.id);
+        
+        pairsCreated++;
+      }
+
+      toast.success(`Created ${pairsCreated} new pair(s)!`);
+      fetchData();
+    } catch (error: any) {
+      console.error("Error pairing accounts:", error);
+      toast.error(error.message || "Failed to pair accounts");
     }
   };
 
@@ -722,15 +763,6 @@ export default function Warmup() {
                         ))}
                       </div>
 
-                      {sessionExpiredAccounts.length >= 2 ? (
-                        <Button size="sm" className="mt-3" onClick={handleRepairOrphanedAccounts}>
-                          Re-pair All ({Math.floor(sessionExpiredAccounts.length / 2)} pairs)
-                        </Button>
-                      ) : (
-                        <p className="text-xs text-muted-foreground mt-2">
-                          Add one more orphaned account to create a new pair.
-                        </p>
-                      )}
                     </div>
                   )}
 
@@ -748,6 +780,14 @@ export default function Warmup() {
                         {" — waiting for another active account to pair."}
                       </p>
                     </div>
+                  )}
+
+                  {/* Pair Together button when we have orphaned + unpaired that can be combined */}
+                  {(sessionExpiredAccounts.length + dedupedUnpairedAccounts.length) >= 2 && (
+                    <Button size="sm" className="mt-3" onClick={handlePairOrphanedWithUnpaired}>
+                      <ArrowLeftRight className="h-4 w-4 mr-2" />
+                      Pair Together ({Math.floor((sessionExpiredAccounts.length + dedupedUnpairedAccounts.length) / 2)} pairs)
+                    </Button>
                   )}
                 </div>
               </div>
