@@ -28,7 +28,10 @@ import {
   Layers,
   Save,
   Link2,
-  Tag
+  Tag,
+  UserPlus,
+  MousePointerClick,
+  CheckSquare
 } from "lucide-react";
 import {
   Dialog,
@@ -147,6 +150,9 @@ export default function Warmup() {
   const [selectedTag, setSelectedTag] = useState<string>("all");
   const [idleAccounts, setIdleAccounts] = useState<{ id: string; phone_number: string; first_name: string | null; tags: string[] | null }[]>([]);
   const [isPairing, setIsPairing] = useState(false);
+  const [addToContacts, setAddToContacts] = useState(true);
+  const [pairingMode, setPairingMode] = useState<"auto" | "manual">("auto");
+  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
 
   const fetchData = useCallback(async (isInitial = false) => {
     // Only show loading spinner on first load / manual refresh (avoid flicker during polling)
@@ -681,7 +687,23 @@ export default function Warmup() {
   const handleOpenPairDialog = () => {
     fetchIdleAccounts();
     setSelectedTag("all");
+    setPairingMode("auto");
+    setSelectedAccounts([]);
+    setAddToContacts(true);
     setIsPairDialogOpen(true);
+  };
+
+  // Toggle account selection for manual pairing
+  const toggleAccountSelection = (accountId: string) => {
+    setSelectedAccounts(prev => {
+      if (prev.includes(accountId)) {
+        return prev.filter(id => id !== accountId);
+      }
+      if (prev.length >= 2) {
+        return [prev[1], accountId]; // Replace first with second, add new
+      }
+      return [...prev, accountId];
+    });
   };
 
   // Get filtered idle accounts by tag
@@ -692,18 +714,52 @@ export default function Warmup() {
 
   // Pair idle accounts
   const handlePairIdleAccounts = async () => {
-    const toPair = filteredIdleAccounts;
-    if (toPair.length < 2) {
-      toast.error("Need at least 2 accounts to create pairs");
-      return;
+    let accountsToPair: typeof idleAccounts = [];
+    
+    if (pairingMode === "manual") {
+      if (selectedAccounts.length !== 2) {
+        toast.error("Select exactly 2 accounts for manual pairing");
+        return;
+      }
+      accountsToPair = idleAccounts.filter(a => selectedAccounts.includes(a.id));
+    } else {
+      accountsToPair = filteredIdleAccounts;
+      if (accountsToPair.length < 2) {
+        toast.error("Need at least 2 accounts to create pairs");
+        return;
+      }
     }
 
     setIsPairing(true);
     try {
       let pairsCreated = 0;
-      for (let i = 0; i < toPair.length - 1; i += 2) {
-        const account1 = toPair[i];
-        const account2 = toPair[i + 1];
+      for (let i = 0; i < accountsToPair.length - 1; i += 2) {
+        const account1 = accountsToPair[i];
+        const account2 = accountsToPair[i + 1];
+
+        // Create pair in warmup_pairs table if addToContacts is true
+        if (addToContacts) {
+          // Insert a warmup pair record with contacts_exchanged = false
+          // The Python runner will handle adding contacts when it sees this
+          const { data: sessionData } = await supabase
+            .from("warmup_sessions")
+            .select("id")
+            .eq("status", "active")
+            .limit(1)
+            .single();
+
+          if (sessionData) {
+            await supabase
+              .from("warmup_pairs")
+              .insert({
+                session_id: sessionData.id,
+                account_a_id: account1.id,
+                account_b_id: account2.id,
+                contacts_exchanged: false,
+                status: "pending"
+              });
+          }
+        }
 
         await supabase
           .from("telegram_accounts")
@@ -718,7 +774,7 @@ export default function Warmup() {
         pairsCreated++;
       }
 
-      toast.success(`Created ${pairsCreated} new pair(s)!`);
+      toast.success(`Created ${pairsCreated} new pair(s)${addToContacts ? " - will add to contacts" : ""}!`);
       setIsPairDialogOpen(false);
       fetchData();
     } catch (error: any) {
@@ -1523,7 +1579,7 @@ export default function Warmup() {
 
       {/* Pair Idle Accounts Dialog */}
       <Dialog open={isPairDialogOpen} onOpenChange={setIsPairDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Link2 className="h-5 w-5 text-primary" />
@@ -1532,69 +1588,173 @@ export default function Warmup() {
           </DialogHeader>
           
           <div className="space-y-4 py-4">
-            {/* Tag Filter */}
-            <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-2">
-                <Tag className="h-4 w-4" />
-                Filter by Tag
-              </label>
-              <Select value={selectedTag} onValueChange={setSelectedTag}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select tag" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Idle Accounts ({idleAccounts.length})</SelectItem>
-                  {availableTags.map(tag => {
-                    const count = idleAccounts.filter(a => (a.tags || []).includes(tag)).length;
-                    return (
-                      <SelectItem key={tag} value={tag}>
-                        {tag} ({count})
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
+            {/* Pairing Mode Toggle */}
+            <div className="flex gap-2">
+              <Button
+                variant={pairingMode === "auto" ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => {
+                  setPairingMode("auto");
+                  setSelectedAccounts([]);
+                }}
+              >
+                <Layers className="h-4 w-4 mr-2" />
+                Auto Pair All
+              </Button>
+              <Button
+                variant={pairingMode === "manual" ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => setPairingMode("manual")}
+              >
+                <MousePointerClick className="h-4 w-4 mr-2" />
+                Manual Select
+              </Button>
             </div>
 
-            {/* Preview */}
-            <div className="space-y-2">
-              <p className="text-sm font-medium">
-                Accounts to pair: <span className="text-primary">{filteredIdleAccounts.length}</span>
-              </p>
-              <p className="text-sm text-muted-foreground">
-                Will create <span className="font-medium text-foreground">{Math.floor(filteredIdleAccounts.length / 2)}</span> pair(s)
-                {filteredIdleAccounts.length % 2 === 1 && (
-                  <span className="text-yellow-500 ml-1">(1 account will remain unpaired)</span>
-                )}
-              </p>
-              
-              {/* Account List Preview */}
-              {filteredIdleAccounts.length > 0 && (
-                <ScrollArea className="h-[150px] border rounded-md p-2">
-                  <div className="space-y-1">
-                    {filteredIdleAccounts.map((acc, idx) => (
-                      <div key={acc.id} className="flex items-center gap-2 text-sm">
-                        <Badge variant="outline" className="h-5 px-1.5 text-xs">
-                          {idx % 2 === 0 ? `P${Math.floor(idx / 2) + 1}` : "↔"}
-                        </Badge>
-                        <span className="font-mono text-xs">{acc.phone_number}</span>
-                        {acc.first_name && (
-                          <span className="text-muted-foreground text-xs">({acc.first_name})</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </ScrollArea>
-              )}
-              
-              {filteredIdleAccounts.length === 0 && (
-                <div className="text-center py-6 text-muted-foreground">
-                  <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                  <p className="text-sm">No idle accounts found</p>
-                  <p className="text-xs">All active accounts are already paired</p>
+            {/* Add to Contacts Toggle */}
+            <div 
+              className="flex items-center justify-between p-3 border rounded-lg cursor-pointer hover:bg-muted/50 transition-colors"
+              onClick={() => setAddToContacts(!addToContacts)}
+            >
+              <div className="flex items-center gap-3">
+                <UserPlus className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <p className="text-sm font-medium">Add each other to contacts</p>
+                  <p className="text-xs text-muted-foreground">Accounts will save each other as contacts when warmup starts</p>
                 </div>
-              )}
+              </div>
+              <div className={`h-5 w-5 rounded border-2 flex items-center justify-center transition-colors ${addToContacts ? "bg-primary border-primary" : "border-muted-foreground"}`}>
+                {addToContacts && <CheckSquare className="h-4 w-4 text-primary-foreground" />}
+              </div>
             </div>
+
+            {/* Tag Filter - Only show in auto mode */}
+            {pairingMode === "auto" && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Tag className="h-4 w-4" />
+                  Filter by Tag
+                </label>
+                <Select value={selectedTag} onValueChange={setSelectedTag}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select tag" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Idle Accounts ({idleAccounts.length})</SelectItem>
+                    {availableTags.map(tag => {
+                      const count = idleAccounts.filter(a => (a.tags || []).includes(tag)).length;
+                      return (
+                        <SelectItem key={tag} value={tag}>
+                          {tag} ({count})
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* Auto Mode Preview */}
+            {pairingMode === "auto" && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">
+                  Accounts to pair: <span className="text-primary">{filteredIdleAccounts.length}</span>
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Will create <span className="font-medium text-foreground">{Math.floor(filteredIdleAccounts.length / 2)}</span> pair(s)
+                  {filteredIdleAccounts.length % 2 === 1 && (
+                    <span className="text-yellow-500 ml-1">(1 account will remain unpaired)</span>
+                  )}
+                </p>
+                
+                {filteredIdleAccounts.length > 0 && (
+                  <ScrollArea className="h-[150px] border rounded-md p-2">
+                    <div className="space-y-1">
+                      {filteredIdleAccounts.map((acc, idx) => (
+                        <div key={acc.id} className="flex items-center gap-2 text-sm">
+                          <Badge variant="outline" className="h-5 px-1.5 text-xs">
+                            {idx % 2 === 0 ? `P${Math.floor(idx / 2) + 1}` : "↔"}
+                          </Badge>
+                          <span className="font-mono text-xs">{acc.phone_number}</span>
+                          {acc.first_name && (
+                            <span className="text-muted-foreground text-xs">({acc.first_name})</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </ScrollArea>
+                )}
+                
+                {filteredIdleAccounts.length === 0 && (
+                  <div className="text-center py-6 text-muted-foreground">
+                    <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No idle accounts found</p>
+                    <p className="text-xs">All active accounts are already paired</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Manual Mode - Account Selection */}
+            {pairingMode === "manual" && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">
+                  Select 2 accounts to pair: <span className={selectedAccounts.length === 2 ? "text-green-500" : "text-primary"}>{selectedAccounts.length}/2</span>
+                </p>
+                
+                {idleAccounts.length > 0 ? (
+                  <ScrollArea className="h-[200px] border rounded-md p-2">
+                    <div className="space-y-1">
+                      {idleAccounts.map((acc) => {
+                        const isSelected = selectedAccounts.includes(acc.id);
+                        const selectionIndex = selectedAccounts.indexOf(acc.id);
+                        return (
+                          <div 
+                            key={acc.id} 
+                            className={`flex items-center gap-2 text-sm p-2 rounded cursor-pointer transition-colors ${
+                              isSelected ? "bg-primary/20 border border-primary" : "hover:bg-muted"
+                            }`}
+                            onClick={() => toggleAccountSelection(acc.id)}
+                          >
+                            <div className={`h-5 w-5 rounded border-2 flex items-center justify-center text-xs font-bold ${
+                              isSelected ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground"
+                            }`}>
+                              {isSelected ? selectionIndex + 1 : ""}
+                            </div>
+                            <span className="font-mono text-xs">{acc.phone_number}</span>
+                            {acc.first_name && (
+                              <span className="text-muted-foreground text-xs">({acc.first_name})</span>
+                            )}
+                            {acc.tags && acc.tags.length > 0 && (
+                              <Badge variant="secondary" className="text-xs h-4 px-1">
+                                {acc.tags[0]}
+                              </Badge>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                ) : (
+                  <div className="text-center py-6 text-muted-foreground">
+                    <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />
+                    <p className="text-sm">No idle accounts found</p>
+                    <p className="text-xs">All active accounts are already paired</p>
+                  </div>
+                )}
+
+                {/* Selected Pair Preview */}
+                {selectedAccounts.length === 2 && (
+                  <div className="flex items-center justify-center gap-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                    <span className="font-mono text-sm">{idleAccounts.find(a => a.id === selectedAccounts[0])?.phone_number}</span>
+                    <ArrowLeftRight className="h-4 w-4 text-green-500" />
+                    <span className="font-mono text-sm">{idleAccounts.find(a => a.id === selectedAccounts[1])?.phone_number}</span>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           
           <DialogFooter>
@@ -1603,14 +1763,21 @@ export default function Warmup() {
             </Button>
             <Button 
               onClick={handlePairIdleAccounts} 
-              disabled={filteredIdleAccounts.length < 2 || isPairing}
+              disabled={
+                isPairing || 
+                (pairingMode === "auto" && filteredIdleAccounts.length < 2) ||
+                (pairingMode === "manual" && selectedAccounts.length !== 2)
+              }
             >
               {isPairing ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : (
                 <Link2 className="h-4 w-4 mr-2" />
               )}
-              Create {Math.floor(filteredIdleAccounts.length / 2)} Pair(s)
+              {pairingMode === "auto" 
+                ? `Create ${Math.floor(filteredIdleAccounts.length / 2)} Pair(s)`
+                : "Create Pair"
+              }
             </Button>
           </DialogFooter>
         </DialogContent>
