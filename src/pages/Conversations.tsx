@@ -34,7 +34,9 @@ import {
   Ban,
   CheckSquare,
   Square,
-  Reply
+  Reply,
+  MessageCircle,
+  MessageCircleOff
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
@@ -734,39 +736,65 @@ const Chat: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* Time Filter Tabs - Improved UI */}
-                <div className="flex gap-1.5 mb-3">
+                {/* Filter Row 1: All / Replies Toggle */}
+                <div className="flex items-center gap-2 mb-2 p-1 bg-secondary/30 rounded-lg">
+                  <button
+                    onClick={() => setShowRepliesOnly(false)}
+                    className={cn(
+                      "flex-1 px-3 py-2 text-xs font-medium rounded-md transition-all duration-200",
+                      !showRepliesOnly 
+                        ? "bg-background text-foreground shadow-sm" 
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    All ({filteredConversations.length + (showRepliesOnly ? conversations.filter(c => !c.hasReply && c.firstMessageSent).length : 0)})
+                  </button>
+                  <button
+                    onClick={() => setShowRepliesOnly(true)}
+                    className={cn(
+                      "p-2 rounded-md transition-all duration-200",
+                      showRepliesOnly 
+                        ? "bg-background text-foreground shadow-sm" 
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    title="Show replies only"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setShowRepliesOnly(false)}
+                    className={cn(
+                      "p-2 rounded-md transition-all duration-200",
+                      !showRepliesOnly 
+                        ? "text-muted-foreground/50" 
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    title="Show all chats"
+                  >
+                    <MessageCircleOff className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Filter Row 2: Time Filters */}
+                <div className="flex gap-1 mb-3 p-1 bg-secondary/30 rounded-lg">
                   {(['today', '3d', '5d'] as TimeFilter[]).map((filter) => {
                     const isActive = timeFilter === filter;
-                    const label = filter === 'today' ? 'Today' : filter === '3d' ? 'Last 3 Days' : 'Last 5 Days';
+                    const label = filter === 'today' ? 'Today' : filter;
                     return (
                       <button
                         key={filter}
                         onClick={() => setTimeFilter(filter)}
                         className={cn(
-                          "flex-1 px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200",
+                          "flex-1 px-3 py-2 text-xs font-medium rounded-md transition-all duration-200",
                           isActive 
-                            ? "bg-primary text-primary-foreground shadow-md shadow-primary/25" 
-                            : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary border border-border/50"
+                            ? "bg-background text-foreground shadow-sm" 
+                            : "text-muted-foreground hover:text-foreground"
                         )}
                       >
                         {label}
                       </button>
                     );
                   })}
-                  {/* Replies Filter Toggle */}
-                  <button
-                    onClick={() => setShowRepliesOnly(!showRepliesOnly)}
-                    className={cn(
-                      "px-3 py-2 text-xs font-medium rounded-lg transition-all duration-200 flex items-center gap-1.5",
-                      showRepliesOnly 
-                        ? "bg-green-500 text-white shadow-md shadow-green-500/25" 
-                        : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary border border-border/50"
-                    )}
-                  >
-                    <Reply className="w-3.5 h-3.5" />
-                    Replies
-                  </button>
                 </div>
                 
                 <div className="relative">
