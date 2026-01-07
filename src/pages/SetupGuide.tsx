@@ -1592,91 +1592,6 @@ if __name__ == "__main__":
     print("Goodbye!")
 `;
 
-  // ========== 8. BLOCK_RUNNER.PY ==========
-  const blockRunnerPy = `#!/usr/bin/env python3
-"""
-Block Runner - Handles blocking and unblocking contacts
-"""
-import asyncio
-import signal
-
-from telethon.tl.functions.contacts import BlockRequest, UnblockRequest
-
-from client_manager import (
-    get_or_create_client, get_next_task, report_result, shutdown_all
-)
-
-RUNNING = True
-
-def signal_handler(sig, frame):
-    global RUNNING
-    print("\\n[STOP] Shutting down...")
-    RUNNING = False
-
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
-
-
-async def block_contact(client, target, action="block"):
-    try:
-        target_id = target.get("telegram_id") or target.get("username") or target.get("phone")
-        if not target_id:
-            return False, "No target identifier"
-        entity = await client.get_entity(target_id)
-        if action == "block":
-            await client(BlockRequest(id=entity))
-        else:
-            await client(UnblockRequest(id=entity))
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-
-async def main_loop():
-    print("=" * 50)
-    print("  Block Runner")
-    print("  [Block/Unblock Contacts]")
-    print("=" * 50)
-    
-    while RUNNING:
-        try:
-            task = await get_next_task(runner="block")
-            task_type = task.get("task", "wait")
-            
-            if task_type == "wait":
-                await asyncio.sleep(task.get("seconds", 2))
-            
-            elif task_type == "block_contact":
-                account = task.get("account", {})
-                target = task.get("target", {})
-                action = task.get("action", "block")
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  [{action.upper()}] Processing...")
-                    success, error = await block_contact(client, target, action)
-                    await report_result("block_contact", {
-                        "task_id": task.get("task_id"),
-                        "account_id": account.get("id"),
-                        "success": success,
-                        "error": error,
-                        "action": action
-                    })
-                    print(f"    {'[OK]' if success else '[FAIL] ' + str(error)}")
-        
-        except Exception as e:
-            print(f"  [ERROR] {e}")
-            await asyncio.sleep(1)
-    
-    await shutdown_all()
-
-
-if __name__ == "__main__":
-    print("\\nInstall: pip install telethon httpx\\n")
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("\\nStopped.")
-`;
 
   // ========== RUN.BAT (Single file to run ALL runners) ==========
   const runBat = `@echo off
@@ -1699,7 +1614,7 @@ if errorlevel 1 (
 echo        Done!
 echo.
 
-echo  [2/2] Starting 5 runners in parallel...
+echo  [2/2] Starting 4 runners in parallel...
 echo.
 
 :: Start each runner in a new window
@@ -1713,20 +1628,16 @@ start "Account Runner" cmd /k "title Account Runner && color 0E && py account_ru
 timeout /t 1 /nobreak >nul
 
 start "Warmup Runner" cmd /k "title Warmup Runner && color 0A && py warmup_runner.py"
-timeout /t 1 /nobreak >nul
-
-start "Block Runner" cmd /k "title Block Runner && color 0C && py block_runner.py"
 
 echo.
 echo  ================================================
-echo     All 5 runners started!
+echo     All 4 runners started!
 echo  ================================================
 echo.
 echo     Blue   = Campaign Runner
 echo     Purple = LiveChat Runner  
 echo     Yellow = Account Runner
 echo     Green  = Warmup Runner
-echo     Red    = Block Runner
 echo.
 echo     To STOP: Close all windows or press Ctrl+C
 echo  ================================================
@@ -1781,7 +1692,6 @@ RUNNERS = {
     "livechat": "livechat_runner.py",
     "account": "account_runner.py",
     "warmup": "warmup_runner.py",
-    "block": "block_runner.py",
 }
 
 # Global state
@@ -2174,7 +2084,6 @@ if __name__ == "__main__":
     folder?.file("livechat_runner.py", livechatRunnerPy);
     folder?.file("account_runner.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
-    folder?.file("block_runner.py", blockRunnerPy);
     
     // Single BAT to run all
     folder?.file("RUN.bat", runBat);
@@ -2187,7 +2096,7 @@ if __name__ == "__main__":
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded! 10 files included.");
+    toast.success("ZIP downloaded! 9 files included.");
   };
 
   const downloadVpsZip = async () => {
@@ -2208,7 +2117,6 @@ if __name__ == "__main__":
     folder?.file("livechat_runner.py", livechatRunnerPy);
     folder?.file("account_runner.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
-    folder?.file("block_runner.py", blockRunnerPy);
     
     // VPS Agent
     folder?.file("vps_agent.py", vpsAgentWithKey);
@@ -2233,7 +2141,6 @@ if __name__ == "__main__":
         zip.file("livechat_runner.py", livechatRunnerPy);
         zip.file("account_runner.py", accountRunnerPy);
         zip.file("warmup_runner.py", warmupRunnerPy);
-        zip.file("block_runner.py", blockRunnerPy);
         zip.file("client_manager.py", clientManagerPy);
         zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
         
@@ -2253,7 +2160,7 @@ if __name__ == "__main__":
     };
     
     syncScriptsToStorage();
-  }, [campaignRunnerPy, livechatRunnerPy, accountRunnerPy, warmupRunnerPy, blockRunnerPy, clientManagerPy, fingerprintGeneratorPy]);
+  }, [campaignRunnerPy, livechatRunnerPy, accountRunnerPy, warmupRunnerPy, clientManagerPy, fingerprintGeneratorPy]);
 
   return (
     <DashboardLayout>
@@ -2284,7 +2191,7 @@ if __name__ == "__main__":
                 <div className="space-y-2">
                   <h2 className="text-2xl font-bold">Download for PC</h2>
                   <p className="text-muted-foreground">
-                    5 separate runners + 1 BAT file to run them all
+                    4 separate runners + 1 BAT file to run them all
                   </p>
                 </div>
 
@@ -2294,14 +2201,13 @@ if __name__ == "__main__":
                 </Button>
 
                 <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-                  <p className="font-medium">📁 Files included (10 total):</p>
+                  <p className="font-medium">📁 Files included (9 total):</p>
                   <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                    <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 5 runners</strong></li>
+                    <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 4 runners</strong></li>
                     <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + validation</li>
                     <li><code className="text-purple-500">livechat_runner.py</code> - Incoming messages + replies</li>
                     <li><code className="text-yellow-500">account_runner.py</code> - SpamBot, name, photo, privacy, import</li>
                     <li><code className="text-orange-500">warmup_runner.py</code> - Warmup chat (pairs) + join/view/react/bio</li>
-                    <li><code className="text-red-500">block_runner.py</code> - Block/unblock contacts</li>
                     <li><code>config.py</code> - Backend settings</li>
                     <li><code>client_manager.py</code> - Shared Telegram logic</li>
                     <li><code>fingerprint_generator.py</code> - Device fingerprints</li>
@@ -2314,7 +2220,7 @@ if __name__ == "__main__":
                   <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
                     <li>Extract ZIP folder</li>
                     <li>Double-click <code className="bg-green-100 dark:bg-green-900 px-2 py-0.5 rounded">RUN.bat</code></li>
-                    <li>5 colored windows will open (one for each runner)</li>
+                    <li>4 colored windows will open (one for each runner)</li>
                     <li>To stop: Close all windows or press <kbd className="bg-background px-2 py-0.5 rounded border">Ctrl+C</kbd></li>
                   </ol>
                 </div>
