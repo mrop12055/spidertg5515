@@ -23,6 +23,8 @@ Deno.serve(async (req) => {
       stale_contact_import_tasks_cancelled: 0,
       old_completed_tasks_cleaned: 0,
       old_heartbeats_cleaned: 0,
+      old_conversations_deleted: 0,
+      old_messages_deleted: 0,
     };
 
     // 1. Reset stuck "sending" messages older than 2 minutes back to "pending"
@@ -184,6 +186,49 @@ Deno.serve(async (req) => {
         staleReasons.map(a => `${a.phone_number}: ${a.ban_reason}`));
     }
 
+    // 12. Delete old conversations and their messages older than 5 days
+    const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString();
+    
+    // First, get conversation IDs to delete
+    const { data: oldConversations, error: oldConvError } = await supabase
+      .from('conversations')
+      .select('id')
+      .lt('last_message_at', fiveDaysAgo);
+    
+    if (oldConvError) {
+      console.error('[system-maintenance] Error fetching old conversations:', oldConvError);
+    } else if (oldConversations && oldConversations.length > 0) {
+      const convIds = oldConversations.map(c => c.id);
+      
+      // Delete messages first (foreign key constraint)
+      const { data: deletedMessages, error: msgDeleteError } = await supabase
+        .from('messages')
+        .delete()
+        .in('conversation_id', convIds)
+        .select('id');
+      
+      if (msgDeleteError) {
+        console.error('[system-maintenance] Error deleting old messages:', msgDeleteError);
+      } else {
+        stats.old_messages_deleted = deletedMessages?.length || 0;
+        console.log(`[system-maintenance] Deleted ${stats.old_messages_deleted} old messages`);
+      }
+      
+      // Now delete conversations
+      const { data: deletedConvs, error: convDeleteError } = await supabase
+        .from('conversations')
+        .delete()
+        .in('id', convIds)
+        .select('id');
+      
+      if (convDeleteError) {
+        console.error('[system-maintenance] Error deleting old conversations:', convDeleteError);
+      } else {
+        stats.old_conversations_deleted = deletedConvs?.length || 0;
+        console.log(`[system-maintenance] Deleted ${stats.old_conversations_deleted} conversations older than 5 days`);
+      }
+    }
+
     // Log summary
     const totalCleaned = 
       stats.stuck_messages_reset +
@@ -191,7 +236,9 @@ Deno.serve(async (req) => {
       stats.stale_block_tasks_cancelled +
       stats.stale_contact_import_tasks_cancelled +
       stats.old_completed_tasks_cleaned +
-      stats.old_heartbeats_cleaned;
+      stats.old_heartbeats_cleaned +
+      stats.old_conversations_deleted +
+      stats.old_messages_deleted;
 
     if (totalCleaned > 0) {
       console.log('[system-maintenance] Maintenance complete:', stats);
