@@ -459,7 +459,7 @@ import random
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all
+    send_message, shutdown_all, disconnect_batch
 )
 
 # ========== GLOBAL STATE ==========
@@ -622,6 +622,15 @@ async def main_loop():
 
             fail_count = len(results) - success_count
             print(f"  [RESULT] Batch complete: {success_count} success, {fail_count} failed")
+
+            # IMPORTANT: Disconnect batch clients to avoid memory/connection buildup
+            batch_account_ids = list({
+                (t.get("account") or {}).get("id")
+                for t in tasks
+                if (t.get("account") or {}).get("id")
+            })
+            if batch_account_ids:
+                await disconnect_batch(batch_account_ids)
 
             # Use server-controlled delay (can be 0 for immediate repoll if more pending)
             if RUNNING and delay_after > 0:
