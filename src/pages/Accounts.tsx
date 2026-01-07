@@ -1773,21 +1773,20 @@ const Accounts: React.FC = () => {
             <div className="text-muted-foreground">Age</div>
           </div>
           
-          {/* Total Messages Sent (lifetime) */}
+          {/* Total Conversations (lifetime) */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className={cn(
                   "flex items-center gap-1 px-2 py-1 rounded text-xs",
-                  (account.successCount || 0) > 0 ? "bg-blue-500/10 text-blue-600" : "bg-muted/50 text-muted-foreground"
+                  totalConvs > 0 ? "bg-blue-500/10 text-blue-600" : "bg-muted/50 text-muted-foreground"
                 )}>
                   <Users className="w-3 h-3" />
-                  <span className="font-medium">{account.successCount || 0}</span>
+                  <span className="font-medium">{totalConvs}</span>
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Total messages sent (lifetime): {account.successCount || 0}</p>
-                <p className="text-xs text-muted-foreground">Conversations: {totalConvs}</p>
+                <p>Total conversations (lifetime): {totalConvs}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
