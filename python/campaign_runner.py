@@ -83,10 +83,17 @@ async def process_single_task(task: dict) -> dict:
         
         print(f"  📨 [{account_phone}] → {recipient}")
         
-        success, error, meta = await send_message(
+        send_res = await send_message(
             client, recipient, content,
             msg.get("media_url")
         )
+        if isinstance(send_res, tuple) and len(send_res) == 3:
+            success, error, meta = send_res
+        elif isinstance(send_res, tuple) and len(send_res) == 2:
+            success, error = send_res
+            meta = None
+        else:
+            success, error, meta = False, f"Unexpected send_message return: {type(send_res)}", None
         
         # Check if this is a sender-side issue (should retry with different account)
         is_sender_error = error and any(x in error.lower() for x in [

@@ -465,7 +465,6 @@ from client_manager import (
 # ========== GLOBAL STATE ==========
 RUNNING = True
 POLL_INTERVAL = 7  # Poll server every 7 seconds
-PARALLEL_BATCH_SIZE = 20
 
 
 def signal_handler(sig, frame):
@@ -514,7 +513,13 @@ async def process_single_task(task: dict, settings: dict) -> dict:
         await asyncio.sleep(random.uniform(0.5, 3))
         print(f"  📨 [{account_phone}] → {recipient}")
 
-        success, error = await send_message(client, recipient, content, msg.get("media_url"))
+        send_res = await send_message(client, recipient, content, msg.get("media_url"))
+        if isinstance(send_res, tuple) and len(send_res) == 2:
+            success, error = send_res
+        elif isinstance(send_res, tuple) and len(send_res) == 3:
+            success, error, _meta = send_res
+        else:
+            success, error = False, f"Unexpected send_message return: {type(send_res)}"
 
         is_privacy_error = error and any(x in error.lower() for x in [
             "privacyrestricted", "privacy restricted", "userprivacyrestricted"
@@ -576,7 +581,7 @@ async def main_loop():
 
     while RUNNING:
         try:
-            batch_result = await get_batch_tasks(runner="campaign", batch_size=PARALLEL_BATCH_SIZE)
+            batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
 
             # NOTE: We intentionally poll on a fixed interval (7s) so the runner
