@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { format } from 'date-fns';
+import { motion } from 'framer-motion';
 
 interface Seat {
   id: string;
@@ -280,9 +281,71 @@ const handleDeleteSeat = async (seatId: string) => {
         {/* Seats Grid */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold">Worker Seats</h2>
-              <p className="text-sm text-muted-foreground">Share seat links with your workers for chat operations</p>
+            <div className="flex items-center gap-4">
+              {/* Animated 3D-style Logo */}
+              <div className="relative">
+                <motion.div
+                  className="w-14 h-14 rounded-2xl bg-gradient-to-br from-primary via-primary/80 to-violet-600 shadow-lg shadow-primary/25 flex items-center justify-center"
+                  animate={{
+                    rotateY: [0, 10, 0, -10, 0],
+                    rotateX: [0, -5, 0, 5, 0],
+                  }}
+                  transition={{
+                    duration: 6,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
+                  style={{ transformStyle: 'preserve-3d', perspective: 1000 }}
+                >
+                  <motion.div
+                    animate={{
+                      scale: [1, 1.1, 1],
+                    }}
+                    transition={{
+                      duration: 2,
+                      repeat: Infinity,
+                      ease: "easeInOut"
+                    }}
+                  >
+                    <Users className="w-7 h-7 text-white" />
+                  </motion.div>
+                  
+                  {/* Floating particles */}
+                  <motion.div
+                    className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-green-400"
+                    animate={{
+                      y: [0, -4, 0],
+                      opacity: [0.7, 1, 0.7],
+                    }}
+                    transition={{
+                      duration: 2,
+                      repeat: Infinity,
+                      ease: "easeInOut"
+                    }}
+                  />
+                  <motion.div
+                    className="absolute -bottom-1 -left-1 w-2 h-2 rounded-full bg-violet-400"
+                    animate={{
+                      y: [0, 3, 0],
+                      opacity: [0.5, 1, 0.5],
+                    }}
+                    transition={{
+                      duration: 2.5,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                      delay: 0.5
+                    }}
+                  />
+                </motion.div>
+                
+                {/* Glow effect */}
+                <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-primary/40 to-violet-600/40 blur-xl -z-10" />
+              </div>
+              
+              <div>
+                <h2 className="text-xl font-semibold">Worker Seats</h2>
+                <p className="text-sm text-muted-foreground">Share seat links with your workers for chat operations</p>
+              </div>
             </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={fetchSeats}>
