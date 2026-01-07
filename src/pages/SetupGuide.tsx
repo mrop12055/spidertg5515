@@ -27,10 +27,10 @@ TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
-  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed) ==========
+  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed + Connection Pooling) ==========
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (Optimized)
-Fast connections with retry logic, timeouts, and proxy support
+Fast connections with retry logic, timeouts, proxy support, and HTTP connection pooling
 """
 
 import os
@@ -54,6 +54,21 @@ active_clients: Dict[str, TelegramClient] = {}
 CONNECTION_TIMEOUT = 30
 CONNECTION_RETRIES = 3
 RETRY_DELAY = 2
+
+# ========== SHARED HTTP CLIENT POOL ==========
+# Prevents socket exhaustion by reusing connections
+_http_client: Optional[httpx.AsyncClient] = None
+
+
+def get_http_client() -> httpx.AsyncClient:
+    """Get shared HTTP client with connection pooling"""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(
+            timeout=30,
+            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+        )
+    return _http_client
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
@@ -243,43 +258,46 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
 
 
 async def get_next_task(runner: str = None) -> dict:
+    """Fetch single task using shared HTTP client"""
     try:
         body = {"runner": runner} if runner else {}
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{BACKEND_URL}/get-next-task",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json=body
-            )
-            return resp.json()
-    except:
+        http = get_http_client()
+        resp = await http.post(
+            f"{BACKEND_URL}/get-next-task",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json=body
+        )
+        return resp.json()
+    except Exception as e:
+        print(f"  [HTTP ERROR] get_next_task: {e}")
         return {"task": "wait", "seconds": 1}
 
 
 async def get_batch_tasks(runner: str = None, batch_size: int = 50) -> dict:
-    """Fetch a batch of tasks for parallel processing."""
+    """Fetch batch of tasks using shared HTTP client"""
     try:
         body = {"runner": runner, "batch_size": batch_size}
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                f"{BACKEND_URL}/get-batch-tasks",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json=body
-            )
-            return resp.json()
+        http = get_http_client()
+        resp = await http.post(
+            f"{BACKEND_URL}/get-batch-tasks",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json=body
+        )
+        return resp.json()
     except Exception as e:
-        print(f"  [ERROR] get_batch_tasks: {e}")
-        return {"tasks": [], "delay_after": 7}
+        print(f"  [HTTP ERROR] get_batch_tasks: {e}")
+        return {"tasks": [], "delay_after": 1}
 
 
 async def report_result(task_type: str, result: dict):
+    """Report task result using shared HTTP client"""
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            await client.post(
-                f"{BACKEND_URL}/report-task-result",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json={"task_type": task_type, "result": result}
-            )
+        http = get_http_client()
+        await http.post(
+            f"{BACKEND_URL}/report-task-result",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json={"task_type": task_type, "result": result}
+        )
     except:
         pass
 
@@ -334,32 +352,32 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         if media_url:
             try:
                 import io
-                async with httpx.AsyncClient(timeout=30) as http:
-                    resp = await http.get(media_url)
-                    if resp.status_code == 200:
-                        # Determine filename from URL to help Telethon classify the file
-                        from urllib.parse import urlparse, unquote
-                        url_path = urlparse(media_url).path
-                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
-                        
-                        # Check if it's an image based on extension or content-type
-                        content_type = resp.headers.get("content-type", "").lower()
-                        ext = filename.split(".")[-1].lower() if "." in filename else ""
-                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
-                        
-                        # Wrap bytes in BytesIO with a name so Telethon knows the file type
-                        file_bytes = io.BytesIO(resp.content)
-                        file_bytes.name = filename if "." in filename else f"photo.jpg"
-                        
-                        print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
-                        
-                        # For images, use force_document=False to send as photo preview
-                        await asyncio.wait_for(
-                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                            timeout=30
-                        )
-                    else:
-                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+                http = get_http_client()
+                resp = await http.get(media_url)
+                if resp.status_code == 200:
+                    # Determine filename from URL to help Telethon classify the file
+                    from urllib.parse import urlparse, unquote
+                    url_path = urlparse(media_url).path
+                    filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+                    
+                    # Check if it's an image based on extension or content-type
+                    content_type = resp.headers.get("content-type", "").lower()
+                    ext = filename.split(".")[-1].lower() if "." in filename else ""
+                    is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+                    
+                    # Wrap bytes in BytesIO with a name so Telethon knows the file type
+                    file_bytes = io.BytesIO(resp.content)
+                    file_bytes.name = filename if "." in filename else f"photo.jpg"
+                    
+                    print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
+                    
+                    # For images, use force_document=False to send as photo preview
+                    await asyncio.wait_for(
+                        client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
+                        timeout=30
+                    )
+                else:
+                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
@@ -407,6 +425,29 @@ async def disconnect_batch(account_ids: list):
         print(f"  [CLEANUP] Disconnected {disconnected} clients after batch")
 
 
+async def cleanup_stale_clients():
+    """Remove disconnected Telegram clients from active_clients - call periodically"""
+    stale = []
+    for acc_id, client in list(active_clients.items()):
+        try:
+            if not client.is_connected():
+                stale.append(acc_id)
+        except:
+            stale.append(acc_id)
+    
+    for acc_id in stale:
+        try:
+            await asyncio.wait_for(active_clients[acc_id].disconnect(), timeout=5)
+        except:
+            pass
+        del active_clients[acc_id]
+    
+    if stale:
+        print(f"  [CLEANUP] Removed {len(stale)} stale Telegram clients")
+    
+    return len(stale)
+
+
 async def shutdown_all():
     print("\\n[SHUTDOWN] Disconnecting...")
     for account_id, client in list(active_clients.items()):
@@ -415,6 +456,13 @@ async def shutdown_all():
         except:
             pass
     active_clients.clear()
+    
+    # Close HTTP client
+    global _http_client
+    if _http_client and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
+    
     print("[OK] Done.")
 `;
 
@@ -462,7 +510,7 @@ def generate_fingerprint():
 TelegramCRM - Campaign Runner (PARALLEL BATCH MODE)
 =====================================================
 Handles campaign messages with PARALLEL execution across multiple accounts.
-Polls server every 7 seconds. RUNS FOREVER with auto-restart.
+RUNS FOREVER with auto-restart and memory cleanup.
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
@@ -471,15 +519,19 @@ Stop: Ctrl+C or pause campaign from dashboard
 import asyncio
 import signal
 import random
+import gc
+import time
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all, disconnect_batch
+    send_message, shutdown_all, disconnect_batch, cleanup_stale_clients, active_clients
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-DEFAULT_POLL_INTERVAL = 3  # Default polling (server can override)
+DEFAULT_POLL_INTERVAL = 1  # Poll every 1 second (fast polling)
+CLEANUP_INTERVAL = 300  # Cleanup stale clients every 5 minutes
+HEARTBEAT_INTERVAL = 60  # Log heartbeat every 60 seconds
 
 
 def signal_handler(sig, frame):
@@ -587,14 +639,32 @@ async def main_loop():
     print("=" * 60)
     print("  🚀 Speed settings from admin dashboard")
     print("  ♾️  RUNS FOREVER - auto-restarts on errors")
+    print("  🧹 Memory cleanup every 5 minutes")
+    print("  💓 Heartbeat every 60 seconds")
     print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
     print("\\n✓ Starting campaign runner...\\n")
 
     consecutive_empty = 0
+    last_cleanup = time.time()
+    last_heartbeat = time.time()
+    iteration_count = 0
 
     while RUNNING:
         try:
+            iteration_count += 1
+            
+            # Heartbeat logging
+            if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
+                print(f"  [HEARTBEAT] Iteration {iteration_count}, Active clients: {len(active_clients)}")
+                last_heartbeat = time.time()
+            
+            # Periodic stale client cleanup
+            if time.time() - last_cleanup > CLEANUP_INTERVAL:
+                await cleanup_stale_clients()
+                gc.collect()
+                last_cleanup = time.time()
+            
             batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
             
@@ -613,7 +683,7 @@ async def main_loop():
                 if consecutive_empty == 1:
                     reason = batch_result.get("reason", "")
                     print(f"  [WAIT] {reason or 'No pending campaign tasks, waiting...'}")
-                elif consecutive_empty % 10 == 0:
+                elif consecutive_empty % 30 == 0:
                     print("  [WAIT] Still waiting for campaign tasks...")
                 await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
                 continue
@@ -646,6 +716,9 @@ async def main_loop():
             })
             if batch_account_ids:
                 await disconnect_batch(batch_account_ids)
+            
+            # Force garbage collection after batch
+            gc.collect()
 
             # Use server-controlled delay (can be 0 for immediate repoll if more pending)
             if RUNNING and delay_after > 0:
@@ -670,7 +743,7 @@ if __name__ == "__main__":
     print("=" * 60)
     print("Required: pip install telethon httpx pysocks")
     
-    while True:
+    while True:  # FOREVER LOOP WITH CRASH RECOVERY
         try:
             asyncio.run(main_loop())
         except KeyboardInterrupt:
@@ -679,7 +752,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"\\n⚠ Runner crashed: {e}")
             print("  Restarting in 5 seconds...")
-            import time
             time.sleep(5)
     
     print("Goodbye!")
@@ -689,18 +761,20 @@ if __name__ == "__main__":
   const livechatRunnerPy = `#!/usr/bin/env python3
 """
 LiveChat Runner - Handles incoming messages and live chat replies
+RUNS FOREVER with crash recovery, memory cleanup, and heartbeat logging
 """
 import asyncio
 import signal
 import base64
 import time
+import gc
 
 import httpx
 from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all
+    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
@@ -710,6 +784,9 @@ _u = urlparse(SUPABASE_URL)
 SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
 RUNNING = True
+CLEANUP_INTERVAL = 300  # 5 minutes
+HEARTBEAT_INTERVAL = 60  # 1 minute
+
 
 def signal_handler(sig, frame):
     global RUNNING
@@ -724,56 +801,57 @@ async def check_conversation_exists(account_id: str, sender_id: int, sender_user
     """Multi-strategy matching: telegram_id -> username -> phone"""
     import re
     try:
-        async with httpx.AsyncClient(timeout=5.0) as http:
-            # Strategy 1: Match by telegram_id
-            response = await http.get(
-                f"{SUPABASE_URL_BASE}/rest/v1/conversations",
-                headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-                params={
-                    "account_id": f"eq.{account_id}",
-                    "recipient_telegram_id": f"eq.{sender_id}",
-                    "first_message_sent": "eq.true",
-                    "select": "id"
-                }
-            )
-            if response.status_code == 200 and response.json():
-                return True
-            
-            # Strategy 2: Match by username
-            if sender_username:
-                username_clean = sender_username.lstrip("@").lower()
-                for variant in [f"@{username_clean}", username_clean]:
-                    response = await http.get(
-                        f"{SUPABASE_URL_BASE}/rest/v1/conversations",
-                        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-                        params={
-                            "account_id": f"eq.{account_id}",
-                            "recipient_username": f"ilike.{variant}",
-                            "first_message_sent": "eq.true",
-                            "select": "id"
-                        }
-                    )
-                    if response.status_code == 200 and response.json():
-                        return True
-            
-            # Strategy 3: Match by phone
-            if sender_phone:
-                digits = re.sub(r'\\D', '', sender_phone)
-                for pv in [f"+{digits}", digits, sender_phone]:
-                    response = await http.get(
-                        f"{SUPABASE_URL_BASE}/rest/v1/conversations",
-                        headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-                        params={
-                            "account_id": f"eq.{account_id}",
-                            "recipient_phone": f"eq.{pv}",
-                            "first_message_sent": "eq.true",
-                            "select": "id"
-                        }
-                    )
-                    if response.status_code == 200 and response.json():
-                        return True
-            
-            return False
+        http = get_http_client()
+        
+        # Strategy 1: Match by telegram_id
+        response = await http.get(
+            f"{SUPABASE_URL_BASE}/rest/v1/conversations",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+            params={
+                "account_id": f"eq.{account_id}",
+                "recipient_telegram_id": f"eq.{sender_id}",
+                "first_message_sent": "eq.true",
+                "select": "id"
+            }
+        )
+        if response.status_code == 200 and response.json():
+            return True
+        
+        # Strategy 2: Match by username
+        if sender_username:
+            username_clean = sender_username.lstrip("@").lower()
+            for variant in [f"@{username_clean}", username_clean]:
+                response = await http.get(
+                    f"{SUPABASE_URL_BASE}/rest/v1/conversations",
+                    headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+                    params={
+                        "account_id": f"eq.{account_id}",
+                        "recipient_username": f"ilike.{variant}",
+                        "first_message_sent": "eq.true",
+                        "select": "id"
+                    }
+                )
+                if response.status_code == 200 and response.json():
+                    return True
+        
+        # Strategy 3: Match by phone
+        if sender_phone:
+            digits = re.sub(r'\\D', '', sender_phone)
+            for pv in [f"+{digits}", digits, sender_phone]:
+                response = await http.get(
+                    f"{SUPABASE_URL_BASE}/rest/v1/conversations",
+                    headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+                    params={
+                        "account_id": f"eq.{account_id}",
+                        "recipient_phone": f"eq.{pv}",
+                        "first_message_sent": "eq.true",
+                        "select": "id"
+                    }
+                )
+                if response.status_code == 200 and response.json():
+                    return True
+        
+        return False
     except Exception as e:
         print(f"    [WARN] Check conversation error: {e}")
         return False
@@ -829,23 +907,23 @@ async def setup_message_handler(client, account_id: str):
                         if hasattr(event.message, 'file') and event.message.file:
                             mime_type = getattr(event.message.file, 'mime_type', None) or "image/jpeg"
                         
-                        async with httpx.AsyncClient(timeout=30.0) as http:
-                            upload_response = await http.put(
-                                f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{file_path}",
-                                headers={
-                                    "apikey": SUPABASE_KEY,
-                                    "Authorization": f"Bearer {SUPABASE_KEY}",
-                                    "Content-Type": mime_type,
-                                    "x-upsert": "true"
-                                },
-                                content=photo_bytes
-                            )
-                            if upload_response.status_code in (200, 201):
-                                media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
-                                print(f"    [OK] Photo uploaded: {file_name}")
-                            else:
-                                error_text = upload_response.text[:300] if upload_response.text else "No details"
-                                print(f"    [WARN] Photo upload failed: {upload_response.status_code} - {error_text}")
+                        http = get_http_client()
+                        upload_response = await http.put(
+                            f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{file_path}",
+                            headers={
+                                "apikey": SUPABASE_KEY,
+                                "Authorization": f"Bearer {SUPABASE_KEY}",
+                                "Content-Type": mime_type,
+                                "x-upsert": "true"
+                            },
+                            content=photo_bytes
+                        )
+                        if upload_response.status_code in (200, 201):
+                            media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
+                            print(f"    [OK] Photo uploaded: {file_name}")
+                        else:
+                            error_text = upload_response.text[:300] if upload_response.text else "No details"
+                            print(f"    [WARN] Photo upload failed: {upload_response.status_code} - {error_text}")
                 except Exception as e:
                     print(f"    [WARN] Could not upload photo: {e}")
             
@@ -877,12 +955,39 @@ async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner")
     print("  [Incoming + Replies]")
+    print("  🧹 Memory cleanup every 5 minutes")
+    print("  💓 Heartbeat every 60 seconds")
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
+    last_cleanup = time.time()
+    last_heartbeat = time.time()
+    iteration_count = 0
     
     while RUNNING:
         try:
+            iteration_count += 1
+            
+            # Heartbeat logging
+            if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
+                print(f"  [HEARTBEAT] Iteration {iteration_count}, Connected: {len(connected_ids)}, Active: {len(active_clients)}")
+                last_heartbeat = time.time()
+            
+            # Periodic cleanup - sync connected_ids with actual clients
+            if time.time() - last_cleanup > CLEANUP_INTERVAL:
+                # Remove stale IDs from connected_ids
+                stale_ids = [acc_id for acc_id in connected_ids if acc_id not in active_clients]
+                for acc_id in stale_ids:
+                    connected_ids.discard(acc_id)
+                
+                if stale_ids:
+                    print(f"  [CLEANUP] Removed {len(stale_ids)} stale IDs from connected_ids")
+                
+                # Clean up disconnected clients
+                await cleanup_stale_clients()
+                gc.collect()
+                last_cleanup = time.time()
+            
             task = await get_next_task(runner="livechat")
             task_type = task.get("task", "wait")
             
@@ -925,10 +1030,19 @@ async def main_loop():
 
 if __name__ == "__main__":
     print("\\nInstall: pip install telethon httpx\\n")
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("\\nStopped.")
+    
+    while True:  # FOREVER LOOP WITH CRASH RECOVERY
+        try:
+            asyncio.run(main_loop())
+        except KeyboardInterrupt:
+            print("\\n⏹ Stopping...")
+            break
+        except Exception as e:
+            print(f"\\n⚠ LiveChat crashed: {e}")
+            print("  Restarting in 5 seconds...")
+            time.sleep(5)
+    
+    print("Goodbye!")
 `;
 
   // ========== 6. ACCOUNT_RUNNER.PY ==========
@@ -1270,10 +1384,20 @@ async def main_loop():
 
 if __name__ == "__main__":
     print("\\nInstall: pip install telethon httpx aiohttp\\n")
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("\\nStopped.")
+    
+    while True:  # FOREVER LOOP WITH CRASH RECOVERY
+        try:
+            asyncio.run(main_loop())
+        except KeyboardInterrupt:
+            print("\\n⏹ Stopping...")
+            break
+        except Exception as e:
+            print(f"\\n⚠ Account Manager crashed: {e}")
+            print("  Restarting in 5 seconds...")
+            import time
+            time.sleep(5)
+    
+    print("Goodbye!")
 `;
 
   // ========== 7. WARMUP_RUNNER.PY (BATCH MODE) ==========

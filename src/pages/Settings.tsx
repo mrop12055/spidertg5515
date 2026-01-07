@@ -235,6 +235,13 @@ const Settings: React.FC = () => {
 
   useEffect(() => {
     fetchApiCredentials();
+    
+    // Auto-refresh API usage every 30 seconds while on page
+    const interval = setInterval(() => {
+      fetchApiCredentials();
+    }, 30000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   // Load local settings from localStorage

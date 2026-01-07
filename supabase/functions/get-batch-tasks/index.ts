@@ -350,11 +350,63 @@ serve(async (req) => {
 
       const campaignIds = runningCampaigns.map(c => c.id);
 
+      // ========== SMART API DISTRIBUTION ==========
+      // Get 24h usage per API credential
+      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+      // Get campaign recipients sent in last 24h with their API
+      const { data: recentSends } = await supabase
+        .from("campaign_recipients")
+        .select("api_credential_id")
+        .eq("status", "sent")
+        .not("api_credential_id", "is", null)
+        .gte("sent_at", oneDayAgo);
+
+      // Count usage per API
+      const apiUsageCounts = new Map<string, number>();
+      (recentSends || []).forEach((r: any) => {
+        if (r.api_credential_id) {
+          apiUsageCounts.set(r.api_credential_id, (apiUsageCounts.get(r.api_credential_id) || 0) + 1);
+        }
+      });
+
+      // Load API daily limit from settings (default 45)
+      let apiDailyLimit = 45;
+      const apiLimitSetting = settingsData?.find((s: any) => s.key === "api_limits");
+      if (apiLimitSetting?.value?.dailyLimitPerApi) {
+        apiDailyLimit = (apiLimitSetting.value as { dailyLimitPerApi?: number }).dailyLimitPerApi || 45;
+      }
+
+      console.log(`[get-batch-tasks] API usage (24h): ${JSON.stringify(Object.fromEntries(apiUsageCounts))}, limit: ${apiDailyLimit}`);
+
+      // Filter accounts to only those whose API is under the 24h limit
+      const accountsWithAvailableApi = usableAccounts.filter((a: any) => {
+        if (!a.api_credential_id) return true; // Allow accounts without API (will use default)
+        const apiUsed = apiUsageCounts.get(a.api_credential_id) || 0;
+        if (apiUsed >= apiDailyLimit) {
+          console.log(`[get-batch-tasks] Skipping account ${a.phone_number} - API at limit (${apiUsed}/${apiDailyLimit})`);
+          return false;
+        }
+        return true;
+      });
+
+      // Sort by API usage (least-used first for even distribution)
+      accountsWithAvailableApi.sort((a: any, b: any) => {
+        const usageA = apiUsageCounts.get(a.api_credential_id) || 0;
+        const usageB = apiUsageCounts.get(b.api_credential_id) || 0;
+        return usageA - usageB; // Least used first
+      });
+
+      console.log(`[get-batch-tasks] ${accountsWithAvailableApi.length} accounts have API under limit (of ${usableAccounts.length} total)`);
+
       // Filter accounts for campaigns using campaign-specific per-account limit
-      const campaignUsableAccounts = usableAccounts.filter((a: any) => {
+      const campaignUsableAccounts = accountsWithAvailableApi.filter((a: any) => {
         const sentToday = a.messages_sent_today ?? 0;
         return sentToday < campaignMessagesPerAccountPerDay;
       });
+
+      // Track API usage in this batch to avoid over-assigning
+      const batchApiUsage = new Map<string, number>();
 
       // ========== STUCK SENDING RECOVERY ==========
       // Find "sending" recipients that have been stuck for over 2 minutes (no message created)
@@ -510,19 +562,36 @@ serve(async (req) => {
             // 1. It's not in failed_account_ids
             // 2. It's in campaignUsableAccounts (active, under limit)
             // 3. Not already used in this batch
+            // 4. API not at limit
             const isNotFailed = !failedAccountIds.includes(recipient.sent_by_account_id);
             account = isNotFailed 
-              ? campaignUsableAccounts.find((a: any) => 
-                  a.id === recipient.sent_by_account_id && !usedAccountIds.has(a.id)
-                )
+              ? campaignUsableAccounts.find((a: any) => {
+                  if (a.id !== recipient.sent_by_account_id) return false;
+                  if (usedAccountIds.has(a.id)) return false;
+                  // Check API limit with batch usage
+                  if (a.api_credential_id) {
+                    const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
+                    const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
+                    if (totalUsage >= apiDailyLimit) return false;
+                  }
+                  return true;
+                })
               : null;
           }
 
-          // If no assigned account or it's already used/failed, find another
+          // If no assigned account or it's already used/failed/API-limited, find another
           if (!account) {
-            account = campaignUsableAccounts.find((a: any) => 
-              !usedAccountIds.has(a.id) && !failedAccountIds.includes(a.id)
-            );
+            account = campaignUsableAccounts.find((a: any) => {
+              if (usedAccountIds.has(a.id)) return false;
+              if (failedAccountIds.includes(a.id)) return false;
+              // Check API limit with batch usage
+              if (a.api_credential_id) {
+                const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
+                const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
+                if (totalUsage >= apiDailyLimit) return false;
+              }
+              return true;
+            });
           }
 
           if (!account) {
@@ -552,12 +621,20 @@ serve(async (req) => {
             continue;
           }
 
-          // Mark recipient as "sending" and assign account
+          // Mark recipient as "sending" and assign account + track API usage
           await supabase
             .from("campaign_recipients")
-            .update({ status: "sending", sent_by_account_id: account.id })
+            .update({ status: "sending", sent_by_account_id: account.id, api_credential_id: account.api_credential_id })
             .eq("id", recipient.id)
             .eq("status", "pending");
+
+          // Track API usage in this batch
+          if (account.api_credential_id) {
+            batchApiUsage.set(
+              account.api_credential_id,
+              (batchApiUsage.get(account.api_credential_id) || 0) + 1
+            );
+          }
 
           // Personalize message
           const personalizedMessage = (campaign.message_template || '')
@@ -625,6 +702,8 @@ serve(async (req) => {
         stagger_max: campaignStaggerMax,
         more_pending: morePending,
         accounts_available: campaignUsableAccounts.length,
+        api_usage: Object.fromEntries(apiUsageCounts),
+        api_limit: apiDailyLimit,
         stop_signal: tasks.length === 0 && !morePending
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
