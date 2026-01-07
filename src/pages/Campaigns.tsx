@@ -54,6 +54,9 @@ interface FailedRecipient {
   phone_number: string;
   name: string | null;
   failed_reason: string | null;
+  sent_by_account_id: string | null;
+  sender_phone: string | null;
+  sender_name: string | null;
 }
 
 interface AccountRecipientStats {
@@ -260,7 +263,27 @@ const Campaigns: React.FC = () => {
       await Promise.all(updatePromises);
     }
     
-    setCampaignReports(newReports);
+    // Merge new basic reports with existing detailed reports (don't overwrite detailed data)
+    setCampaignReports(prev => {
+      const merged = new Map(prev);
+      newReports.forEach((basicReport, campaignId) => {
+        const existing = merged.get(campaignId);
+        if (existing && existing.failedRecipients.length > 0) {
+          // Preserve detailed data, only update counts
+          merged.set(campaignId, {
+            ...existing,
+            successful: basicReport.successful,
+            failed: basicReport.failed,
+            pending: basicReport.pending,
+            unused: basicReport.unused,
+            total: basicReport.total,
+          });
+        } else {
+          merged.set(campaignId, basicReport);
+        }
+      });
+      return merged;
+    });
     if (needsRefresh) refreshData();
   }, [refreshData]);
 
@@ -288,24 +311,36 @@ const Campaigns: React.FC = () => {
       if (failedRecipientsData.length > 0) {
         const { data: failedMessages } = await supabase
           .from('messages')
-          .select('failed_reason, campaign_recipient_id')
+          .select('failed_reason, campaign_recipient_id, account_id')
           .eq('direction', 'outgoing')
           .in('status', ['failed', 'cancelled'])
           .in('campaign_recipient_id', failedRecipientsData.map(r => r.id))
-          .limit(100);
+          .limit(200);
 
-        const reasonsByRecipientId = new Map<string, string>();
+        const messageInfoByRecipientId = new Map<string, { reason: string; accountId: string | null }>();
         (failedMessages || []).forEach((m: any) => {
           if (m.campaign_recipient_id && m.failed_reason) {
-            reasonsByRecipientId.set(m.campaign_recipient_id, m.failed_reason);
+            messageInfoByRecipientId.set(m.campaign_recipient_id, {
+              reason: m.failed_reason,
+              accountId: m.account_id || null
+            });
           }
         });
 
-        failedRecipients = failedRecipientsData.map((r) => ({
-          phone_number: r.phone_number,
-          name: r.name,
-          failed_reason: reasonsByRecipientId.get(r.id) || (r as any).failed_reason || 'Unknown error'
-        }));
+        failedRecipients = failedRecipientsData.map((r) => {
+          const messageInfo = messageInfoByRecipientId.get(r.id);
+          const senderAccountId = messageInfo?.accountId || r.sent_by_account_id;
+          const senderAccount = senderAccountId ? currentAccounts.find(a => a.id === senderAccountId) : null;
+          
+          return {
+            phone_number: r.phone_number,
+            name: r.name,
+            failed_reason: messageInfo?.reason || (r as any).failed_reason || 'Unknown error',
+            sent_by_account_id: senderAccountId || null,
+            sender_phone: senderAccount?.phoneNumber || null,
+            sender_name: senderAccount?.firstName || null
+          };
+        });
       }
 
       const sentCount = recipients.filter((r) => r.status === 'sent').length;
@@ -2029,6 +2064,12 @@ username123
                                                     <span className="text-xs text-muted-foreground ml-2">{recipient.phone_number}</span>
                                                   )}
                                                 </div>
+                                                {recipient.sender_phone && (
+                                                  <div className="text-right">
+                                                    <span className="text-xs text-muted-foreground">via </span>
+                                                    <span className="text-xs font-medium">{recipient.sender_name || recipient.sender_phone}</span>
+                                                  </div>
+                                                )}
                                               </div>
                                               <p className="text-xs text-destructive mt-1" title={recipient.failed_reason || 'Unknown error'}>
                                                 {recipient.failed_reason || 'Unknown error'}
