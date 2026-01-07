@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { DashboardLayout } from "@/components/layout/DashboardLayout";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -373,44 +373,59 @@ export default function Warmup() {
     loadBatchSize();
   }, []);
 
+  // Debounce fetchData to prevent excessive API calls during rapid realtime updates
+  const debounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debouncedFetchData = useCallback(() => {
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+    }
+    debounceRef.current = setTimeout(() => {
+      fetchData();
+    }, 2000); // Wait 2 seconds after last change before fetching
+  }, []);
+
   useEffect(() => {
     fetchData();
 
-    // Subscribe to realtime updates for all warmup tables
+    // Subscribe to realtime updates for all warmup tables with debounced refresh
     const channel = supabase
       .channel("warmup-updates")
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "warmup_messages" },
-        (payload) => {
-          console.log("Warmup message change:", payload);
-          fetchData();
+        () => {
+          // Debounce - don't fetch immediately on every message change
+          debouncedFetchData();
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "warmup_pairs" },
-        (payload) => {
-          console.log("Warmup pair change:", payload);
-          fetchData();
+        () => {
+          debouncedFetchData();
         }
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "warmup_sessions" },
-        (payload) => {
-          console.log("Warmup session change:", payload);
+        () => {
+          // Session changes are rare - fetch immediately
           fetchData();
         }
       )
-      .subscribe((status) => {
-        console.log("Warmup realtime subscription status:", status);
-      });
+      .subscribe();
+
+    // Also poll every 10 seconds as backup
+    const pollInterval = setInterval(fetchData, 10000);
 
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(pollInterval);
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+      }
     };
-  }, []);
+  }, [debouncedFetchData]);
 
   const handleSaveBatchSize = async () => {
     setIsSavingBatchSize(true);
