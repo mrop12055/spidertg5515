@@ -392,6 +392,21 @@ async def validate_contact(client: TelegramClient, phone: str):
         return False, None, None
 
 
+async def disconnect_batch(account_ids: list):
+    """Disconnect multiple clients after batch completion to free memory."""
+    disconnected = 0
+    for acc_id in account_ids:
+        if acc_id in active_clients:
+            try:
+                await asyncio.wait_for(active_clients[acc_id].disconnect(), timeout=5)
+            except:
+                pass
+            del active_clients[acc_id]
+            disconnected += 1
+    if disconnected > 0:
+        print(f"  [CLEANUP] Disconnected {disconnected} clients after batch")
+
+
 async def shutdown_all():
     print("\\n[SHUTDOWN] Disconnecting...")
     for account_id, client in list(active_clients.items()):
