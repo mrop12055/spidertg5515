@@ -33,7 +33,8 @@ import {
   Trash2,
   Ban,
   CheckSquare,
-  Square
+  Square,
+  Reply
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
@@ -848,6 +849,12 @@ const Chat: React.FC = () => {
                               )}>
                                 {displayName}
                               </span>
+                              {conv.hasReply && (
+                                <Badge className="h-4 px-1.5 text-[10px] flex items-center gap-0.5 flex-shrink-0 bg-green-500/15 text-green-600 dark:text-green-400 border-0">
+                                  <Reply className="w-2.5 h-2.5" />
+                                  Replied
+                                </Badge>
+                              )}
                               {conv.blockedByRecipient && (
                                 <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5 flex-shrink-0">
                                   <Ban className="w-2.5 h-2.5" />

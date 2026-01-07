@@ -92,6 +92,8 @@ export interface Conversation {
   blockedByRecipient?: boolean;
   /** True when our side sent the first message (campaign/user-initiated). */
   firstMessageSent?: boolean;
+  /** True when the recipient has replied to our message. */
+  hasReply?: boolean;
 }
 
 export interface Campaign {

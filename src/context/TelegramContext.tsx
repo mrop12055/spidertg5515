@@ -244,7 +244,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       // Fetch conversations (limit to recent ones for performance)
       // NOTE: We avoid "select *" here because the REST query can timeout under load.
       const conversationsSelect =
-        'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent' as const;
+        'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply' as const;
 
       const fetchConversations = async () => {
         // Fetch campaign conversations (first_message_sent = true) with higher limit for multi-day filtering
@@ -295,6 +295,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             lastMessageContent: c.last_message_content || undefined,
             blockedByRecipient: (c as any).blocked_by_recipient || false,
             firstMessageSent: (c as any).first_message_sent ?? false,
+            hasReply: (c as any).has_reply ?? false,
           }))
         );
       }
