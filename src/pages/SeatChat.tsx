@@ -1775,29 +1775,71 @@ const SeatChat: React.FC = () => {
               </div>
               
               {/* Seat Info Card */}
-              <div className="bg-card rounded-xl p-6 border border-border shadow-sm">
-                <h3 className="text-lg font-semibold text-foreground mb-4">Workspace Details</h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Workspace</p>
-                    <p className="text-foreground font-semibold text-base mt-1">{seat?.name}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</p>
-                    <div className="flex items-center gap-2 mt-1">
-                      <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                      <span className="text-foreground font-semibold text-base">Active</span>
+              <div className="bg-gradient-to-br from-card via-card to-muted/30 rounded-xl border border-border shadow-sm overflow-hidden">
+                <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-6 py-4 border-b border-border/50">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center">
+                      <Settings className="w-5 h-5 text-primary" />
+                    </div>
+                    <div>
+                      <h3 className="text-lg font-semibold text-foreground">Workspace Details</h3>
+                      <p className="text-xs text-muted-foreground">Current session information</p>
                     </div>
                   </div>
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Efficiency</p>
-                    <p className="text-foreground font-semibold text-base mt-1">
-                      {stats.messages_sent_today > 0 ? 'High' : 'Normal'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Session</p>
-                    <p className="text-foreground font-semibold text-base mt-1">Live</p>
+                </div>
+                <div className="p-6">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                    <div className="group relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-transparent rounded-lg opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative p-4 rounded-lg border border-border/50 bg-muted/30 hover:border-blue-500/30 transition-colors">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Users className="w-4 h-4 text-blue-500" />
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Workspace</p>
+                        </div>
+                        <p className="text-foreground font-bold text-lg truncate">{seat?.name}</p>
+                      </div>
+                    </div>
+                    <div className="group relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-transparent rounded-lg opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative p-4 rounded-lg border border-border/50 bg-muted/30 hover:border-green-500/30 transition-colors">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Status</p>
+                        </div>
+                        <p className="text-green-500 font-bold text-lg">Active</p>
+                      </div>
+                    </div>
+                    <div className="group relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 to-transparent rounded-lg opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative p-4 rounded-lg border border-border/50 bg-muted/30 hover:border-amber-500/30 transition-colors">
+                        <div className="flex items-center gap-2 mb-2">
+                          <BarChart3 className="w-4 h-4 text-amber-500" />
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Efficiency</p>
+                        </div>
+                        <p className={cn(
+                          "font-bold text-lg",
+                          stats.messages_sent_today > 0 ? "text-amber-500" : "text-muted-foreground"
+                        )}>
+                          {stats.messages_sent_today > 0 ? 'High' : 'Normal'}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="group relative">
+                      <div className="absolute inset-0 bg-gradient-to-br from-violet-500/10 to-transparent rounded-lg opacity-0 group-hover:opacity-100 transition-opacity" />
+                      <div className="relative p-4 rounded-lg border border-border/50 bg-muted/30 hover:border-violet-500/30 transition-colors">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Clock className="w-4 h-4 text-violet-500" />
+                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Session</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="relative flex h-2 w-2">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span>
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-violet-500"></span>
+                          </span>
+                          <p className="text-violet-500 font-bold text-lg">Live</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
