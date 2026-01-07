@@ -18,7 +18,19 @@ const runnerNames: Record<string, string> = {
   block: 'Block Runner',
 };
 
-const OFFLINE_GRACE_PERIOD_MS = 10000; // 10 seconds grace period before showing red dot
+const OFFLINE_THRESHOLD_MS = 180000; // 3 minutes (batch processing can take a while)
+const OFFLINE_GRACE_PERIOD_MS = 15000; // 15 seconds grace period before showing red dot
+
+const normalizeRunnerKey = (runnerName: string) => {
+  // Legacy split livechat runners
+  if (runnerName === 'livechat_sender' || runnerName === 'livechat_receiver') return 'livechat';
+
+  // Normalize variants like warmup_chat, warmup_batch, warmup_chat_batch, campaign_batch, etc.
+  let key = runnerName;
+  key = key.replace(/_batch$/, '');
+  key = key.replace(/_chat$/, '');
+  return key;
+};
 
 export const useRunnerStatus = () => {
   const [runners, setRunners] = useState<RunnerInfo[]>(
@@ -43,15 +55,7 @@ export const useRunnerStatus = () => {
       const runnerMap = new Map<string, Date>();
       if (heartbeats) {
         for (const hb of heartbeats) {
-          // Normalize runner names (some scripts report multiple internal runner keys)
-          const runnerKey =
-            hb.runner_name === 'warmup_chat' || hb.runner_name === 'warmup_chat_batch'
-              ? 'warmup'
-              : hb.runner_name === 'campaign_batch'
-                ? 'campaign'
-                : hb.runner_name === 'livechat_sender' || hb.runner_name === 'livechat_receiver'
-                  ? 'livechat'
-                  : hb.runner_name;
+          const runnerKey = normalizeRunnerKey(hb.runner_name);
           const lastSeen = new Date(hb.last_seen);
           // Keep the most recent timestamp for each runner
           if (!runnerMap.has(runnerKey) || lastSeen > runnerMap.get(runnerKey)!) {
@@ -60,19 +64,20 @@ export const useRunnerStatus = () => {
         }
       }
       
-      // Consider offline if last seen more than 20 seconds ago (should poll every 7s)
-      const twentySecondsAgo = new Date(Date.now() - 20000);
+      // Consider offline if last seen more than OFFLINE_THRESHOLD_MS ago
+      const offlineThreshold = new Date(Date.now() - OFFLINE_THRESHOLD_MS);
       const now = new Date();
       
-      // Calculate the threshold for "confirmed offline" - if last seen is older than this,
-      // we should immediately show as offline (no grace period needed)
-      const confirmedOfflineThreshold = new Date(Date.now() - 20000 - OFFLINE_GRACE_PERIOD_MS);
+      // If last_seen is older than this, show as offline immediately (skip grace)
+      const confirmedOfflineThreshold = new Date(
+        Date.now() - OFFLINE_THRESHOLD_MS - OFFLINE_GRACE_PERIOD_MS
+      );
 
       setRunners(prev => {
         const newRunners = prev.map(runner => {
           const lastSeen = runnerMap.get(runner.runnerKey);
-          const isOnline = lastSeen && lastSeen > twentySecondsAgo;
-          
+          const isOnline = !!(lastSeen && lastSeen > offlineThreshold);
+
           // Track offline transitions for grace period
           if (!isOnline) {
             // If runner has been offline for longer than grace period already (based on last_seen),
