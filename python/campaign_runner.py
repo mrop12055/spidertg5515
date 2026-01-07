@@ -4,10 +4,10 @@ TelegramCRM - Campaign Runner (Server-Controlled)
 ===================================================
 Simple task executor - all settings controlled by admin side.
 
-- Polls server every 10 seconds for batch of tasks
+- Polls server every 7 seconds for batch of tasks
 - Executes ALL tasks in parallel
 - Reports results back to server
-- Server controls: batch size, delays, limits
+- Server controls: batch size (polling interval is fixed at 7s)
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
@@ -163,30 +163,32 @@ async def main_loop():
     while RUNNING:
         try:
             # Request batch of tasks from server
-            # Server controls: batch size, which tasks, timing
             batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
-            delay_after = batch_result.get("delay_after", POLL_INTERVAL)
-            
+
+            # NOTE: We intentionally poll on a fixed interval (7s) so the runner
+            # always re-checks for new campaign work quickly.
+            # (delay_after from backend is treated as advisory and ignored here)
+
             # Check for stop signal from server
             if batch_result.get("stop_signal"):
                 print("⏹ Campaign paused from dashboard. Stopping...")
                 break
-            
+
             # Handle no tasks
             if not tasks:
                 reason = batch_result.get("reason", "")
                 consecutive_empty += 1
-                
+
                 if consecutive_empty == 1:
                     if reason:
                         print(f"  ⏳ {reason}")
                     else:
                         print("  ⏳ No pending campaign tasks, waiting...")
-                elif consecutive_empty % 6 == 0:  # Every ~minute at 10s interval
+                elif consecutive_empty % 6 == 0:  # Every ~42s at 7s interval
                     print("  ⏳ Still waiting for campaign tasks...")
-                
-                await asyncio.sleep(delay_after if delay_after > 0 else POLL_INTERVAL)
+
+                await asyncio.sleep(POLL_INTERVAL)
                 continue
             
             consecutive_empty = 0
@@ -221,8 +223,8 @@ async def main_loop():
             ))
             await disconnect_batch(batch_account_ids)
             
-            # Wait server-specified delay before next poll
-            wait_time = delay_after if delay_after > 0 else POLL_INTERVAL
+            # Wait a fixed delay before next poll (always re-check every 7s)
+            wait_time = POLL_INTERVAL
             if RUNNING and wait_time > 0:
                 print(f"  ⏳ Waiting {wait_time}s before next poll...")
                 await asyncio.sleep(wait_time)
