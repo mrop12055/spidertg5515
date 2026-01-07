@@ -153,6 +153,8 @@ const Accounts: React.FC = () => {
   const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [selectedTagsForBulk, setSelectedTagsForBulk] = useState<string[]>([]);
+  const [editingTagName, setEditingTagName] = useState('');
+  const [editedTagValue, setEditedTagValue] = useState('');
   
   // SpamBot check state
   const [isSpamBotChecking, setIsSpamBotChecking] = useState(false);
@@ -1320,6 +1322,38 @@ const Accounts: React.FC = () => {
     }
   };
 
+  // Rename tag across all accounts that have it
+  const handleRenameTag = async () => {
+    if (!editingTagName || !editedTagValue.trim() || editedTagValue === editingTagName) return;
+    
+    try {
+      // Find all accounts that have this tag
+      const accountsWithTag = accounts.filter(a => (a.tags || []).includes(editingTagName));
+      
+      if (accountsWithTag.length === 0) {
+        toast.error('No accounts found with this tag');
+        return;
+      }
+      
+      // Update each account's tags
+      for (const account of accountsWithTag) {
+        const newTags = (account.tags || []).map(t => t === editingTagName ? editedTagValue.trim() : t);
+        await supabase
+          .from('telegram_accounts')
+          .update({ tags: newTags })
+          .eq('id', account.id);
+      }
+      
+      toast.success(`Tag renamed from "${editingTagName}" to "${editedTagValue.trim()}" on ${accountsWithTag.length} account(s)`);
+      setEditingTagName('');
+      setEditedTagValue('');
+      refreshData();
+    } catch (error) {
+      console.error('Error renaming tag:', error);
+      toast.error('Failed to rename tag');
+    }
+  };
+
 
   const getStatusBadge = (status: AccountStatus) => {
     const option = statusOptions.find(o => o.value === status);
@@ -2078,10 +2112,6 @@ const Accounts: React.FC = () => {
                   <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
                     <Tag className="w-4 h-4 mr-2" />
                     Assign Tags
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setIsGroupDialogOpen(true)}>
-                    <FolderPlus className="w-4 h-4 mr-2" />
-                    Create Groups
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setIsBulkProxyOpen(true)}>
                     <Globe className="w-4 h-4 mr-2" />
@@ -2900,35 +2930,77 @@ const Accounts: React.FC = () => {
         <Dialog open={isTagDialogOpen} onOpenChange={setIsTagDialogOpen}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>Assign Tags</DialogTitle>
+              <DialogTitle>Manage Tags</DialogTitle>
               <DialogDescription>
-                Add tags to {selectedIds.size} selected account(s) for organization
+                Add tags to {selectedIds.size} selected account(s) or rename existing tags
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 pt-4">
-              {/* Existing tags to select */}
+              {/* Existing tags to select or rename */}
               {availableTags.length > 0 && (
                 <div className="space-y-2">
                   <Label>Select Existing Tags</Label>
                   <div className="flex flex-wrap gap-2">
                     {availableTags.map(tag => (
-                      <Badge
-                        key={tag}
-                        variant={selectedTagsForBulk.includes(tag) ? "default" : "outline"}
-                        className="cursor-pointer"
-                        onClick={() => {
-                          if (selectedTagsForBulk.includes(tag)) {
-                            setSelectedTagsForBulk(prev => prev.filter(t => t !== tag));
-                          } else {
-                            setSelectedTagsForBulk(prev => [...prev, tag]);
-                          }
-                        }}
-                      >
-                        <Tag className="w-3 h-3 mr-1" />
-                        {tag}
-                        {selectedTagsForBulk.includes(tag) && <Check className="w-3 h-3 ml-1" />}
-                      </Badge>
+                      <div key={tag} className="flex items-center gap-1">
+                        <Badge
+                          variant={selectedTagsForBulk.includes(tag) ? "default" : "outline"}
+                          className="cursor-pointer"
+                          onClick={() => {
+                            if (selectedTagsForBulk.includes(tag)) {
+                              setSelectedTagsForBulk(prev => prev.filter(t => t !== tag));
+                            } else {
+                              setSelectedTagsForBulk(prev => [...prev, tag]);
+                            }
+                          }}
+                        >
+                          <Tag className="w-3 h-3 mr-1" />
+                          {tag}
+                          {selectedTagsForBulk.includes(tag) && <Check className="w-3 h-3 ml-1" />}
+                        </Badge>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingTagName(tag);
+                            setEditedTagValue(tag);
+                          }}
+                        >
+                          <Settings className="w-3 h-3" />
+                        </Button>
+                      </div>
                     ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Rename tag input */}
+              {editingTagName && (
+                <div className="space-y-2 p-3 rounded-lg border bg-muted/30">
+                  <Label>Rename Tag: "{editingTagName}"</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="New tag name..."
+                      value={editedTagValue}
+                      onChange={(e) => setEditedTagValue(e.target.value)}
+                      className="flex-1"
+                    />
+                    <Button 
+                      size="sm" 
+                      onClick={handleRenameTag}
+                      disabled={!editedTagValue.trim() || editedTagValue === editingTagName}
+                    >
+                      Rename
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="ghost"
+                      onClick={() => { setEditingTagName(''); setEditedTagValue(''); }}
+                    >
+                      Cancel
+                    </Button>
                   </div>
                 </div>
               )}
@@ -2944,7 +3016,7 @@ const Accounts: React.FC = () => {
               </div>
               
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => { setIsTagDialogOpen(false); setNewTagName(''); setSelectedTagsForBulk([]); }}>
+                <Button variant="outline" onClick={() => { setIsTagDialogOpen(false); setNewTagName(''); setSelectedTagsForBulk([]); setEditingTagName(''); setEditedTagValue(''); }}>
                   Cancel
                 </Button>
                 <Button onClick={handleBulkTagAssign} disabled={isTagAssigning || (selectedTagsForBulk.length === 0 && !newTagName.trim())}>
