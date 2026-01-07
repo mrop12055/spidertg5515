@@ -14,8 +14,7 @@ const runnerNames: Record<string, string> = {
   campaign: 'Campaign Runner',
   livechat: 'LiveChat Runner',
   account: 'Account Runner',
-  warmup: 'Warmup Runner',  // warmup_runner.py
-  block: 'Block Runner',
+  warmup: 'Warmup Runner',
 };
 
 const OFFLINE_THRESHOLD_MS = 180000; // 3 minutes (batch processing can take a while)
