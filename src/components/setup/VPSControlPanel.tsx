@@ -7,7 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Server, Play, Square, RefreshCw, Download, Loader2, 
   Terminal, CheckCircle2, XCircle, Clock, Send, MessageSquare,
-  UserCog, Flame, Circle, Trash2
+  UserCog, Flame, Ban, Circle, Trash2
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
@@ -46,6 +46,7 @@ const runnerConfig: Record<string, { icon: React.ReactNode; label: string; color
   livechat: { icon: <MessageSquare className="h-4 w-4" />, label: 'LiveChat', color: 'text-purple-500' },
   account: { icon: <UserCog className="h-4 w-4" />, label: 'Account', color: 'text-yellow-500' },
   warmup: { icon: <Flame className="h-4 w-4" />, label: 'Warmup', color: 'text-orange-500' },
+  block: { icon: <Ban className="h-4 w-4" />, label: 'Block', color: 'text-red-500' },
 };
 
 export const VPSControlPanel: React.FC = () => {
@@ -267,7 +268,7 @@ export const VPSControlPanel: React.FC = () => {
         </div>
 
         {/* Individual Runner Controls */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
           {Object.entries(runnerConfig).map(([key, cfg]) => {
             const runnerStatus = runners.find(r => r.runnerKey === key);
             const isRunning = runnerStatus?.isOnline;
