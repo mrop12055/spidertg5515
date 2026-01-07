@@ -160,7 +160,7 @@ const Chat: React.FC = () => {
     return filtered;
   }, [messages, selectedConv?.id, messageSearchQuery]);
 
-  // Filter conversations by time
+  // Filter conversations by time - based on when conversation was CREATED (campaign start)
   const getTimeFilterCutoff = () => {
     const now = new Date();
     switch (timeFilter) {
@@ -177,6 +177,11 @@ const Chat: React.FC = () => {
         return startOfToday;
       }
     }
+  };
+
+  // Helper to get conversation creation time (when the campaign message was first sent)
+  const getConversationCreatedTime = (conv: typeof conversations[0]) => {
+    return new Date(conv.createdAt).getTime();
   };
 
   // Helper to check if conversation should be shown:
@@ -214,8 +219,8 @@ const Chat: React.FC = () => {
   const filteredConversations = conversations
     .filter(c => {
       const cutoff = getTimeFilterCutoff();
-      const lastMsgTime = getLastMessageTime(c);
-      const matchesTime = lastMsgTime >= cutoff.getTime();
+      const convCreatedTime = getConversationCreatedTime(c);
+      const matchesTime = convCreatedTime >= cutoff.getTime();
       const searchLower = searchQuery.toLowerCase();
       const matchesSearch = !searchQuery || 
         c.recipientName?.toLowerCase().includes(searchLower) ||
