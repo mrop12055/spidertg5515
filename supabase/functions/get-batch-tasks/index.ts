@@ -27,12 +27,14 @@ serve(async (req) => {
 
     console.log(`[get-batch-tasks] Request for runner: ${runner}, batch_size: ${batch_size}`);
 
-    // Record runner heartbeat
+    // Record runner heartbeat - use base runner name for UI display
     if (runner) {
+      // Normalize runner name: warmup_chat -> warmup, campaign_batch -> campaign
+      const baseRunnerName = runner.replace(/_batch$/, '').replace(/_chat$/, '');
       await supabase
         .from("runner_heartbeats")
         .upsert({
-          runner_name: `${runner}_batch`,
+          runner_name: baseRunnerName,
           last_seen: new Date().toISOString(),
           status: 'online'
         }, { onConflict: 'runner_name' });

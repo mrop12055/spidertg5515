@@ -349,7 +349,7 @@ async def get_batch_tasks(runner: str = None) -> dict:
             )
             return resp.json()
     except Exception as e:
-        return {"tasks": [], "delay_after": 10}
+        return {"tasks": [], "delay_after": 7}
 
 
 async def report_result(task_type: str, result: dict):

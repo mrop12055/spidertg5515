@@ -269,7 +269,7 @@ async def get_batch_tasks(runner: str = None, batch_size: int = 50) -> dict:
             return resp.json()
     except Exception as e:
         print(f"  [ERROR] get_batch_tasks: {e}")
-        return {"tasks": [], "delay_after": 5}
+        return {"tasks": [], "delay_after": 7}
 
 
 async def report_result(task_type: str, result: dict):
@@ -447,7 +447,7 @@ def generate_fingerprint():
 TelegramCRM - Campaign Runner (PARALLEL BATCH MODE)
 =====================================================
 Handles campaign messages with PARALLEL execution across multiple accounts.
-Each account processes its message with proper delays independently.
+Polls server every 7 seconds. RUNS FOREVER with auto-restart.
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
@@ -464,13 +464,11 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-
-# Parallelism: one message per account in each batch
-PARALLEL_BATCH_SIZE = 20  # Process up to 20 messages simultaneously
+POLL_INTERVAL = 7  # Poll server every 7 seconds
+PARALLEL_BATCH_SIZE = 20
 
 
 def signal_handler(sig, frame):
-    """Handle Ctrl+C gracefully"""
     global RUNNING
     print("\\n[STOP] Stop signal received. Finishing current batch...")
     RUNNING = False
@@ -481,11 +479,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def process_single_task(task: dict, settings: dict) -> dict:
-    """Process a single campaign send task.
-
-    IMPORTANT: This function is fully isolated - any exception here
-    only affects this task, never crashes the whole runner.
-    """
+    """Process a single campaign send task - fully isolated"""
     msg = task.get("message", {})
     recipient = task.get("recipient")
     recipient_name = task.get("recipient_name")
@@ -505,37 +499,27 @@ async def process_single_task(task: dict, settings: dict) -> dict:
         }
 
     try:
-        # Get or create client with task-level proxy
         client = await get_or_create_client(account, task_proxy=proxy)
-
         if not client:
-            result = {
+            print(f"    ✗ [{account_phone}] No client")
+            return {
                 "success": False,
                 "error": "Could not connect client",
                 "campaign_recipient_id": msg.get("campaign_recipient_id"),
                 "message_id": msg.get("id"),
                 "account_id": account_id,
             }
-            print(f"    ✗ [{account_phone}] No client")
-            return result
 
-        # Add small random delay to stagger sends (human-like)
-        stagger_delay = random.uniform(0.5, 3)
-        await asyncio.sleep(stagger_delay)
-
+        # Stagger sends
+        await asyncio.sleep(random.uniform(0.5, 3))
         print(f"  📨 [{account_phone}] → {recipient}")
 
-        success, error = await send_message(
-            client, recipient, content,
-            msg.get("media_url")
-        )
+        success, error = await send_message(client, recipient, content, msg.get("media_url"))
 
-        # Check if this is a sender-side privacy restriction
         is_privacy_error = error and any(x in error.lower() for x in [
             "privacyrestricted", "privacy restricted", "userprivacyrestricted"
         ])
 
-        # Get API credential ID
         api_creds = account.get("telegram_api_credentials")
         api_credential_id = api_creds.get("id") if api_creds else account.get("api_credential_id")
 
@@ -563,11 +547,10 @@ async def process_single_task(task: dict, settings: dict) -> dict:
         return result
 
     except Exception as e:
-        error_str = str(e)
-        print(f"    ✗ [{account_phone}] Error: {error_str[:50]}")
+        print(f"    ✗ [{account_phone}] Error: {str(e)[:50]}")
         return {
             "success": False,
-            "error": error_str,
+            "error": str(e),
             "campaign_recipient_id": msg.get("campaign_recipient_id"),
             "message_id": msg.get("id"),
             "account_id": account_id,
@@ -575,100 +558,95 @@ async def process_single_task(task: dict, settings: dict) -> dict:
 
 
 async def main_loop():
-    """Main campaign task execution loop - PARALLEL BATCH MODE"""
+    """Main campaign loop - RUNS FOREVER with 7s polling"""
     global RUNNING
 
     print("=" * 60)
-    print("  TelegramCRM - Campaign Runner (PARALLEL BATCH MODE)")
+    print("  TelegramCRM - Campaign Runner (Server-Controlled)")
     print("=" * 60)
-    print(f"  Processing up to {PARALLEL_BATCH_SIZE} messages SIMULTANEOUSLY")
-    print("  Stop: Press Ctrl+C or pause campaign in dashboard")
+    print(f"  📨 Polling server every {POLL_INTERVAL} seconds")
+    print("  🔧 All settings controlled by admin dashboard")
+    print("  ♾️  RUNS FOREVER - auto-restarts on errors")
+    print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
-    print("\\nStarting parallel campaign loop...\\n")
+    print("\\n✓ Starting campaign runner...\\n")
 
     consecutive_empty = 0
-
-    # Default settings
-    settings = {
-        "minDelaySeconds": 5,
-        "maxDelaySeconds": 15,
-    }
+    settings = {"minDelaySeconds": 5, "maxDelaySeconds": 15}
 
     while RUNNING:
         try:
-            # Get batch of campaign tasks
             batch_result = await get_batch_tasks(runner="campaign", batch_size=PARALLEL_BATCH_SIZE)
             tasks = batch_result.get("tasks", [])
-            delay_after = batch_result.get("delay_after", 5)
+            delay_after = batch_result.get("delay_after", POLL_INTERVAL)
 
-            # Check for stop signal
             if batch_result.get("stop_signal"):
                 print("[STOP] Campaign paused from dashboard. Stopping...")
                 break
 
-            # Handle no tasks
             if not tasks:
-                reason = batch_result.get("reason", "")
                 consecutive_empty += 1
-
                 if consecutive_empty == 1:
-                    if reason:
-                        print(f"  [WAIT] {reason}")
-                    else:
-                        print("  [WAIT] No pending campaign tasks, waiting...")
-                elif consecutive_empty % 12 == 0:
+                    reason = batch_result.get("reason", "")
+                    print(f"  [WAIT] {reason or 'No pending campaign tasks, waiting...'}")
+                elif consecutive_empty % 8 == 0:  # Every ~56 seconds at 7s interval
                     print("  [WAIT] Still waiting for campaign tasks...")
-
-                await asyncio.sleep(delay_after)
+                await asyncio.sleep(delay_after if delay_after > 0 else POLL_INTERVAL)
                 continue
 
             consecutive_empty = 0
-            print(f"\\n  [BATCH] Processing batch of {len(tasks)} messages in PARALLEL...")
+            print(f"\\n  [BATCH] Processing {len(tasks)} messages in PARALLEL...")
 
-            # Process all tasks in parallel
             results = await asyncio.gather(
                 *[process_single_task(task, settings) for task in tasks],
                 return_exceptions=True
             )
 
-            # Report all results
             success_count = 0
             for result in results:
                 if isinstance(result, Exception):
                     print(f"  ⚠ Task exception: {result}")
                     continue
-
                 if result.get("success"):
                     success_count += 1
-
-                # Report each result to backend
                 await report_result("send", result)
 
             fail_count = len(results) - success_count
             print(f"  [RESULT] Batch complete: {success_count} success, {fail_count} failed")
 
-            # Wait between batches
             if RUNNING and delay_after > 0:
                 print(f"  [WAIT] Waiting {delay_after}s before next batch...")
                 await asyncio.sleep(delay_after)
 
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(POLL_INTERVAL)
 
     print("\\n[STOP] Campaign loop stopped.")
     await shutdown_all()
 
 
 if __name__ == "__main__":
-    print("Starting Campaign Runner (Parallel)... Press Ctrl+C to stop.")
-    print("Required: pip install telethon httpx")
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("\\n[STOP] Keyboard interrupt.")
-    finally:
-        print("Goodbye!")
+    print("=" * 60)
+    print("  Starting Campaign Runner - RUNS FOREVER")
+    print("  Polls server every 7 seconds for tasks")
+    print("  Press Ctrl+C to stop")
+    print("=" * 60)
+    print("Required: pip install telethon httpx python-socks")
+    
+    while True:
+        try:
+            asyncio.run(main_loop())
+        except KeyboardInterrupt:
+            print("\\n⏹ Keyboard interrupt - stopping...")
+            break
+        except Exception as e:
+            print(f"\\n⚠ Runner crashed: {e}")
+            print("  Restarting in 5 seconds...")
+            import time
+            time.sleep(5)
+    
+    print("Goodbye!")
 `;
 
   // ========== 5. LIVECHAT_RUNNER.PY ==========
@@ -1268,7 +1246,7 @@ if __name__ == "__main__":
 TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)
 ===================================================
 Handles warmup tasks with PARALLEL execution.
-Fetches batch from server every 10 seconds, processes all in parallel.
+Polls server every 7 seconds. RUNS FOREVER with auto-restart.
 
 Run: python warmup_runner.py
 Stop: Ctrl+C
@@ -1284,6 +1262,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
+POLL_INTERVAL = 7  # Poll server every 7 seconds
 WARMUP_CHANNELS = ["telegram", "durov", "tginfo", "techcrunch"]
 REACTIONS = ["👍", "❤️", "🔥", "👏", "😂", "🎉", "💯", "⭐"]
 
@@ -1299,17 +1278,10 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def add_contact(client, phone, first_name, last_name=""):
-    """Add a contact"""
     try:
         from telethon.tl.functions.contacts import ImportContactsRequest
         from telethon.tl.types import InputPhoneContact
-        
-        contact = InputPhoneContact(
-            client_id=0,
-            phone=phone,
-            first_name=first_name,
-            last_name=last_name
-        )
+        contact = InputPhoneContact(client_id=0, phone=phone, first_name=first_name, last_name=last_name)
         result = await client(ImportContactsRequest([contact]))
         if result.imported:
             return True, phone, None
@@ -1319,28 +1291,21 @@ async def add_contact(client, phone, first_name, last_name=""):
 
 
 async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_id=None, recipient_username=None, recipient_first_name=None):
-    """Send warmup chat message with human-like typing simulation"""
     try:
         from telethon.tl.functions.contacts import ImportContactsRequest
         from telethon.tl.types import InputPhoneContact
         
         user = None
-        
-        # Try telegram_id first (fastest)
         if recipient_telegram_id:
             try:
                 user = await client.get_entity(recipient_telegram_id)
             except:
                 pass
-        
-        # Try username next
         if not user and recipient_username:
             try:
                 user = await client.get_entity(recipient_username)
             except:
                 pass
-        
-        # Fallback to phone number
         if not user:
             contact = InputPhoneContact(
                 client_id=random.randint(0, 999999),
@@ -1358,8 +1323,7 @@ async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_
         # Human-like typing simulation
         base_delay = random.uniform(2, 4)
         typing_delay = len(message) * random.uniform(0.08, 0.15)
-        thinking_pause = random.uniform(0, 2)
-        total_typing_time = min(base_delay + typing_delay + thinking_pause, 15)
+        total_typing_time = min(base_delay + typing_delay, 15)
         
         async with client.action(user, 'typing'):
             await asyncio.sleep(total_typing_time)
@@ -1408,11 +1372,7 @@ async def send_reaction(client, channel_username=None):
         if messages:
             msg = random.choice(messages)
             reaction = random.choice(REACTIONS)
-            await client(SendReactionRequest(
-                peer=entity,
-                msg_id=msg.id,
-                reaction=[ReactionEmoji(emoticon=reaction)]
-            ))
+            await client(SendReactionRequest(peer=entity, msg_id=msg.id, reaction=[ReactionEmoji(emoticon=reaction)]))
             return True, reaction, None
     except Exception as e:
         return False, None, str(e)
@@ -1432,7 +1392,7 @@ async def update_profile_bio(client, bio=None):
 
 
 async def process_single_warmup_task(task: dict) -> dict:
-    """Process a single warmup task - fully isolated, never crashes runner"""
+    """Process a single warmup task - fully isolated"""
     task_type = task.get("task_type") or task.get("task", "unknown")
     task_id = task.get("task_id")
     account = task.get("account", {})
@@ -1450,14 +1410,10 @@ async def process_single_warmup_task(task: dict) -> dict:
         client = await get_or_create_client(account, task_proxy=proxy)
         if not client:
             return {
-                "success": False,
-                "error": "Could not connect client",
-                "task_id": task_id,
-                "account_id": account_id,
-                "pair_id": pair_id
+                "success": False, "error": "Could not connect client",
+                "task_id": task_id, "account_id": account_id, "pair_id": pair_id
             }
         
-        # Add small random delay for human-like behavior
         await asyncio.sleep(random.uniform(0.5, 2))
         
         if task_type == "warmup_add_contact":
@@ -1465,14 +1421,7 @@ async def process_single_warmup_task(task: dict) -> dict:
             first_name = task_data.get("first_name", "Friend")
             print(f"  [CONTACT] [{phone}] Adding contact...")
             success, added_phone, error = await add_contact(client, target_phone, first_name)
-            return {
-                "task_id": task_id,
-                "pair_id": pair_id,
-                "account_id": account_id,
-                "success": success,
-                "error": error,
-                "task_subtype": "add_contact"
-            }
+            return {"task_id": task_id, "pair_id": pair_id, "account_id": account_id, "success": success, "error": error, "task_subtype": "add_contact"}
         
         elif task_type == "warmup_chat":
             recipient_phone = task_data.get("recipient_phone")
@@ -1480,66 +1429,33 @@ async def process_single_warmup_task(task: dict) -> dict:
             recipient_username = task_data.get("recipient_username")
             recipient_first_name = task_data.get("first_name")
             message = task_data.get("message", "Hey! 👋")
-            
             print(f"  [CHAT] [{phone}] Sending warmup message...")
-            success, error = await send_warmup_chat(
-                client, recipient_phone, message, recipient_telegram_id, recipient_username, recipient_first_name
-            )
-            return {
-                "task_id": task_id,
-                "pair_id": pair_id,
-                "account_id": account_id,
-                "success": success,
-                "error": error
-            }
+            success, error = await send_warmup_chat(client, recipient_phone, message, recipient_telegram_id, recipient_username, recipient_first_name)
+            return {"task_id": task_id, "pair_id": pair_id, "account_id": account_id, "success": success, "error": error}
         
         elif task_type == "warmup_join_channel":
             channel = task_data.get("channel_username") or task.get("channel_username")
             print(f"  [JOIN] [{phone}] Joining channel...")
             success, channel_name, error = await join_channel(client, channel)
-            return {
-                "task_id": task_id,
-                "task_type": "join_channel",
-                "account_id": account_id,
-                "success": success,
-                "error": error
-            }
+            return {"task_id": task_id, "task_type": "join_channel", "account_id": account_id, "success": success, "error": error}
         
         elif task_type == "warmup_view_content":
             channel = task_data.get("channel_username") or task.get("channel_username")
             print(f"  [VIEW] [{phone}] Viewing content...")
             success, count, error = await view_channel_messages(client, channel)
-            return {
-                "task_id": task_id,
-                "task_type": "view_content",
-                "account_id": account_id,
-                "success": success,
-                "error": error
-            }
+            return {"task_id": task_id, "task_type": "view_content", "account_id": account_id, "success": success, "error": error}
         
         elif task_type == "warmup_send_reaction":
             channel = task_data.get("channel_username") or task.get("channel_username")
             print(f"  [REACT] [{phone}] Sending reaction...")
             success, reaction, error = await send_reaction(client, channel)
-            return {
-                "task_id": task_id,
-                "task_type": "send_reaction",
-                "account_id": account_id,
-                "success": success,
-                "error": error
-            }
+            return {"task_id": task_id, "task_type": "send_reaction", "account_id": account_id, "success": success, "error": error}
         
         elif task_type == "warmup_profile_update":
             bio = task_data.get("bio")
             print(f"  [BIO] [{phone}] Updating bio...")
             success, error = await update_profile_bio(client, bio)
-            return {
-                "task_id": task_id,
-                "task_type": "profile_update",
-                "account_id": account_id,
-                "success": success,
-                "error": error
-            }
+            return {"task_id": task_id, "task_type": "profile_update", "account_id": account_id, "success": success, "error": error}
         
         else:
             print(f"  [?] [{phone}] Unknown task type: {task_type}")
@@ -1547,72 +1463,56 @@ async def process_single_warmup_task(task: dict) -> dict:
     
     except Exception as e:
         print(f"  [ERROR] [{phone}] {str(e)[:50]}")
-        return {
-            "success": False,
-            "error": str(e),
-            "task_id": task_id,
-            "account_id": account_id,
-            "pair_id": pair_id
-        }
+        return {"success": False, "error": str(e), "task_id": task_id, "account_id": account_id, "pair_id": pair_id}
 
 
 async def main_loop():
-    """Main warmup task execution loop - PARALLEL BATCH MODE"""
+    """Main warmup loop - RUNS FOREVER with 7s polling"""
     global RUNNING
     
     print("=" * 60)
-    print("  TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)")
+    print("  TelegramCRM - Warmup Runner (Server-Controlled)")
     print("=" * 60)
-    print("  Fetches batch from server, processes ALL in parallel")
-    print("  Stop: Press Ctrl+C")
+    print(f"  🔥 Polling server every {POLL_INTERVAL} seconds")
+    print("  🔧 All settings controlled by admin dashboard")
+    print("  ♾️  RUNS FOREVER - auto-restarts on errors")
+    print("  ⏹ Stop: Press Ctrl+C")
     print("=" * 60)
-    print("\\nStarting parallel warmup loop...\\n")
+    print("\\n✓ Starting warmup runner...\\n")
     
     consecutive_empty = 0
     
     while RUNNING:
         try:
-            # Get batch of warmup tasks from server
             batch_result = await get_batch_tasks(runner="warmup", batch_size=50)
             tasks = batch_result.get("tasks", [])
-            delay_after = batch_result.get("delay_after", 10)
+            delay_after = batch_result.get("delay_after", POLL_INTERVAL)
             
-            # Handle no tasks
             if not tasks:
-                reason = batch_result.get("reason", "")
                 consecutive_empty += 1
-                
                 if consecutive_empty == 1:
-                    if reason:
-                        print(f"  [WAIT] {reason}")
-                    else:
-                        print("  [WAIT] No pending warmup tasks, waiting...")
-                elif consecutive_empty % 6 == 0:
+                    reason = batch_result.get("reason", "")
+                    print(f"  [WAIT] {reason or 'No pending warmup tasks, waiting...'}")
+                elif consecutive_empty % 8 == 0:  # Every ~56 seconds at 7s interval
                     print("  [WAIT] Still waiting for warmup tasks...")
-                
-                await asyncio.sleep(delay_after)
+                await asyncio.sleep(delay_after if delay_after > 0 else POLL_INTERVAL)
                 continue
             
             consecutive_empty = 0
             print(f"\\n  [BATCH] Processing {len(tasks)} warmup tasks in PARALLEL...")
             
-            # Process all tasks in parallel
             results = await asyncio.gather(
                 *[process_single_warmup_task(task) for task in tasks],
                 return_exceptions=True
             )
             
-            # Report all results
             success_count = 0
             for result in results:
                 if isinstance(result, Exception):
                     print(f"  ⚠ Task exception: {result}")
                     continue
-                
                 if result.get("success"):
                     success_count += 1
-                
-                # Report based on task type
                 if result.get("task_subtype") == "add_contact" or result.get("pair_id"):
                     await report_result("warmup_chat", result)
                 else:
@@ -1621,28 +1521,39 @@ async def main_loop():
             fail_count = len(results) - success_count
             print(f"  [RESULT] Batch complete: {success_count} success, {fail_count} failed")
             
-            # Wait for server-controlled delay
             if RUNNING and delay_after > 0:
                 print(f"  [WAIT] Waiting {delay_after}s before next batch...")
                 await asyncio.sleep(delay_after)
         
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
-            await asyncio.sleep(5)
+            await asyncio.sleep(POLL_INTERVAL)
     
     print("\\n[STOP] Warmup loop stopped.")
     await shutdown_all()
 
 
 if __name__ == "__main__":
-    print("Starting Warmup Runner (Parallel)... Press Ctrl+C to stop.")
-    print("Required: pip install telethon httpx")
-    try:
-        asyncio.run(main_loop())
-    except KeyboardInterrupt:
-        print("\\n[STOP] Keyboard interrupt.")
-    finally:
-        print("Goodbye!")
+    print("=" * 60)
+    print("  Starting Warmup Runner - RUNS FOREVER")
+    print("  Polls server every 7 seconds for tasks")
+    print("  Press Ctrl+C to stop")
+    print("=" * 60)
+    print("Required: pip install telethon httpx python-socks")
+    
+    while True:
+        try:
+            asyncio.run(main_loop())
+        except KeyboardInterrupt:
+            print("\\n⏹ Keyboard interrupt - stopping...")
+            break
+        except Exception as e:
+            print(f"\\n⚠ Runner crashed: {e}")
+            print("  Restarting in 5 seconds...")
+            import time
+            time.sleep(5)
+    
+    print("Goodbye!")
 `;
 
   // ========== 8. BLOCK_RUNNER.PY ==========

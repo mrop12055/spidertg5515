@@ -18,7 +18,7 @@ const runnerNames: Record<string, string> = {
   block: 'Block Runner',
 };
 
-const OFFLINE_GRACE_PERIOD_MS = 15000; // 15 seconds grace period before showing red dot
+const OFFLINE_GRACE_PERIOD_MS = 10000; // 10 seconds grace period before showing red dot
 
 export const useRunnerStatus = () => {
   const [runners, setRunners] = useState<RunnerInfo[]>(
@@ -60,17 +60,18 @@ export const useRunnerStatus = () => {
         }
       }
       
-      const thirtySecondsAgo = new Date(Date.now() - 30000);
+      // Consider offline if last seen more than 20 seconds ago (should poll every 7s)
+      const twentySecondsAgo = new Date(Date.now() - 20000);
       const now = new Date();
       
       // Calculate the threshold for "confirmed offline" - if last seen is older than this,
       // we should immediately show as offline (no grace period needed)
-      const confirmedOfflineThreshold = new Date(Date.now() - 30000 - OFFLINE_GRACE_PERIOD_MS);
+      const confirmedOfflineThreshold = new Date(Date.now() - 20000 - OFFLINE_GRACE_PERIOD_MS);
 
       setRunners(prev => {
         const newRunners = prev.map(runner => {
           const lastSeen = runnerMap.get(runner.runnerKey);
-          const isOnline = lastSeen && lastSeen > thirtySecondsAgo;
+          const isOnline = lastSeen && lastSeen > twentySecondsAgo;
           
           // Track offline transitions for grace period
           if (!isOnline) {
