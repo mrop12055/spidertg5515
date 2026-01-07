@@ -52,6 +52,12 @@ const statusConfig: Record<AccountStatus, {
     icon: Clock,
     className: 'bg-status-cooldown/10 text-status-cooldown border-status-cooldown/30',
     dotColor: 'bg-status-cooldown animate-pulse'
+  },
+  frozen: {
+    label: 'Frozen',
+    icon: AlertTriangle,
+    className: 'bg-blue-500/10 text-blue-500 border-blue-500/30',
+    dotColor: 'bg-blue-500'
   }
 };
 

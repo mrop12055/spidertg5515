@@ -1467,7 +1467,8 @@ const Accounts: React.FC = () => {
     ),
     inactive: filteredAccounts.filter(a => 
       a.status === 'banned' || 
-      a.status === 'disconnected'
+      a.status === 'disconnected' ||
+      a.status === 'frozen'
     ),
   };
 
@@ -1555,7 +1556,8 @@ const Accounts: React.FC = () => {
     ).length,
     inactive: accounts.filter(a => 
       a.status === 'banned' || 
-      a.status === 'disconnected'
+      a.status === 'disconnected' ||
+      a.status === 'frozen'
     ).length,
   };
 
@@ -1606,6 +1608,7 @@ const Accounts: React.FC = () => {
               account.status === 'restricted' && "bg-status-restricted/15 text-status-restricted",
               account.status === 'cooldown' && "bg-status-cooldown/15 text-status-cooldown",
               account.status === 'disconnected' && "bg-status-disconnected/15 text-status-disconnected",
+              account.status === 'frozen' && "bg-blue-500/15 text-blue-500",
             )}>
               {verifyResult?.status === 'checking' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -1625,6 +1628,7 @@ const Accounts: React.FC = () => {
             account.status === 'restricted' && "bg-status-restricted",
             account.status === 'cooldown' && "bg-status-cooldown",
             account.status === 'disconnected' && "bg-status-disconnected",
+            account.status === 'frozen' && "bg-blue-500",
           )}>
             {account.status === 'active' && <Check className="w-2 h-2 text-white" />}
             {account.status === 'banned' && <XCircle className="w-2 h-2 text-white" />}
