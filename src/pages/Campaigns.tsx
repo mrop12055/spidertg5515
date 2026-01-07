@@ -86,7 +86,7 @@ interface Seat {
 
 const Campaigns: React.FC = () => {
   const { campaigns, accounts, createCampaign, updateCampaign, deleteCampaign, uploadRecipients, startCampaign, isLoading, refreshData } = useTelegram();
-  const { settings: appSettings, updateSettings: updateAppSettings, saveSetting, isLoading: isLoadingSettings, isSaving } = useAppSettings();
+  const { settings: appSettings, updateSettings: updateAppSettings, saveSetting, fetchSettings, isLoading: isLoadingSettings, isSaving } = useAppSettings();
   
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -1677,7 +1677,13 @@ username123
                     <Button 
                       variant="outline" 
                       size="sm" 
-                      onClick={() => setShowSpeedSettings(!showSpeedSettings)}
+                      onClick={() => {
+                        if (!showSpeedSettings) {
+                          // Refetch settings from database when opening panel
+                          fetchSettings();
+                        }
+                        setShowSpeedSettings(!showSpeedSettings);
+                      }}
                       className="gap-2"
                     >
                       <Settings className="w-4 h-4" />
