@@ -341,11 +341,14 @@ serve(async (req) => {
           delay_after: campaignPollingInterval,
           stagger_min: campaignStaggerMin,
           stagger_max: campaignStaggerMax,
-          reason: "No running campaigns"
+          reason: "No running campaigns",
+          stop_signal: true
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
+
+      const campaignIds = runningCampaigns.map(c => c.id);
 
       // Filter accounts for campaigns using campaign-specific per-account limit
       const campaignUsableAccounts = usableAccounts.filter((a: any) => {
@@ -353,14 +356,133 @@ serve(async (req) => {
         return sentToday < campaignMessagesPerAccountPerDay;
       });
 
-      if (campaignUsableAccounts.length === 0) {
-        console.log(`[get-batch-tasks] All accounts at campaign daily limit (${campaignMessagesPerAccountPerDay} msgs/account)`);
+      // ========== STUCK SENDING RECOVERY ==========
+      // Find "sending" recipients that have been stuck for over 2 minutes (no message created)
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      const { data: stuckSendingRecipients } = await supabase
+        .from("campaign_recipients")
+        .select("id, campaign_id, sent_by_account_id")
+        .eq("status", "sending")
+        .in("campaign_id", campaignIds)
+        .limit(50);
+
+      if (stuckSendingRecipients && stuckSendingRecipients.length > 0) {
+        // Check which ones don't have a corresponding message
+        for (const stuck of stuckSendingRecipients) {
+          const { count: msgCount } = await supabase
+            .from("messages")
+            .select("id", { count: "exact", head: true })
+            .eq("campaign_recipient_id", stuck.id);
+
+          if (msgCount === 0) {
+            // No message exists - this is truly stuck, reset to pending
+            console.log(`[get-batch-tasks] Recovering stuck recipient ${stuck.id} - no message found`);
+            
+            // Add the stuck account to failed_account_ids to avoid retrying with same account
+            const { data: currentRecipient } = await supabase
+              .from("campaign_recipients")
+              .select("failed_account_ids")
+              .eq("id", stuck.id)
+              .single();
+            
+            const failedIds: string[] = currentRecipient?.failed_account_ids || [];
+            if (stuck.sent_by_account_id && !failedIds.includes(stuck.sent_by_account_id)) {
+              failedIds.push(stuck.sent_by_account_id);
+            }
+
+            await supabase
+              .from("campaign_recipients")
+              .update({
+                status: "pending",
+                sent_by_account_id: null,
+                failed_account_ids: failedIds,
+                failed_reason: null
+              })
+              .eq("id", stuck.id);
+          }
+        }
+      }
+
+      // ========== GET PENDING RECIPIENTS ==========
+      // Get pending recipients with their failed_account_ids
+      const { data: pendingRecipients } = await supabase
+        .from("campaign_recipients")
+        .select("*, campaigns!inner(id, status, message_template, batch_size)")
+        .eq("status", "pending")
+        .eq("campaigns.status", "running")
+        .limit(200); // Fetch more to account for filtering
+
+      // Count total pending after recovery
+      const totalPending = pendingRecipients?.length || 0;
+
+      // ========== NO PENDING RECIPIENTS = AUTO-COMPLETE ==========
+      if (totalPending === 0) {
+        console.log(`[get-batch-tasks] No pending recipients - checking if campaigns should complete`);
+        
+        // Check each running campaign
+        for (const campaign of runningCampaigns) {
+          const { count: stillPending } = await supabase
+            .from("campaign_recipients")
+            .select("id", { count: "exact", head: true })
+            .eq("campaign_id", campaign.id)
+            .in("status", ["pending", "sending"]);
+
+          if (stillPending === 0) {
+            console.log(`[get-batch-tasks] Auto-completing campaign ${campaign.id} - no pending/sending recipients`);
+            await supabase
+              .from("campaigns")
+              .update({ status: "completed", updated_at: new Date().toISOString() })
+              .eq("id", campaign.id);
+          }
+        }
+
         return new Response(JSON.stringify({
           tasks: [],
           delay_after: campaignPollingInterval,
           stagger_min: campaignStaggerMin,
           stagger_max: campaignStaggerMax,
-          reason: `All accounts at campaign daily limit (${campaignMessagesPerAccountPerDay} messages/account)`
+          reason: "No pending recipients",
+          stop_signal: true
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // ========== NO USABLE ACCOUNTS = AUTO-FAIL ==========
+      if (campaignUsableAccounts.length === 0) {
+        console.log(`[get-batch-tasks] No usable accounts - AUTO-FAILING campaigns with pending recipients`);
+        
+        for (const campaign of runningCampaigns) {
+          // Mark campaign as failed
+          await supabase
+            .from("campaigns")
+            .update({ 
+              status: "failed", 
+              updated_at: new Date().toISOString() 
+            })
+            .eq("id", campaign.id);
+
+          // Mark all pending recipients as failed
+          await supabase
+            .from("campaign_recipients")
+            .update({
+              status: "failed",
+              failed_reason: "No accounts available - all restricted or at daily limit",
+              sent_at: new Date().toISOString()
+            })
+            .eq("campaign_id", campaign.id)
+            .eq("status", "pending");
+
+          console.log(`[get-batch-tasks] Campaign ${campaign.id} auto-failed - no usable accounts`);
+        }
+
+        return new Response(JSON.stringify({
+          tasks: [],
+          delay_after: campaignPollingInterval,
+          stagger_min: campaignStaggerMin,
+          stagger_max: campaignStaggerMax,
+          reason: "All accounts restricted or at daily limit - campaigns failed",
+          stop_signal: true
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
@@ -368,47 +490,66 @@ serve(async (req) => {
 
       // Use campaignBatchSize from settings, limited by available accounts
       const actualBatchSize = Math.min(campaignBatchSize, campaignUsableAccounts.length);
-      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (from settings: ${campaignBatchSize}, accounts: ${campaignUsableAccounts.length}, limit: ${campaignMessagesPerAccountPerDay}/account)`);
+      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (settings: ${campaignBatchSize}, accounts: ${campaignUsableAccounts.length}, limit: ${campaignMessagesPerAccountPerDay}/account)`);
 
-      // Count total pending recipients to determine if immediate repoll needed
-      const { count: pendingCount } = await supabase
-        .from("campaign_recipients")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "pending")
-        .in("campaign_id", runningCampaigns.map(c => c.id));
-
-      // Get pending recipients from running campaigns (include unassigned ones too)
-      const { data: pendingRecipients } = await supabase
-        .from("campaign_recipients")
-        .select("*, campaigns!inner(id, status, message_template, batch_size)")
-        .eq("status", "pending")
-        .eq("campaigns.status", "running")
-        .limit(actualBatchSize * 2); // Fetch extra in case some accounts are already used
+      // Track recipients with no eligible accounts (all accounts in their failed_account_ids)
+      let recipientsWithNoAccounts = 0;
 
       if (pendingRecipients && pendingRecipients.length > 0) {
         for (const recipient of pendingRecipients) {
           if (tasks.length >= actualBatchSize) break;
 
           const campaign = recipient.campaigns;
+          const failedAccountIds: string[] = recipient.failed_account_ids || [];
           
-          // Find an account - prefer assigned one, otherwise assign dynamically
+          // ========== KEY FIX: Filter out accounts in failed_account_ids ==========
           let account = null;
           
           if (recipient.sent_by_account_id) {
-            // Use pre-assigned account if available, under campaign limit, and not already used in this batch
+            // Use pre-assigned account ONLY if:
+            // 1. It's not in failed_account_ids
+            // 2. It's in campaignUsableAccounts (active, under limit)
+            // 3. Not already used in this batch
+            const isNotFailed = !failedAccountIds.includes(recipient.sent_by_account_id);
+            account = isNotFailed 
+              ? campaignUsableAccounts.find((a: any) => 
+                  a.id === recipient.sent_by_account_id && !usedAccountIds.has(a.id)
+                )
+              : null;
+          }
+
+          // If no assigned account or it's already used/failed, find another
+          if (!account) {
             account = campaignUsableAccounts.find((a: any) => 
-              a.id === recipient.sent_by_account_id && !usedAccountIds.has(a.id)
+              !usedAccountIds.has(a.id) && !failedAccountIds.includes(a.id)
             );
           }
 
-          // If no assigned account or it's already used, find any available account
           if (!account) {
-            account = campaignUsableAccounts.find((a: any) => !usedAccountIds.has(a.id));
-          }
+            // Check if this recipient has exhausted all possible accounts
+            const eligibleAccounts = campaignUsableAccounts.filter((a: any) => 
+              !failedAccountIds.includes(a.id)
+            );
+            
+            if (eligibleAccounts.length === 0 && failedAccountIds.length > 0) {
+              // This recipient has tried all possible accounts - mark as failed
+              console.log(`[get-batch-tasks] Recipient ${recipient.id} has no eligible accounts (tried ${failedAccountIds.length}) - marking failed`);
+              
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "failed",
+                  failed_reason: `No eligible accounts left (tried ${failedAccountIds.length} accounts)`,
+                  sent_at: new Date().toISOString()
+                })
+                .eq("id", recipient.id);
 
-          if (!account) {
-            console.log(`[get-batch-tasks] No more unique accounts for batch`);
-            break;
+              // Increment campaign failed count
+              await supabase.rpc("increment_campaign_failed_count", { cid: recipient.campaign_id });
+              recipientsWithNoAccounts++;
+            }
+            // Skip this recipient for now (accounts may become available later)
+            continue;
           }
 
           // Mark recipient as "sending" and assign account
@@ -463,12 +604,19 @@ serve(async (req) => {
           console.log(`[get-batch-tasks] Added task for ${recipient.phone_number} via ${account.phone_number}`);
         }
       }
+
+      // Recount pending after potential failures
+      const { count: remainingPending } = await supabase
+        .from("campaign_recipients")
+        .select("id", { count: "exact", head: true })
+        .eq("status", "pending")
+        .in("campaign_id", campaignIds);
       
       // Calculate if more tasks are pending (for immediate repoll)
-      const morePending = (pendingCount || 0) > tasks.length;
+      const morePending = (remainingPending || 0) > 0;
       const delayAfter = morePending && tasks.length > 0 ? 0 : campaignPollingInterval;
       
-      console.log(`[get-batch-tasks] Campaign returning ${tasks.length} tasks, more pending: ${morePending}, delay: ${delayAfter}s`);
+      console.log(`[get-batch-tasks] Campaign returning ${tasks.length} tasks, remaining pending: ${remainingPending}, delay: ${delayAfter}s`);
       
       return new Response(JSON.stringify({
         tasks,
@@ -476,7 +624,8 @@ serve(async (req) => {
         stagger_min: campaignStaggerMin,
         stagger_max: campaignStaggerMax,
         more_pending: morePending,
-        accounts_available: usableAccounts.length,
+        accounts_available: campaignUsableAccounts.length,
+        stop_signal: tasks.length === 0 && !morePending
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
