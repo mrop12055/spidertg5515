@@ -1285,10 +1285,10 @@ if __name__ == "__main__":
 TelegramCRM - Warmup Runner (POLLING MODE)
 ============================================
 Simple polling-based warmup runner:
-- Polls server every 10 seconds for pending tasks
-- Admin assigns work via batch_size in settings
-- Python just executes whatever work is assigned
-- Supports 100+ parallel batches
+- Polls server every 2 seconds for pending tasks
+- Server controls batch size - Python processes ALL tasks received
+- No limits on Python side - admin controls everything
+- Supports unlimited parallel tasks
 
 Run: python warmup_runner.py
 Stop: Ctrl+C
@@ -1305,7 +1305,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-POLL_INTERVAL = 10  # Poll every 10 seconds
+POLL_INTERVAL = 2  # Poll every 2 seconds - fast polling
 
 # Warmup channels (safe public channels for building history)
 WARMUP_CHANNELS = [
@@ -1317,7 +1317,7 @@ WARMUP_CHANNELS = [
 ]
 
 # Reaction emojis
-REACTIONS = ["👍", "❤️", "🔥", "👏", "😊", "🎉", "💯", "⭐"]
+REACTIONS = ["thumbs_up", "heart", "fire", "clap", "smile", "party", "100", "star"]
 
 
 def signal_handler(sig, frame):
@@ -1528,14 +1528,20 @@ async def process_single_task(task: dict) -> dict:
 
 
 async def main_loop():
-    """Main warmup loop - polls server every 10 seconds for work"""
+    """Main warmup loop - polls server every 2 seconds for work.
+    
+    NO LIMITS HERE - server controls everything:
+    - Server decides batch size
+    - Server decides which tasks to send
+    - Python just processes ALL tasks it receives
+    """
     global RUNNING
 
     print("=" * 60)
     print("  TelegramCRM - Warmup Runner (POLLING MODE)")
     print("=" * 60)
-    print(f"  Polling server every {POLL_INTERVAL} seconds for tasks")
-    print("  Batch size is controlled by admin settings")
+    print(f"  Polling every {POLL_INTERVAL} seconds")
+    print("  Server controls batch size - Python processes ALL tasks")
     print("  Stop: Press Ctrl+C")
     print("=" * 60)
     print("")
@@ -1547,25 +1553,29 @@ async def main_loop():
     while RUNNING:
         try:
             # Poll server for pending warmup tasks
+            # Server returns ALL tasks based on admin batch_size settings
+            # NO LIMIT HERE - we process everything server sends
             batch_result = await get_batch_tasks(runner="warmup_chat")
             tasks = batch_result.get("tasks", [])
             accounts_available = batch_result.get("accounts_available", 0)
+            delay_after = batch_result.get("delay_after", POLL_INTERVAL)
 
             if not tasks:
                 consecutive_empty += 1
                 if consecutive_empty == 1:
                     print(f"  [WAIT] No tasks available ({accounts_available} accounts ready)")
-                elif consecutive_empty % 6 == 0:
-                    print(f"  [WAIT] Still waiting for tasks... ({accounts_available} accounts ready)")
+                elif consecutive_empty % 30 == 0:  # Every ~minute (30 x 2s)
+                    print(f"  [WAIT] Still waiting... ({accounts_available} accounts ready)")
 
+                # Wait before next poll
                 await asyncio.sleep(POLL_INTERVAL)
                 continue
 
             consecutive_empty = 0
             print(f"")
-            print(f"  [BATCH] Received {len(tasks)} tasks from server")
+            print(f"  [BATCH] Processing {len(tasks)} tasks from server")
 
-            # Process all tasks in parallel
+            # Process ALL tasks in parallel - no limit!
             results = await asyncio.gather(
                 *[process_single_task(task) for task in tasks],
                 return_exceptions=True
@@ -1574,7 +1584,7 @@ async def main_loop():
             # Summary
             success_count = sum(1 for r in results if isinstance(r, dict) and r.get("success"))
             fail_count = len(results) - success_count
-            print(f"  [DONE] Batch complete: {success_count} success, {fail_count} failed")
+            print(f"  [DONE] Batch: {success_count} OK, {fail_count} failed")
 
             # Disconnect clients after batch
             batch_account_ids = list(set(
@@ -1584,7 +1594,8 @@ async def main_loop():
             ))
             await disconnect_batch(batch_account_ids)
 
-            await asyncio.sleep(POLL_INTERVAL)
+            # Use server-suggested delay or default poll interval
+            await asyncio.sleep(delay_after if delay_after > 0 else POLL_INTERVAL)
 
         except Exception as e:
             print(f"  [ERROR] Loop error: {e}")
