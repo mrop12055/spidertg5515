@@ -154,6 +154,12 @@ export default function Warmup() {
   const [pairingMode, setPairingMode] = useState<"auto" | "manual">("auto");
   const [selectedAccounts, setSelectedAccounts] = useState<string[]>([]);
 
+  // Warmup selection dialog state
+  const [isWarmupDialogOpen, setIsWarmupDialogOpen] = useState(false);
+  const [warmupSelectedTag, setWarmupSelectedTag] = useState<string>("all");
+  const [warmupSelectedPairs, setWarmupSelectedPairs] = useState<string[]>([]);
+  const [warmupSelectMode, setWarmupSelectMode] = useState<"all" | "selected">("all");
+
   const fetchData = useCallback(async (isInitial = false) => {
     // Only show loading spinner on first load / manual refresh (avoid flicker during polling)
     if (isInitial || !initialLoadDoneRef.current) {
@@ -506,14 +512,29 @@ export default function Warmup() {
     }
   };
 
-  const handleStartWarmup = async () => {
+  const handleStartWarmup = async (specificPairIds?: string[]) => {
     setIsStarting(true);
     try {
+      const body: any = {
+        messagesPerPairMin: messagesPerPair[0],
+        messagesPerPairMax: messagesPerPair[1],
+      };
+      
+      // If specific pairs selected, extract account IDs
+      if (specificPairIds && specificPairIds.length > 0) {
+        const accountIds: string[] = [];
+        specificPairIds.forEach(pairKey => {
+          const pair = prePairedAccounts.find(p => p.id === pairKey);
+          if (pair) {
+            accountIds.push(pair.id);
+            accountIds.push(pair.warmup_pair_id);
+          }
+        });
+        body.specificPairAccountIds = accountIds;
+      }
+      
       const { data, error } = await supabase.functions.invoke("start-warmup-chat", {
-        body: {
-          messagesPerPairMin: messagesPerPair[0],
-          messagesPerPairMax: messagesPerPair[1],
-        },
+        body,
       });
 
       if (error) throw error;
@@ -523,6 +544,7 @@ export default function Warmup() {
       } else {
         toast.success(`Warmup started! Created ${data.pairs_created} pairs with ${data.messages_scheduled} messages (~${data.estimated_duration_minutes || 10} min)`);
       }
+      setIsWarmupDialogOpen(false);
       fetchData();
     } catch (error: any) {
       console.error("Error starting warmup:", error);
@@ -530,6 +552,34 @@ export default function Warmup() {
     } finally {
       setIsStarting(false);
     }
+  };
+
+  // Open warmup dialog
+  const handleOpenWarmupDialog = () => {
+    setWarmupSelectedTag("all");
+    setWarmupSelectedPairs([]);
+    setWarmupSelectMode("all");
+    setIsWarmupDialogOpen(true);
+  };
+
+  // Get filtered pairs by tag for warmup
+  const warmupFilteredPairs = useMemo(() => {
+    if (warmupSelectedTag === "all") return prePairedAccounts;
+    // Filter pairs where at least one account has the tag
+    return prePairedAccounts.filter(pair => {
+      const account = idleAccounts.find(a => a.id === pair.id);
+      return account && (account.tags || []).includes(warmupSelectedTag);
+    });
+  }, [prePairedAccounts, warmupSelectedTag, idleAccounts]);
+
+  // Toggle pair selection for warmup
+  const toggleWarmupPairSelection = (pairId: string) => {
+    setWarmupSelectedPairs(prev => {
+      if (prev.includes(pairId)) {
+        return prev.filter(id => id !== pairId);
+      }
+      return [...prev, pairId];
+    });
   };
 
   const handleStopWarmup = async () => {
@@ -862,7 +912,7 @@ export default function Warmup() {
               >
                 <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
               </Button>
-              {session?.status === "active" ? (
+              {session?.status === "active" && (
                 <Button
                   variant="destructive"
                   onClick={handleStopWarmup}
@@ -874,19 +924,6 @@ export default function Warmup() {
                     <Square className="h-4 w-4 mr-2" />
                   )}
                   Stop Warmup
-                </Button>
-              ) : (
-                <Button
-                  onClick={handleStartWarmup}
-                  disabled={isStarting}
-                  className="bg-orange-500 hover:bg-orange-600"
-                >
-                  {isStarting ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4 mr-2" />
-                  )}
-                  Start Warmup
                 </Button>
               )}
             </div>
@@ -1179,6 +1216,16 @@ export default function Warmup() {
                     <Link2 className="h-4 w-4 mr-1.5" />
                     Pair Idle Accounts
                   </Button>
+                  {session?.status !== "active" && prePairedAccounts.length > 0 && (
+                    <Button
+                      size="sm"
+                      onClick={handleOpenWarmupDialog}
+                      className="h-8 bg-orange-500 hover:bg-orange-600"
+                    >
+                      <Play className="h-4 w-4 mr-1.5" />
+                      Start Warmup
+                    </Button>
+                  )}
                   {session?.status === "active" && pairs.filter(p => p.status === "active").length > 0 && (
                     <Badge className="bg-green-500 text-white">
                       <Loader2 className="h-3 w-3 mr-1 animate-spin" />
@@ -1778,6 +1825,163 @@ export default function Warmup() {
                 ? `Create ${Math.floor(filteredIdleAccounts.length / 2)} Pair(s)`
                 : "Create Pair"
               }
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Start Warmup Dialog */}
+      <Dialog open={isWarmupDialogOpen} onOpenChange={setIsWarmupDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Play className="h-5 w-5 text-orange-500" />
+              Start Warmup
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            {/* Selection Mode Toggle */}
+            <div className="flex gap-2">
+              <Button
+                variant={warmupSelectMode === "all" ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => {
+                  setWarmupSelectMode("all");
+                  setWarmupSelectedPairs([]);
+                }}
+              >
+                <Layers className="h-4 w-4 mr-2" />
+                All Pairs ({prePairedAccounts.length})
+              </Button>
+              <Button
+                variant={warmupSelectMode === "selected" ? "default" : "outline"}
+                size="sm"
+                className="flex-1"
+                onClick={() => setWarmupSelectMode("selected")}
+              >
+                <MousePointerClick className="h-4 w-4 mr-2" />
+                Select Pairs
+              </Button>
+            </div>
+
+            {/* Tag Filter - Only in selected mode */}
+            {warmupSelectMode === "selected" && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <Tag className="h-4 w-4" />
+                  Filter by Tag
+                </label>
+                <Select value={warmupSelectedTag} onValueChange={setWarmupSelectedTag}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select tag" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Paired Accounts ({prePairedAccounts.length})</SelectItem>
+                    {availableTags.map(tag => (
+                      <SelectItem key={tag} value={tag}>
+                        {tag}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+
+            {/* All Mode Preview */}
+            {warmupSelectMode === "all" && (
+              <div className="p-4 bg-muted/30 rounded-lg border border-border/50">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium">Total Pairs</span>
+                  <Badge variant="secondary" className="font-mono">{prePairedAccounts.length}</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  All {prePairedAccounts.length} paired accounts will start warmup with {messagesPerPair[0]}-{messagesPerPair[1]} messages per pair.
+                </p>
+              </div>
+            )}
+
+            {/* Selected Mode - Pair Selection */}
+            {warmupSelectMode === "selected" && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium">
+                    Selected: <span className={warmupSelectedPairs.length > 0 ? "text-green-500" : "text-primary"}>{warmupSelectedPairs.length}</span>
+                  </p>
+                  {warmupSelectedPairs.length > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setWarmupSelectedPairs([])}
+                      className="h-6 px-2 text-xs"
+                    >
+                      Clear
+                    </Button>
+                  )}
+                </div>
+                
+                <ScrollArea className="h-[250px] border rounded-md p-2">
+                  <div className="space-y-1">
+                    {prePairedAccounts.map((pair, idx) => {
+                      const isSelected = warmupSelectedPairs.includes(pair.id);
+                      return (
+                        <div 
+                          key={pair.id} 
+                          className={`flex items-center gap-2 text-sm p-2 rounded cursor-pointer transition-colors ${
+                            isSelected ? "bg-orange-500/20 border border-orange-500/50" : "hover:bg-muted"
+                          }`}
+                          onClick={() => toggleWarmupPairSelection(pair.id)}
+                        >
+                          <div className={`h-5 w-5 rounded border-2 flex items-center justify-center text-xs font-bold ${
+                            isSelected ? "bg-orange-500 border-orange-500 text-white" : "border-muted-foreground"
+                          }`}>
+                            {isSelected ? "✓" : ""}
+                          </div>
+                          <Badge variant="outline" className="h-5 px-1.5 text-xs">
+                            #{idx + 1}
+                          </Badge>
+                          <span className="font-mono text-xs">{pair.phone_number}</span>
+                          <ArrowLeftRight className="h-3 w-3 text-muted-foreground" />
+                          <span className="font-mono text-xs">{pair.pair_phone}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+
+            {/* Messages per pair info */}
+            <div className="p-3 bg-muted/30 rounded-lg border border-border/50">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-muted-foreground">Messages per pair</span>
+                <Badge variant="secondary" className="font-mono">{messagesPerPair[0]} - {messagesPerPair[1]}</Badge>
+              </div>
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsWarmupDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button 
+              onClick={() => {
+                if (warmupSelectMode === "all") {
+                  handleStartWarmup();
+                } else {
+                  handleStartWarmup(warmupSelectedPairs);
+                }
+              }}
+              disabled={isStarting || (warmupSelectMode === "selected" && warmupSelectedPairs.length === 0)}
+              className="bg-orange-500 hover:bg-orange-600"
+            >
+              {isStarting ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Play className="h-4 w-4 mr-2" />
+              )}
+              Start {warmupSelectMode === "all" ? `All ${prePairedAccounts.length} Pairs` : `${warmupSelectedPairs.length} Pair(s)`}
             </Button>
           </DialogFooter>
         </DialogContent>
