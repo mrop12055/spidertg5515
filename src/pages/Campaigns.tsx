@@ -782,11 +782,63 @@ const Campaigns: React.FC = () => {
       toast.error('Failed to fetch report data');
       return;
     }
+
+    // Fetch failed reasons from messages
+    const failedRecipientIds = recipients?.filter(r => r.status === 'failed').map(r => r.id) || [];
+    let failedReasons = new Map<string, string>();
     
-    // Create CSV
-    const csvLines = ['Phone Number,Name,Status,Sent At,Sent By Account'];
+    if (failedRecipientIds.length > 0) {
+      const { data: failedMessages } = await supabase
+        .from('messages')
+        .select('failed_reason, campaign_recipient_id')
+        .eq('direction', 'outgoing')
+        .in('status', ['failed', 'cancelled'])
+        .in('campaign_recipient_id', failedRecipientIds);
+      
+      (failedMessages || []).forEach((m: any) => {
+        if (m.campaign_recipient_id && m.failed_reason) {
+          failedReasons.set(m.campaign_recipient_id, m.failed_reason);
+        }
+      });
+    }
+
+    // Get sender account details
+    const accountIds = [...new Set(recipients?.map(r => r.sent_by_account_id).filter(Boolean) || [])];
+    const accountsMap = new Map<string, { phone: string; name: string }>();
+    accounts.forEach(a => {
+      accountsMap.set(a.id, { phone: a.phoneNumber, name: a.firstName || '' });
+    });
+
+    // Escape CSV field (handle commas, quotes, newlines)
+    const escapeCSV = (field: string | null | undefined): string => {
+      if (!field) return '';
+      const str = String(field);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+    
+    // Create CSV with enhanced columns
+    const csvLines = ['Phone Number,Name,Status,Error Reason,Sent At,Sender Phone,Sender Name,Campaign Message'];
+    const campaignMessage = campaign.messageTemplate || '';
+    
     recipients?.forEach((r: any) => {
-      csvLines.push(`${r.phone_number},${r.name || ''},${r.status},${r.sent_at || ''},${r.sent_by_account_id || ''}`);
+      const senderInfo = r.sent_by_account_id ? accountsMap.get(r.sent_by_account_id) : null;
+      const errorReason = r.status === 'failed' 
+        ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error')
+        : '';
+      
+      csvLines.push([
+        escapeCSV(r.phone_number),
+        escapeCSV(r.name),
+        escapeCSV(r.status),
+        escapeCSV(errorReason),
+        escapeCSV(r.sent_at),
+        escapeCSV(senderInfo?.phone),
+        escapeCSV(senderInfo?.name),
+        escapeCSV(campaignMessage)
+      ].join(','));
     });
     
     const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
