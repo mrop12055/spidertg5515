@@ -9,6 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Slider } from '@/components/ui/slider';
@@ -98,6 +99,11 @@ const Campaigns: React.FC = () => {
   // Bulk selection state
   const [selectedCampaigns, setSelectedCampaigns] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deletingCampaignId, setDeletingCampaignId] = useState<string | null>(null);
+  
+  // Track which campaign detail dialogs have loaded their reports
+  const [loadedReportIds, setLoadedReportIds] = useState<Set<string>>(new Set());
   
   // Seats for campaign assignment
   const [seats, setSeats] = useState<Seat[]>([]);
@@ -271,6 +277,7 @@ const Campaigns: React.FC = () => {
 
       if (!recipients || error) {
         setIsLoadingReport(false);
+        setLoadedReportIds(prev => new Set(prev).add(campaignId));
         return;
       }
 
@@ -341,6 +348,7 @@ const Campaigns: React.FC = () => {
       };
 
       setCampaignReports(prev => new Map(prev).set(campaignId, report));
+      setLoadedReportIds(prev => new Set(prev).add(campaignId));
     } finally {
       setIsLoadingReport(false);
     }
@@ -812,6 +820,23 @@ const Campaigns: React.FC = () => {
       toast.error('Failed to delete some campaigns');
     } finally {
       setIsDeleting(false);
+      setIsDeleteDialogOpen(false);
+    }
+  };
+
+  // Single delete campaign
+  const handleSingleDelete = async () => {
+    if (!deletingCampaignId) return;
+    
+    setIsDeleting(true);
+    try {
+      await deleteCampaign(deletingCampaignId);
+      toast.success('Campaign deleted');
+    } catch (error) {
+      toast.error('Failed to delete campaign');
+    } finally {
+      setIsDeleting(false);
+      setDeletingCampaignId(null);
     }
   };
 
@@ -1629,15 +1654,11 @@ username123
                   <Button 
                     variant="destructive" 
                     size="sm" 
-                    onClick={handleBulkDelete}
+                    onClick={() => setIsDeleteDialogOpen(true)}
                     disabled={isDeleting}
                     className="gap-2"
                   >
-                    {isDeleting ? (
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-4 h-4" />
-                    )}
+                    <Trash2 className="w-4 h-4" />
                     Delete {selectedCampaigns.size}
                   </Button>
                 )}
@@ -1986,6 +2007,7 @@ username123
                               {(() => {
                                 const failedCount = report?.failed ?? campaign.failedCount ?? 0;
                                 const failedRecipients = report?.failedRecipients || [];
+                                const hasLoaded = loadedReportIds.has(campaign.id);
                                 
                                 if (failedCount === 0) return null;
                                 
@@ -2015,6 +2037,10 @@ username123
                                           ))}
                                         </div>
                                       </ScrollArea>
+                                    ) : hasLoaded ? (
+                                      <div className="flex items-center justify-center py-4 border rounded-xl bg-muted/30">
+                                        <span className="text-sm text-muted-foreground">No failure details available</span>
+                                      </div>
                                     ) : (
                                       <div className="flex items-center justify-center py-4 border rounded-xl bg-muted/30">
                                         <Loader2 className="w-4 h-4 animate-spin text-muted-foreground mr-2" />
@@ -2058,7 +2084,7 @@ username123
                           )}
                         </Button>
                         
-                        <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => deleteCampaign(campaign.id)}>
+                        <Button variant="ghost" size="icon" className="h-9 w-9 text-destructive hover:text-destructive hover:bg-destructive/10" onClick={() => setDeletingCampaignId(campaign.id)}>
                           <Trash2 className="w-4 h-4" />
                         </Button>
                       </div>
@@ -2071,6 +2097,52 @@ username123
           )}
         </div>
       )}
+
+      {/* Single Delete Confirmation Dialog */}
+      <AlertDialog open={!!deletingCampaignId} onOpenChange={(open) => !open && setDeletingCampaignId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Campaign</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this campaign? This action cannot be undone and will remove all associated recipients and messages.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleSingleDelete} 
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selectedCampaigns.size} Campaign(s)</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete {selectedCampaigns.size} selected campaign(s)? This action cannot be undone and will remove all associated recipients and messages.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={handleBulkDelete} 
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Delete All
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </DashboardLayout>
   );
 };
