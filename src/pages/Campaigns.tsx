@@ -1670,7 +1670,7 @@ username123
                       <div>
                         <h3 className="font-semibold">Campaign Speed Settings</h3>
                         <p className="text-xs text-muted-foreground">
-                          {campaignSpeed.messagesPerAccountPerDay} msgs/account • Stagger: {campaignSpeed.staggerMin}s - {campaignSpeed.staggerMax}s • Batch: {campaignSpeed.batchSize}
+                          {campaignSpeed.messagesPerAccountPerDay} msgs/account today • Delay: {campaignSpeed.staggerMin}s - {campaignSpeed.staggerMax}s • Batch: {campaignSpeed.batchSize}
                         </p>
                       </div>
                     </div>
@@ -1709,7 +1709,7 @@ username123
                         </div>
                         
                         <div className="space-y-2">
-                          <Label>Stagger Min (seconds)</Label>
+                          <Label>Min Delay Between Messages</Label>
                           <div className="flex items-center gap-4">
                             <Slider
                               value={[campaignSpeed.staggerMin]}
@@ -1721,11 +1721,11 @@ username123
                             />
                             <span className="w-12 text-center font-medium">{campaignSpeed.staggerMin}s</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">Min delay (0 = instant)</p>
+                          <p className="text-xs text-muted-foreground">Minimum pause before sending (0 = instant)</p>
                         </div>
                         
                         <div className="space-y-2">
-                          <Label>Stagger Max (seconds)</Label>
+                          <Label>Max Delay Between Messages</Label>
                           <div className="flex items-center gap-4">
                             <Slider
                               value={[campaignSpeed.staggerMax]}
@@ -1737,11 +1737,11 @@ username123
                             />
                             <span className="w-12 text-center font-medium">{campaignSpeed.staggerMax}s</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">Max delay between sends</p>
+                          <p className="text-xs text-muted-foreground">Maximum pause before sending</p>
                         </div>
                         
                         <div className="space-y-2">
-                          <Label>Polling Interval (seconds)</Label>
+                          <Label>Wait Between Batches</Label>
                           <div className="flex items-center gap-4">
                             <Slider
                               value={[campaignSpeed.pollingInterval]}
@@ -1753,7 +1753,7 @@ username123
                             />
                             <span className="w-12 text-center font-medium">{campaignSpeed.pollingInterval}s</span>
                           </div>
-                          <p className="text-xs text-muted-foreground">Wait between batches (0 = immediate)</p>
+                          <p className="text-xs text-muted-foreground">Pause after each batch completes (0 = no wait)</p>
                         </div>
                         
                         <div className="space-y-2">
