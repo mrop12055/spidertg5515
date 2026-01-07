@@ -141,7 +141,7 @@ const Accounts: React.FC = () => {
   // Bulk proxy assignment
   const [isBulkProxyOpen, setIsBulkProxyOpen] = useState(false);
   const [selectedProxyId, setSelectedProxyId] = useState<string>('');
-  const [proxyRatio, setProxyRatio] = useState<'1' | '2' | '3'>('1');
+  
   const [isBulkProxyAssigning, setIsBulkProxyAssigning] = useState(false);
   
   // Active tab for account sections
@@ -1046,7 +1046,6 @@ const Accounts: React.FC = () => {
     setIsBulkProxyAssigning(true);
     try {
       const selectedAccountIds = Array.from(selectedIds);
-      const ratio = parseInt(proxyRatio);
       
       const activeProxies = proxies.filter(p => p.status === 'active');
       
@@ -1068,48 +1067,18 @@ const Accounts: React.FC = () => {
         );
         toast.success(`Assigned proxy to ${selectedAccountIds.length} account(s)`);
       } else {
-        // Auto-rotate: prioritize proxies with fewer connected accounts (load balancing)
-        // Count current connections for each proxy
-        const proxyUsageCount = new Map<string, number>();
-        activeProxies.forEach(p => {
-          const count = accounts.filter(a => a.proxyId === p.id).length;
-          proxyUsageCount.set(p.id, count);
-        });
+        // Use smart distribution edge function
+        toast.info('Running smart proxy distribution...');
         
-        // Sort proxies by usage count (least used first)
-        const sortedProxies = [...activeProxies].sort((a, b) => 
-          (proxyUsageCount.get(a.id) || 0) - (proxyUsageCount.get(b.id) || 0)
-        );
+        const { data, error } = await supabase.functions.invoke('enforce-proxy-mapping');
         
-        // Assign accounts to proxies, maintaining the ratio and prioritizing least used
-        const assignments: { accountId: string; proxyId: string }[] = [];
-        const tempUsageCount = new Map(proxyUsageCount);
+        if (error) throw error;
         
-        for (const accountId of selectedAccountIds) {
-          // Re-sort based on current temp usage to always pick least used
-          sortedProxies.sort((a, b) => 
-            (tempUsageCount.get(a.id) || 0) - (tempUsageCount.get(b.id) || 0)
-          );
-          
-          // Pick the proxy with least connections
-          const targetProxy = sortedProxies[0];
-          assignments.push({ accountId, proxyId: targetProxy.id });
-          
-          // Update temp count
-          tempUsageCount.set(targetProxy.id, (tempUsageCount.get(targetProxy.id) || 0) + 1);
+        if (data?.success) {
+          toast.success(data.message || `Smart distribution completed: ${data.stats?.assignments_made || 0} assignments`);
+        } else {
+          toast.error(data?.error || 'Distribution failed');
         }
-        
-        await Promise.all(
-          assignments.map(({ accountId, proxyId }) =>
-            supabase
-              .from('telegram_accounts')
-              .update({ proxy_id: proxyId })
-              .eq('id', accountId)
-          )
-        );
-        
-        const uniqueProxiesUsed = new Set(assignments.map(a => a.proxyId)).size;
-        toast.success(`Auto-assigned ${uniqueProxiesUsed} proxy(s) to ${selectedAccountIds.length} account(s) (least-used first)`);
       }
       
       setIsBulkProxyOpen(false);
@@ -3008,23 +2977,10 @@ const Accounts: React.FC = () => {
               )}
               
               {selectedProxyId === 'auto' && (
-                <div className="space-y-2">
-                  <Label>Accounts per Proxy</Label>
-                  <RadioGroup value={proxyRatio} onValueChange={(v) => setProxyRatio(v as '1' | '2' | '3')}>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="1" id="r1" />
-                      <Label htmlFor="r1">1:1 (1 proxy per account)</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="2" id="r2" />
-                      <Label htmlFor="r2">1:2 (1 proxy for 2 accounts)</Label>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <RadioGroupItem value="3" id="r3" />
-                      <Label htmlFor="r3">1:3 (1 proxy for 3 accounts)</Label>
-                    </div>
-                  </RadioGroup>
-                </div>
+                <p className="text-sm text-muted-foreground bg-muted/50 p-3 rounded-lg">
+                  <span className="font-medium">Smart Distribution:</span> Proxies will be distributed evenly. 
+                  If you have more accounts than proxies, some proxies will get 2 accounts.
+                </p>
               )}
               
               <div className="flex justify-end gap-2">
