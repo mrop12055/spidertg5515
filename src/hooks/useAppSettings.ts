@@ -38,6 +38,13 @@ export interface WarmupBatchSettings {
   batchSize: number;
 }
 
+export interface CampaignSpeedSettings {
+  staggerMin: number;
+  staggerMax: number;
+  pollingInterval: number;
+  batchSize: number;
+}
+
 export interface AllSettings {
   message_timing: MessageTimingSettings;
   scheduler: SchedulerSettings;
@@ -45,6 +52,7 @@ export interface AllSettings {
   safety: SafetySettings;
   cleanup: CleanupSettings;
   warmup_batch_size: WarmupBatchSettings;
+  campaign_speed: CampaignSpeedSettings;
 }
 
 const defaultSettings: AllSettings = {
@@ -75,6 +83,12 @@ const defaultSettings: AllSettings = {
     retentionDays: 30,
   },
   warmup_batch_size: {
+    batchSize: 100,
+  },
+  campaign_speed: {
+    staggerMin: 0.3,
+    staggerMax: 1.5,
+    pollingInterval: 3,
     batchSize: 100,
   },
 };

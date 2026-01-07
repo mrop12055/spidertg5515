@@ -86,7 +86,7 @@ interface Seat {
 
 const Campaigns: React.FC = () => {
   const { campaigns, accounts, createCampaign, updateCampaign, deleteCampaign, uploadRecipients, startCampaign, isLoading, refreshData } = useTelegram();
-  const { settings: appSettings, updateSettings: updateAppSettings, saveSetting, isLoading: isLoadingSettings } = useAppSettings();
+  const { settings: appSettings, updateSettings: updateAppSettings, saveSetting, isLoading: isLoadingSettings, isSaving } = useAppSettings();
   
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
@@ -133,6 +133,7 @@ const Campaigns: React.FC = () => {
   const [messageInterval, setMessageInterval] = useState(5);
   const [accountSwitchDelay, setAccountSwitchDelay] = useState(30);
   const [showScheduler, setShowScheduler] = useState(false);
+  const [showSpeedSettings, setShowSpeedSettings] = useState(false);
   const [schedulerSettings, setSchedulerSettings] = useState({
     enabled: true,
     maxMessagesBeforeRotation: 10,
@@ -140,6 +141,14 @@ const Campaigns: React.FC = () => {
     prioritizeHighMaturity: true,
     autoSkipRestricted: true,
     balanceLoad: true
+  });
+  
+  // Campaign speed settings (local state synced from DB)
+  const [campaignSpeed, setCampaignSpeed] = useState({
+    staggerMin: 0.3,
+    staggerMax: 1.5,
+    pollingInterval: 3,
+    batchSize: 100,
   });
   
   // Sync local settings with database settings when they load
@@ -156,6 +165,15 @@ const Campaigns: React.FC = () => {
         autoSkipRestricted: appSettings.scheduler.autoSkipRestricted,
         balanceLoad: appSettings.scheduler.balanceLoad,
       });
+      // Sync campaign speed settings
+      if (appSettings.campaign_speed) {
+        setCampaignSpeed({
+          staggerMin: appSettings.campaign_speed.staggerMin ?? 0.3,
+          staggerMax: appSettings.campaign_speed.staggerMax ?? 1.5,
+          pollingInterval: appSettings.campaign_speed.pollingInterval ?? 3,
+          batchSize: appSettings.campaign_speed.batchSize ?? 100,
+        });
+      }
     }
   }, [isLoadingSettings, appSettings]);
   
@@ -909,6 +927,14 @@ const Campaigns: React.FC = () => {
     } finally {
       setIsDeleting(false);
       setIsDeleteDialogOpen(false);
+    }
+  };
+
+  // Save campaign speed settings to database
+  const handleSaveSpeedSettings = async () => {
+    const success = await saveSetting('campaign_speed', campaignSpeed);
+    if (success) {
+      toast.success('Campaign speed settings saved');
     }
   };
 
@@ -1785,6 +1811,114 @@ username123
             </Card>
           ) : (
             <>
+              {/* Campaign Speed Settings Card */}
+              <Card className="border-primary/20 bg-gradient-to-r from-primary/5 to-transparent">
+                <CardContent className="p-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
+                        <TrendingUp className="w-5 h-5 text-primary" />
+                      </div>
+                      <div>
+                        <h3 className="font-semibold">Campaign Speed Settings</h3>
+                        <p className="text-xs text-muted-foreground">
+                          Stagger: {campaignSpeed.staggerMin}s - {campaignSpeed.staggerMax}s • Polling: {campaignSpeed.pollingInterval}s • Batch: {campaignSpeed.batchSize}
+                        </p>
+                      </div>
+                    </div>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={() => setShowSpeedSettings(!showSpeedSettings)}
+                      className="gap-2"
+                    >
+                      <Settings className="w-4 h-4" />
+                      {showSpeedSettings ? 'Hide' : 'Configure'}
+                    </Button>
+                  </div>
+                  
+                  {showSpeedSettings && (
+                    <div className="mt-4 pt-4 border-t border-border/50 space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Stagger Min (seconds)</Label>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[campaignSpeed.staggerMin]}
+                              onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, staggerMin: v }))}
+                              min={0.1}
+                              max={3}
+                              step={0.1}
+                              className="flex-1"
+                            />
+                            <span className="w-12 text-center font-medium">{campaignSpeed.staggerMin}s</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">Minimum delay between parallel sends</p>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <Label>Stagger Max (seconds)</Label>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[campaignSpeed.staggerMax]}
+                              onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, staggerMax: v }))}
+                              min={0.5}
+                              max={5}
+                              step={0.1}
+                              className="flex-1"
+                            />
+                            <span className="w-12 text-center font-medium">{campaignSpeed.staggerMax}s</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">Maximum delay between parallel sends</p>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <Label>Polling Interval (seconds)</Label>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[campaignSpeed.pollingInterval]}
+                              onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, pollingInterval: v }))}
+                              min={0}
+                              max={10}
+                              step={1}
+                              className="flex-1"
+                            />
+                            <span className="w-12 text-center font-medium">{campaignSpeed.pollingInterval}s</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">Wait between batches (0 = immediate if more pending)</p>
+                        </div>
+                        
+                        <div className="space-y-2">
+                          <Label>Batch Size</Label>
+                          <div className="flex items-center gap-4">
+                            <Slider
+                              value={[campaignSpeed.batchSize]}
+                              onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, batchSize: v }))}
+                              min={10}
+                              max={200}
+                              step={10}
+                              className="flex-1"
+                            />
+                            <span className="w-12 text-center font-medium">{campaignSpeed.batchSize}</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">Messages per batch request</p>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center justify-between pt-2">
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <AlertCircle className="w-4 h-4" />
+                          <span>Lower delays = faster but higher risk of restrictions</span>
+                        </div>
+                        <Button onClick={handleSaveSpeedSettings} disabled={isSaving} size="sm">
+                          {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+                          Save Speed Settings
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
               {/* Bulk Selection Bar */}
               <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border border-border/50">
                 <div className="flex items-center gap-3">
