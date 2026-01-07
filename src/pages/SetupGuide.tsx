@@ -14,6 +14,8 @@ import { VPSControlPanel } from '@/components/setup/VPSControlPanel';
 const SetupGuide: React.FC = () => {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const [isSyncing, setIsSyncing] = React.useState(false);
+  const [lastSyncTime, setLastSyncTime] = React.useState<Date | null>(null);
 
   // ========== 1. CONFIG.PY ==========
   const configPy = `"""
@@ -2348,36 +2350,50 @@ if __name__ == "__main__":
     toast.success("VPS ZIP downloaded! Run vps_agent.py on your server.");
   };
 
+  // Manual sync function
+  const syncScriptsToStorage = async (showToast = true) => {
+    setIsSyncing(true);
+    try {
+      const zip = new JSZip();
+      zip.file("campaign_runner.py", campaignRunnerPy);
+      zip.file("livechat_runner.py", livechatRunnerPy);
+      zip.file("account_runner.py", accountRunnerPy);
+      zip.file("warmup_runner.py", warmupRunnerPy);
+      zip.file("block_runner.py", blockRunnerPy);
+      zip.file("client_manager.py", clientManagerPy);
+      zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
+      zip.file("config.py", configPy);
+      
+      const blob = await zip.generateAsync({ type: "blob" });
+      
+      const { error } = await supabase.storage
+        .from('python-scripts')
+        .upload('runners.zip', blob, { 
+          upsert: true,
+          contentType: 'application/zip'
+        });
+      
+      if (error) throw error;
+      
+      setLastSyncTime(new Date());
+      console.log('[Sync] Scripts synced to storage');
+      if (showToast) {
+        toast.success("Scripts synced to VPS storage! Click 'Update All' in VPS controls to apply.");
+      }
+    } catch (error) {
+      console.error('[Sync] Failed to sync scripts:', error);
+      if (showToast) {
+        toast.error("Failed to sync scripts to storage");
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // Auto-sync scripts to storage on page load
   React.useEffect(() => {
-    const syncScriptsToStorage = async () => {
-      try {
-        const zip = new JSZip();
-        zip.file("campaign_runner.py", campaignRunnerPy);
-        zip.file("livechat_runner.py", livechatRunnerPy);
-        zip.file("account_runner.py", accountRunnerPy);
-        zip.file("warmup_runner.py", warmupRunnerPy);
-        zip.file("block_runner.py", blockRunnerPy);
-        zip.file("client_manager.py", clientManagerPy);
-        zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
-        
-        const blob = await zip.generateAsync({ type: "blob" });
-        
-        await supabase.storage
-          .from('python-scripts')
-          .upload('runners.zip', blob, { 
-            upsert: true,
-            contentType: 'application/zip'
-          });
-        
-        console.log('[Auto-Sync] Scripts synced to storage');
-      } catch (error) {
-        console.error('[Auto-Sync] Failed to sync scripts:', error);
-      }
-    };
-    
-    syncScriptsToStorage();
-  }, [campaignRunnerPy, livechatRunnerPy, accountRunnerPy, warmupRunnerPy, blockRunnerPy, clientManagerPy, fingerprintGeneratorPy]);
+    syncScriptsToStorage(false);
+  }, []);
 
   return (
     <DashboardLayout>
@@ -2509,17 +2525,42 @@ if __name__ == "__main__":
                 </CardContent>
               </Card>
 
-              {/* Auto-Sync Info */}
+              {/* Manual Sync Button */}
               <Card className="border-blue-500/30 bg-blue-500/5">
                 <CardContent className="py-4">
                   <div className="flex items-start gap-3">
-                    <RefreshCw className="h-5 w-5 text-blue-500 mt-0.5" />
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium text-blue-600 dark:text-blue-400">Auto-Sync Enabled</p>
+                    <Upload className="h-5 w-5 text-blue-500 mt-0.5" />
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-medium text-blue-600 dark:text-blue-400">Sync Scripts to VPS Storage</p>
+                        {lastSyncTime && (
+                          <span className="text-xs text-muted-foreground">
+                            Last synced: {lastSyncTime.toLocaleTimeString()}
+                          </span>
+                        )}
+                      </div>
                       <p className="text-xs text-muted-foreground">
-                        Scripts automatically sync to storage when you open this page. When you click "Start All" or start any runner, 
-                        the VPS fetches the latest scripts, stops old processes, and runs the new version.
+                        Upload latest crash-proof scripts to storage. Then click "Update All" in VPS controls above to apply on your VPS.
                       </p>
+                      <Button 
+                        onClick={() => syncScriptsToStorage(true)} 
+                        disabled={isSyncing}
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                      >
+                        {isSyncing ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Syncing...
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="h-4 w-4" />
+                            Sync Scripts Now
+                          </>
+                        )}
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
