@@ -1064,50 +1064,45 @@ export default function Warmup() {
                             isRunning ? "bg-green-500/5" : ""
                           }`}
                         >
-                          {/* Pair Number */}
-                          <div className="flex items-center gap-4 min-w-0 flex-1">
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${
+                          {/* Pair Info */}
+                          <div className="flex items-center gap-3 min-w-0 flex-1">
+                            <Badge variant="outline" className={`h-6 px-2 justify-center font-semibold shrink-0 ${
                               isRunning 
-                                ? "bg-green-500 text-white" 
+                                ? "bg-green-500/10 text-green-600 border-green-500/30" 
                                 : activePair?.status === "completed" 
-                                  ? "bg-primary/20 text-primary"
+                                  ? "bg-primary/10 text-primary border-primary/30"
                                   : activePair?.status === "failed"
-                                    ? "bg-red-500/20 text-red-500"
-                                    : "bg-muted text-muted-foreground"
+                                    ? "bg-red-500/10 text-red-500 border-red-500/30"
+                                    : ""
                             }`}>
-                              {index + 1}
+                              #{index + 1}
+                            </Badge>
+                            
+                            {/* Account A */}
+                            <div className="text-left min-w-0">
+                              <span className={`font-mono text-sm block truncate ${
+                                account.timeoutAccountPhone === account.phone_number ? 'text-blue-500' : ''
+                              }`}>
+                                {formatPhone(account.phone_number)}
+                              </span>
+                              {account.first_name && (
+                                <span className="text-xs text-muted-foreground truncate block">{account.first_name}</span>
+                              )}
                             </div>
                             
-                            {/* Account Pair Info */}
-                            <div className="flex items-center gap-3 min-w-0 flex-1">
-                              {/* Account A */}
-                              <div className="text-left min-w-0 flex-1">
-                                <span className={`font-mono text-sm block truncate ${
-                                  account.timeoutAccountPhone === account.phone_number ? 'text-blue-500' : ''
-                                }`}>
-                                  {formatPhone(account.phone_number)}
-                                </span>
-                                <span className="text-xs text-muted-foreground truncate block">
-                                  {account.first_name || "—"}
-                                </span>
-                              </div>
-                              
-                              {/* Arrow */}
-                              <div className={`shrink-0 p-1.5 rounded-full ${isRunning ? 'bg-green-500/20' : 'bg-muted'}`}>
-                                <ArrowLeftRight className={`h-3.5 w-3.5 ${isRunning ? 'text-green-500' : 'text-muted-foreground'}`} />
-                              </div>
-                              
-                              {/* Account B */}
-                              <div className="text-left min-w-0 flex-1">
-                                <span className={`font-mono text-sm block truncate ${
-                                  account.timeoutAccountPhone === account.pair_phone ? 'text-blue-500' : ''
-                                }`}>
-                                  {formatPhone(account.pair_phone)}
-                                </span>
-                                <span className="text-xs text-muted-foreground truncate block">
-                                  {account.pair_first_name || "—"}
-                                </span>
-                              </div>
+                            {/* Arrow */}
+                            <ArrowLeftRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            
+                            {/* Account B */}
+                            <div className="text-left min-w-0">
+                              <span className={`font-mono text-sm block truncate ${
+                                account.timeoutAccountPhone === account.pair_phone ? 'text-blue-500' : ''
+                              }`}>
+                                {formatPhone(account.pair_phone)}
+                              </span>
+                              {account.pair_first_name && (
+                                <span className="text-xs text-muted-foreground truncate block">{account.pair_first_name}</span>
+                              )}
                             </div>
                           </div>
                           
