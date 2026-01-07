@@ -95,6 +95,10 @@ const Campaigns: React.FC = () => {
   const [isLoadingReport, setIsLoadingReport] = useState(false);
   const [accountUniqueRecipients, setAccountUniqueRecipients] = useState<Map<string, number>>(new Map());
   
+  // Bulk selection state
+  const [selectedCampaigns, setSelectedCampaigns] = useState<Set<string>>(new Set());
+  const [isDeleting, setIsDeleting] = useState(false);
+  
   // Seats for campaign assignment
   const [seats, setSeats] = useState<Seat[]>([]);
   const [selectedSeatId, setSelectedSeatId] = useState<string | null>(null);
@@ -769,6 +773,45 @@ const Campaigns: React.FC = () => {
       updateCampaign(campaign.id, { status: 'paused' });
     } else if (campaign.status === 'paused' || campaign.status === 'draft') {
       handleStartCampaign(campaign.id);
+    }
+  };
+
+  // Toggle campaign selection for bulk operations
+  const toggleCampaignSelection = (campaignId: string) => {
+    setSelectedCampaigns(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(campaignId)) {
+        newSet.delete(campaignId);
+      } else {
+        newSet.add(campaignId);
+      }
+      return newSet;
+    });
+  };
+
+  // Select all campaigns
+  const selectAllCampaigns = () => {
+    if (selectedCampaigns.size === campaigns.length) {
+      setSelectedCampaigns(new Set());
+    } else {
+      setSelectedCampaigns(new Set(campaigns.map(c => c.id)));
+    }
+  };
+
+  // Bulk delete campaigns
+  const handleBulkDelete = async () => {
+    if (selectedCampaigns.size === 0) return;
+    
+    setIsDeleting(true);
+    try {
+      const deletePromises = Array.from(selectedCampaigns).map(id => deleteCampaign(id));
+      await Promise.all(deletePromises);
+      setSelectedCampaigns(new Set());
+      toast.success(`Deleted ${selectedCampaigns.size} campaign(s)`);
+    } catch (error) {
+      toast.error('Failed to delete some campaigns');
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -1567,7 +1610,41 @@ username123
               </CardContent>
             </Card>
           ) : (
-            campaigns.map((campaign) => {
+            <>
+              {/* Bulk Selection Bar */}
+              <div className="flex items-center justify-between p-3 bg-muted/30 rounded-lg border border-border/50">
+                <div className="flex items-center gap-3">
+                  <Checkbox
+                    checked={selectedCampaigns.size === campaigns.length && campaigns.length > 0}
+                    onCheckedChange={selectAllCampaigns}
+                  />
+                  <span className="text-sm text-muted-foreground">
+                    {selectedCampaigns.size === 0 
+                      ? `${campaigns.length} campaign${campaigns.length !== 1 ? 's' : ''}` 
+                      : `${selectedCampaigns.size} selected`
+                    }
+                  </span>
+                </div>
+                {selectedCampaigns.size > 0 && (
+                  <Button 
+                    variant="destructive" 
+                    size="sm" 
+                    onClick={handleBulkDelete}
+                    disabled={isDeleting}
+                    className="gap-2"
+                  >
+                    {isDeleting ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                    Delete {selectedCampaigns.size}
+                  </Button>
+                )}
+              </div>
+              
+              {/* Campaign Cards */}
+              {campaigns.map((campaign) => {
               const report = campaignReports.get(campaign.id);
 
               // Check if this campaign has usable accounts (not temp restricted, under daily limit)
@@ -1620,6 +1697,14 @@ username123
                   
                   <CardContent className="p-5 pt-6">
                     <div className="flex items-center justify-between gap-4">
+                      {/* Selection Checkbox */}
+                      <Checkbox
+                        checked={selectedCampaigns.has(campaign.id)}
+                        onCheckedChange={() => toggleCampaignSelection(campaign.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        className="shrink-0"
+                      />
+                      
                       {/* Left Section - Name & Status */}
                       <div className="flex items-center gap-4 min-w-0 flex-1">
                         {/* Status Icon */}
@@ -1981,7 +2066,8 @@ username123
                   </CardContent>
                 </Card>
               );
-            })
+            })}
+            </>
           )}
         </div>
       )}
