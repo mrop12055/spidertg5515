@@ -133,7 +133,7 @@ const SeatChat: React.FC = () => {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
   const [chatTab, setChatTab] = useState<ChatTab>('all');
-  const [senderAccount, setSenderAccount] = useState<SenderAccount | null>(null);
+  const [senderAccounts, setSenderAccounts] = useState<Map<string, SenderAccount>>(new Map());
   const [stats, setStats] = useState<SeatStats>({
     total_conversations: 0,
     conversations_started: 0,
@@ -400,34 +400,32 @@ const SeatChat: React.FC = () => {
     }
   }, [seat]);
 
-  // Fetch sender account info for this seat
-  const fetchSenderAccount = useCallback(async () => {
-    if (!seat) return;
+  // Fetch sender accounts info for all conversations
+  const fetchSenderAccounts = useCallback(async () => {
+    if (!seat || conversations.length === 0) return;
 
     try {
-      // Get any conversation for this seat to find the account_id
-      const { data: convData } = await supabase
-        .from('conversations')
-        .select('account_id')
-        .eq('seat_id', seat.id)
-        .limit(1)
-        .maybeSingle();
+      // Get unique account IDs from conversations
+      const accountIds = [...new Set(conversations.map(c => c.account_id).filter(Boolean))];
+      
+      if (accountIds.length === 0) return;
 
-      if (convData?.account_id) {
-        const { data: accountData, error } = await supabase
-          .from('telegram_accounts')
-          .select('id, phone_number, first_name, last_name, username, avatar_url')
-          .eq('id', convData.account_id)
-          .maybeSingle();
+      const { data: accountsData, error } = await supabase
+        .from('telegram_accounts')
+        .select('id, phone_number, first_name, last_name, username, avatar_url')
+        .in('id', accountIds);
 
-        if (!error && accountData) {
-          setSenderAccount(accountData);
-        }
+      if (!error && accountsData) {
+        const accountsMap = new Map<string, SenderAccount>();
+        accountsData.forEach(acc => {
+          accountsMap.set(acc.id, acc);
+        });
+        setSenderAccounts(accountsMap);
       }
     } catch (err) {
-      console.error('Error fetching sender account:', err);
+      console.error('Error fetching sender accounts:', err);
     }
-  }, [seat]);
+  }, [seat, conversations]);
 
   // Fetch messages for selected conversation
   const fetchMessages = useCallback(async () => {
@@ -466,9 +464,13 @@ const SeatChat: React.FC = () => {
     if (seat) {
       fetchConversations();
       fetchStats();
-      fetchSenderAccount();
     }
-  }, [seat, fetchConversations, fetchStats, fetchSenderAccount]);
+  }, [seat, fetchConversations, fetchStats]);
+
+  // Fetch sender accounts when conversations change
+  useEffect(() => {
+    fetchSenderAccounts();
+  }, [fetchSenderAccounts]);
 
   useEffect(() => {
     fetchMessages();
@@ -1253,6 +1255,25 @@ const SeatChat: React.FC = () => {
                               </span>
                             )}
                           </div>
+                          {/* Sender Account Info */}
+                          {senderAccounts.get(conv.account_id) && (
+                            <div className="flex items-center gap-2 mt-2 pt-2 border-t border-border/30">
+                              <Avatar className="w-5 h-5">
+                                <AvatarImage src={senderAccounts.get(conv.account_id)?.avatar_url || undefined} />
+                                <AvatarFallback className={cn(
+                                  "text-[9px] font-semibold text-white bg-gradient-to-br",
+                                  getAvatarColor(senderAccounts.get(conv.account_id)?.phone_number || null)
+                                )}>
+                                  {senderAccounts.get(conv.account_id)?.first_name?.[0] || 'S'}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="text-[10px] text-muted-foreground truncate">
+                                Sent by: <span className="font-medium text-foreground/80">
+                                  {senderAccounts.get(conv.account_id)?.first_name || senderAccounts.get(conv.account_id)?.username || 'Unknown'}
+                                </span>
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         {/* Actions Menu */}
@@ -1828,43 +1849,6 @@ const SeatChat: React.FC = () => {
                   </div>
                 </div>
                 <div className="p-6 space-y-6">
-                  {/* Sender Account Card */}
-                  {senderAccount && (
-                    <div className="group relative">
-                      <div className="absolute inset-0 bg-gradient-to-br from-primary/10 to-transparent rounded-xl opacity-0 group-hover:opacity-100 transition-opacity" />
-                      <div className="relative p-5 rounded-xl border border-primary/20 bg-gradient-to-br from-primary/5 to-transparent hover:border-primary/40 transition-all">
-                        <div className="flex items-center gap-4">
-                          <Avatar className="h-14 w-14 ring-2 ring-primary/20 ring-offset-2 ring-offset-background">
-                            <AvatarImage src={senderAccount.avatar_url || undefined} alt="Sender" />
-                            <AvatarFallback className={cn(
-                              "text-lg font-semibold text-white bg-gradient-to-br",
-                              getAvatarColor(senderAccount.phone_number)
-                            )}>
-                              {senderAccount.first_name?.[0] || senderAccount.phone_number?.[1] || 'S'}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <Phone className="w-3.5 h-3.5 text-primary" />
-                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Sender Account</p>
-                            </div>
-                            <p className="text-foreground font-bold text-lg truncate">
-                              {senderAccount.first_name || senderAccount.username || 'Unknown'}
-                              {senderAccount.last_name ? ` ${senderAccount.last_name}` : ''}
-                            </p>
-                            {senderAccount.username && (
-                              <p className="text-sm text-muted-foreground truncate">@{senderAccount.username}</p>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1 text-xs text-green-500 bg-green-500/10 px-2 py-1 rounded-full">
-                            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                            <span>Active</span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  
                   {/* Workspace Details Grid */}
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                     <div className="group relative">
