@@ -535,20 +535,21 @@ serve(async (req) => {
           const campaign = recipient.campaigns;
           const failedAccountIds: string[] = recipient.failed_account_ids || [];
           
-          // ========== KEY FIX: Filter out accounts in failed_account_ids ==========
+          // ========== ROUND-ROBIN: Assign accounts evenly, allow multiple messages per account ==========
           let account = null;
+          
+          // Round-robin index for fair distribution
+          const roundRobinIndex = tasks.length % campaignUsableAccounts.length;
           
           if (recipient.sent_by_account_id) {
             // Use pre-assigned account ONLY if:
             // 1. It's not in failed_account_ids
             // 2. It's in campaignUsableAccounts (active, under limit)
-            // 3. Not already used in this batch
-            // 4. API not at limit
+            // 3. API not at limit (NO usedAccountIds check - allow multiple per batch)
             const isNotFailed = !failedAccountIds.includes(recipient.sent_by_account_id);
             account = isNotFailed 
               ? campaignUsableAccounts.find((a: any) => {
                   if (a.id !== recipient.sent_by_account_id) return false;
-                  if (usedAccountIds.has(a.id)) return false;
                   // Check API limit with batch usage
                   if (a.api_credential_id) {
                     const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
@@ -560,19 +561,25 @@ serve(async (req) => {
               : null;
           }
 
-          // If no assigned account or it's already used/failed/API-limited, find another
+          // If no assigned account, use round-robin to distribute evenly
           if (!account) {
-            account = campaignUsableAccounts.find((a: any) => {
-              if (usedAccountIds.has(a.id)) return false;
-              if (failedAccountIds.includes(a.id)) return false;
+            // Start from round-robin position and find first eligible account
+            for (let i = 0; i < campaignUsableAccounts.length; i++) {
+              const idx = (roundRobinIndex + i) % campaignUsableAccounts.length;
+              const a = campaignUsableAccounts[idx];
+              
+              if (failedAccountIds.includes(a.id)) continue;
+              
               // Check API limit with batch usage
               if (a.api_credential_id) {
                 const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
                 const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
-                if (totalUsage >= apiDailyLimit) return false;
+                if (totalUsage >= apiDailyLimit) continue;
               }
-              return true;
-            });
+              
+              account = a;
+              break;
+            }
           }
 
           if (!account) {
@@ -666,7 +673,7 @@ serve(async (req) => {
             mode: "campaign",
           });
 
-          usedAccountIds.add(account.id);
+          // NO usedAccountIds tracking - allow same account to send multiple messages per batch
           console.log(`[get-batch-tasks] Added task for ${recipient.phone_number} via ${account.phone_number}`);
         }
       }
