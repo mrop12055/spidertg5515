@@ -163,11 +163,8 @@ const Accounts: React.FC = () => {
   const [spamBotProgress, setSpamBotProgress] = useState<{ total: number; completed: number; results: Map<string, { status: string; result?: string }> }>({ total: 0, completed: 0, results: new Map() });
   
   
-  // Messages sent today tracking (unique recipients in last 24h)
-  const [messagesSentLast24h, setMessagesSentLast24h] = useState<Map<string, number>>(new Map());
-  
-  // Total lifetime conversations per account
-  const [totalConversations, setTotalConversations] = useState<Map<string, number>>(new Map());
+  // Total lifetime messages per account (actual message count, not conversations)
+  const [totalMessages, setTotalMessages] = useState<Map<string, number>>(new Map());
 
   // Processing tasks state
   const [processingTasks, setProcessingTasks] = useState<Map<string, string>>(new Map());
@@ -371,51 +368,14 @@ const Accounts: React.FC = () => {
     };
   }, [isAccountTaskRunning, accountTasksProgress]);
    
-  // Fetch unique conversations (recipients) contacted in last 24 hours per account
+  // Fetch total lifetime messages per account (actual sent messages count)
   useEffect(() => {
-    const fetchMessageCounts = async () => {
-      const yesterday = new Date();
-      yesterday.setHours(yesterday.getHours() - 24);
-      
-      const { data, error } = await supabase
-        .from('messages')
-        .select('account_id, conversation_id')
-        .eq('direction', 'outgoing')
-        .gte('created_at', yesterday.toISOString());
-      
-      if (data && !error) {
-        // Count unique conversations per account (not total messages)
-        const accountConversations = new Map<string, Set<string>>();
-        data.forEach((msg: any) => {
-          if (!accountConversations.has(msg.account_id)) {
-            accountConversations.set(msg.account_id, new Set());
-          }
-          accountConversations.get(msg.account_id)!.add(msg.conversation_id);
-        });
-        
-        // Convert to count of unique recipients
-        const counts = new Map<string, number>();
-        accountConversations.forEach((convSet, accountId) => {
-          counts.set(accountId, convSet.size);
-        });
-        setMessagesSentLast24h(counts);
-      }
-    };
-    
-    fetchMessageCounts();
-    const interval = setInterval(fetchMessageCounts, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Fetch total lifetime conversations per account (using RPC to avoid 1000 row limit)
-  useEffect(() => {
-    const fetchTotalConversations = async () => {
+    const fetchTotalMessages = async () => {
       // Fetch all account_ids first
       const accountIds = accounts.map(a => a.id);
       if (accountIds.length === 0) return;
       
-      // Fetch conversation counts for each account using a single query with grouping
-      // We need to paginate to avoid the 1000 row limit
+      // Fetch outgoing message counts for each account using pagination
       const counts = new Map<string, number>();
       let offset = 0;
       const pageSize = 1000;
@@ -423,8 +383,10 @@ const Accounts: React.FC = () => {
       
       while (hasMore) {
         const { data, error } = await supabase
-          .from('conversations')
+          .from('messages')
           .select('account_id')
+          .eq('direction', 'outgoing')
+          .eq('status', 'sent')
           .range(offset, offset + pageSize - 1);
         
         if (error || !data) {
@@ -432,19 +394,19 @@ const Accounts: React.FC = () => {
           break;
         }
         
-        data.forEach((conv: any) => {
-          counts.set(conv.account_id, (counts.get(conv.account_id) || 0) + 1);
+        data.forEach((msg: any) => {
+          counts.set(msg.account_id, (counts.get(msg.account_id) || 0) + 1);
         });
         
         hasMore = data.length === pageSize;
         offset += pageSize;
       }
       
-      setTotalConversations(counts);
+      setTotalMessages(counts);
     };
     
-    fetchTotalConversations();
-    const interval = setInterval(fetchTotalConversations, 60000);
+    fetchTotalMessages();
+    const interval = setInterval(fetchTotalMessages, 60000);
     return () => clearInterval(interval);
   }, [accounts]);
 
@@ -1568,8 +1530,8 @@ const Accounts: React.FC = () => {
     const proxyStatus = getProxyStatus(account.proxyId);
     const proxyCountry = getProxyCountry(account.proxyId);
     const proxyFlag = countryToFlag(proxyCountry);
-    const msgSent24h = messagesSentLast24h.get(account.id) || 0;
-    const totalConvs = totalConversations.get(account.id) || 0;
+    const msgSentToday = account.messagesSentToday || 0; // Use actual DB field
+    const totalMsgs = totalMessages.get(account.id) || 0;
     const accountGroup = groups.find(g => g.accountIds.includes(account.id));
     
     // Accounts without username AND no first/last name might be blocked/restricted
@@ -1807,38 +1769,38 @@ const Accounts: React.FC = () => {
             <div className="text-muted-foreground">Age</div>
           </div>
           
-          {/* Total Conversations (lifetime) */}
+          {/* Total lifetime messages */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className={cn(
                   "flex items-center gap-1 px-2 py-1 rounded text-xs",
-                  totalConvs > 0 ? "bg-blue-500/10 text-blue-600" : "bg-muted/50 text-muted-foreground"
+                  totalMsgs > 0 ? "bg-blue-500/10 text-blue-600" : "bg-muted/50 text-muted-foreground"
                 )}>
                   <Users className="w-3 h-3" />
-                  <span className="font-medium">{totalConvs}</span>
+                  <span className="font-medium">{totalMsgs}</span>
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Total conversations (lifetime): {totalConvs}</p>
+                <p>Total messages sent (lifetime): {totalMsgs}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
           
-          {/* Recipients contacted in last 24h */}
+          {/* Messages sent today */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className={cn(
                   "flex items-center gap-1 px-2 py-1 rounded text-xs",
-                  msgSent24h > 0 ? "bg-primary/10 text-primary" : "bg-muted/50 text-muted-foreground"
+                  msgSentToday > 0 ? "bg-primary/10 text-primary" : "bg-muted/50 text-muted-foreground"
                 )}>
                   <MessageSquare className="w-3 h-3" />
-                  <span className="font-medium">{msgSent24h}</span>
+                  <span className="font-medium">{msgSentToday}</span>
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Recipients contacted in last 24h: {msgSent24h}</p>
+                <p>Messages sent today: {msgSentToday} / {account.dailyLimit || 25}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
