@@ -710,9 +710,10 @@ serve(async (req) => {
     // For livechat, we need ALL accounts (active + restricted) to receive and send messages
     if (runner === "livechat") {
       // Fetch active + restricted accounts specifically for livechat
+      // No API credentials needed - livechat uses session files for existing conversations
       const { data: livechatAccounts } = await supabase
         .from("telegram_accounts")
-        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+        .select("*, proxies!fk_proxy(*)")
         .in("status", ["active", "restricted"])
         .or(`restricted_until.is.null,restricted_until.lt.${now}`);
 
@@ -761,8 +762,6 @@ serve(async (req) => {
             .update({ status: "sending" })
             .eq("id", msg.id);
 
-          const apiCred = account.telegram_api_credentials;
-
           tasks.push({
             task: "send",
             message: {
@@ -782,8 +781,8 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
+              api_id: account.api_id,
+              api_hash: account.api_hash,
               proxy_id: account.proxy_id,
             },
             proxy: account.proxies
@@ -814,8 +813,8 @@ serve(async (req) => {
         app_version: a.app_version,
         lang_code: a.lang_code,
         system_lang_code: a.system_lang_code,
-        api_id: a.telegram_api_credentials?.api_id || a.api_id,
-        api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
+        api_id: a.api_id,
+        api_hash: a.api_hash,
         proxy_id: a.proxy_id,
         proxy: a.proxies ? {
           host: a.proxies.host,
