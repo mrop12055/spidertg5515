@@ -144,37 +144,48 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
         return (ptype, host, int(port))
 
 
-async def connect_with_retry(client: TelegramClient, account_id: str = None) -> tuple[bool, str, bool]:
-    """Connect with NO RETRY on proxy errors.
-    
-    Returns: (success, error_message, is_proxy_error)
-    
-    On proxy error: immediately returns failure so proxy can be changed.
-    Does NOT retry - just reports and moves on.
-    """
-    try:
-        await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-        return (True, "", False)
-    except asyncio.TimeoutError:
-        return (False, "Connection timeout - proxy may be slow or unresponsive", True)
-    except ConnectionRefusedError:
-        return (False, "Proxy connection refused", True)
-    except OSError as e:
-        error_str = str(e).lower()
-        is_proxy = any(x in error_str for x in ["proxy", "socks", "connect", "network", "unreachable"])
-        return (False, f"Connection error: {e}", is_proxy)
-    except Exception as e:
-        error_str = str(e).lower()
-        is_proxy = any(x in error_str for x in ["proxy", "socks", "connection refused", "connect error", "unreachable", "timeout"])
-        return (False, f"Connection failed: {e}", is_proxy)
+async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> tuple[bool, str]:
+    """Connect with retry logic and exponential backoff."""
+    last_error = ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+            return (True, "")
+        except asyncio.TimeoutError:
+            last_error = "Connection timeout - proxy may be slow or unresponsive"
+            print(f"    [TIMEOUT] Attempt {attempt}/{max_retries}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        except ConnectionRefusedError:
+            last_error = "Proxy connection refused"
+            print(f"    [REFUSED] Attempt {attempt}/{max_retries}: Connection refused")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        except OSError as e:
+            error_str = str(e).lower()
+            if "proxy" in error_str or "socks" in error_str or "connect" in error_str:
+                last_error = f"Proxy error: {e}"
+            elif "network" in error_str or "unreachable" in error_str:
+                last_error = f"Network unreachable - proxy may be down: {e}"
+            else:
+                last_error = f"Connection error: {e}"
+            print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(x in error_str for x in ["proxy", "socks", "connection refused", "connect error", "unreachable"]):
+                last_error = f"Proxy error: {e}"
+            else:
+                last_error = f"Connection failed: {e}"
+            print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+    return (False, last_error)
 
 
 async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False, task_proxy: dict = None) -> Optional[TelegramClient]:
-    """Get existing client or create new one with unique device fingerprint.
-    
-    Uses existing fingerprint if available, generates new one only if missing.
-    On proxy error: reports and changes proxy, returns None immediately (no retry).
-    """
+    """Get existing client or create new one with unique device fingerprint."""
     account_id = account["id"]
     
     # Return cached client if connected
@@ -200,7 +211,7 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
     if not session_path:
         return None
     
-    # Use existing fingerprint if available, generate only if missing
+    # Get or generate device fingerprint
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     app_version = account.get("app_version")
@@ -208,16 +219,13 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
     system_lang_code = account.get("system_lang_code") or "en-US"
     
     if not device_model or not system_version:
-        # Generate new fingerprint only if not exists
         fp = generate_fingerprint()
         device_model = fp["device_model"]
         system_version = fp["system_version"]
         app_version = fp["app_version"]
         lang_code = fp["lang_code"]
         system_lang_code = fp["system_lang_code"]
-        print(f"  [FP] Generated NEW: {device_model} ({system_version})")
-        
-        # Report fingerprint to server to save it
+        print(f"  [FP] Generated: {device_model} ({system_version})")
         await report_result("fingerprint_generated", {
             "account_id": account_id,
             "device_model": device_model,
@@ -226,8 +234,6 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             "lang_code": lang_code,
             "system_lang_code": system_lang_code
         })
-    else:
-        print(f"  [FP] Using existing: {device_model} ({system_version})")
     
     proxy = get_proxy_settings(account, task_proxy)
     if proxy:
@@ -264,18 +270,15 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         )
         
         print(f"  [CONNECT] {account['phone_number']}...")
-        connected, connect_error, is_proxy_error = await connect_with_retry(client, account_id)
+        connected, connect_error = await connect_with_retry(client)
         if not connected:
             print(f"  [FAIL] Could not connect: {account['phone_number']} - {connect_error}")
-            
-            if is_proxy_error:
-                # Proxy error - report and request proxy change (NO RETRY)
-                print(f"  [PROXY] Error detected - requesting proxy change for {account['phone_number']}")
+            error_lower = connect_error.lower()
+            if any(x in error_lower for x in ["proxy", "socks", "refused", "unreachable", "timeout"]):
                 await report_result("proxy_error", {
                     "account_id": account_id, 
                     "reason": connect_error,
-                    "proxy_id": f"{proxy[1]}:{proxy[2]}" if proxy else None,
-                    "change_proxy": True  # Signal to change proxy
+                    "proxy_id": proxy[1] + ":" + str(proxy[2]) if proxy else None
                 })
             else:
                 await report_result("account_disconnected", {"account_id": account_id, "reason": connect_error})
@@ -668,37 +671,6 @@ async def disconnect_batch(account_ids: list):
         print(f"  [CLEANUP] Disconnected {disconnected} clients after batch")
 
 
-async def send_heartbeat(runner_name: str):
-    """Send heartbeat to runner_heartbeats table to show runner is online."""
-    try:
-        from config import SUPABASE_URL, SUPABASE_KEY
-        from datetime import datetime, timezone
-        
-        http = await _get_backend_http()
-        now_iso = datetime.now(timezone.utc).isoformat()
-        
-        # Upsert heartbeat directly to Supabase REST API
-        resp = await http.post(
-            f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json",
-                "Prefer": "resolution=merge-duplicates"
-            },
-            json={
-                "runner_name": runner_name,
-                "last_seen": now_iso,
-                "status": "online",
-                "server_id": "pc"
-            }
-        )
-        if resp.status_code not in (200, 201):
-            print(f"  [HEARTBEAT] {runner_name}: {resp.status_code}")
-    except Exception as e:
-        print(f"  [HEARTBEAT] Failed: {e}")
-
-
 async def shutdown_all():
     """Cleanup all clients on shutdown"""
     print("\n[SHUTDOWN] Disconnecting all clients...")
@@ -708,5 +680,4 @@ async def shutdown_all():
         except:
             pass
     active_clients.clear()
-    await _close_http_clients()
     print("[OK] All clients disconnected.")

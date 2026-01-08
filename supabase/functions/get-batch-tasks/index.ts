@@ -47,86 +47,102 @@ serve(async (req) => {
 
     // Dynamic batch sizes from settings
     let warmupBatchSize = 100; // Default for warmup
+    let campaignBatchSize = 100; // Default for campaign
     
-    // Campaign speed settings - NO LIMITS, INSTANT SENDING
-    const campaignStaggerMin = 0;  // No stagger
-    const campaignStaggerMax = 0;  // No stagger
-    const campaignPollingInterval = 3;  // 3 seconds when tasks exist
-    const noTaskPollingInterval = 30;   // 30 seconds when no tasks
-    // NO message limit per account - unlimited
-    
+    // Campaign speed settings (server-controlled)
+    let campaignStaggerMin = 0.3;
+    let campaignStaggerMax = 1.5;
+    let campaignPollingInterval = 3;
+    let campaignMessagesPerAccountPerDay = 25; // NEW: Messages per account per day for campaigns
     if (settingsData) {
       for (const setting of settingsData) {
         const value = setting.value as Record<string, unknown>;
         if (setting.key === "message_timing" && value) {
           MESSAGE_DELAY_MIN_SECONDS = (value.minDelaySeconds as number) || MESSAGE_DELAY_MIN_SECONDS;
           MESSAGE_DELAY_MAX_SECONDS = (value.maxDelaySeconds as number) || MESSAGE_DELAY_MAX_SECONDS;
+        } else if (setting.key === "account_limits" && value) {
+          DAILY_MESSAGE_LIMIT = (value.dailyMessageLimit as number) || DAILY_MESSAGE_LIMIT;
         } else if (setting.key === "warmup_batch_size" && value) {
           // Read warmup batch size from app_settings
           warmupBatchSize = (value.batchSize as number) || warmupBatchSize;
+        } else if (setting.key === "campaign_speed" && value) {
+          // Campaign speed settings
+          campaignStaggerMin = (value.staggerMin as number) ?? campaignStaggerMin;
+          campaignStaggerMax = (value.staggerMax as number) ?? campaignStaggerMax;
+          campaignPollingInterval = (value.pollingInterval as number) ?? campaignPollingInterval;
+          campaignBatchSize = (value.batchSize as number) ?? campaignBatchSize;
+          campaignMessagesPerAccountPerDay = (value.messagesPerAccountPerDay as number) ?? campaignMessagesPerAccountPerDay;
         }
-        // Ignore campaign_speed settings - we use hardcoded values for no limits
       }
     }
 
     const now = new Date().toISOString();
 
+    // Get all active accounts not temporarily restricted, with their proxy info
+    // Fetch all accounts without limit to support 100+ pairs
+    const { data: activeAccounts, error: accountsError } = await supabase
+      .from("telegram_accounts")
+      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+      .eq("status", "active")
+      .or(`restricted_until.is.null,restricted_until.lt.${now}`);
+
+    if (accountsError || !activeAccounts || activeAccounts.length === 0) {
+      console.log("[get-batch-tasks] No active accounts available");
+      return new Response(JSON.stringify({
+        tasks: [],
+        delay_after: 30,
+        reason: "No active accounts"
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // CRITICAL SAFETY CHECK: Only use accounts that have an ACTIVE proxy assigned
+    const accountsWithActiveProxy = activeAccounts.filter((a: any) => {
+      if (!a.proxy_id) {
+        console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - NO PROXY ASSIGNED`);
+        return false;
+      }
+      if (!a.proxies || a.proxies.status !== 'active') {
+        console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - PROXY NOT ACTIVE (status: ${a.proxies?.status || 'missing'})`);
+        return false;
+      }
+      return true;
+    });
+
+    if (accountsWithActiveProxy.length === 0) {
+      console.log("[get-batch-tasks] No accounts with active proxies available");
+      return new Response(JSON.stringify({
+        tasks: [],
+        delay_after: 30,
+        reason: "No accounts with active proxies - assign proxies to accounts first"
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Filter to accounts under daily limit
+    const usableAccounts = accountsWithActiveProxy.filter((a: any) => {
+      const limit = a.daily_limit ?? DAILY_MESSAGE_LIMIT;
+      const sentToday = a.messages_sent_today ?? 0;
+      return sentToday < limit;
+    });
+
+    if (usableAccounts.length === 0) {
+      console.log("[get-batch-tasks] All accounts at daily limit");
+      return new Response(JSON.stringify({
+        tasks: [],
+        delay_after: 60,
+        reason: "All accounts at daily limit"
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    
+    console.log(`[get-batch-tasks] ${usableAccounts.length} accounts with active proxies ready`);
+
     const tasks: any[] = [];
     const usedAccountIds = new Set<string>();
-
-    // For livechat we don't need the global accounts+API-credentials fetch.
-    // We fetch only the minimal account+proxy fields inside the livechat block.
-    let usableAccounts: any[] = [];
-
-    if (runner !== "livechat") {
-      // Get all active accounts not temporarily restricted, with their proxy info
-      // Fetch all accounts without limit to support 100+ pairs
-      const { data: activeAccounts, error: accountsError } = await supabase
-        .from("telegram_accounts")
-        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-        .eq("status", "active")
-        .or(`restricted_until.is.null,restricted_until.lt.${now}`);
-
-      if (accountsError || !activeAccounts || activeAccounts.length === 0) {
-        console.log("[get-batch-tasks] No active accounts available");
-        return new Response(JSON.stringify({
-          tasks: [],
-          delay_after: 30,
-          reason: "No active accounts",
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // CRITICAL SAFETY CHECK: Only use accounts that have an ACTIVE proxy assigned
-      const accountsWithActiveProxy = activeAccounts.filter((a: any) => {
-        if (!a.proxy_id) {
-          console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - NO PROXY ASSIGNED`);
-          return false;
-        }
-        if (!a.proxies || a.proxies.status !== "active") {
-          console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - PROXY NOT ACTIVE (status: ${a.proxies?.status || "missing"})`);
-          return false;
-        }
-        return true;
-      });
-
-      if (accountsWithActiveProxy.length === 0) {
-        console.log("[get-batch-tasks] No accounts with active proxies available");
-        return new Response(JSON.stringify({
-          tasks: [],
-          delay_after: noTaskPollingInterval,
-          reason: "No accounts with active proxies - assign proxies to accounts first",
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // Use ALL accounts with active proxies - NO daily limit filtering for campaigns
-      usableAccounts = accountsWithActiveProxy;
-
-      console.log(`[get-batch-tasks] ${usableAccounts.length} accounts with active proxies ready (NO LIMITS)`);
-    }
 
     // WARMUP_CHAT RUNNER: Get pending warmup messages (PARALLEL BATCH)
     if (runner === "warmup_chat") {
@@ -322,7 +338,7 @@ serve(async (req) => {
       if (!runningCampaigns || runningCampaigns.length === 0) {
         return new Response(JSON.stringify({
           tasks: [],
-          delay_after: noTaskPollingInterval,
+          delay_after: campaignPollingInterval,
           stagger_min: campaignStaggerMin,
           stagger_max: campaignStaggerMax,
           reason: "No running campaigns",
@@ -389,8 +405,11 @@ serve(async (req) => {
 
       console.log(`[get-batch-tasks] ${accountsWithAvailableApi.length} accounts have API under limit (of ${usableAccounts.length} total)`);
 
-      // NO per-account message limit - use all accounts with available API
-      const campaignUsableAccounts = accountsWithAvailableApi;
+      // Filter accounts for campaigns using campaign-specific per-account limit
+      const campaignUsableAccounts = accountsWithAvailableApi.filter((a: any) => {
+        const sentToday = a.messages_sent_today ?? 0;
+        return sentToday < campaignMessagesPerAccountPerDay;
+      });
 
       // Track API usage in this batch to avoid over-assigning
       const batchApiUsage = new Map<string, number>();
@@ -477,7 +496,7 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({
           tasks: [],
-          delay_after: noTaskPollingInterval,
+          delay_after: campaignPollingInterval,
           stagger_min: campaignStaggerMin,
           stagger_max: campaignStaggerMax,
           reason: "No pending recipients",
@@ -517,7 +536,7 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({
           tasks: [],
-          delay_after: noTaskPollingInterval,
+          delay_after: campaignPollingInterval,
           stagger_min: campaignStaggerMin,
           stagger_max: campaignStaggerMax,
           reason: "All accounts restricted or at daily limit - campaigns failed",
@@ -527,9 +546,9 @@ serve(async (req) => {
         });
       }
 
-      // NO batch size limit - get ALL pending recipients that we can assign to accounts
-      const actualBatchSize = campaignUsableAccounts.length * 10; // Allow many tasks per account
-      console.log(`[get-batch-tasks] Campaign using NO LIMITS: ${campaignUsableAccounts.length} accounts available`);
+      // Use campaignBatchSize from settings, limited by available accounts
+      const actualBatchSize = Math.min(campaignBatchSize, campaignUsableAccounts.length);
+      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (settings: ${campaignBatchSize}, accounts: ${campaignUsableAccounts.length}, limit: ${campaignMessagesPerAccountPerDay}/account)`);
 
       // Track recipients with no eligible accounts (all accounts in their failed_account_ids)
       let recipientsWithNoAccounts = 0;
@@ -541,21 +560,20 @@ serve(async (req) => {
           const campaign = recipient.campaigns;
           const failedAccountIds: string[] = recipient.failed_account_ids || [];
           
-          // ========== ROUND-ROBIN: Assign accounts evenly, allow multiple messages per account ==========
+          // ========== KEY FIX: Filter out accounts in failed_account_ids ==========
           let account = null;
-          
-          // Round-robin index for fair distribution
-          const roundRobinIndex = tasks.length % campaignUsableAccounts.length;
           
           if (recipient.sent_by_account_id) {
             // Use pre-assigned account ONLY if:
             // 1. It's not in failed_account_ids
             // 2. It's in campaignUsableAccounts (active, under limit)
-            // 3. API not at limit (NO usedAccountIds check - allow multiple per batch)
+            // 3. Not already used in this batch
+            // 4. API not at limit
             const isNotFailed = !failedAccountIds.includes(recipient.sent_by_account_id);
             account = isNotFailed 
               ? campaignUsableAccounts.find((a: any) => {
                   if (a.id !== recipient.sent_by_account_id) return false;
+                  if (usedAccountIds.has(a.id)) return false;
                   // Check API limit with batch usage
                   if (a.api_credential_id) {
                     const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
@@ -567,25 +585,19 @@ serve(async (req) => {
               : null;
           }
 
-          // If no assigned account, use round-robin to distribute evenly
+          // If no assigned account or it's already used/failed/API-limited, find another
           if (!account) {
-            // Start from round-robin position and find first eligible account
-            for (let i = 0; i < campaignUsableAccounts.length; i++) {
-              const idx = (roundRobinIndex + i) % campaignUsableAccounts.length;
-              const a = campaignUsableAccounts[idx];
-              
-              if (failedAccountIds.includes(a.id)) continue;
-              
+            account = campaignUsableAccounts.find((a: any) => {
+              if (usedAccountIds.has(a.id)) return false;
+              if (failedAccountIds.includes(a.id)) return false;
               // Check API limit with batch usage
               if (a.api_credential_id) {
                 const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
                 const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
-                if (totalUsage >= apiDailyLimit) continue;
+                if (totalUsage >= apiDailyLimit) return false;
               }
-              
-              account = a;
-              break;
-            }
+              return true;
+            });
           }
 
           if (!account) {
@@ -679,7 +691,7 @@ serve(async (req) => {
             mode: "campaign",
           });
 
-          // NO usedAccountIds tracking - allow same account to send multiple messages per batch
+          usedAccountIds.add(account.id);
           console.log(`[get-batch-tasks] Added task for ${recipient.phone_number} via ${account.phone_number}`);
         }
       }
@@ -713,40 +725,8 @@ serve(async (req) => {
     }
 
     // LIVECHAT RUNNER: Get pending outgoing messages
-    // For livechat, we need ALL accounts (active + restricted) to receive and send messages
     if (runner === "livechat") {
-      // Fetch active + restricted accounts specifically for livechat
-      // No API credentials needed - livechat uses session files for existing conversations
-      const { data: livechatAccounts } = await supabase
-        .from("telegram_accounts")
-        .select(`
-          id,
-          phone_number,
-          session_data,
-          device_model,
-          system_version,
-          app_version,
-          lang_code,
-          system_lang_code,
-          api_id,
-          api_hash,
-          proxy_id,
-          proxies!fk_proxy(host, port, username, password, proxy_type, status)
-        `)
-        .in("status", ["active", "restricted"])
-        .or(`restricted_until.is.null,restricted_until.lt.${now}`);
-
-      // Filter to only those with active proxies
-      const livechatUsableAccounts = (livechatAccounts || []).filter((a: any) => {
-        const proxy = Array.isArray(a.proxies) ? a.proxies[0] : a.proxies;
-        if (!a.proxy_id) return false;
-        if (!proxy || proxy.status !== "active") return false;
-        return true;
-      });
-
-      console.log(`[get-batch-tasks] Livechat: ${livechatUsableAccounts.length} accounts (active + restricted with active proxies)`);
-
-      const actualBatchSize = Math.min(batch_size || 50, livechatUsableAccounts.length);
+      const actualBatchSize = Math.min(batch_size || 50, usableAccounts.length);
       
       const { data: pendingMessages } = await supabase
         .from("messages")
@@ -769,8 +749,8 @@ serve(async (req) => {
 
           const conv = msg.conversations;
           
-          // Find the account for this conversation from livechat accounts
-          const account = livechatUsableAccounts.find((a: any) => 
+          // Find the account for this conversation
+          const account = usableAccounts.find((a: any) => 
             a.id === conv.account_id && !usedAccountIds.has(a.id)
           );
 
@@ -782,7 +762,7 @@ serve(async (req) => {
             .update({ status: "sending" })
             .eq("id", msg.id);
 
-          const proxy = Array.isArray(account.proxies) ? account.proxies[0] : account.proxies;
+          const apiCred = account.telegram_api_credentials;
 
           tasks.push({
             task: "send",
@@ -803,18 +783,18 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: account.api_id,
-              api_hash: account.api_hash,
+              api_id: apiCred?.api_id || account.api_id,
+              api_hash: apiCred?.api_hash || account.api_hash,
               proxy_id: account.proxy_id,
             },
-            proxy: proxy
+            proxy: account.proxies
               ? {
-                  host: proxy.host,
-                  port: proxy.port,
-                  username: proxy.username,
-                  password: proxy.password,
-                  proxy_type: proxy.proxy_type,
-                  type: proxy.proxy_type,
+                  host: account.proxies.host,
+                  port: account.proxies.port,
+                  username: account.proxies.username,
+                  password: account.proxies.password,
+                  proxy_type: account.proxies.proxy_type,
+                  type: account.proxies.proxy_type,
                 }
               : null,
             mode: "livechat",
@@ -824,41 +804,35 @@ serve(async (req) => {
         }
       }
       
-      // For livechat, return ALL active + restricted accounts for connection
-      // This ensures all accounts can receive incoming messages
-      const accountsForConnection = livechatUsableAccounts.map((a: any) => {
-        const proxy = Array.isArray(a.proxies) ? a.proxies[0] : a.proxies;
-
-        return {
-          id: a.id,
-          phone_number: a.phone_number,
-          session_data: a.session_data,
-          device_model: a.device_model,
-          system_version: a.system_version,
-          app_version: a.app_version,
-          lang_code: a.lang_code,
-          system_lang_code: a.system_lang_code,
-          api_id: a.api_id,
-          api_hash: a.api_hash,
-          proxy_id: a.proxy_id,
-          proxy: proxy
-            ? {
-                host: proxy.host,
-                port: proxy.port,
-                username: proxy.username,
-                password: proxy.password,
-                proxy_type: proxy.proxy_type,
-                type: proxy.proxy_type,
-              }
-            : null,
-        };
-      });
+      // For livechat, also return accounts for initial connection
+      // This helps the runner connect accounts that need message handlers
+      const accountsForConnection = usableAccounts.map((a: any) => ({
+        id: a.id,
+        phone_number: a.phone_number,
+        session_data: a.session_data,
+        device_model: a.device_model,
+        system_version: a.system_version,
+        app_version: a.app_version,
+        lang_code: a.lang_code,
+        system_lang_code: a.system_lang_code,
+        api_id: a.telegram_api_credentials?.api_id || a.api_id,
+        api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
+        proxy_id: a.proxy_id,
+        proxy: a.proxies ? {
+          host: a.proxies.host,
+          port: a.proxies.port,
+          username: a.proxies.username,
+          password: a.proxies.password,
+          proxy_type: a.proxies.proxy_type,
+          type: a.proxies.proxy_type,
+        } : null,
+      }));
       
       return new Response(JSON.stringify({
         tasks,
         accounts: accountsForConnection,
         delay_after: 1, // 1-second polling for livechat
-        accounts_available: livechatUsableAccounts.length,
+        accounts_available: usableAccounts.length,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });

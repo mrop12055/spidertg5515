@@ -966,7 +966,6 @@ export type Database = {
           ip_address: string | null
           last_seen: string
           runner_name: string
-          server_id: string | null
           status: string | null
         }
         Insert: {
@@ -975,7 +974,6 @@ export type Database = {
           ip_address?: string | null
           last_seen?: string
           runner_name: string
-          server_id?: string | null
           status?: string | null
         }
         Update: {
@@ -984,7 +982,6 @@ export type Database = {
           ip_address?: string | null
           last_seen?: string
           runner_name?: string
-          server_id?: string | null
           status?: string | null
         }
         Relationships: []

@@ -16,24 +16,22 @@ Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
 """
 
-BUILD_VERSION = "2026-01-08-no-limits-v3"
+BUILD_VERSION = "2026-01-08-batch-reporting-v2"
 
 import asyncio
 import signal
+import random
 import time
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all, disconnect_batch, report_batch_results,
-    send_heartbeat
+    send_message, shutdown_all, disconnect_batch, report_batch_results
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-DEFAULT_POLL_INTERVAL = 3    # Default polling when tasks exist
-NO_TASK_POLL_INTERVAL = 30   # Polling when no tasks available
-REPORT_CONCURRENCY = 20      # Max parallel report calls
-HEARTBEAT_INTERVAL = 30      # Send heartbeat every 30 seconds
+DEFAULT_POLL_INTERVAL = 3  # Default polling (server can override)
+REPORT_CONCURRENCY = 20    # Max parallel report calls
 
 
 def signal_handler(sig, frame):
@@ -85,13 +83,11 @@ async def pre_connect_batch(tasks: list) -> int:
     return success_count
 
 
-async def process_single_task(task: dict) -> dict:
+async def process_single_task(task: dict, stagger_min: float, stagger_max: float) -> dict:
     """Process a single campaign send task.
     
     IMPORTANT: This function is fully isolated - any exception here
     only affects this task, never crashes the whole runner.
-    
-    No stagger delay - send immediately for maximum speed.
     """
     msg = task.get("message", {})
     recipient = task.get("recipient")
@@ -117,21 +113,24 @@ async def process_single_task(task: dict) -> dict:
         }
     
     try:
-        # Get or create client with task-level proxy (fingerprint always fetched)
+        # Get or create client with task-level proxy
         client = await get_or_create_client(account, task_proxy=proxy)
         
         if not client:
             result = {
                 "success": False,
-                "error": "Could not connect client (proxy error - proxy changed)",
+                "error": "Could not connect client",
                 "campaign_recipient_id": msg.get("campaign_recipient_id"),
                 "message_id": msg.get("id"),
                 "account_id": account_id,
             }
-            print(f"    ✗ [{account_phone}] No client - proxy error")
+            print(f"    ✗ [{account_phone}] No client")
             return result
         
-        # No stagger - send immediately
+        # Server-controlled stagger delay
+        stagger_delay = random.uniform(stagger_min, stagger_max)
+        await asyncio.sleep(stagger_delay)
+        
         print(f"  📨 [{account_phone}] → {recipient}")
         
         send_res = await send_message(
@@ -270,15 +269,8 @@ async def main_loop():
     print("\n✓ Starting campaign runner...\n")
     
     consecutive_empty = 0
-    last_heartbeat = 0
     
     while RUNNING:
-        # Send heartbeat every HEARTBEAT_INTERVAL seconds
-        import time
-        now = time.time()
-        if now - last_heartbeat >= HEARTBEAT_INTERVAL:
-            await send_heartbeat("campaign")
-            last_heartbeat = now
         try:
             batch_start = time.time()
             
@@ -288,39 +280,41 @@ async def main_loop():
             
             fetch_time = time.time() - batch_start
             
-            # Get server-controlled settings (stagger removed - always 0)
+            # Get server-controlled speed settings
+            stagger_min = batch_result.get("stagger_min", 0.3)
+            stagger_max = batch_result.get("stagger_max", 1.5)
             delay_after = batch_result.get("delay_after", DEFAULT_POLL_INTERVAL)
             more_pending = batch_result.get("more_pending", False)
 
-            # Check for stop signal from server - wait 30 seconds before checking again
+            # Check for stop signal from server - now just waits instead of stopping
             if batch_result.get("stop_signal"):
                 reason = batch_result.get("reason", "Campaign paused from dashboard")
                 consecutive_empty += 1
                 if consecutive_empty == 1:
-                    print(f"  ⏸️  {reason} — waiting for campaign to resume (checking every 30s)...")
-                elif consecutive_empty % 10 == 0:
+                    print(f"  ⏸️  {reason} — waiting for campaign to resume...")
+                elif consecutive_empty % 20 == 0:
                     print("  ⏸️  Still waiting for campaign to resume...")
-                await asyncio.sleep(NO_TASK_POLL_INTERVAL)
+                await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
                 continue
 
-            # Handle no tasks - wait 30 seconds before checking again
+            # Handle no tasks
             if not tasks:
                 reason = batch_result.get("reason", "")
                 consecutive_empty += 1
 
                 if consecutive_empty == 1:
                     if reason:
-                        print(f"  ⏳ {reason} — checking every 30s...")
+                        print(f"  ⏳ {reason}")
                     else:
-                        print("  ⏳ No pending campaign tasks, checking every 30s...")
+                        print("  ⏳ No pending campaign tasks, waiting...")
                 elif consecutive_empty % 10 == 0:
                     print("  ⏳ Still waiting for campaign tasks...")
 
-                await asyncio.sleep(NO_TASK_POLL_INTERVAL)
+                await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
                 continue
             
             consecutive_empty = 0
-            print(f"\n  📦 Processing {len(tasks)} messages (NO STAGGER - INSTANT)...")
+            print(f"\n  📦 Processing {len(tasks)} messages (stagger: {stagger_min:.1f}-{stagger_max:.1f}s)...")
             print(f"     [fetch: {fetch_time:.2f}s]")
             
             # Pre-connect all accounts in parallel FIRST (major speedup)
@@ -329,10 +323,10 @@ async def main_loop():
             connect_time = time.time() - connect_start
             print(f"     [connect: {connect_time:.2f}s]")
             
-            # Execute ALL tasks in parallel - NO STAGGER for maximum speed
+            # Execute ALL tasks in parallel with server-controlled stagger
             send_start = time.time()
             results = await asyncio.gather(
-                *[process_single_task(task) for task in tasks],
+                *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
                 return_exceptions=True
             )
             send_time = time.time() - send_start
