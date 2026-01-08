@@ -191,7 +191,10 @@ serve(async (req) => {
           WARMUP_DAYS = (value.warmupDays as number) || WARMUP_DAYS;
           DAILY_MESSAGE_LIMIT = (value.dailyMessageLimit as number) || DAILY_MESSAGE_LIMIT;
           MESSAGES_PER_ACCOUNT = (value.messagesPerAccount as number) || MESSAGES_PER_ACCOUNT;
-          DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT = (value.dailyCampaignLimitPerAccount as number) || DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT;
+          // Legacy support: dailyCampaignLimitPerAccount from account_limits
+          if (value.dailyCampaignLimitPerAccount) {
+            DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT = value.dailyCampaignLimitPerAccount as number;
+          }
         } else if (setting.key === "scheduler" && value) {
           // If a value is missing, keep defaults
           if (typeof value.enabled === 'boolean') {
@@ -199,11 +202,15 @@ serve(async (req) => {
           }
           MAX_MESSAGES_BEFORE_ROTATION = (value.maxMessagesBeforeRotation as number) || MAX_MESSAGES_BEFORE_ROTATION;
           COOLDOWN_DURATION_SECONDS = (value.cooldownDuration as number) || COOLDOWN_DURATION_SECONDS;
+        } else if (setting.key === "campaign_speed" && value) {
+          // PRIMARY: messagesPerAccountPerDay from campaign_speed settings (set via Campaigns UI)
+          if (value.messagesPerAccountPerDay) {
+            DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT = value.messagesPerAccountPerDay as number;
+          }
         }
       }
       console.log(
-        `[get-next-task] Loaded settings: delay=${MESSAGE_DELAY_MIN_SECONDS}-${MESSAGE_DELAY_MAX_SECONDS}s, switch=${ACCOUNT_SWITCH_DELAY_SECONDS}s, warmup=${WARMUP_DAYS}d, dailyLimit=${DAILY_MESSAGE_LIMIT}, perCampaign=${MESSAGES_PER_ACCOUNT}, dailyCampaignLimit=${DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT}, rotate=${MAX_MESSAGES_BEFORE_ROTATION}, cooldown=${COOLDOWN_DURATION_SECONDS}s, enabled=${SCHEDULER_ENABLED}`
-      );
+        `[get-next-task] Loaded settings: delay=${MESSAGE_DELAY_MIN_SECONDS}-${MESSAGE_DELAY_MAX_SECONDS}s, switch=${ACCOUNT_SWITCH_DELAY_SECONDS}s, warmup=${WARMUP_DAYS}d, dailyLimit=${DAILY_MESSAGE_LIMIT}, perCampaign=${MESSAGES_PER_ACCOUNT}, dailyCampaignLimit=${DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT}, rotate=${MAX_MESSAGES_BEFORE_ROTATION}, cooldown=${COOLDOWN_DURATION_SECONDS}s, enabled=${SCHEDULER_ENABLED}`);
     }
 
     // Maintenance: requeue "sending" messages that got stuck (e.g. runner crash / timeout).
