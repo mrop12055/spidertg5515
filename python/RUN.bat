@@ -1,15 +1,19 @@
 @echo off
-title TelegramCRM - Campaign Runner
 echo ============================================
-echo       TelegramCRM - Campaign Runner
-echo ============================================
-echo.
-echo  Sends campaign messages to recipients
-echo  Press Ctrl+C to stop
-echo.
+echo       TelegramCRM - Starting All Runners
 echo ============================================
 echo.
-python campaign_runner.py
+echo Starting Campaign Runner...
+start "Campaign Runner" cmd /k python campaign_runner.py
+echo Starting Live Chat Listener...
+start "Live Chat Listener" cmd /k python live_chat_listener.py
+echo Starting Account Manager...
+start "Account Manager" cmd /k python account_manager.py
+echo Starting Warmup Runner...
+start "Warmup Runner" cmd /k python warmup_runner.py
 echo.
-echo Campaign runner stopped.
+echo ============================================
+echo  All runners started in separate windows
+echo  Close each window to stop individual runners
+echo ============================================
 pause
