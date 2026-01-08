@@ -1339,27 +1339,39 @@ async def main_loop():
                 ]
                 
                 if new_accounts:
-                    print(f"  [CONNECT] Connecting {len(new_accounts)} new accounts...")
+                    print(f"  [CONNECT] Connecting {len(new_accounts)} accounts in PARALLEL...")
                     
-                    # Connect with smart fingerprint and proxy handling
-                    for acc in new_accounts:
+                    # Connect ALL accounts in parallel (no delay)
+                    async def connect_one(acc):
                         acc_id = acc.get("id")
                         if not acc_id:
-                            continue
-                        
+                            return None, None, "No ID"
                         client, error = await connect_account_with_fingerprint(acc, setup_handler=setup_message_handler)
-                        
+                        return acc_id, client, error
+                    
+                    results = await asyncio.gather(
+                        *[connect_one(acc) for acc in new_accounts],
+                        return_exceptions=True
+                    )
+                    
+                    # Process results
+                    success_count = 0
+                    for result in results:
+                        if isinstance(result, Exception):
+                            continue
+                        acc_id, client, error = result
+                        if not acc_id:
+                            continue
                         if client:
                             connected_ids.add(acc_id)
+                            success_count += 1
                         elif error:
-                            # Check if network error - don't mark as failed
                             if error.startswith("NETWORK_ERROR:"):
-                                print(f"    [SKIP] Network issue, will retry later")
-                                # Don't add to any tracking - will retry next iteration
+                                pass  # Will retry next iteration
                             else:
-                                # Proxy or other error - wait before retrying
-                                failed_proxy_accounts[acc_id] = time.time() + 300  # Retry in 5 min
-                                print(f"    [FAIL] Will retry in 5 minutes")
+                                failed_proxy_accounts[acc_id] = time.time() + 300
+                    
+                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts")
                 
                 # No artificial delay - server returns seconds=0 for instant polling
             
