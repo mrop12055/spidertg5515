@@ -207,8 +207,8 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         
         print(f"  [CONNECT] {account['phone_number']}...")
         if not await connect_with_retry(client):
-            print(f"  [FAIL] Timeout: {account['phone_number']}")
-            await report_result("account_disconnected", {"account_id": account_id, "reason": "Connection timeout"})
+            print(f"  [FAIL] Proxy/timeout - will retry with different proxy: {account['phone_number']}")
+            # DO NOT mark account as disconnected - it's a proxy issue, not account issue
             return None
         
         if not await client.is_user_authorized():
@@ -1039,14 +1039,39 @@ async def update_account_proxy(account_id: str, new_proxy_id: str):
         return False
 
 
+async def fetch_random_proxy_excluding(excluded_proxy_ids: list = None):
+    """Fetch a random active proxy, excluding multiple failed ones"""
+    try:
+        http = get_http_client()
+        response = await http.get(
+            f"{SUPABASE_URL_BASE}/rest/v1/proxies",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+            params={
+                "status": "eq.active",
+                "select": "id,host,port,username,password,proxy_type"
+            }
+        )
+        if response.status_code == 200:
+            proxies = response.json()
+            if excluded_proxy_ids:
+                proxies = [p for p in proxies if p.get("id") not in excluded_proxy_ids]
+            if proxies:
+                return random.choice(proxies)
+        return None
+    except Exception as e:
+        print(f"  [WARN] Could not fetch proxy: {e}")
+        return None
+
+
 async def connect_account_with_fingerprint(account: dict, setup_handler=None) -> tuple:
     """
     Connect account with smart fingerprint and proxy handling.
     
     1. Check if account has fingerprint in DB, use it
     2. If no fingerprint, generate new and save to DB
-    3. If proxy fails, switch to different random proxy (no retry)
+    3. If proxy fails, IMMEDIATELY try 2 different random proxies (NO cooldown)
     4. Detect network errors and skip account status updates
+    5. NEVER mark account as disconnected due to proxy issues
     
     Returns: (client, error_str or None)
     """
@@ -1088,45 +1113,44 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     # Get current proxy
     proxy = account.get("proxy")
     current_proxy_id = proxy.get("id") if proxy else None
+    excluded_proxies = []
     
-    # Try to connect
-    try:
-        client = await get_or_create_client(account, setup_handler=setup_handler, task_proxy=proxy)
-        if client:
-            return client, None
-        else:
-            # Connection failed - check if it's a proxy issue
-            return None, "Connection failed"
-    except Exception as e:
-        error_str = str(e)
-        
-        # Check if this is a LOCAL network error (wifi disconnect)
-        if is_network_error(error_str):
-            print(f"  [{phone}] NETWORK ERROR (wifi/internet issue): {error_str[:50]}")
-            # Return None but mark as network error - don't update account status
-            return None, f"NETWORK_ERROR:{error_str}"
-        
-        # Check if proxy-related error
-        proxy_error_patterns = ["proxy", "socks", "connection refused", "timeout", "timed out", "cannot connect"]
-        is_proxy_error = any(p in error_str.lower() for p in proxy_error_patterns)
-        
-        if is_proxy_error and current_proxy_id:
-            print(f"  [{phone}] Proxy failed, switching to different proxy...")
+    # Try up to 3 times: current proxy + 2 different random proxies
+    MAX_PROXY_ATTEMPTS = 3
+    
+    for attempt in range(MAX_PROXY_ATTEMPTS):
+        try:
+            client = await get_or_create_client(account, setup_handler=setup_handler, task_proxy=account.get("proxy"))
+            if client:
+                return client, None
+        except Exception as e:
+            error_str = str(e)
             
-            # Fetch a different random proxy
-            new_proxy = await fetch_random_proxy(exclude_proxy_id=current_proxy_id)
+            # Check if this is a LOCAL network error (wifi disconnect)
+            if is_network_error(error_str):
+                print(f"  [{phone}] NETWORK ERROR (wifi/internet issue): {error_str[:50]}")
+                return None, f"NETWORK_ERROR:{error_str}"
+        
+        # Connection failed - try different proxy if we have more attempts
+        if attempt < MAX_PROXY_ATTEMPTS - 1:
+            current_proxy_id = account.get("proxy", {}).get("id") if account.get("proxy") else None
+            if current_proxy_id:
+                excluded_proxies.append(current_proxy_id)
+            
+            print(f"  [{phone}] Proxy failed, trying different proxy (attempt {attempt + 2}/{MAX_PROXY_ATTEMPTS})...")
+            new_proxy = await fetch_random_proxy_excluding(excluded_proxies)
+            
             if new_proxy:
                 # Update account's proxy in database
-                if await update_account_proxy(account_id, new_proxy["id"]):
-                    print(f"  [{phone}] Switched to new proxy: {new_proxy['host']}:{new_proxy['port']}")
-                    # Update account dict for next attempt (will be used in next iteration)
-                    account["proxy"] = new_proxy
-                else:
-                    print(f"  [{phone}] Could not update proxy in database")
+                await update_account_proxy(account_id, new_proxy["id"])
+                account["proxy"] = new_proxy
+                print(f"  [{phone}] Switched to: {new_proxy['host']}:{new_proxy['port']}")
             else:
-                print(f"  [{phone}] No other proxies available")
-        
-        return None, error_str
+                print(f"  [{phone}] No more proxies available to try")
+                break
+    
+    # All attempts failed - but DON'T mark account as disconnected
+    return None, "All proxies failed"
 
 
 async def check_conversation_exists(account_id: str, sender_id: int, sender_username: str = None, sender_phone: str = None) -> bool:
@@ -1409,12 +1433,12 @@ async def main_loop():
                         elif error:
                             if error.startswith("NETWORK_ERROR:"):
                                 pass  # Will retry next iteration
-                            elif error == "TIMEOUT":
+                            elif error == "TIMEOUT" or error == "All proxies failed":
                                 timeout_count += 1
-                                failed_proxy_accounts[acc_id] = time.time() + 300
+                                # NO cooldown - will retry next iteration with different proxy
                             else:
                                 error_count += 1
-                                failed_proxy_accounts[acc_id] = time.time() + 300
+                                # NO cooldown - keep trying
                     
                     print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count})")
 
