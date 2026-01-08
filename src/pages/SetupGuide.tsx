@@ -37,17 +37,55 @@ const SetupGuide: React.FC = () => {
       const { data, error } = await supabase.storage
         .from('python-scripts')
         .download(fileName);
-      
+
       if (error || !data) {
         console.warn(`File not in storage: ${fileName}`);
         return null;
       }
-      
+
       return await data.text();
     } catch (err) {
       console.error(`Error fetching ${fileName}:`, err);
       return null;
     }
+  };
+
+  // Backwards-compatible patch: some older client_manager.py copies are missing send_heartbeat.
+  const sendHeartbeatPy = `
+
+async def send_heartbeat(runner_name: str):
+    """Send heartbeat to runner_heartbeats table to show runner is online."""
+    try:
+        from config import SUPABASE_URL, SUPABASE_KEY
+        from datetime import datetime, timezone
+
+        http = await _get_backend_http()
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        resp = await http.post(
+            f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+            },
+            json={
+                "runner_name": runner_name,
+                "last_seen": now_iso,
+                "status": "online",
+                "server_id": "pc"
+            }
+        )
+        if resp.status_code not in (200, 201):
+            print(f"  [HEARTBEAT] {runner_name}: {resp.status_code}")
+    except Exception as e:
+        print(f"  [HEARTBEAT] Failed: {e}")
+`;
+
+  const ensureSendHeartbeat = (src: string) => {
+    if (src.includes("send_heartbeat") && src.includes("runner_heartbeats")) return src;
+    return `${src}${sendHeartbeatPy}`;
   };
 
   // ========== 1. CONFIG.PY ==========
@@ -3217,7 +3255,8 @@ if __name__ == "__main__":
       
       for (const { fileName, content } of results) {
         if (content) {
-          folder?.file(fileName, content);
+          const fixedContent = fileName === 'client_manager.py' ? ensureSendHeartbeat(content) : content;
+          folder?.file(fileName, fixedContent);
           filesAdded++;
         } else {
           console.warn(`Skipping ${fileName} - not found in storage`);
@@ -3265,12 +3304,14 @@ if __name__ == "__main__":
       
       for (const { fileName, content } of results) {
         if (content) {
+          let fixedContent = fileName === 'client_manager.py' ? ensureSendHeartbeat(content) : content;
+
           // Inject VPS API key into vps_agent.py
           if (fileName === 'vps_agent.py') {
-            folder?.file(fileName, content.replace('REPLACE_WITH_YOUR_VPS_KEY', vpsApiKey));
-          } else {
-            folder?.file(fileName, content);
+            fixedContent = fixedContent.replace('REPLACE_WITH_YOUR_VPS_KEY', vpsApiKey);
           }
+
+          folder?.file(fileName, fixedContent);
           filesAdded++;
         }
       }
@@ -3298,7 +3339,7 @@ if __name__ == "__main__":
     try {
       // Upload each file individually to storage
       const filesToUpload = [
-        { name: 'client_manager.py', content: clientManagerPy },
+        { name: 'client_manager.py', content: ensureSendHeartbeat(clientManagerPy) },
         { name: 'fingerprint_generator.py', content: fingerprintGeneratorPy },
         { name: 'campaign_runner.py', content: campaignRunnerPy },
         { name: 'live_chat_listener.py', content: livechatRunnerPy },
