@@ -1277,14 +1277,30 @@ async def setup_message_handler(client, account_id: str):
                 print(f"  [WARN] Handler error: {e}")
 
 
+async def keep_clients_alive():
+    """Background task that keeps all clients receiving updates"""
+    while RUNNING:
+        # Small sleep to yield control
+        await asyncio.sleep(0.1)
+        # Catch updates for all connected clients by yielding
+        for acc_id, client in list(active_clients.items()):
+            try:
+                if client.is_connected():
+                    # This processes pending updates without blocking
+                    await client.catch_up()
+            except Exception:
+                pass
+
+
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (Smart Fingerprint + Proxy)")
-    print("  BUILD: 2026-01-08-smart-fingerprint-proxy")
+    print("  BUILD: 2026-01-08-v2-catchup-fix")
     print("  [Incoming + Replies]")
     print("  🔐 Uses fingerprint from DB or generates new")
     print("  🔄 Auto-switches proxy on failure")
     print("  📶 Detects wifi/network errors")
+    print("  🔁 Background update catcher enabled")
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
@@ -1292,6 +1308,9 @@ async def main_loop():
     last_cleanup = time.time()
     last_heartbeat = time.time()
     iteration_count = 0
+    
+    # Start background task to keep clients catching updates
+    asyncio.create_task(keep_clients_alive())
     
     while RUNNING:
         try:
@@ -1388,7 +1407,17 @@ async def main_loop():
                     
                     print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count})")
 
-                # No artificial delay - server returns seconds=0 for instant polling
+                # Get delay from server response (usually 0 for fast polling)
+                wait_seconds = task.get("seconds", 0.5)
+                if wait_seconds > 0:
+                    # Use small sleeps to allow update processing
+                    for _ in range(int(wait_seconds * 10)):
+                        if not RUNNING:
+                            break
+                        await asyncio.sleep(0.1)
+                else:
+                    # Even with 0 delay, yield briefly for updates
+                    await asyncio.sleep(0.05)
             
             elif task_type == "send":
                 msg = task.get("message", {})
