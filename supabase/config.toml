@@ -56,3 +56,6 @@ verify_jwt = false
 
 [functions.stop-warmup-chat]
 verify_jwt = false
+
+[functions.report-batch-results]
+verify_jwt = false

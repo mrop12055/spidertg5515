@@ -2,16 +2,21 @@
 """
 TelegramCRM - Campaign Runner (Server-Controlled Speed + Parallel Reporting)
 =============================================================================
+BUILD: 2026-01-08-batch-reporting-v2
+
 All speed settings controlled by admin dashboard.
 
 - Polls server for batch of tasks
 - Speed settings (stagger, polling) controlled by server
 - Executes ALL tasks in parallel
 - Reports results in parallel (bounded concurrency)
+- Uses batch reporting endpoint for speed
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
 """
+
+BUILD_VERSION = "2026-01-08-batch-reporting-v2"
 
 import asyncio
 import signal
@@ -254,9 +259,10 @@ async def main_loop():
     
     print("=" * 60)
     print("  TelegramCRM - Campaign Runner (Parallel Speed)")
+    print(f"  BUILD: {BUILD_VERSION}")
     print("=" * 60)
     print("  🚀 Speed settings from admin dashboard")
-    print("  ⚡ Parallel sending + parallel reporting")
+    print("  ⚡ Parallel sending + batch reporting")
     print("  ♾️  RUNS FOREVER - auto-restarts on errors")
     print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
