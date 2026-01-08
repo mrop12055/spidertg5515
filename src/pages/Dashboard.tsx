@@ -33,71 +33,9 @@ interface DashboardStats {
   repliesLifetime: number;
 }
 
-// Python file contents - fetched fresh from project
-const PYTHON_FILES: Record<string, string> = {
-  'config.py': `"""
-TelegramCRM - Configuration
-"""
-
-BACKEND_URL = "https://ismtbdcnbxyyvsacbeld.supabase.co/functions/v1"
-SUPABASE_URL = "https://ismtbdcnbxyyvsacbeld.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlzbXRiZGNuYnh5eXZzYWNiZWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjcxMjM5NzksImV4cCI6MjA4MjY5OTk3OX0.j0PjzGtgTtyhRvuG_IqsCHzrNBB_tni67q2_3SVXwL0"
-TELEGRAM_API_ID = "31812270"
-TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"`,
-  'requirements.txt': `telethon>=1.34.0
-httpx>=0.27.0
-pysocks>=1.7.1
-aiohttp>=3.9.0`,
-  'RUN.bat': `@echo off
-title TelegramCRM - All Runners
-color 0A
-
-echo.
-echo  ================================================
-echo       TelegramCRM - Starting All Runners
-echo  ================================================
-echo.
-
-cd /d "%~dp0"
-
-echo  [1/2] Installing requirements...
-py -m pip install telethon httpx pysocks aiohttp --quiet 2>nul
-if errorlevel 1 (
-    python -m pip install telethon httpx pysocks aiohttp --quiet 2>nul
-)
-echo        Done!
-echo.
-
-echo  [2/2] Starting 4 runners in parallel...
-echo.
-
-:: Start each runner in a new window
-start "Campaign Runner" cmd /k "title Campaign Runner && color 0B && py campaign_runner.py"
-timeout /t 1 /nobreak >nul
-
-start "LiveChat Listener" cmd /k "title LiveChat Listener && color 0D && py live_chat_listener.py"
-timeout /t 1 /nobreak >nul
-
-start "Account Manager" cmd /k "title Account Manager && color 0E && py account_manager.py"
-timeout /t 1 /nobreak >nul
-
-start "Warmup Runner" cmd /k "title Warmup Runner && color 0A && py warmup_runner.py"
-
-echo.
-echo  ================================================
-echo     All 4 runners started!
-echo  ================================================
-echo.
-echo     Blue   = Campaign Runner
-echo     Purple = LiveChat Listener  
-echo     Yellow = Account Manager
-echo     Green  = Warmup Runner
-echo.
-echo     To STOP: Close all windows or press Ctrl+C
-echo  ================================================
-echo.
-pause`,
-};
+// Supabase storage bucket for Python files
+const STORAGE_BUCKET = 'python-scripts';
+const SUPABASE_URL = 'https://ismtbdcnbxyyvsacbeld.supabase.co';
 
 const Dashboard: React.FC = () => {
   const { campaigns, refreshData } = useTelegram();
@@ -182,42 +120,50 @@ const Dashboard: React.FC = () => {
     try {
       const zip = new JSZip();
       
-      // Add static files
-      Object.entries(PYTHON_FILES).forEach(([filename, content]) => {
-        zip.file(filename, content);
-      });
-      
-      // Fetch dynamic Python files from the project
-      const pythonModules = [
-        { name: 'account_manager.py', url: '/python/account_manager.py' },
-        { name: 'campaign_runner.py', url: '/python/campaign_runner.py' },
-        { name: 'client_manager.py', url: '/python/client_manager.py' },
-        { name: 'fingerprint_generator.py', url: '/python/fingerprint_generator.py' },
-        { name: 'live_chat_listener.py', url: '/python/live_chat_listener.py' },
-        { name: 'warmup_runner.py', url: '/python/warmup_runner.py' },
+      // List of all Python files to download from Supabase storage
+      const pythonFiles = [
+        'config.py',
+        'requirements.txt',
+        'RUN.bat',
+        'bootstrap.py',
+        'account_manager.py',
+        'campaign_runner.py',
+        'client_manager.py',
+        'fingerprint_generator.py',
+        'live_chat_listener.py',
+        'warmup_runner.py',
       ];
       
-      // Fetch all Python files in parallel
+      // Fetch all Python files from Supabase storage in parallel
       const fileContents = await Promise.all(
-        pythonModules.map(async (mod) => {
+        pythonFiles.map(async (filename) => {
           try {
-            const response = await fetch(mod.url);
+            const url = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/${filename}`;
+            const response = await fetch(url);
             if (response.ok) {
-              return { name: mod.name, content: await response.text() };
+              return { name: filename, content: await response.text() };
             }
           } catch (e) {
-            console.error(`Failed to fetch ${mod.name}:`, e);
+            console.error(`Failed to fetch ${filename}:`, e);
           }
           return null;
         })
       );
       
       // Add fetched files to zip
+      let addedCount = 0;
       fileContents.forEach((file) => {
-        if (file) {
+        if (file && file.content) {
           zip.file(file.name, file.content);
+          addedCount++;
         }
       });
+      
+      if (addedCount === 0) {
+        console.error('No files found in storage. Please upload Python files first.');
+        setIsDownloading(false);
+        return;
+      }
       
       // Generate and download
       const blob = await zip.generateAsync({ type: 'blob' });
