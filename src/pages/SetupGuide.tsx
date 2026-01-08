@@ -677,8 +677,14 @@ async def main_loop():
             more_pending = batch_result.get("more_pending", False)
 
             if batch_result.get("stop_signal"):
-                print("[STOP] Campaign paused from dashboard. Stopping...")
-                break
+                reason = batch_result.get("reason", "Campaign paused from dashboard")
+                consecutive_empty += 1
+                if consecutive_empty == 1:
+                    print(f"  ⏸️  {reason} — waiting for campaign to resume...")
+                elif consecutive_empty % 20 == 0:
+                    print("  ⏸️  Still waiting for campaign to resume...")
+                await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
+                continue
 
             if not tasks:
                 consecutive_empty += 1
@@ -1825,7 +1831,7 @@ if errorlevel 1 (
 echo        Done!
 echo.
 
-echo  [2/2] Starting 5 runners in parallel...
+echo  [2/2] Starting 4 runners in parallel...
 echo.
 
 :: Start each runner in a new window
@@ -1839,20 +1845,16 @@ start "Account Runner" cmd /k "title Account Runner && color 0E && py account_ru
 timeout /t 1 /nobreak >nul
 
 start "Warmup Runner" cmd /k "title Warmup Runner && color 0A && py warmup_runner.py"
-timeout /t 1 /nobreak >nul
-
-start "Block Runner" cmd /k "title Block Runner && color 0C && py block_runner.py"
 
 echo.
 echo  ================================================
-echo     All 5 runners started!
+echo     All 4 runners started!
 echo  ================================================
 echo.
 echo     Blue   = Campaign Runner
 echo     Purple = LiveChat Runner  
 echo     Yellow = Account Runner
 echo     Green  = Warmup Runner
-echo     Red    = Block Runner
 echo.
 echo     To STOP: Close all windows or press Ctrl+C
 echo  ================================================
@@ -1901,13 +1903,12 @@ SUPABASE_URL = "${supabaseUrl}"
 SUPABASE_KEY = "${supabaseKey}"
 VPS_API_KEY = "REPLACE_WITH_YOUR_VPS_KEY"  # Will be set on first run
 
-# Runner definitions
+# Runner definitions (block runner removed)
 RUNNERS = {
     "campaign": "campaign_runner.py",
     "livechat": "livechat_runner.py",
     "account": "account_runner.py",
     "warmup": "warmup_runner.py",
-    "block": "block_runner.py",
 }
 
 # Global state
@@ -2295,12 +2296,11 @@ if __name__ == "__main__":
     folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
     folder?.file("requirements.txt", requirementsTxt);
     
-    // Individual runners
+    // Individual runners (block_runner removed)
     folder?.file("campaign_runner.py", campaignRunnerPy);
     folder?.file("livechat_runner.py", livechatRunnerPy);
     folder?.file("account_runner.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
-    folder?.file("block_runner.py", blockRunnerPy);
     
     // Single BAT to run all
     folder?.file("RUN.bat", runBat);
@@ -2313,7 +2313,7 @@ if __name__ == "__main__":
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded! 10 files included.");
+    toast.success("ZIP downloaded! 9 files included.");
   };
 
   const downloadVpsZip = async () => {
@@ -2329,12 +2329,11 @@ if __name__ == "__main__":
     folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
     folder?.file("requirements.txt", requirementsTxt);
     
-    // Individual runners
+    // Individual runners (block_runner removed)
     folder?.file("campaign_runner.py", campaignRunnerPy);
     folder?.file("livechat_runner.py", livechatRunnerPy);
     folder?.file("account_runner.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
-    folder?.file("block_runner.py", blockRunnerPy);
     
     // VPS Agent
     folder?.file("vps_agent.py", vpsAgentWithKey);
@@ -2359,7 +2358,7 @@ if __name__ == "__main__":
       zip.file("livechat_runner.py", livechatRunnerPy);
       zip.file("account_runner.py", accountRunnerPy);
       zip.file("warmup_runner.py", warmupRunnerPy);
-      zip.file("block_runner.py", blockRunnerPy);
+      // block_runner.py removed
       zip.file("client_manager.py", clientManagerPy);
       zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
       zip.file("config.py", configPy);
