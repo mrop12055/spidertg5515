@@ -38,6 +38,44 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
+async def pre_connect_batch(tasks: list) -> int:
+    """Pre-connect all accounts in parallel BEFORE processing tasks.
+    
+    This speeds up batch processing by connecting all clients upfront
+    instead of sequentially during task processing.
+    
+    Returns: number of successfully pre-connected accounts
+    """
+    unique_accounts = {}
+    for t in tasks:
+        acc = t.get("account", {})
+        acc_id = acc.get("id")
+        if acc_id and acc_id not in unique_accounts:
+            unique_accounts[acc_id] = (acc, t.get("proxy"))
+    
+    if not unique_accounts:
+        return 0
+    
+    print(f"  ⚡ Pre-connecting {len(unique_accounts)} accounts in parallel...")
+    
+    async def connect_one(account: dict, proxy: dict) -> bool:
+        try:
+            client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True)
+            return client is not None
+        except Exception as e:
+            print(f"    ⚠ Pre-connect failed for {account.get('phone_number', '???')[-4:]}: {e}")
+            return False
+    
+    results = await asyncio.gather(
+        *[connect_one(acc, px) for acc, px in unique_accounts.values()],
+        return_exceptions=True
+    )
+    
+    success_count = sum(1 for r in results if r is True)
+    print(f"  ✓ Pre-connection complete: {success_count}/{len(unique_accounts)} connected")
+    return success_count
+
+
 async def process_single_task(task: dict, stagger_min: float, stagger_max: float) -> dict:
     """Process a single campaign send task.
     
@@ -208,6 +246,9 @@ async def main_loop():
             consecutive_empty = 0
             print(f"\n  📦 Processing {len(tasks)} messages (stagger: {stagger_min:.1f}-{stagger_max:.1f}s)...")
             
+            # Pre-connect all accounts in parallel FIRST (major speedup)
+            await pre_connect_batch(tasks)
+            
             # Execute ALL tasks in parallel with server-controlled stagger
             results = await asyncio.gather(
                 *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
@@ -229,15 +270,9 @@ async def main_loop():
             fail_count = len(results) - success_count
             print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
 
-            # IMPORTANT: Disconnect batch clients to avoid memory/connection buildup
-            # (Keeping hundreds of Telethon clients open can lead to OOM / OS-kill after a few batches)
-            batch_account_ids = list({
-                (t.get("account") or {}).get("id")
-                for t in tasks
-                if (t.get("account") or {}).get("id")
-            })
-            if batch_account_ids:
-                await disconnect_batch(batch_account_ids)
+            # NOTE: We no longer disconnect after every batch to allow client reuse
+            # Clients will be disconnected on shutdown or after extended idle
+            # This significantly speeds up consecutive batches
 
             # Use server-controlled delay (can be 0 for immediate repoll if more pending)
             if RUNNING and delay_after > 0:

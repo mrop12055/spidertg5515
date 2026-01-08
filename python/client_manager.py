@@ -26,6 +26,9 @@ SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 # Active clients cache
 active_clients: Dict[str, TelegramClient] = {}
 
+# Phone lookup cache: phone -> telegram_id (speeds up repeated lookups)
+_phone_cache: Dict[str, int] = {}
+
 # Connection settings
 CONNECTION_TIMEOUT = 30
 CONNECTION_RETRIES = 3
@@ -315,8 +318,10 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
         
         active_clients[account_id] = client
         
-        # Always sync profile on first connection
-        await _sync_profile(client, account_id, skip_avatar=False)
+        # Only sync profile once per client (skip if already synced)
+        if not getattr(client, "_profile_synced", False):
+            await _sync_profile(client, account_id, skip_avatar=skip_avatar)
+            setattr(client, "_profile_synced", True)
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
@@ -429,7 +434,9 @@ async def report_result(task_type: str, result: dict):
 
 async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
     """Send a message and return (success, error, meta)."""
+    global _phone_cache
     meta = None
+    original_recipient = recipient
     try:
         entity = None
 
@@ -452,10 +459,22 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                 if not phone.startswith("+"):
                     phone = "+" + phone
 
-                try:
-                    entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
-                except Exception:
-                    pass
+                # Check phone cache first for faster lookup
+                if phone in _phone_cache:
+                    try:
+                        entity = await asyncio.wait_for(client.get_entity(_phone_cache[phone]), timeout=10)
+                        if entity:
+                            print(f"  [CACHE] Using cached telegram_id for {phone}")
+                    except Exception:
+                        # Cache entry invalid, remove it
+                        del _phone_cache[phone]
+                        entity = None
+
+                if not entity:
+                    try:
+                        entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+                    except Exception:
+                        pass
 
                 if not entity:
                     max_retries = 2
@@ -470,6 +489,10 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
 
                         if result.users:
                             entity = result.users[0]
+                            # Cache the phone -> telegram_id mapping
+                            if hasattr(entity, 'id'):
+                                _phone_cache[phone] = entity.id
+                                print(f"  [CACHE] Cached telegram_id {entity.id} for {phone}")
                             break
                         elif result.retry_contacts:
                             if attempt < max_retries:
@@ -481,6 +504,8 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                                     resolve_result = await asyncio.wait_for(client(ResolvePhoneRequest(phone=phone)), timeout=10)
                                     if resolve_result.users:
                                         entity = resolve_result.users[0]
+                                        if hasattr(entity, 'id'):
+                                            _phone_cache[phone] = entity.id
                                         break
                                 except Exception as resolve_err:
                                     print(f"  [WARN] ResolvePhoneRequest failed: {resolve_err}")
