@@ -180,6 +180,9 @@ serve(async (req) => {
       .from("app_settings")
       .select("key, value");
 
+    // Track if campaign_speed set the daily limit (takes priority)
+    let campaignSpeedSetLimit = false;
+    
     if (settingsData) {
       for (const setting of settingsData) {
         const value = setting.value as Record<string, unknown>;
@@ -191,12 +194,11 @@ serve(async (req) => {
           WARMUP_DAYS = (value.warmupDays as number) || WARMUP_DAYS;
           DAILY_MESSAGE_LIMIT = (value.dailyMessageLimit as number) || DAILY_MESSAGE_LIMIT;
           MESSAGES_PER_ACCOUNT = (value.messagesPerAccount as number) || MESSAGES_PER_ACCOUNT;
-          // Legacy support: dailyCampaignLimitPerAccount from account_limits
-          if (value.dailyCampaignLimitPerAccount) {
+          // Only use account_limits.dailyCampaignLimitPerAccount if campaign_speed hasn't set it
+          if (!campaignSpeedSetLimit && value.dailyCampaignLimitPerAccount) {
             DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT = value.dailyCampaignLimitPerAccount as number;
           }
         } else if (setting.key === "scheduler" && value) {
-          // If a value is missing, keep defaults
           if (typeof value.enabled === 'boolean') {
             SCHEDULER_ENABLED = value.enabled as boolean;
           }
@@ -206,6 +208,7 @@ serve(async (req) => {
           // PRIMARY: messagesPerAccountPerDay from campaign_speed settings (set via Campaigns UI)
           if (value.messagesPerAccountPerDay) {
             DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT = value.messagesPerAccountPerDay as number;
+            campaignSpeedSetLimit = true;
           }
         }
       }
