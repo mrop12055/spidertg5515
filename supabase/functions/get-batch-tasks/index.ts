@@ -71,56 +71,62 @@ serve(async (req) => {
 
     const now = new Date().toISOString();
 
-    // Get all active accounts not temporarily restricted, with their proxy info
-    // Fetch all accounts without limit to support 100+ pairs
-    const { data: activeAccounts, error: accountsError } = await supabase
-      .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-      .eq("status", "active")
-      .or(`restricted_until.is.null,restricted_until.lt.${now}`);
-
-    if (accountsError || !activeAccounts || activeAccounts.length === 0) {
-      console.log("[get-batch-tasks] No active accounts available");
-      return new Response(JSON.stringify({
-        tasks: [],
-        delay_after: 30,
-        reason: "No active accounts"
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // CRITICAL SAFETY CHECK: Only use accounts that have an ACTIVE proxy assigned
-    const accountsWithActiveProxy = activeAccounts.filter((a: any) => {
-      if (!a.proxy_id) {
-        console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - NO PROXY ASSIGNED`);
-        return false;
-      }
-      if (!a.proxies || a.proxies.status !== 'active') {
-        console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - PROXY NOT ACTIVE (status: ${a.proxies?.status || 'missing'})`);
-        return false;
-      }
-      return true;
-    });
-
-    if (accountsWithActiveProxy.length === 0) {
-      console.log("[get-batch-tasks] No accounts with active proxies available");
-      return new Response(JSON.stringify({
-        tasks: [],
-        delay_after: noTaskPollingInterval,
-        reason: "No accounts with active proxies - assign proxies to accounts first"
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    // Use ALL accounts with active proxies - NO daily limit filtering for campaigns
-    const usableAccounts = accountsWithActiveProxy;
-    
-    console.log(`[get-batch-tasks] ${usableAccounts.length} accounts with active proxies ready (NO LIMITS)`);
-
     const tasks: any[] = [];
     const usedAccountIds = new Set<string>();
+
+    // For livechat we don't need the global accounts+API-credentials fetch.
+    // We fetch only the minimal account+proxy fields inside the livechat block.
+    let usableAccounts: any[] = [];
+
+    if (runner !== "livechat") {
+      // Get all active accounts not temporarily restricted, with their proxy info
+      // Fetch all accounts without limit to support 100+ pairs
+      const { data: activeAccounts, error: accountsError } = await supabase
+        .from("telegram_accounts")
+        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+        .eq("status", "active")
+        .or(`restricted_until.is.null,restricted_until.lt.${now}`);
+
+      if (accountsError || !activeAccounts || activeAccounts.length === 0) {
+        console.log("[get-batch-tasks] No active accounts available");
+        return new Response(JSON.stringify({
+          tasks: [],
+          delay_after: 30,
+          reason: "No active accounts",
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // CRITICAL SAFETY CHECK: Only use accounts that have an ACTIVE proxy assigned
+      const accountsWithActiveProxy = activeAccounts.filter((a: any) => {
+        if (!a.proxy_id) {
+          console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - NO PROXY ASSIGNED`);
+          return false;
+        }
+        if (!a.proxies || a.proxies.status !== "active") {
+          console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - PROXY NOT ACTIVE (status: ${a.proxies?.status || "missing"})`);
+          return false;
+        }
+        return true;
+      });
+
+      if (accountsWithActiveProxy.length === 0) {
+        console.log("[get-batch-tasks] No accounts with active proxies available");
+        return new Response(JSON.stringify({
+          tasks: [],
+          delay_after: noTaskPollingInterval,
+          reason: "No accounts with active proxies - assign proxies to accounts first",
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // Use ALL accounts with active proxies - NO daily limit filtering for campaigns
+      usableAccounts = accountsWithActiveProxy;
+
+      console.log(`[get-batch-tasks] ${usableAccounts.length} accounts with active proxies ready (NO LIMITS)`);
+    }
 
     // WARMUP_CHAT RUNNER: Get pending warmup messages (PARALLEL BATCH)
     if (runner === "warmup_chat") {
@@ -713,14 +719,28 @@ serve(async (req) => {
       // No API credentials needed - livechat uses session files for existing conversations
       const { data: livechatAccounts } = await supabase
         .from("telegram_accounts")
-        .select("*, proxies!fk_proxy(*)")
+        .select(`
+          id,
+          phone_number,
+          session_data,
+          device_model,
+          system_version,
+          app_version,
+          lang_code,
+          system_lang_code,
+          api_id,
+          api_hash,
+          proxy_id,
+          proxies!fk_proxy(host, port, username, password, proxy_type, status)
+        `)
         .in("status", ["active", "restricted"])
         .or(`restricted_until.is.null,restricted_until.lt.${now}`);
 
       // Filter to only those with active proxies
       const livechatUsableAccounts = (livechatAccounts || []).filter((a: any) => {
+        const proxy = Array.isArray(a.proxies) ? a.proxies[0] : a.proxies;
         if (!a.proxy_id) return false;
-        if (!a.proxies || a.proxies.status !== 'active') return false;
+        if (!proxy || proxy.status !== "active") return false;
         return true;
       });
 
@@ -762,6 +782,8 @@ serve(async (req) => {
             .update({ status: "sending" })
             .eq("id", msg.id);
 
+          const proxy = Array.isArray(account.proxies) ? account.proxies[0] : account.proxies;
+
           tasks.push({
             task: "send",
             message: {
@@ -785,14 +807,14 @@ serve(async (req) => {
               api_hash: account.api_hash,
               proxy_id: account.proxy_id,
             },
-            proxy: account.proxies
+            proxy: proxy
               ? {
-                  host: account.proxies.host,
-                  port: account.proxies.port,
-                  username: account.proxies.username,
-                  password: account.proxies.password,
-                  proxy_type: account.proxies.proxy_type,
-                  type: account.proxies.proxy_type,
+                  host: proxy.host,
+                  port: proxy.port,
+                  username: proxy.username,
+                  password: proxy.password,
+                  proxy_type: proxy.proxy_type,
+                  type: proxy.proxy_type,
                 }
               : null,
             mode: "livechat",
@@ -804,27 +826,33 @@ serve(async (req) => {
       
       // For livechat, return ALL active + restricted accounts for connection
       // This ensures all accounts can receive incoming messages
-      const accountsForConnection = livechatUsableAccounts.map((a: any) => ({
-        id: a.id,
-        phone_number: a.phone_number,
-        session_data: a.session_data,
-        device_model: a.device_model,
-        system_version: a.system_version,
-        app_version: a.app_version,
-        lang_code: a.lang_code,
-        system_lang_code: a.system_lang_code,
-        api_id: a.api_id,
-        api_hash: a.api_hash,
-        proxy_id: a.proxy_id,
-        proxy: a.proxies ? {
-          host: a.proxies.host,
-          port: a.proxies.port,
-          username: a.proxies.username,
-          password: a.proxies.password,
-          proxy_type: a.proxies.proxy_type,
-          type: a.proxies.proxy_type,
-        } : null,
-      }));
+      const accountsForConnection = livechatUsableAccounts.map((a: any) => {
+        const proxy = Array.isArray(a.proxies) ? a.proxies[0] : a.proxies;
+
+        return {
+          id: a.id,
+          phone_number: a.phone_number,
+          session_data: a.session_data,
+          device_model: a.device_model,
+          system_version: a.system_version,
+          app_version: a.app_version,
+          lang_code: a.lang_code,
+          system_lang_code: a.system_lang_code,
+          api_id: a.api_id,
+          api_hash: a.api_hash,
+          proxy_id: a.proxy_id,
+          proxy: proxy
+            ? {
+                host: proxy.host,
+                port: proxy.port,
+                username: proxy.username,
+                password: proxy.password,
+                proxy_type: proxy.proxy_type,
+                type: proxy.proxy_type,
+              }
+            : null,
+        };
+      });
       
       return new Response(JSON.stringify({
         tasks,
