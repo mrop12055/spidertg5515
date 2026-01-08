@@ -8,7 +8,6 @@ import { Progress } from '@/components/ui/progress';
 import { useTelegram } from '@/context/TelegramContext';
 import { supabase } from '@/integrations/supabase/client';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
-import { VPSManager } from '@/components/dashboard/VPSManager';
 import { 
   LayoutDashboard, 
   Phone, 
@@ -181,10 +180,9 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
-      {/* Runner Status & VPS Manager */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
+      {/* Runner Status */}
+      <div className="mb-8">
         <RunnerStatusCard />
-        <VPSManager />
       </div>
 
       {/* Running Campaigns */}
