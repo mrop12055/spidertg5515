@@ -26,7 +26,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-POLL_INTERVAL = 1  # 1-second polling for live chat (must be fast!)
+POLL_INTERVAL = 0.1  # INSTANT - 100ms polling for live chat
 KEEP_ALIVE_INTERVAL = 60  # Ping connections every 60 seconds
 
 

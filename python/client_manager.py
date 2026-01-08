@@ -45,7 +45,8 @@ _MEDIA_HTTP_LOOP = None
 
 
 def _http_limits() -> httpx.Limits:
-    return httpx.Limits(max_connections=40, max_keepalive_connections=20, keepalive_expiry=30.0)
+    """Ultra high-capacity HTTP limits for 5000+ batch processing"""
+    return httpx.Limits(max_connections=1000, max_keepalive_connections=500, keepalive_expiry=60.0)
 
 
 async def _get_backend_http() -> httpx.AsyncClient:
@@ -62,7 +63,7 @@ async def _get_backend_http() -> httpx.AsyncClient:
             except Exception:
                 pass
         _BACKEND_HTTP = httpx.AsyncClient(
-            timeout=httpx.Timeout(20.0, connect=15.0),
+            timeout=httpx.Timeout(120.0, connect=60.0),  # High timeout for massive batches
             limits=_http_limits(),
             headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
         )
@@ -79,7 +80,7 @@ async def _get_media_http() -> httpx.AsyncClient:
                 await _MEDIA_HTTP.aclose()
             except Exception:
                 pass
-        _MEDIA_HTTP = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=20.0), limits=_http_limits())
+        _MEDIA_HTTP = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=30.0), limits=_http_limits())
         _MEDIA_HTTP_LOOP = loop
     return _MEDIA_HTTP
 

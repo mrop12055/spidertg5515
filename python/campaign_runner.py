@@ -30,8 +30,8 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-DEFAULT_POLL_INTERVAL = 3  # Default polling (server can override)
-REPORT_CONCURRENCY = 20    # Max parallel report calls
+DEFAULT_POLL_INTERVAL = 0  # INSTANT - no delay between batches
+REPORT_CONCURRENCY = 1000  # Max parallel report calls for 5000 batch
 
 
 def signal_handler(sig, frame):
@@ -127,9 +127,12 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             print(f"    ✗ [{account_phone}] No client")
             return result
         
-        # Server-controlled stagger delay
-        stagger_delay = random.uniform(stagger_min, stagger_max)
-        await asyncio.sleep(stagger_delay)
+        # NO STAGGER - INSTANT SEND (server sends 0,0 for max speed)
+        # Only sleep if server explicitly requests delay > 0
+        if stagger_max > 0:
+            stagger_delay = random.uniform(stagger_min, stagger_max)
+            if stagger_delay > 0:
+                await asyncio.sleep(stagger_delay)
         
         print(f"  📨 [{account_phone}] → {recipient}")
         
