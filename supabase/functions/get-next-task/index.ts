@@ -250,7 +250,8 @@ serve(async (req) => {
       .from("telegram_accounts")
       .select(ACCOUNT_WITH_JOINS_SELECT as any)
       .eq("status", "active")
-      .limit(60);
+      .not("session_data", "is", null)
+      .limit(100);
 
     // Get restricted accounts with limit
     const { data: restrictedAccountsRaw } = await supabase
