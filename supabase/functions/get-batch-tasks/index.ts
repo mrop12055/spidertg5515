@@ -707,8 +707,25 @@ serve(async (req) => {
     }
 
     // LIVECHAT RUNNER: Get pending outgoing messages
+    // For livechat, we need ALL accounts (active + restricted) to receive and send messages
     if (runner === "livechat") {
-      const actualBatchSize = Math.min(batch_size || 50, usableAccounts.length);
+      // Fetch active + restricted accounts specifically for livechat
+      const { data: livechatAccounts } = await supabase
+        .from("telegram_accounts")
+        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+        .in("status", ["active", "restricted"])
+        .or(`restricted_until.is.null,restricted_until.lt.${now}`);
+
+      // Filter to only those with active proxies
+      const livechatUsableAccounts = (livechatAccounts || []).filter((a: any) => {
+        if (!a.proxy_id) return false;
+        if (!a.proxies || a.proxies.status !== 'active') return false;
+        return true;
+      });
+
+      console.log(`[get-batch-tasks] Livechat: ${livechatUsableAccounts.length} accounts (active + restricted with active proxies)`);
+
+      const actualBatchSize = Math.min(batch_size || 50, livechatUsableAccounts.length);
       
       const { data: pendingMessages } = await supabase
         .from("messages")
@@ -731,8 +748,8 @@ serve(async (req) => {
 
           const conv = msg.conversations;
           
-          // Find the account for this conversation
-          const account = usableAccounts.find((a: any) => 
+          // Find the account for this conversation from livechat accounts
+          const account = livechatUsableAccounts.find((a: any) => 
             a.id === conv.account_id && !usedAccountIds.has(a.id)
           );
 
@@ -786,9 +803,9 @@ serve(async (req) => {
         }
       }
       
-      // For livechat, also return accounts for initial connection
-      // This helps the runner connect accounts that need message handlers
-      const accountsForConnection = usableAccounts.map((a: any) => ({
+      // For livechat, return ALL active + restricted accounts for connection
+      // This ensures all accounts can receive incoming messages
+      const accountsForConnection = livechatUsableAccounts.map((a: any) => ({
         id: a.id,
         phone_number: a.phone_number,
         session_data: a.session_data,
@@ -814,7 +831,7 @@ serve(async (req) => {
         tasks,
         accounts: accountsForConnection,
         delay_after: 1, // 1-second polling for livechat
-        accounts_available: usableAccounts.length,
+        accounts_available: livechatUsableAccounts.length,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
