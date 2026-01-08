@@ -170,17 +170,51 @@ serve(async (req) => {
         }
       }
 
-      // 5. Update account last_campaign_send_at in batch
-      const uniqueAccountIds = [...new Set(successResults.map(r => r.account_id).filter(Boolean))];
-      await supabase
-        .from("telegram_accounts")
-        .update({ 
-          last_campaign_send_at: now,
-          last_active: now
-        })
-        .in("id", uniqueAccountIds);
+      // 5. Increment messages_sent_today for accounts that created NEW conversations
+      // Group new conversations by account_id to count how many each account created
+      const accountNewConvCounts = new Map<string, number>();
+      for (const conv of newConversations) {
+        const accId = conv.account_id;
+        if (accId) {
+          accountNewConvCounts.set(accId, (accountNewConvCounts.get(accId) || 0) + 1);
+        }
+      }
 
-      // 6. Mark contacts as used in batch
+      // Increment messages_sent_today for each account based on new conversations created
+      for (const [accountId, newConvCount] of accountNewConvCounts) {
+        const { data: account } = await supabase
+          .from("telegram_accounts")
+          .select("messages_sent_today")
+          .eq("id", accountId)
+          .single();
+
+        if (account) {
+          await supabase
+            .from("telegram_accounts")
+            .update({
+              messages_sent_today: (account.messages_sent_today || 0) + newConvCount,
+              last_campaign_send_at: now,
+              last_active: now
+            })
+            .eq("id", accountId);
+        }
+      }
+
+      // 6. Update remaining accounts (existing convs) with just timestamps
+      const accountsWithExistingConvs = [...new Set(successResults.map(r => r.account_id).filter(Boolean))]
+        .filter(id => !accountNewConvCounts.has(id));
+      
+      if (accountsWithExistingConvs.length > 0) {
+        await supabase
+          .from("telegram_accounts")
+          .update({ 
+            last_campaign_send_at: now,
+            last_active: now
+          })
+          .in("id", accountsWithExistingConvs);
+      }
+
+      // 7. Mark contacts as used in batch
       const usedPhones = [...new Set(successResults.map(r => r.recipient_phone).filter(Boolean))];
       if (usedPhones.length > 0) {
         await supabase
@@ -189,7 +223,7 @@ serve(async (req) => {
           .in("phone_number", usedPhones);
       }
 
-      console.log(`[report-batch-results] Processed ${successResults.length} successes (${newConversations.length} new convs)`);
+      console.log(`[report-batch-results] Processed ${successResults.length} successes (${newConversations.length} new convs, ${accountNewConvCounts.size} accounts incremented)`);
     }
 
     // ========== BATCH PROCESS FAILURES ==========
