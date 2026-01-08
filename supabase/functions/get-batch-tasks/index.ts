@@ -23,30 +23,21 @@ serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({}));
-    const { runner, batch_size = 100, server_id } = body;
+    const { runner, batch_size = 100 } = body;
 
-    console.log(`[get-batch-tasks] Request for runner: ${runner}, server_id: ${server_id}, batch_size: ${batch_size}`);
+    console.log(`[get-batch-tasks] Request for runner: ${runner}, batch_size: ${batch_size}`);
 
-    // Record runner heartbeat with server_id for unique server tracking
+    // Record runner heartbeat - use base runner name for UI display
     if (runner) {
       // Normalize runner name: warmup_chat -> warmup, campaign_batch -> campaign
       const baseRunnerName = runner.replace(/_batch$/, '').replace(/_chat$/, '');
-      const serverId = server_id || 'legacy';
-      
-      // Get IP from headers
-      const ipAddress = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
-                       req.headers.get('cf-connecting-ip') || 
-                       'unknown';
-      
       await supabase
         .from("runner_heartbeats")
         .upsert({
           runner_name: baseRunnerName,
-          server_id: serverId,
-          ip_address: ipAddress,
           last_seen: new Date().toISOString(),
           status: 'online'
-        }, { onConflict: 'runner_name,server_id' });
+        }, { onConflict: 'runner_name' });
     }
 
     // Load settings from database

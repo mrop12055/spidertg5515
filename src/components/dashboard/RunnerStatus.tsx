@@ -1,7 +1,6 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Send, MessageSquare, UserCog, Flame, CheckCircle2, XCircle, Activity, Server } from 'lucide-react';
+import { Send, MessageSquare, UserCog, Flame, Ban, CheckCircle2, XCircle, Activity } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRunnerStatus } from '@/hooks/useRunnerStatus';
 
@@ -29,13 +28,7 @@ const runnerIcons: Record<string, { icon: React.ReactNode; color: string; functi
 };
 
 export const RunnerStatusCard: React.FC = () => {
-  const { runners, serverInstances, uniqueServerCount, onlineCount, totalCount } = useRunnerStatus();
-  
-  // Get unique online servers for display
-  const onlineServers = serverInstances.filter(s => s.isOnline);
-  const uniqueServers = Array.from(
-    new Map(onlineServers.map(s => [s.serverId, s])).values()
-  );
+  const { runners, onlineCount, totalCount } = useRunnerStatus();
 
   return (
     <Card>
@@ -43,17 +36,13 @@ export const RunnerStatusCard: React.FC = () => {
         <CardTitle className="flex items-center gap-2 text-base">
           <Activity className="w-5 h-5 text-primary" />
           Runner Status
-          <span className="ml-auto flex items-center gap-3 text-sm font-normal text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <Server className="w-3.5 h-3.5" />
-              {uniqueServerCount} {uniqueServerCount === 1 ? 'Server' : 'Servers'}
-            </span>
-            <span>{onlineCount}/{totalCount} Online</span>
+          <span className="ml-auto text-sm font-normal text-muted-foreground">
+            {onlineCount}/{totalCount} Online
           </span>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           {runners.map((runner) => {
             const config = runnerIcons[runner.runnerKey];
             return (
@@ -85,32 +74,6 @@ export const RunnerStatusCard: React.FC = () => {
             );
           })}
         </div>
-        
-        {/* Active Servers Section */}
-        {uniqueServers.length > 0 && (
-          <div className="mt-3 pt-3 border-t">
-            <p className="text-xs text-muted-foreground mb-2 flex items-center gap-1">
-              <Server className="w-3 h-3" />
-              Active Servers ({uniqueServers.length})
-            </p>
-            <div className="flex flex-wrap gap-1.5">
-              {uniqueServers.slice(0, 10).map((server) => (
-                <Badge 
-                  key={server.serverId} 
-                  variant="outline" 
-                  className="text-xs bg-green-500/10 border-green-500/30 text-green-600"
-                >
-                  {server.serverId}
-                </Badge>
-              ))}
-              {uniqueServers.length > 10 && (
-                <Badge variant="secondary" className="text-xs">
-                  +{uniqueServers.length - 10} more
-                </Badge>
-              )}
-            </div>
-          </div>
-        )}
       </CardContent>
     </Card>
   );

@@ -11,8 +11,6 @@ import tempfile
 import asyncio
 import httpx
 import socks
-import socket
-import uuid
 from typing import Dict, Optional
 
 from telethon import TelegramClient, events
@@ -21,21 +19,6 @@ from telethon.network.connection import ConnectionTcpFull
 
 from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
 from fingerprint_generator import generate_fingerprint
-
-# ========== UNIQUE SERVER ID ==========
-def get_server_id():
-    """Generate unique server ID: hostname + short unique suffix"""
-    try:
-        hostname = socket.gethostname()[:15]  # First 15 chars of hostname
-        # Use MAC address for uniqueness across restarts
-        mac_suffix = uuid.getnode() % 10000
-        return f"{hostname}-{mac_suffix}"
-    except:
-        # Fallback to random ID if hostname fails
-        return f"server-{random.randint(1000, 9999)}"
-
-SERVER_ID = get_server_id()
-print(f"[client_manager] 🖥️ Server ID: {SERVER_ID}")
 
 # Temp folder for session files
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
@@ -410,12 +393,9 @@ async def _sync_profile(client: TelegramClient, account_id: str, skip_avatar: bo
 
 
 async def get_next_task(runner: str = None) -> dict:
-    """Ask backend for next task.
-    
-    Sends server_id for unique server tracking in dashboard.
-    """
+    """Ask backend for next task."""
     try:
-        body = {"runner": runner, "server_id": SERVER_ID} if runner else {"server_id": SERVER_ID}
+        body = {"runner": runner} if runner else {}
         http = await _get_backend_http()
         resp = await http.post(f"{BACKEND_URL}/get-next-task", json=body)
         return resp.json()
@@ -426,12 +406,9 @@ async def get_next_task(runner: str = None) -> dict:
 
 
 async def get_batch_tasks(runner: str = None) -> dict:
-    """Ask backend for batch of tasks - server controls batch size.
-    
-    Sends server_id for unique server tracking in dashboard.
-    """
+    """Ask backend for batch of tasks - server controls batch size."""
     try:
-        body = {"runner": runner, "server_id": SERVER_ID} if runner else {"server_id": SERVER_ID}
+        body = {"runner": runner} if runner else {}
         http = await _get_backend_http()
         resp = await http.post(f"{BACKEND_URL}/get-batch-tasks", json=body)
         return resp.json()

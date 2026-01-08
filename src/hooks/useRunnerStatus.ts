@@ -8,14 +8,6 @@ interface RunnerInfo {
   lastSeen: Date | null;
 }
 
-interface ServerInstance {
-  serverId: string;
-  runnerName: string;
-  ipAddress: string | null;
-  lastSeen: Date;
-  isOnline: boolean;
-}
-
 // Maps Python runner script names to display names
 // warmup_runner.py reports both 'warmup' and 'warmup_chat' - we track both but show as single card
 const runnerNames: Record<string, string> = {
@@ -49,8 +41,6 @@ export const useRunnerStatus = () => {
     }))
   );
   
-  const [serverInstances, setServerInstances] = useState<ServerInstance[]>([]);
-  
   // Track when each runner first went offline (for grace period)
   const offlineSinceRef = useRef<Map<string, Date>>(new Map());
   const [anyOfflineConfirmed, setAnyOfflineConfirmed] = useState(false);
@@ -59,38 +49,22 @@ export const useRunnerStatus = () => {
     try {
       const { data: heartbeats } = await supabase
         .from('runner_heartbeats')
-        .select('runner_name, server_id, ip_address, last_seen, status');
+        .select('runner_name, last_seen, status');
       
       const runnerMap = new Map<string, Date>();
-      const servers: ServerInstance[] = [];
-      const offlineThreshold = new Date(Date.now() - OFFLINE_THRESHOLD_MS);
-      
       if (heartbeats) {
         for (const hb of heartbeats) {
           const runnerKey = normalizeRunnerKey(hb.runner_name);
           const lastSeen = new Date(hb.last_seen);
-          const isOnline = lastSeen > offlineThreshold;
-          
-          // Track individual server instances
-          servers.push({
-            serverId: (hb as any).server_id || 'legacy',
-            runnerName: runnerKey,
-            ipAddress: hb.ip_address,
-            lastSeen,
-            isOnline,
-          });
-          
-          // Keep the most recent timestamp for each runner type
+          // Keep the most recent timestamp for each runner
           if (!runnerMap.has(runnerKey) || lastSeen > runnerMap.get(runnerKey)!) {
             runnerMap.set(runnerKey, lastSeen);
           }
         }
       }
       
-      // Update server instances (unique servers)
-      setServerInstances(servers);
-      
       // Consider offline if last seen more than OFFLINE_THRESHOLD_MS ago
+      const offlineThreshold = new Date(Date.now() - OFFLINE_THRESHOLD_MS);
       const now = new Date();
       
       // If last_seen is older than this, show as offline immediately (skip grace)
@@ -183,21 +157,6 @@ export const useRunnerStatus = () => {
   const anyOffline = runners.some(r => !r.isOnline);
   const allOnline = runners.every(r => r.isOnline);
   const onlineCount = runners.filter(r => r.isOnline).length;
-  
-  // Count unique online servers (by server_id)
-  const uniqueOnlineServers = new Set(
-    serverInstances.filter(s => s.isOnline).map(s => s.serverId)
-  );
-  const uniqueServerCount = uniqueOnlineServers.size;
 
-  return { 
-    runners, 
-    serverInstances,
-    uniqueServerCount,
-    anyOffline, 
-    anyOfflineConfirmed, 
-    allOnline, 
-    onlineCount, 
-    totalCount: runners.length 
-  };
+  return { runners, anyOffline, anyOfflineConfirmed, allOnline, onlineCount, totalCount: runners.length };
 };
