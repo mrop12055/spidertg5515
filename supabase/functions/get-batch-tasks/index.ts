@@ -47,32 +47,25 @@ serve(async (req) => {
 
     // Dynamic batch sizes from settings
     let warmupBatchSize = 100; // Default for warmup
-    let campaignBatchSize = 100; // Default for campaign
     
-    // Campaign speed settings (server-controlled)
-    let campaignStaggerMin = 0.3;
-    let campaignStaggerMax = 1.5;
-    let campaignPollingInterval = 3;
-    let campaignMessagesPerAccountPerDay = 25; // NEW: Messages per account per day for campaigns
+    // Campaign speed settings - NO LIMITS, INSTANT SENDING
+    const campaignStaggerMin = 0;  // No stagger
+    const campaignStaggerMax = 0;  // No stagger
+    const campaignPollingInterval = 3;  // 3 seconds when tasks exist
+    const noTaskPollingInterval = 30;   // 30 seconds when no tasks
+    // NO message limit per account - unlimited
+    
     if (settingsData) {
       for (const setting of settingsData) {
         const value = setting.value as Record<string, unknown>;
         if (setting.key === "message_timing" && value) {
           MESSAGE_DELAY_MIN_SECONDS = (value.minDelaySeconds as number) || MESSAGE_DELAY_MIN_SECONDS;
           MESSAGE_DELAY_MAX_SECONDS = (value.maxDelaySeconds as number) || MESSAGE_DELAY_MAX_SECONDS;
-        } else if (setting.key === "account_limits" && value) {
-          DAILY_MESSAGE_LIMIT = (value.dailyMessageLimit as number) || DAILY_MESSAGE_LIMIT;
         } else if (setting.key === "warmup_batch_size" && value) {
           // Read warmup batch size from app_settings
           warmupBatchSize = (value.batchSize as number) || warmupBatchSize;
-        } else if (setting.key === "campaign_speed" && value) {
-          // Campaign speed settings
-          campaignStaggerMin = (value.staggerMin as number) ?? campaignStaggerMin;
-          campaignStaggerMax = (value.staggerMax as number) ?? campaignStaggerMax;
-          campaignPollingInterval = (value.pollingInterval as number) ?? campaignPollingInterval;
-          campaignBatchSize = (value.batchSize as number) ?? campaignBatchSize;
-          campaignMessagesPerAccountPerDay = (value.messagesPerAccountPerDay as number) ?? campaignMessagesPerAccountPerDay;
         }
+        // Ignore campaign_speed settings - we use hardcoded values for no limits
       }
     }
 
@@ -114,32 +107,17 @@ serve(async (req) => {
       console.log("[get-batch-tasks] No accounts with active proxies available");
       return new Response(JSON.stringify({
         tasks: [],
-        delay_after: 30,
+        delay_after: noTaskPollingInterval,
         reason: "No accounts with active proxies - assign proxies to accounts first"
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    // Filter to accounts under daily limit
-    const usableAccounts = accountsWithActiveProxy.filter((a: any) => {
-      const limit = a.daily_limit ?? DAILY_MESSAGE_LIMIT;
-      const sentToday = a.messages_sent_today ?? 0;
-      return sentToday < limit;
-    });
-
-    if (usableAccounts.length === 0) {
-      console.log("[get-batch-tasks] All accounts at daily limit");
-      return new Response(JSON.stringify({
-        tasks: [],
-        delay_after: 60,
-        reason: "All accounts at daily limit"
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    // Use ALL accounts with active proxies - NO daily limit filtering for campaigns
+    const usableAccounts = accountsWithActiveProxy;
     
-    console.log(`[get-batch-tasks] ${usableAccounts.length} accounts with active proxies ready`);
+    console.log(`[get-batch-tasks] ${usableAccounts.length} accounts with active proxies ready (NO LIMITS)`);
 
     const tasks: any[] = [];
     const usedAccountIds = new Set<string>();
@@ -338,7 +316,7 @@ serve(async (req) => {
       if (!runningCampaigns || runningCampaigns.length === 0) {
         return new Response(JSON.stringify({
           tasks: [],
-          delay_after: campaignPollingInterval,
+          delay_after: noTaskPollingInterval,
           stagger_min: campaignStaggerMin,
           stagger_max: campaignStaggerMax,
           reason: "No running campaigns",
@@ -405,11 +383,8 @@ serve(async (req) => {
 
       console.log(`[get-batch-tasks] ${accountsWithAvailableApi.length} accounts have API under limit (of ${usableAccounts.length} total)`);
 
-      // Filter accounts for campaigns using campaign-specific per-account limit
-      const campaignUsableAccounts = accountsWithAvailableApi.filter((a: any) => {
-        const sentToday = a.messages_sent_today ?? 0;
-        return sentToday < campaignMessagesPerAccountPerDay;
-      });
+      // NO per-account message limit - use all accounts with available API
+      const campaignUsableAccounts = accountsWithAvailableApi;
 
       // Track API usage in this batch to avoid over-assigning
       const batchApiUsage = new Map<string, number>();
@@ -496,7 +471,7 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({
           tasks: [],
-          delay_after: campaignPollingInterval,
+          delay_after: noTaskPollingInterval,
           stagger_min: campaignStaggerMin,
           stagger_max: campaignStaggerMax,
           reason: "No pending recipients",
@@ -536,7 +511,7 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({
           tasks: [],
-          delay_after: campaignPollingInterval,
+          delay_after: noTaskPollingInterval,
           stagger_min: campaignStaggerMin,
           stagger_max: campaignStaggerMax,
           reason: "All accounts restricted or at daily limit - campaigns failed",
@@ -546,9 +521,9 @@ serve(async (req) => {
         });
       }
 
-      // Use campaignBatchSize from settings, limited by available accounts
-      const actualBatchSize = Math.min(campaignBatchSize, campaignUsableAccounts.length);
-      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (settings: ${campaignBatchSize}, accounts: ${campaignUsableAccounts.length}, limit: ${campaignMessagesPerAccountPerDay}/account)`);
+      // NO batch size limit - get ALL pending recipients that we can assign to accounts
+      const actualBatchSize = campaignUsableAccounts.length * 10; // Allow many tasks per account
+      console.log(`[get-batch-tasks] Campaign using NO LIMITS: ${campaignUsableAccounts.length} accounts available`);
 
       // Track recipients with no eligible accounts (all accounts in their failed_account_ids)
       let recipientsWithNoAccounts = 0;
