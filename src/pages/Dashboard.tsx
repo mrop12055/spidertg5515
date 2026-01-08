@@ -8,6 +8,7 @@ import { Progress } from '@/components/ui/progress';
 import { useTelegram } from '@/context/TelegramContext';
 import { supabase } from '@/integrations/supabase/client';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
+import { VPSManager } from '@/components/dashboard/VPSManager';
 import { 
   LayoutDashboard, 
   Phone, 
@@ -19,9 +20,9 @@ import {
   Users,
   TrendingUp,
   Clock,
-  Download
+  Infinity,
+  Reply
 } from 'lucide-react';
-import JSZip from 'jszip';
 import { useNavigate } from 'react-router-dom';
 
 interface DashboardStats {
@@ -33,15 +34,10 @@ interface DashboardStats {
   repliesLifetime: number;
 }
 
-// Supabase storage bucket for Python files
-const STORAGE_BUCKET = 'python-scripts';
-const SUPABASE_URL = 'https://ismtbdcnbxyyvsacbeld.supabase.co';
-
 const Dashboard: React.FC = () => {
-  const { campaigns, refreshData } = useTelegram();
+  const { campaigns, proxies, refreshData } = useTelegram();
   const navigate = useNavigate();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isDownloading, setIsDownloading] = useState(false);
   const [stats, setStats] = useState<DashboardStats>({
     totalAccounts: 0,
     activeAccounts: 0,
@@ -115,72 +111,6 @@ const Dashboard: React.FC = () => {
     setIsRefreshing(false);
   };
 
-  const handleDownloadPython = async () => {
-    setIsDownloading(true);
-    try {
-      const zip = new JSZip();
-      
-      // List of all Python files to download from Supabase storage
-      const pythonFiles = [
-        'config.py',
-        'requirements.txt',
-        'RUN.bat',
-        'bootstrap.py',
-        'account_manager.py',
-        'campaign_runner.py',
-        'client_manager.py',
-        'fingerprint_generator.py',
-        'live_chat_listener.py',
-        'warmup_runner.py',
-      ];
-      
-      // Fetch all Python files from Supabase storage in parallel
-      const fileContents = await Promise.all(
-        pythonFiles.map(async (filename) => {
-          try {
-            const url = `${SUPABASE_URL}/storage/v1/object/public/${STORAGE_BUCKET}/${filename}`;
-            const response = await fetch(url);
-            if (response.ok) {
-              return { name: filename, content: await response.text() };
-            }
-          } catch (e) {
-            console.error(`Failed to fetch ${filename}:`, e);
-          }
-          return null;
-        })
-      );
-      
-      // Add fetched files to zip
-      let addedCount = 0;
-      fileContents.forEach((file) => {
-        if (file && file.content) {
-          zip.file(file.name, file.content);
-          addedCount++;
-        }
-      });
-      
-      if (addedCount === 0) {
-        console.error('No files found in storage. Please upload Python files first.');
-        setIsDownloading(false);
-        return;
-      }
-      
-      // Generate and download
-      const blob = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `TelegramCRM-Python-${new Date().toISOString().split('T')[0]}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Download error:', error);
-    }
-    setIsDownloading(false);
-  };
-
   const runningCampaigns = campaigns.filter(c => c.status === 'running').length;
 
   return (
@@ -190,24 +120,14 @@ const Dashboard: React.FC = () => {
         description="Monitor your TGxOP bulk messaging system"
         icon={LayoutDashboard}
         action={
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleDownloadPython} disabled={isDownloading}>
-              {isDownloading ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <Download className="w-4 h-4" />
-              )}
-              <span className="ml-2">Python</span>
-            </Button>
-            <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-              {isRefreshing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-              <span className="ml-2">Refresh</span>
-            </Button>
-          </div>
+          <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
+            {isRefreshing ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <RefreshCw className="w-4 h-4" />
+            )}
+            <span className="ml-2">Refresh</span>
+          </Button>
         }
       />
       
@@ -261,9 +181,10 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
-      {/* Runner Status */}
-      <div className="mb-8">
+      {/* Runner Status & VPS Manager */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-8">
         <RunnerStatusCard />
+        <VPSManager />
       </div>
 
       {/* Running Campaigns */}

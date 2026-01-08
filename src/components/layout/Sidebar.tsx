@@ -10,6 +10,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Phone,
+  BookOpen,
   Globe,
   Database,
   Flame,
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { icon: Users, label: 'Seats', path: '/seats' },
   { icon: Package, label: 'Material', path: '/material' },
   { icon: Database, label: 'Database', path: '/database' },
+  { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 

@@ -47,10 +47,10 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 async def pre_connect_batch(tasks: list) -> int:
     """Pre-connect all accounts in parallel BEFORE processing tasks.
-
+    
     This speeds up batch processing by connecting all clients upfront
     instead of sequentially during task processing.
-
+    
     Returns: number of successfully pre-connected accounts
     """
     unique_accounts = {}
@@ -59,12 +59,12 @@ async def pre_connect_batch(tasks: list) -> int:
         acc_id = acc.get("id")
         if acc_id and acc_id not in unique_accounts:
             unique_accounts[acc_id] = (acc, t.get("proxy"))
-
+    
     if not unique_accounts:
         return 0
-
+    
     print(f"  ⚡ Pre-connecting {len(unique_accounts)} accounts in parallel...")
-
+    
     async def connect_one(account: dict, proxy: dict) -> bool:
         try:
             client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True)
@@ -72,12 +72,12 @@ async def pre_connect_batch(tasks: list) -> int:
         except Exception as e:
             print(f"    ⚠ Pre-connect failed for {account.get('phone_number', '???')[-4:]}: {e}")
             return False
-
+    
     results = await asyncio.gather(
         *[connect_one(acc, px) for acc, px in unique_accounts.values()],
         return_exceptions=True
     )
-
+    
     success_count = sum(1 for r in results if r is True)
     print(f"  ✓ Pre-connection complete: {success_count}/{len(unique_accounts)} connected")
     return success_count
@@ -85,7 +85,7 @@ async def pre_connect_batch(tasks: list) -> int:
 
 async def process_single_task(task: dict, stagger_min: float, stagger_max: float) -> dict:
     """Process a single campaign send task.
-
+    
     IMPORTANT: This function is fully isolated - any exception here
     only affects this task, never crashes the whole runner.
     """
@@ -95,15 +95,15 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
     account = task.get("account", {})
     proxy = task.get("proxy")
     content = msg.get("content", "")
-
+    
     # Get campaign metadata from task (passed from get-batch-tasks)
     campaign_seat_id = task.get("campaign_seat_id")
     campaign_id = task.get("campaign_id")
     campaign_name = task.get("campaign_name")
-
+    
     account_id = account.get("id")
     account_phone = account.get("phone_number", "????")[-4:]
-
+    
     if not account_id or not recipient:
         return {
             "success": False,
@@ -111,11 +111,11 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             "campaign_recipient_id": msg.get("campaign_recipient_id"),
             "account_id": account_id,
         }
-
+    
     try:
         # Get or create client with task-level proxy
         client = await get_or_create_client(account, task_proxy=proxy)
-
+        
         if not client:
             result = {
                 "success": False,
@@ -126,13 +126,13 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             }
             print(f"    ✗ [{account_phone}] No client")
             return result
-
+        
         # Server-controlled stagger delay
         stagger_delay = random.uniform(stagger_min, stagger_max)
         await asyncio.sleep(stagger_delay)
-
+        
         print(f"  📨 [{account_phone}] → {recipient}")
-
+        
         send_res = await send_message(
             client, recipient, content,
             msg.get("media_url")
@@ -144,17 +144,17 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             meta = None
         else:
             success, error, meta = False, f"Unexpected send_message return: {type(send_res)}", None
-
+        
         # Check if this is a sender-side issue (should retry with different account)
         is_sender_error = error and any(x in error.lower() for x in [
             "privacyrestricted", "privacy restricted", "userprivacyrestricted",
             "too many requests", "sendmessagerequest"
         ])
-
+        
         # Get API credential ID
         api_creds = account.get("telegram_api_credentials")
         api_credential_id = api_creds.get("id") if api_creds else account.get("api_credential_id")
-
+        
         result = {
             "success": success,
             "error": error,
@@ -170,7 +170,7 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             "campaign_id": campaign_id,
             "campaign_name": campaign_name,
         }
-
+        
         if is_sender_error:
             result["skip_account"] = True
             result["retry_with_different_account"] = True
@@ -179,12 +179,12 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             print(f"    ✓ [{account_phone}] Sent")
         else:
             print(f"    ✗ [{account_phone}] {error}")
-
+        
         if meta:
             result.update(meta)
-
+        
         return result
-
+        
     except Exception as e:
         error_str = str(e)
         print(f"    ✗ [{account_phone}] Error: {error_str[:50]}")
@@ -199,17 +199,17 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
 
 async def report_results_parallel(results: list) -> tuple:
     """Report all results to server in parallel with bounded concurrency.
-
+    
     Returns: (success_count, fail_count, report_time_seconds)
     """
     start_time = time.time()
-
+    
     # Filter out exceptions
     valid_results = [r for r in results if not isinstance(r, Exception)]
-
+    
     if not valid_results:
         return 0, 0, 0
-
+    
     # Try batch reporting first (much faster if available)
     try:
         batch_success = await report_batch_results(valid_results)
@@ -219,10 +219,10 @@ async def report_results_parallel(results: list) -> tuple:
             return success_count, len(valid_results) - success_count, elapsed
     except Exception as e:
         print(f"  ⚠ Batch report failed, falling back to parallel: {e}")
-
+    
     # Fallback: parallel individual reports with bounded concurrency
     semaphore = asyncio.Semaphore(REPORT_CONCURRENCY)
-
+    
     async def report_one(result: dict) -> bool:
         async with semaphore:
             try:
@@ -231,23 +231,23 @@ async def report_results_parallel(results: list) -> tuple:
             except Exception as e:
                 print(f"    ⚠ Report error: {e}")
                 return False
-
+    
     # Report all in parallel (bounded by semaphore)
     report_results = await asyncio.gather(
         *[report_one(r) for r in valid_results],
         return_exceptions=True
     )
-
+    
     elapsed = time.time() - start_time
     success_count = sum(1 for r in report_results if r is True)
     fail_count = len(valid_results) - success_count
-
+    
     return success_count, fail_count, elapsed
 
 
 async def main_loop():
     """Main campaign loop - Server-controlled speed settings
-
+    
     Simple loop:
     1. Request tasks from server (server decides batch size + speed)
     2. Execute ALL tasks in parallel with server-controlled stagger
@@ -256,7 +256,7 @@ async def main_loop():
     5. Repeat
     """
     global RUNNING
-
+    
     print("=" * 60)
     print("  TelegramCRM - Campaign Runner (Parallel Speed)")
     print(f"  BUILD: {BUILD_VERSION}")
@@ -267,19 +267,19 @@ async def main_loop():
     print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
     print("\n✓ Starting campaign runner...\n")
-
+    
     consecutive_empty = 0
-
+    
     while RUNNING:
         try:
             batch_start = time.time()
-
+            
             # Request batch of tasks from server
             batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
-
+            
             fetch_time = time.time() - batch_start
-
+            
             # Get server-controlled speed settings
             stagger_min = batch_result.get("stagger_min", 0.3)
             stagger_max = batch_result.get("stagger_max", 1.5)
@@ -312,17 +312,17 @@ async def main_loop():
 
                 await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
                 continue
-
+            
             consecutive_empty = 0
             print(f"\n  📦 Processing {len(tasks)} messages (stagger: {stagger_min:.1f}-{stagger_max:.1f}s)...")
             print(f"     [fetch: {fetch_time:.2f}s]")
-
+            
             # Pre-connect all accounts in parallel FIRST (major speedup)
             connect_start = time.time()
             await pre_connect_batch(tasks)
             connect_time = time.time() - connect_start
             print(f"     [connect: {connect_time:.2f}s]")
-
+            
             # Execute ALL tasks in parallel with server-controlled stagger
             send_start = time.time()
             results = await asyncio.gather(
@@ -331,13 +331,13 @@ async def main_loop():
             )
             send_time = time.time() - send_start
             print(f"     [send: {send_time:.2f}s]")
-
+            
             # Report ALL results in parallel (bounded concurrency)
             success_count, fail_count, report_time = await report_results_parallel(results)
-
+            
             total_time = time.time() - batch_start
             msgs_per_min = (len(tasks) / total_time * 60) if total_time > 0 else 0
-
+            
             print(f"  📊 Batch: {success_count}✓ {fail_count}✗ | {total_time:.1f}s total ({msgs_per_min:.0f}/min)")
             print(f"     [report: {report_time:.2f}s]")
 
@@ -347,11 +347,11 @@ async def main_loop():
                 await asyncio.sleep(delay_after)
             elif RUNNING and more_pending:
                 print("  🚀 More pending, immediate repoll...")
-
+        
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
             await asyncio.sleep(DEFAULT_POLL_INTERVAL)
-
+    
     print("\n⏹ Campaign loop stopped.")
     await shutdown_all()
 
@@ -363,7 +363,7 @@ if __name__ == "__main__":
     print("  Press Ctrl+C to stop")
     print("=" * 60)
     print("Required: pip install telethon httpx pysocks")
-
+    
     while True:
         try:
             asyncio.run(main_loop())
@@ -375,5 +375,5 @@ if __name__ == "__main__":
             print("  Restarting in 5 seconds...")
             import time
             time.sleep(5)
-
+    
     print("Goodbye!")
