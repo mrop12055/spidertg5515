@@ -13,4 +13,8 @@ python campaign_runner.py
 echo.
 echo Runner stopped.
 pause
-4545
+
+5
+5
+55
+5
