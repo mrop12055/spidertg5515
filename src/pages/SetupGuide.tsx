@@ -47,9 +47,16 @@ SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
 # Speed settings
-CONNECTION_TIMEOUT = 30
-CONNECTION_RETRIES = 3
-RETRY_DELAY = 2
+CONNECTION_TIMEOUT = 20  # Reduced from 30 for faster failure detection
+CONNECTION_RETRIES = 1   # Only 1 attempt - if proxy fails, switch immediately
+RETRY_DELAY = 1
+
+# Proxy error patterns - fail fast on these, don't retry
+PROXY_ERROR_PATTERNS = [
+    "semaphore timeout", "winerror 121", "connection refused", 
+    "proxy", "socks", "timed out", "timeout", "cannot connect",
+    "connection reset", "connection closed", "no route"
+]
 
 # ========== SHARED HTTP CLIENT POOL ==========
 # Prevents socket exhaustion by reusing connections
@@ -117,9 +124,14 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
             return True
         except asyncio.TimeoutError:
             print(f"    [TIMEOUT] Attempt {attempt}/{max_retries}")
-            if attempt < max_retries:
-                await asyncio.sleep(RETRY_DELAY * attempt)
+            # Don't retry timeouts - likely proxy issue
+            return False
         except Exception as e:
+            err_str = str(e).lower()
+            # Check if this is a proxy error - fail immediately, don't retry
+            if any(p in err_str for p in PROXY_ERROR_PATTERNS):
+                print(f"    [PROXY FAIL] {e}")
+                return False
             print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
             if attempt < max_retries:
                 await asyncio.sleep(RETRY_DELAY * attempt)
