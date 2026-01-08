@@ -19,12 +19,13 @@ import random
 
 from client_manager import (
     get_or_create_client, get_next_task, get_batch_tasks, report_result,
-    shutdown_all, disconnect_batch
+    shutdown_all, disconnect_batch, send_heartbeat
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
 POLL_INTERVAL = 7  # Poll server every 7 seconds
+HEARTBEAT_INTERVAL = 30  # Send heartbeat every 30 seconds
 
 # Warmup channels (safe public channels for building history)
 WARMUP_CHANNELS = [
@@ -451,9 +452,16 @@ async def main_loop():
     print("=" * 60)
     print("\n✓ Starting warmup runner...\n")
     
+    import time
     consecutive_empty = 0
+    last_heartbeat = 0
     
     while RUNNING:
+        # Send heartbeat every HEARTBEAT_INTERVAL seconds
+        now = time.time()
+        if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+            await send_heartbeat("warmup")
+            last_heartbeat = now
         try:
             # Request batch of tasks from server
             # Server controls: batch size, which tasks, timing
