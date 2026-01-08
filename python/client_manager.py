@@ -577,25 +577,25 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                 http = await _get_media_http()
                 media_resp = await http.get(media_url)
                 if media_resp.status_code == 200:
-                        from urllib.parse import urlparse, unquote
-                        url_path = urlparse(media_url).path
-                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+                    from urllib.parse import urlparse, unquote
+                    url_path = urlparse(media_url).path
+                    filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
 
-                        content_type = media_resp.headers.get("content-type", "").lower()
-                        ext = filename.split(".")[-1].lower() if "." in filename else ""
-                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+                    content_type = media_resp.headers.get("content-type", "").lower()
+                    ext = filename.split(".")[-1].lower() if "." in filename else ""
+                    is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
 
-                        file_bytes = io.BytesIO(media_resp.content)
-                        file_bytes.name = filename if "." in filename else "photo.jpg"
+                    file_bytes = io.BytesIO(media_resp.content)
+                    file_bytes.name = filename if "." in filename else "photo.jpg"
 
-                        print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
+                    print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
 
-                        await asyncio.wait_for(
-                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                            timeout=30
-                        )
-                    else:
-                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+                    await asyncio.wait_for(
+                        client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
+                        timeout=30
+                    )
+                else:
+                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
