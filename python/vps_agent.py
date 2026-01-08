@@ -25,13 +25,12 @@ VPS_API_KEY = "YOUR_VPS_API_KEY"  # Generated when VPS is registered
 # Get the directory where this script lives
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Runner definitions
+# Runner definitions (block_runner removed)
 RUNNERS = {
     "campaign": "campaign_runner.py",
     "livechat": "livechat_runner.py",
     "account": "account_runner.py",
     "warmup": "warmup_runner.py",
-    "block": "block_runner.py",
 }
 
 # Global state

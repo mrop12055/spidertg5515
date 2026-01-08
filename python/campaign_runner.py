@@ -178,10 +178,16 @@ async def main_loop():
             delay_after = batch_result.get("delay_after", DEFAULT_POLL_INTERVAL)
             more_pending = batch_result.get("more_pending", False)
 
-            # Check for stop signal from server
+            # Check for stop signal from server - now just waits instead of stopping
             if batch_result.get("stop_signal"):
-                print("⏹ Campaign paused from dashboard. Stopping...")
-                break
+                reason = batch_result.get("reason", "Campaign paused from dashboard")
+                consecutive_empty += 1
+                if consecutive_empty == 1:
+                    print(f"  ⏸️  {reason} — waiting for campaign to resume...")
+                elif consecutive_empty % 20 == 0:
+                    print("  ⏸️  Still waiting for campaign to resume...")
+                await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
+                continue
 
             # Handle no tasks
             if not tasks:
