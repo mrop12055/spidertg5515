@@ -24,7 +24,8 @@ import time
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all, disconnect_batch, report_batch_results
+    send_message, shutdown_all, disconnect_batch, report_batch_results,
+    send_heartbeat
 )
 
 # ========== GLOBAL STATE ==========
@@ -32,6 +33,7 @@ RUNNING = True
 DEFAULT_POLL_INTERVAL = 3    # Default polling when tasks exist
 NO_TASK_POLL_INTERVAL = 30   # Polling when no tasks available
 REPORT_CONCURRENCY = 20      # Max parallel report calls
+HEARTBEAT_INTERVAL = 30      # Send heartbeat every 30 seconds
 
 
 def signal_handler(sig, frame):
@@ -268,8 +270,15 @@ async def main_loop():
     print("\n✓ Starting campaign runner...\n")
     
     consecutive_empty = 0
+    last_heartbeat = 0
     
     while RUNNING:
+        # Send heartbeat every HEARTBEAT_INTERVAL seconds
+        import time
+        now = time.time()
+        if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+            await send_heartbeat("campaign")
+            last_heartbeat = now
         try:
             batch_start = time.time()
             

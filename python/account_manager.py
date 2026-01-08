@@ -25,11 +25,12 @@ import base64
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    shutdown_all, SESSION_FOLDER
+    shutdown_all, SESSION_FOLDER, send_heartbeat
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
+HEARTBEAT_INTERVAL = 30  # Send heartbeat every 30 seconds
 
 
 def signal_handler(sig, frame):
@@ -237,7 +238,16 @@ async def main_loop():
     print("=" * 60)
     print("\n✓ Starting account manager...\n")
     
+    import time
+    last_heartbeat = 0
+    
     while RUNNING:
+        # Send heartbeat every HEARTBEAT_INTERVAL seconds
+        now = time.time()
+        if now - last_heartbeat >= HEARTBEAT_INTERVAL:
+            await send_heartbeat("account")
+            last_heartbeat = now
+        
         try:
             # Get next task from server
             task = await get_next_task(runner="account")

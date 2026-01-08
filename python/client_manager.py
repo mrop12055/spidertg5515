@@ -668,6 +668,37 @@ async def disconnect_batch(account_ids: list):
         print(f"  [CLEANUP] Disconnected {disconnected} clients after batch")
 
 
+async def send_heartbeat(runner_name: str):
+    """Send heartbeat to runner_heartbeats table to show runner is online."""
+    try:
+        from config import SUPABASE_URL, SUPABASE_KEY
+        from datetime import datetime, timezone
+        
+        http = await _get_backend_http()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        
+        # Upsert heartbeat directly to Supabase REST API
+        resp = await http.post(
+            f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+            },
+            json={
+                "runner_name": runner_name,
+                "last_seen": now_iso,
+                "status": "online",
+                "server_id": "pc"
+            }
+        )
+        if resp.status_code not in (200, 201):
+            print(f"  [HEARTBEAT] {runner_name}: {resp.status_code}")
+    except Exception as e:
+        print(f"  [HEARTBEAT] Failed: {e}")
+
+
 async def shutdown_all():
     """Cleanup all clients on shutdown"""
     print("\n[SHUTDOWN] Disconnecting all clients...")
@@ -677,4 +708,5 @@ async def shutdown_all():
         except:
             pass
     active_clients.clear()
+    await _close_http_clients()
     print("[OK] All clients disconnected.")

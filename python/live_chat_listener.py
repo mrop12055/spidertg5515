@@ -21,13 +21,14 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all, active_clients
+    send_message, shutdown_all, active_clients, send_heartbeat
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
 POLL_INTERVAL = 1  # 1-second polling for live chat (must be fast!)
 KEEP_ALIVE_INTERVAL = 60  # Ping connections every 60 seconds
+HEARTBEAT_INTERVAL = 30  # Send heartbeat every 30 seconds
 
 
 def signal_handler(sig, frame):
@@ -265,11 +266,17 @@ async def main_loop():
     
     connected_ids = set()
     last_keep_alive = time.time()
+    last_heartbeat = 0
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 10
     
     while RUNNING:
         loop_start = time.time()
+        
+        # Send heartbeat every HEARTBEAT_INTERVAL seconds
+        if loop_start - last_heartbeat >= HEARTBEAT_INTERVAL:
+            await send_heartbeat("livechat")
+            last_heartbeat = loop_start
         
         try:
             # Poll for send tasks - server controls batch size
