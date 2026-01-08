@@ -937,6 +937,7 @@ SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else
 RUNNING = True
 CLEANUP_INTERVAL = 300  # 5 minutes
 HEARTBEAT_INTERVAL = 60  # 1 minute
+CONNECT_TIMEOUT_SECONDS = 45  # Prevent hangs during parallel connects
 
 # Network error detection - these indicate LOCAL network issues, not account problems
 NETWORK_ERROR_PATTERNS = [
@@ -1341,13 +1342,20 @@ async def main_loop():
                 if new_accounts:
                     print(f"  [CONNECT] Connecting {len(new_accounts)} accounts in PARALLEL...")
                     
-                    # Connect ALL accounts in parallel (no delay)
                     async def connect_one(acc):
                         acc_id = acc.get("id")
                         if not acc_id:
                             return None, None, "No ID"
-                        client, error = await connect_account_with_fingerprint(acc, setup_handler=setup_message_handler)
-                        return acc_id, client, error
+                        try:
+                            client, error = await asyncio.wait_for(
+                                connect_account_with_fingerprint(acc, setup_handler=setup_message_handler),
+                                timeout=CONNECT_TIMEOUT_SECONDS
+                            )
+                            return acc_id, client, error
+                        except asyncio.TimeoutError:
+                            return acc_id, None, "TIMEOUT"
+                        except Exception as e:
+                            return acc_id, None, f"ERROR:{e}"
                     
                     results = await asyncio.gather(
                         *[connect_one(acc) for acc in new_accounts],
@@ -1356,8 +1364,11 @@ async def main_loop():
                     
                     # Process results
                     success_count = 0
+                    timeout_count = 0
+                    error_count = 0
                     for result in results:
                         if isinstance(result, Exception):
+                            error_count += 1
                             continue
                         acc_id, client, error = result
                         if not acc_id:
@@ -1368,11 +1379,15 @@ async def main_loop():
                         elif error:
                             if error.startswith("NETWORK_ERROR:"):
                                 pass  # Will retry next iteration
+                            elif error == "TIMEOUT":
+                                timeout_count += 1
+                                failed_proxy_accounts[acc_id] = time.time() + 300
                             else:
+                                error_count += 1
                                 failed_proxy_accounts[acc_id] = time.time() + 300
                     
-                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts")
-                
+                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count})")
+
                 # No artificial delay - server returns seconds=0 for instant polling
             
             elif task_type == "send":
