@@ -70,7 +70,22 @@ pause
     const zip = new JSZip();
     const folder = zip.folder("telegram_crm");
     
+    // Generate build timestamp
+    const buildTime = new Date();
+    const buildTimestamp = buildTime.toISOString();
+    const buildInfo = `TelegramCRM Build Info
+========================
+Generated: ${buildTimestamp}
+Version: ${buildTime.getTime()}
+
+If you see IndentationError, make sure you:
+1. Downloaded this ZIP AFTER doing a hard refresh (Ctrl+F5) on the Setup page
+2. Extracted to a NEW folder (delete old telegram_crm folders first)
+3. Are running from the newly extracted folder
+`;
+    
     // Core files
+    folder?.file("BUILD_INFO.txt", buildInfo);
     folder?.file("config.py", configPy);
     folder?.file("client_manager.py", clientManagerPy);
     folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
@@ -89,11 +104,14 @@ pause
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "telegram_crm.zip";
+    
+    // Unique filename with timestamp to prevent confusion
+    const dateStr = buildTime.toISOString().slice(0,16).replace(/[-:T]/g, '');
+    a.download = `telegram_crm_${dateStr}.zip`;
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("ZIP downloaded! 9 files included.");
+    toast.success("ZIP downloaded! 10 files included (check BUILD_INFO.txt for version).");
   };
 
   const downloadVpsZip = async () => {
