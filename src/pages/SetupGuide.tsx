@@ -15,7 +15,40 @@ const SetupGuide: React.FC = () => {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
   const [isSyncing, setIsSyncing] = React.useState(false);
+  const [isDownloading, setIsDownloading] = React.useState(false);
   const [lastSyncTime, setLastSyncTime] = React.useState<Date | null>(null);
+
+  // Files to fetch from storage (these are the source of truth)
+  const PYTHON_FILES = [
+    'client_manager.py',
+    'fingerprint_generator.py', 
+    'campaign_runner.py',
+    'live_chat_listener.py',
+    'account_manager.py',
+    'warmup_runner.py',
+    'vps_agent.py',
+    'requirements.txt',
+    'RUN.bat',
+  ];
+
+  // Fetch a single file from storage
+  const fetchFileFromStorage = async (fileName: string): Promise<string | null> => {
+    try {
+      const { data, error } = await supabase.storage
+        .from('python-scripts')
+        .download(fileName);
+      
+      if (error || !data) {
+        console.warn(`File not in storage: ${fileName}`);
+        return null;
+      }
+      
+      return await data.text();
+    } catch (err) {
+      console.error(`Error fetching ${fileName}:`, err);
+      return null;
+    }
+  };
 
   // ========== 1. CONFIG.PY ==========
   const configPy = `"""
@@ -3163,98 +3196,153 @@ if __name__ == "__main__":
 `;
 
   const downloadZip = async () => {
-    const zip = new JSZip();
-    const folder = zip.folder("telegram_crm");
-    
-    // Core files
-    folder?.file("config.py", configPy);
-    folder?.file("client_manager.py", clientManagerPy);
-    folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
-    folder?.file("requirements.txt", requirementsTxt);
-    
-    // Individual runners - using correct filenames matching /python folder
-    folder?.file("campaign_runner.py", campaignRunnerPy);
-    folder?.file("live_chat_listener.py", livechatRunnerPy);
-    folder?.file("account_manager.py", accountRunnerPy);
-    folder?.file("warmup_runner.py", warmupRunnerPy);
-    
-    // Single BAT to run all
-    folder?.file("RUN.bat", runBat);
-    
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "telegram_crm.zip";
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    toast.success("ZIP downloaded! 9 files included.");
+    setIsDownloading(true);
+    try {
+      toast.info("Fetching latest files from storage...");
+      
+      const zip = new JSZip();
+      const folder = zip.folder("telegram_crm");
+      
+      // Always generate config.py dynamically (contains Supabase credentials)
+      folder?.file("config.py", configPy);
+      
+      // Fetch all other files from storage
+      const filePromises = PYTHON_FILES.filter(f => f !== 'vps_agent.py').map(async (fileName) => {
+        const content = await fetchFileFromStorage(fileName);
+        return { fileName, content };
+      });
+      
+      const results = await Promise.all(filePromises);
+      let filesAdded = 1; // config.py already added
+      
+      for (const { fileName, content } of results) {
+        if (content) {
+          folder?.file(fileName, content);
+          filesAdded++;
+        } else {
+          console.warn(`Skipping ${fileName} - not found in storage`);
+        }
+      }
+      
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "telegram_crm.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      toast.success(`ZIP downloaded! ${filesAdded} files included.`);
+    } catch (error) {
+      console.error('Download error:', error);
+      toast.error("Failed to download. Make sure files are synced to storage.");
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const downloadVpsZip = async () => {
-    const vpsApiKey = generateVpsApiKey();
-    const vpsAgentWithKey = vpsAgentPy.replace('REPLACE_WITH_YOUR_VPS_KEY', vpsApiKey);
-    
-    const zip = new JSZip();
-    const folder = zip.folder("telegram_crm_vps");
-    
-    // Core files
-    folder?.file("config.py", configPy);
-    folder?.file("client_manager.py", clientManagerPy);
-    folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
-    folder?.file("requirements.txt", requirementsTxt);
-    
-    // Individual runners - using correct filenames matching /python folder
-    folder?.file("campaign_runner.py", campaignRunnerPy);
-    folder?.file("live_chat_listener.py", livechatRunnerPy);
-    folder?.file("account_manager.py", accountRunnerPy);
-    folder?.file("warmup_runner.py", warmupRunnerPy);
-    
-    // VPS Agent
-    folder?.file("vps_agent.py", vpsAgentWithKey);
-    
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "telegram_crm_vps.zip";
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    toast.success("VPS ZIP downloaded! Run vps_agent.py on your server.");
+    setIsDownloading(true);
+    try {
+      toast.info("Fetching latest files from storage...");
+      
+      const vpsApiKey = generateVpsApiKey();
+      
+      const zip = new JSZip();
+      const folder = zip.folder("telegram_crm_vps");
+      
+      // Always generate config.py dynamically
+      folder?.file("config.py", configPy);
+      
+      // Fetch all files including vps_agent from storage
+      const filePromises = PYTHON_FILES.map(async (fileName) => {
+        const content = await fetchFileFromStorage(fileName);
+        return { fileName, content };
+      });
+      
+      const results = await Promise.all(filePromises);
+      let filesAdded = 1; // config.py already added
+      
+      for (const { fileName, content } of results) {
+        if (content) {
+          // Inject VPS API key into vps_agent.py
+          if (fileName === 'vps_agent.py') {
+            folder?.file(fileName, content.replace('REPLACE_WITH_YOUR_VPS_KEY', vpsApiKey));
+          } else {
+            folder?.file(fileName, content);
+          }
+          filesAdded++;
+        }
+      }
+      
+      const blob = await zip.generateAsync({ type: "blob" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "telegram_crm_vps.zip";
+      a.click();
+      URL.revokeObjectURL(url);
+      
+      toast.success(`VPS ZIP downloaded! ${filesAdded} files. Run vps_agent.py on your server.`);
+    } catch (error) {
+      console.error('Download error:', error);
+      toast.error("Failed to download. Make sure files are synced to storage.");
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
-  // Manual sync function
+  // Manual sync function - uploads embedded files to storage
   const syncScriptsToStorage = async (showToast = true) => {
     setIsSyncing(true);
     try {
-      const zip = new JSZip();
-      zip.file("campaign_runner.py", campaignRunnerPy);
-      zip.file("live_chat_listener.py", livechatRunnerPy);
-      zip.file("account_manager.py", accountRunnerPy);
-      zip.file("warmup_runner.py", warmupRunnerPy);
-      zip.file("client_manager.py", clientManagerPy);
-      zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
-      zip.file("config.py", configPy);
-      zip.file("requirements.txt", requirementsTxt);
-      zip.file("RUN.bat", runBat);
+      // Upload each file individually to storage
+      const filesToUpload = [
+        { name: 'client_manager.py', content: clientManagerPy },
+        { name: 'fingerprint_generator.py', content: fingerprintGeneratorPy },
+        { name: 'campaign_runner.py', content: campaignRunnerPy },
+        { name: 'live_chat_listener.py', content: livechatRunnerPy },
+        { name: 'account_manager.py', content: accountRunnerPy },
+        { name: 'warmup_runner.py', content: warmupRunnerPy },
+        { name: 'vps_agent.py', content: vpsAgentPy },
+        { name: 'requirements.txt', content: requirementsTxt },
+        { name: 'RUN.bat', content: runBat },
+      ];
 
-      const blob = await zip.generateAsync({ type: "blob" });
+      for (const file of filesToUpload) {
+        const blob = new Blob([file.content], { type: 'text/plain' });
+        const { error } = await supabase.storage
+          .from('python-scripts')
+          .upload(file.name, blob, { 
+            upsert: true,
+            contentType: 'text/plain'
+          });
+        
+        if (error) {
+          console.error(`Failed to upload ${file.name}:`, error);
+        }
+      }
       
-      const { error } = await supabase.storage
+      // Also create the zip for backwards compatibility
+      const zip = new JSZip();
+      for (const file of filesToUpload) {
+        zip.file(file.name, file.content);
+      }
+      zip.file("config.py", configPy);
+
+      const zipBlob = await zip.generateAsync({ type: "blob" });
+      
+      await supabase.storage
         .from('python-scripts')
-        .upload('runners.zip', blob, { 
+        .upload('runners.zip', zipBlob, { 
           upsert: true,
           contentType: 'application/zip'
         });
       
-      if (error) throw error;
-      
       setLastSyncTime(new Date());
       console.log('[Sync] Scripts synced to storage');
       if (showToast) {
-        toast.success("Scripts synced to VPS storage! Click 'Update All' in VPS controls to apply.");
+        toast.success("Scripts synced to storage! Downloads will now use latest files.");
       }
     } catch (error) {
       console.error('[Sync] Failed to sync scripts:', error);
@@ -3304,9 +3392,18 @@ if __name__ == "__main__":
                   </p>
                 </div>
 
-                <Button size="lg" onClick={downloadZip} className="gap-2 text-lg px-8 py-6">
-                  <Download className="h-6 w-6" />
-                  Download ZIP
+                <Button size="lg" onClick={downloadZip} disabled={isDownloading} className="gap-2 text-lg px-8 py-6">
+                  {isDownloading ? (
+                    <>
+                      <Loader2 className="h-6 w-6 animate-spin" />
+                      Fetching Latest...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-6 w-6" />
+                      Download ZIP
+                    </>
+                  )}
                 </Button>
 
                 <div className="text-left bg-muted rounded-lg p-4 space-y-3">
@@ -3366,9 +3463,13 @@ if __name__ == "__main__":
                       <p className="text-xs text-muted-foreground">
                         Includes VPS Agent for remote control + all runners
                       </p>
-                      <Button onClick={downloadVpsZip} className="w-full gap-2">
-                        <Download className="h-4 w-4" />
-                        Download VPS ZIP
+                      <Button onClick={downloadVpsZip} disabled={isDownloading} className="w-full gap-2">
+                        {isDownloading ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                        {isDownloading ? "Fetching..." : "Download VPS ZIP"}
                       </Button>
                     </div>
 
