@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-vps-api-key',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -20,8 +20,6 @@ serve(async (req) => {
     const url = new URL(req.url);
     const path = url.pathname.replace('/telegram-api', '');
     
-    // VPS API Key authentication (optional for VPS backend)
-    const vpsApiKey = req.headers.get('x-vps-api-key');
     
     console.log(`[telegram-api] ${req.method} ${path}`);
 
@@ -237,56 +235,6 @@ serve(async (req) => {
         return jsonResponse(campaign, 201);
       }
 
-      // ==================== VPS SYNC ====================
-      case path === '/vps/heartbeat' && req.method === 'POST': {
-        // VPS backend sends heartbeat to confirm it's running
-        if (!vpsApiKey) {
-          return jsonResponse({ error: 'VPS API key required' }, 401);
-        }
-        
-        const { data, error } = await supabase
-          .from('vps_connections')
-          .update({ 
-            last_seen: new Date().toISOString(), 
-            status: 'connected',
-            ip_address: req.headers.get('x-forwarded-for') || 'unknown'
-          })
-          .eq('api_key', vpsApiKey)
-          .select()
-          .single();
-        
-        if (error || !data) {
-          return jsonResponse({ error: 'Invalid VPS API key' }, 401);
-        }
-        
-        return jsonResponse({ status: 'ok', server_time: new Date().toISOString() });
-      }
-
-      case path === '/vps/accounts-to-process' && req.method === 'GET': {
-        // Get accounts that need processing by VPS
-        const { data, error } = await supabase
-          .from('telegram_accounts')
-          .select('*, proxies(*)')
-          .in('status', ['active', 'cooldown'])
-          .not('session_data', 'is', null);
-        
-        if (error) throw error;
-        return jsonResponse(data);
-      }
-
-      case path === '/vps/pending-messages' && req.method === 'GET': {
-        // Get messages waiting to be sent
-        const { data, error } = await supabase
-          .from('messages')
-          .select('*, conversations(*), telegram_accounts(*)')
-          .eq('status', 'pending')
-          .eq('direction', 'outgoing')
-          .order('created_at', { ascending: true })
-          .limit(50);
-        
-        if (error) throw error;
-        return jsonResponse(data);
-      }
 
       default:
         return jsonResponse({ error: 'Not found', path }, 404);

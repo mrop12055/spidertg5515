@@ -1,21 +1,15 @@
 import React from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Download, Loader2, Server, Monitor, Upload, CheckCircle2, RefreshCw, BookOpen } from 'lucide-react';
+import { Download, BookOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
-import { supabase } from '@/integrations/supabase/client';
-import { VPSControlPanel } from '@/components/setup/VPSControlPanel';
 
 const SetupGuide: React.FC = () => {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  const [isSyncing, setIsSyncing] = React.useState(false);
-  const [lastSyncTime, setLastSyncTime] = React.useState<Date | null>(null);
 
   // ========== 1. CONFIG.PY ==========
   const configPy = `"""
@@ -2009,422 +2003,6 @@ pysocks>=1.7.1
 aiohttp>=3.9.0
 `;
 
-  // ========== VPS AGENT ==========
-  const generateVpsApiKey = () => {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = 'vps_';
-    for (let i = 0; i < 32; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  };
-
-  const vpsAgentPy = `"""
-TelegramCRM VPS Agent
-Manages all Python runners remotely - start/stop/restart/update
-Polls Supabase for commands and reports status back
-"""
-
-import os
-import sys
-import asyncio
-import signal
-import subprocess
-import zipfile
-import io
-import platform
-from datetime import datetime, timezone
-from typing import Dict, Optional
-
-import httpx
-
-# Configuration
-SUPABASE_URL = "${supabaseUrl}"
-SUPABASE_KEY = "${supabaseKey}"
-VPS_API_KEY = "REPLACE_WITH_YOUR_VPS_KEY"  # Will be set on first run
-
-# Runner definitions
-RUNNERS = {
-    "campaign": "campaign_runner.py",
-    "livechat": "live_chat_listener.py",
-    "account": "account_manager.py",
-    "warmup": "warmup_runner.py",
-}
-
-# Global state
-RUNNING = True
-processes: Dict[str, subprocess.Popen] = {}
-vps_id: Optional[str] = None
-
-POLL_INTERVAL = 5
-HEARTBEAT_INTERVAL = 10
-
-
-def get_headers():
-    return {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
-        "Content-Type": "application/json",
-    }
-
-
-async def register_vps(client: httpx.AsyncClient) -> Optional[str]:
-    global vps_id
-    
-    resp = await client.get(
-        f"{SUPABASE_URL}/rest/v1/vps_connections",
-        headers=get_headers(),
-        params={"api_key": f"eq.{VPS_API_KEY}", "select": "id"}
-    )
-    
-    if resp.status_code == 200 and resp.json():
-        vps_id = resp.json()[0]["id"]
-        print(f"[VPS] Connected: {vps_id[:8]}...")
-        return vps_id
-    
-    ip = await get_public_ip(client)
-    resp = await client.post(
-        f"{SUPABASE_URL}/rest/v1/vps_connections",
-        headers={**get_headers(), "Prefer": "return=representation"},
-        json={
-            "name": f"VPS-{platform.node()}",
-            "api_key": VPS_API_KEY,
-            "ip_address": ip,
-            "status": "online"
-        }
-    )
-    
-    if resp.status_code == 201:
-        vps_id = resp.json()[0]["id"]
-        print(f"[VPS] Registered: {vps_id[:8]}...")
-        return vps_id
-    
-    print(f"[ERROR] Failed to register VPS: {resp.text}")
-    return None
-
-
-async def get_public_ip(client: httpx.AsyncClient) -> str:
-    try:
-        resp = await client.get("https://api.ipify.org?format=text", timeout=5)
-        return resp.text.strip()
-    except:
-        return "unknown"
-
-
-async def send_heartbeat(client: httpx.AsyncClient):
-    if not vps_id:
-        return
-    
-    await client.patch(
-        f"{SUPABASE_URL}/rest/v1/vps_connections",
-        headers=get_headers(),
-        params={"id": f"eq.{vps_id}"},
-        json={
-            "status": "online",
-            "last_seen": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-
-
-async def send_log(client: httpx.AsyncClient, runner: str, level: str, message: str):
-    if not vps_id:
-        return
-    
-    await client.post(
-        f"{SUPABASE_URL}/rest/v1/vps_logs",
-        headers=get_headers(),
-        json={
-            "vps_id": vps_id,
-            "runner_name": runner,
-            "log_level": level,
-            "message": message[:500],
-        }
-    )
-
-
-async def poll_commands(client: httpx.AsyncClient) -> list:
-    if not vps_id:
-        return []
-    
-    resp = await client.get(
-        f"{SUPABASE_URL}/rest/v1/vps_commands",
-        headers=get_headers(),
-        params={
-            "vps_id": f"eq.{vps_id}",
-            "status": "eq.pending",
-            "order": "created_at.asc",
-            "limit": "10"
-        }
-    )
-    
-    if resp.status_code == 200:
-        return resp.json()
-    return []
-
-
-async def update_command(client: httpx.AsyncClient, cmd_id: str, status: str, result: str = None):
-    await client.patch(
-        f"{SUPABASE_URL}/rest/v1/vps_commands",
-        headers=get_headers(),
-        params={"id": f"eq.{cmd_id}"},
-        json={
-            "status": status,
-            "result": result,
-            "processed_at": datetime.now(timezone.utc).isoformat(),
-        }
-    )
-
-
-async def fetch_single_script(client: httpx.AsyncClient, script_name: str) -> bool:
-    """Fetch a single script from storage and overwrite local copy."""
-    try:
-        resp = await client.get(
-            f"{SUPABASE_URL}/storage/v1/object/public/python-scripts/{script_name}",
-            timeout=30
-        )
-        if resp.status_code == 200:
-            with open(script_name, 'wb') as f:
-                f.write(resp.content)
-            print(f"[SYNC] Updated: {script_name}")
-            return True
-        else:
-            print(f"[SYNC] {script_name} not in storage (using local)")
-            return False
-    except Exception as e:
-        print(f"[SYNC] Failed to fetch {script_name}: {e}")
-        return False
-
-
-async def fetch_scripts_from_zip(client: httpx.AsyncClient, target_scripts: list = None) -> bool:
-    """Fetch runners.zip and extract scripts. If target_scripts provided, only extract those."""
-    try:
-        resp = await client.get(
-            f"{SUPABASE_URL}/storage/v1/object/public/python-scripts/runners.zip",
-            timeout=60
-        )
-        
-        if resp.status_code != 200:
-            print(f"[SYNC] No runners.zip in storage (using local scripts)")
-            return False
-        
-        with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
-            for info in zf.infolist():
-                if info.filename.endswith('.py') and not info.filename.startswith('__'):
-                    target_path = os.path.basename(info.filename)
-                    # Skip protected files
-                    if target_path in ['vps_agent.py', 'config.py']:
-                        continue
-                    # If filtering, only extract requested scripts
-                    if target_scripts and target_path not in target_scripts:
-                        continue
-                    with zf.open(info) as source:
-                        with open(target_path, 'wb') as target:
-                            target.write(source.read())
-                    print(f"[SYNC] Extracted: {target_path}")
-        return True
-    except Exception as e:
-        print(f"[SYNC] ZIP fetch failed: {e}")
-        return False
-
-
-def start_runner_sync(name: str) -> bool:
-    """Start runner without fetching (internal use after sync)."""
-    if name in processes and processes[name].poll() is None:
-        print(f"[RUNNER] {name} already running")
-        return False
-    
-    script = RUNNERS.get(name)
-    if not script or not os.path.exists(script):
-        print(f"[ERROR] Script not found: {script}")
-        return False
-    
-    try:
-        proc = subprocess.Popen(
-            [sys.executable, script],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            cwd=os.path.dirname(os.path.abspath(__file__)) or ".",
-        )
-        processes[name] = proc
-        print(f"[RUNNER] Started {name} (PID: {proc.pid})")
-        return True
-    except Exception as e:
-        print(f"[ERROR] Failed to start {name}: {e}")
-        return False
-
-
-async def start_runner(client: httpx.AsyncClient, name: str) -> bool:
-    """Stop old runner, fetch latest script, then start."""
-    # Stop existing instance first
-    stop_runner(name)
-    
-    # Fetch latest script from storage
-    script = RUNNERS.get(name)
-    if script:
-        await fetch_scripts_from_zip(client, [script])
-    
-    return start_runner_sync(name)
-
-
-def stop_runner(name: str) -> bool:
-    if name not in processes:
-        return False
-    
-    proc = processes[name]
-    if proc.poll() is not None:
-        del processes[name]
-        return False
-    
-    try:
-        proc.terminate()
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-    
-    del processes[name]
-    print(f"[RUNNER] Stopped {name}")
-    return True
-
-
-async def start_all(client: httpx.AsyncClient):
-    """Stop all, fetch all scripts, start all."""
-    stop_all()
-    await fetch_scripts_from_zip(client)
-    results = []
-    for name in RUNNERS:
-        if start_runner_sync(name):
-            results.append(name)
-    return results
-
-
-def stop_all():
-    results = []
-    for name in list(processes.keys()):
-        if stop_runner(name):
-            results.append(name)
-    return results
-
-
-async def restart_all(client: httpx.AsyncClient):
-    stop_all()
-    return await start_all(client)
-
-
-async def process_command(client: httpx.AsyncClient, cmd: dict):
-    cmd_id = cmd["id"]
-    command = cmd["command"]
-    target = cmd.get("target_runner")
-    
-    print(f"[CMD] Processing: {command}" + (f" ({target})" if target else ""))
-    
-    await update_command(client, cmd_id, "processing")
-    
-    try:
-        result = ""
-        
-        if command == "start_all":
-            started = await start_all(client)
-            result = f"Started: {', '.join(started) if started else 'none'}"
-            
-        elif command == "stop_all":
-            stopped = stop_all()
-            result = f"Stopped: {', '.join(stopped) if stopped else 'none'}"
-            
-        elif command == "restart_all":
-            restarted = await restart_all(client)
-            result = f"Restarted: {', '.join(restarted) if restarted else 'none'}"
-            
-        elif command == "start_runner" and target:
-            if await start_runner(client, target):
-                result = f"Started {target}"
-            else:
-                result = f"Failed to start {target}"
-                
-        elif command == "stop_runner" and target:
-            if stop_runner(target):
-                result = f"Stopped {target}"
-            else:
-                result = f"{target} was not running"
-                
-        elif command == "update":
-            if await fetch_scripts_from_zip(client):
-                result = "Scripts updated (use Start All to run new versions)"
-            else:
-                result = "No updates available"
-        else:
-            result = f"Unknown command: {command}"
-        
-        await update_command(client, cmd_id, "completed", result)
-        await send_log(client, "agent", "info", f"Command: {command} -> {result}")
-        
-    except Exception as e:
-        error = str(e)[:200]
-        await update_command(client, cmd_id, "failed", error)
-        await send_log(client, "agent", "error", f"Command failed: {command} - {error}")
-
-
-async def monitor_processes(client: httpx.AsyncClient):
-    for name, proc in list(processes.items()):
-        if proc.poll() is not None:
-            exit_code = proc.returncode
-            await send_log(client, name, "warning", f"Process exited with code {exit_code}, restarting...")
-            del processes[name]
-            start_runner_sync(name)
-
-
-async def main_loop():
-    global RUNNING
-    
-    print("=" * 50)
-    print("  TelegramCRM VPS Agent")
-    print("=" * 50)
-    
-    async with httpx.AsyncClient() as client:
-        if not await register_vps(client):
-            print("[FATAL] Could not register VPS")
-            return
-        
-        await send_log(client, "agent", "info", "VPS Agent started")
-        
-        last_heartbeat = 0
-        
-        while RUNNING:
-            try:
-                now = asyncio.get_event_loop().time()
-                
-                if now - last_heartbeat >= HEARTBEAT_INTERVAL:
-                    await send_heartbeat(client)
-                    last_heartbeat = now
-                
-                commands = await poll_commands(client)
-                for cmd in commands:
-                    await process_command(client, cmd)
-                
-                await monitor_processes(client)
-                
-                await asyncio.sleep(POLL_INTERVAL)
-                
-            except Exception as e:
-                print(f"[ERROR] Main loop: {e}")
-                await asyncio.sleep(5)
-        
-        print("[VPS] Shutting down...")
-        stop_all()
-        await send_log(client, "agent", "info", "VPS Agent stopped")
-
-
-def signal_handler(sig, frame):
-    global RUNNING
-    print("\\n[VPS] Received shutdown signal")
-    RUNNING = False
-
-
-if __name__ == "__main__":
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-    
-    asyncio.run(main_loop())
-`;
 
   const downloadZip = async () => {
     const zip = new JSZip();
@@ -2456,258 +2034,56 @@ if __name__ == "__main__":
     toast.success("ZIP downloaded! 9 files included.");
   };
 
-  const downloadVpsZip = async () => {
-    const vpsApiKey = generateVpsApiKey();
-    const vpsAgentWithKey = vpsAgentPy.replace('REPLACE_WITH_YOUR_VPS_KEY', vpsApiKey);
-    
-    const zip = new JSZip();
-    const folder = zip.folder("telegram_crm_vps");
-    
-    // Core files
-    folder?.file("config.py", configPy);
-    folder?.file("client_manager.py", clientManagerPy);
-    folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
-    folder?.file("requirements.txt", requirementsTxt);
-    
-    // Individual runners - using correct filenames matching /python folder
-    folder?.file("campaign_runner.py", campaignRunnerPy);
-    folder?.file("live_chat_listener.py", livechatRunnerPy);
-    folder?.file("account_manager.py", accountRunnerPy);
-    folder?.file("warmup_runner.py", warmupRunnerPy);
-    
-    // VPS Agent
-    folder?.file("vps_agent.py", vpsAgentWithKey);
-    
-    const blob = await zip.generateAsync({ type: "blob" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "telegram_crm_vps.zip";
-    a.click();
-    URL.revokeObjectURL(url);
-    
-    toast.success("VPS ZIP downloaded! Run vps_agent.py on your server.");
-  };
-
-  // Manual sync function
-  const syncScriptsToStorage = async (showToast = true) => {
-    setIsSyncing(true);
-    try {
-      const zip = new JSZip();
-      zip.file("campaign_runner.py", campaignRunnerPy);
-      zip.file("live_chat_listener.py", livechatRunnerPy);
-      zip.file("account_manager.py", accountRunnerPy);
-      zip.file("warmup_runner.py", warmupRunnerPy);
-      zip.file("client_manager.py", clientManagerPy);
-      zip.file("fingerprint_generator.py", fingerprintGeneratorPy);
-      zip.file("config.py", configPy);
-      zip.file("requirements.txt", requirementsTxt);
-      zip.file("RUN.bat", runBat);
-
-      const blob = await zip.generateAsync({ type: "blob" });
-      
-      const { error } = await supabase.storage
-        .from('python-scripts')
-        .upload('runners.zip', blob, { 
-          upsert: true,
-          contentType: 'application/zip'
-        });
-      
-      if (error) throw error;
-      
-      setLastSyncTime(new Date());
-      console.log('[Sync] Scripts synced to storage');
-      if (showToast) {
-        toast.success("Scripts synced to VPS storage! Click 'Update All' in VPS controls to apply.");
-      }
-    } catch (error) {
-      console.error('[Sync] Failed to sync scripts:', error);
-      if (showToast) {
-        toast.error("Failed to sync scripts to storage");
-      }
-    } finally {
-      setIsSyncing(false);
-    }
-  };
-
-  // Auto-sync scripts to storage on page load
-  React.useEffect(() => {
-    syncScriptsToStorage(false);
-  }, []);
 
   return (
     <DashboardLayout>
       <div className="space-y-6 max-w-3xl mx-auto">
         <PageHeader
           title="Setup"
-          description="Download Python files for your PC or VPS"
+          description="Download Python files to run on your PC"
           icon={BookOpen}
         />
 
-        <Tabs defaultValue="pc" className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="pc" className="gap-2">
-              <Monitor className="h-4 w-4" />
-              Run on PC
-            </TabsTrigger>
-            <TabsTrigger value="vps" className="gap-2">
-              <Server className="h-4 w-4" />
-              Run on VPS
-              <Badge variant="secondary" className="ml-1 text-xs">Remote Control</Badge>
-            </TabsTrigger>
-          </TabsList>
-
-          {/* PC Mode */}
-          <TabsContent value="pc">
-            <Card>
-              <CardContent className="p-8 text-center space-y-6">
-                <div className="space-y-2">
-                  <h2 className="text-2xl font-bold">Download for PC</h2>
-                  <p className="text-muted-foreground">
-                    5 separate runners + 1 BAT file to run them all
-                  </p>
-                </div>
-
-                <Button size="lg" onClick={downloadZip} className="gap-2 text-lg px-8 py-6">
-                  <Download className="h-6 w-6" />
-                  Download ZIP
-                </Button>
-
-                <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-                  <p className="font-medium">📁 Files included (9 total):</p>
-                  <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                    <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 4 runners</strong></li>
-                    <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + batch reporting</li>
-                    <li><code className="text-purple-500">live_chat_listener.py</code> - Incoming messages + replies</li>
-                    <li><code className="text-yellow-500">account_manager.py</code> - SpamBot, name, photo, privacy</li>
-                    <li><code className="text-orange-500">warmup_runner.py</code> - Warmup chat (pairs) + join/view/react/bio</li>
-                    <li><code>config.py</code> - Backend settings</li>
-                    <li><code>client_manager.py</code> - Shared Telegram logic + batch reporting</li>
-                    <li><code>fingerprint_generator.py</code> - Device fingerprints</li>
-                    <li><code>requirements.txt</code> - Dependencies</li>
-                  </ul>
-                </div>
-
-                <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-                  <p className="font-medium">🚀 How to use:</p>
-                  <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
-                    <li>Extract ZIP folder</li>
-                    <li>Double-click <code className="bg-green-100 dark:bg-green-900 px-2 py-0.5 rounded">RUN.bat</code></li>
-                    <li>4 colored windows will open (one for each runner)</li>
-                    <li>To stop: Close all windows or press <kbd className="bg-background px-2 py-0.5 rounded border">Ctrl+C</kbd></li>
-                  </ol>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* VPS Mode */}
-          <TabsContent value="vps">
-            <div className="space-y-4">
-              {/* VPS Control Panel */}
-              <VPSControlPanel />
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Server className="h-5 w-5 text-primary" />
-                    VPS Setup
-                    <Badge variant="outline" className="ml-2">Recommended</Badge>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-6">
-                  <div className="text-sm text-muted-foreground">
-                    Control your runners remotely. Start, stop, restart, view logs, and auto-update scripts - all from your browser!
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {/* Step 1: Download */}
-                    <div className="p-4 rounded-lg border bg-muted/30 space-y-3">
-                      <div className="flex items-center gap-2 font-medium">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs">1</span>
-                        Download VPS Package
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Includes VPS Agent for remote control + all runners
-                      </p>
-                      <Button onClick={downloadVpsZip} className="w-full gap-2">
-                        <Download className="h-4 w-4" />
-                        Download VPS ZIP
-                      </Button>
-                    </div>
-
-                    {/* Step 2: Setup */}
-                    <div className="p-4 rounded-lg border bg-muted/30 space-y-3">
-                      <div className="flex items-center gap-2 font-medium">
-                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs">2</span>
-                        Setup on VPS
-                      </div>
-                      <div className="text-xs text-muted-foreground space-y-1">
-                        <p><code>pip install -r requirements.txt</code></p>
-                        <p><code>python vps_agent.py</code></p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="p-4 rounded-lg border border-green-500/30 bg-green-500/5 space-y-2">
-                    <div className="flex items-center gap-2 font-medium text-green-600">
-                      <CheckCircle2 className="h-4 w-4" />
-                      What you get with VPS mode
-                    </div>
-                    <ul className="text-sm text-muted-foreground space-y-1 ml-6">
-                      <li>• Start/stop individual runners remotely</li>
-                      <li>• View real-time logs in your browser</li>
-                      <li>• Auto-restart on crash</li>
-                      <li>• One-click script updates (auto-sync)</li>
-                    </ul>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Manual Sync Button */}
-              <Card className="border-blue-500/30 bg-blue-500/5">
-                <CardContent className="py-4">
-                  <div className="flex items-start gap-3">
-                    <Upload className="h-5 w-5 text-blue-500 mt-0.5" />
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <p className="text-sm font-medium text-blue-600 dark:text-blue-400">Sync Scripts to VPS Storage</p>
-                        {lastSyncTime && (
-                          <span className="text-xs text-muted-foreground">
-                            Last synced: {lastSyncTime.toLocaleTimeString()}
-                          </span>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Upload latest crash-proof scripts to storage. Then click "Update All" in VPS controls above to apply on your VPS.
-                      </p>
-                      <Button 
-                        onClick={() => syncScriptsToStorage(true)} 
-                        disabled={isSyncing}
-                        variant="outline"
-                        size="sm"
-                        className="gap-2"
-                      >
-                        {isSyncing ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                            Syncing...
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="h-4 w-4" />
-                            Sync Scripts Now
-                          </>
-                        )}
-                      </Button>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+        <Card>
+          <CardContent className="p-8 text-center space-y-6">
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold">Download for PC</h2>
+              <p className="text-muted-foreground">
+                5 separate runners + 1 BAT file to run them all
+              </p>
             </div>
-          </TabsContent>
-        </Tabs>
 
+            <Button size="lg" onClick={downloadZip} className="gap-2 text-lg px-8 py-6">
+              <Download className="h-6 w-6" />
+              Download ZIP
+            </Button>
+
+            <div className="text-left bg-muted rounded-lg p-4 space-y-3">
+              <p className="font-medium">📁 Files included (9 total):</p>
+              <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
+                <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 4 runners</strong></li>
+                <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + batch reporting</li>
+                <li><code className="text-purple-500">live_chat_listener.py</code> - Incoming messages + replies</li>
+                <li><code className="text-yellow-500">account_manager.py</code> - SpamBot, name, photo, privacy</li>
+                <li><code className="text-orange-500">warmup_runner.py</code> - Warmup chat (pairs) + join/view/react/bio</li>
+                <li><code>config.py</code> - Backend settings</li>
+                <li><code>client_manager.py</code> - Shared Telegram logic + batch reporting</li>
+                <li><code>fingerprint_generator.py</code> - Device fingerprints</li>
+                <li><code>requirements.txt</code> - Dependencies</li>
+              </ul>
+            </div>
+
+            <div className="text-left bg-muted rounded-lg p-4 space-y-3">
+              <p className="font-medium">🚀 How to use:</p>
+              <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
+                <li>Extract ZIP folder</li>
+                <li>Double-click <code className="bg-green-100 dark:bg-green-900 px-2 py-0.5 rounded">RUN.bat</code></li>
+                <li>4 colored windows will open (one for each runner)</li>
+                <li>To stop: Close all windows or press <kbd className="bg-background px-2 py-0.5 rounded border">Ctrl+C</kbd></li>
+              </ol>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   );
