@@ -122,13 +122,12 @@ serve(async (req) => {
 
       // Get accounts that have active conversations (campaign-initiated) for listening to replies
       // This is essential - without accounts, the Python listener can't connect to Telegram
-      // Increased limit from 50 to 500 to support more accounts
+      // No limit - fetch ALL accounts for livechat listening
       const { data: livechatAccounts } = await supabase
         .from("telegram_accounts")
         .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
         .in("status", ["active", "restricted", "cooldown", "frozen"])
-        .not("session_data", "is", null)
-        .limit(500);
+        .not("session_data", "is", null);
 
       // Filter to accounts with active proxy
       const validAccounts = (livechatAccounts || [])
