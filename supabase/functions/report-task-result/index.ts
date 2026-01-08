@@ -230,36 +230,6 @@ serve(async (req) => {
 
               console.log(`[report-task-result] Incremented message count for account ${account_id} (new contact). New count=${newCount}`);
 
-              // Apply scheduler rotation/cooldown based on backend settings
-              const { data: schedulerRow } = await supabase
-                .from("app_settings")
-                .select("value")
-                .eq("key", "scheduler")
-                .maybeSingle();
-
-              const scheduler = (schedulerRow?.value as any) || {};
-              const enabled = scheduler.enabled !== false;
-              const maxBeforeRotation = Number(scheduler.maxMessagesBeforeRotation || 0);
-              const cooldownSeconds = Number(scheduler.cooldownDuration || 0);
-
-              if (
-                enabled &&
-                maxBeforeRotation > 0 &&
-                cooldownSeconds > 0 &&
-                newCount % maxBeforeRotation === 0
-              ) {
-                const until = new Date(Date.now() + cooldownSeconds * 1000).toISOString();
-                await supabase
-                  .from("telegram_accounts")
-                  .update({
-                    status: "cooldown",
-                    restricted_until: until,
-                  })
-                  .eq("id", account_id)
-                  .eq("status", "active");
-
-                console.log(`[report-task-result] Applied cooldown to account ${account_id} for ${cooldownSeconds}s (until ${until})`);
-              }
             }
           } else if (account_id) {
             // Just update last_active for replies, don't count
@@ -325,18 +295,16 @@ serve(async (req) => {
             'peer_id_invalid',       // Invalid recipient ID
             'user was deleted',      // RECIPIENT deleted their account (not sender!)
             'specified user',        // "The specified user was deleted"
+            'privacy',               // Recipient has privacy settings - mark failed immediately
+            'privacy restricted',    // Recipient blocked unknown users - don't retry
           ];
           
-          // Errors that should RETRY with a different account (max 5 attempts)
-          // These are SENDER-SIDE issues - the recipient is fine, just try with another account
+          // Errors that should RETRY with a different account
+          // These are SENDER-SIDE rate limits - the recipient is fine, just try with another account
           const retryWithDifferentAccountErrors = [
-            'privacy',           // Recipient has privacy settings blocking THIS account
-            'privacy restricted', // Recipient blocked messages from THIS unknown user
             'too many requests', // Rate limit on THIS account - try another (applies 12h restriction to account)
             'sendmessagerequest' // Rate limit error from SendMessageRequest
           ];
-          
-          const MAX_ACCOUNT_RETRIES = 5;  // Try up to 5 different accounts
           
           const errorLower = (error || '').toLowerCase();
           const isPermanentBan = permanentBanErrors.some(r => errorLower.includes(r));
@@ -352,30 +320,6 @@ serve(async (req) => {
             await supabase.rpc('increment_account_failure', { acc_id: account_id });
             console.log(`[report-task-result] Incremented failure count for account ${account_id}`);
             
-            // Check if account should be auto-disabled due to low success rate
-            const { data: accountHealth } = await supabase
-              .from("telegram_accounts")
-              .select("success_count, failure_count, success_rate")
-              .eq("id", account_id)
-              .single();
-            
-            if (accountHealth) {
-              const totalAttempts = (accountHealth.success_count || 0) + (accountHealth.failure_count || 0);
-              const successRate = accountHealth.success_rate ?? 100;
-              
-              // Auto-disable if: success rate < 50% AND at least 3 failures
-              if (successRate < 50 && (accountHealth.failure_count || 0) >= 3 && totalAttempts >= 5) {
-                await supabase
-                  .from("telegram_accounts")
-                  .update({
-                    auto_disabled: true,
-                    disabled_reason: `Low success rate: ${successRate.toFixed(1)}% (${accountHealth.failure_count} failures)`,
-                  })
-                  .eq("id", account_id);
-                
-                console.log(`[report-task-result] Auto-disabled account ${account_id} - success rate ${successRate.toFixed(1)}%`);
-              }
-            }
           }
           if (isPermanentBan && account_id) {
             // PERMANENT BAN - mark account as banned, cannot be used anymore
