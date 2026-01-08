@@ -432,6 +432,35 @@ async def report_result(task_type: str, result: dict):
         print(f"  [WARN] Failed to report result: {type(e).__name__}: {e}")
 
 
+async def report_batch_results(results: list) -> bool:
+    """Report multiple campaign results in a single request.
+    
+    Much faster than individual reports - reduces HTTP overhead significantly.
+    Returns True if batch was accepted, False if should fall back to individual.
+    """
+    if not results:
+        return True
+    
+    try:
+        http = await _get_backend_http()
+        resp = await http.post(
+            f"{BACKEND_URL}/report-batch-results",
+            json={"results": results},
+            timeout=30.0  # Allow more time for batch processing
+        )
+        if resp.status_code == 200:
+            return True
+        elif resp.status_code == 404:
+            # Endpoint doesn't exist yet, fall back to individual
+            return False
+        else:
+            print(f"  [WARN] Batch report returned {resp.status_code}")
+            return False
+    except Exception as e:
+        print(f"  [WARN] Batch report failed: {type(e).__name__}: {e}")
+        return False
+
+
 async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
     """Send a message and return (success, error, meta)."""
     global _phone_cache
