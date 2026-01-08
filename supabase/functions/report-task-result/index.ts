@@ -1241,20 +1241,10 @@ serve(async (req) => {
       }
 
       case "proxy_error": {
-        // Proxy connection failed - mark account with proxy error and optionally update proxy status
-        const { account_id, reason, proxy_id } = result;
+        // Proxy connection failed - mark proxy as error and assign new proxy to account
+        const { account_id, reason, proxy_id, change_proxy } = result;
 
-        // Update account with proxy error status - use 'disconnected' but with clear proxy error reason
-        await supabase
-          .from("telegram_accounts")
-          .update({ 
-            status: "disconnected",
-            disabled_reason: `Proxy error: ${reason || "Connection failed"}`,
-            geo_mismatch: true  // Flag as having connection issues
-          })
-          .eq("id", account_id);
-
-        // If we have the proxy_id (host:port), try to find and mark the proxy as having issues
+        // If we have the proxy_id (host:port), mark the proxy as error
         if (proxy_id) {
           const [host, portStr] = proxy_id.split(":");
           if (host && portStr) {
@@ -1268,6 +1258,48 @@ serve(async (req) => {
               .eq("port", parseInt(portStr));
             console.log(`[report-task-result] Marked proxy ${proxy_id} as error`);
           }
+        }
+
+        // Find and assign a new proxy to this account
+        const { data: availableProxies } = await supabase
+          .from("proxies")
+          .select("id")
+          .eq("status", "active")
+          .is("assigned_account_id", null)
+          .limit(1);
+
+        if (availableProxies && availableProxies.length > 0) {
+          const newProxyId = availableProxies[0].id;
+          
+          // Assign new proxy to account and keep it active
+          await supabase
+            .from("telegram_accounts")
+            .update({ 
+              proxy_id: newProxyId,
+              disabled_reason: null,
+              geo_mismatch: false
+            })
+            .eq("id", account_id);
+
+          // Mark the new proxy as assigned
+          await supabase
+            .from("proxies")
+            .update({ assigned_account_id: account_id })
+            .eq("id", newProxyId);
+
+          console.log(`[report-task-result] Assigned new proxy ${newProxyId} to account ${account_id}`);
+        } else {
+          // No available proxies - mark account as disconnected
+          await supabase
+            .from("telegram_accounts")
+            .update({ 
+              status: "disconnected",
+              disabled_reason: `Proxy error: ${reason || "Connection failed"} - No available proxies`,
+              geo_mismatch: true
+            })
+            .eq("id", account_id);
+          
+          console.log(`[report-task-result] No available proxies for account ${account_id} - marked as disconnected`);
         }
 
         // Log to warmup_errors if this came from warmup context
