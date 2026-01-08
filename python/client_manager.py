@@ -172,7 +172,7 @@ async def connect_with_retry(client: TelegramClient, account_id: str = None) -> 
 async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False, task_proxy: dict = None) -> Optional[TelegramClient]:
     """Get existing client or create new one with unique device fingerprint.
     
-    ALWAYS fetches fingerprint if not set.
+    Uses existing fingerprint if available, generates new one only if missing.
     On proxy error: reports and changes proxy, returns None immediately (no retry).
     """
     account_id = account["id"]
@@ -200,24 +200,34 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
     if not session_path:
         return None
     
-    # ALWAYS generate fingerprint - ensures unique device identity
-    fp = generate_fingerprint()
-    device_model = fp["device_model"]
-    system_version = fp["system_version"]
-    app_version = fp["app_version"]
-    lang_code = fp["lang_code"]
-    system_lang_code = fp["system_lang_code"]
-    print(f"  [FP] Generated: {device_model} ({system_version})")
+    # Use existing fingerprint if available, generate only if missing
+    device_model = account.get("device_model")
+    system_version = account.get("system_version")
+    app_version = account.get("app_version")
+    lang_code = account.get("lang_code") or "en"
+    system_lang_code = account.get("system_lang_code") or "en-US"
     
-    # Report fingerprint to server
-    await report_result("fingerprint_generated", {
-        "account_id": account_id,
-        "device_model": device_model,
-        "system_version": system_version,
-        "app_version": app_version,
-        "lang_code": lang_code,
-        "system_lang_code": system_lang_code
-    })
+    if not device_model or not system_version:
+        # Generate new fingerprint only if not exists
+        fp = generate_fingerprint()
+        device_model = fp["device_model"]
+        system_version = fp["system_version"]
+        app_version = fp["app_version"]
+        lang_code = fp["lang_code"]
+        system_lang_code = fp["system_lang_code"]
+        print(f"  [FP] Generated NEW: {device_model} ({system_version})")
+        
+        # Report fingerprint to server to save it
+        await report_result("fingerprint_generated", {
+            "account_id": account_id,
+            "device_model": device_model,
+            "system_version": system_version,
+            "app_version": app_version,
+            "lang_code": lang_code,
+            "system_lang_code": system_lang_code
+        })
+    else:
+        print(f"  [FP] Using existing: {device_model} ({system_version})")
     
     proxy = get_proxy_settings(account, task_proxy)
     if proxy:
