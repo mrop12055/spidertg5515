@@ -1629,6 +1629,7 @@ const Campaigns: React.FC = () => {
                           const total = report?.total || campaign.recipientCount || 0;
                           const sent = report?.successful ?? campaign.sentCount ?? 0;
                           const failed = report?.failed ?? campaign.failedCount ?? 0;
+                          const pending = report?.pending ?? Math.max(0, total - sent - failed);
                           const percent = total > 0 ? Math.round((sent / total) * 100) : 0;
                           
                           return (
@@ -1641,6 +1642,11 @@ const Campaigns: React.FC = () => {
                               <div className="text-center px-3">
                                 <p className="text-lg font-bold text-primary">{sent}</p>
                                 <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Sent</p>
+                              </div>
+                              <div className="w-px h-8 bg-border" />
+                              <div className="text-center px-3">
+                                <p className="text-lg font-bold text-yellow-600">{pending}</p>
+                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pending</p>
                               </div>
                               <div className="w-px h-8 bg-border" />
                               <div className="text-center px-3">
