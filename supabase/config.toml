@@ -59,6 +59,3 @@ verify_jwt = false
 
 [functions.report-batch-results]
 verify_jwt = false
-
-[functions.get-random-proxy]
-verify_jwt = false

@@ -29,13 +29,10 @@ active_clients: Dict[str, TelegramClient] = {}
 # Phone lookup cache: phone -> telegram_id (speeds up repeated lookups)
 _phone_cache: Dict[str, int] = {}
 
-# Connection settings - optimized for speed
+# Connection settings
 CONNECTION_TIMEOUT = 30
-CONNECTION_RETRIES = 1  # Single attempt, then try random proxy
-
-# HTTP client refresh for long-running processes
-HTTP_CLIENT_MAX_AGE = 3600  # Refresh HTTP clients every hour to prevent stale connections
-_http_client_created_at = None
+CONNECTION_RETRIES = 3
+RETRY_DELAY = 2
 
 # Shared HTTP clients
 # - Prevents socket exhaustion from creating a new client for every request
@@ -48,27 +45,16 @@ _MEDIA_HTTP_LOOP = None
 
 
 def _http_limits() -> httpx.Limits:
-    """Ultra high-capacity HTTP limits for 5000+ batch processing"""
-    return httpx.Limits(max_connections=1000, max_keepalive_connections=500, keepalive_expiry=60.0)
+    return httpx.Limits(max_connections=40, max_keepalive_connections=20, keepalive_expiry=30.0)
 
 
 async def _get_backend_http() -> httpx.AsyncClient:
-    global _BACKEND_HTTP, _BACKEND_HTTP_LOOP, _http_client_created_at
-    import time
+    global _BACKEND_HTTP, _BACKEND_HTTP_LOOP
     loop = asyncio.get_running_loop()
-    now = time.time()
-    
-    # Check if client needs refresh (stale after HTTP_CLIENT_MAX_AGE)
-    needs_refresh = (
-        _http_client_created_at is not None 
-        and (now - _http_client_created_at) > HTTP_CLIENT_MAX_AGE
-    )
-    
     if (
         _BACKEND_HTTP is None
         or getattr(_BACKEND_HTTP, "is_closed", False)
         or _BACKEND_HTTP_LOOP is not loop
-        or needs_refresh
     ):
         if _BACKEND_HTTP is not None and not getattr(_BACKEND_HTTP, "is_closed", False):
             try:
@@ -76,14 +62,11 @@ async def _get_backend_http() -> httpx.AsyncClient:
             except Exception:
                 pass
         _BACKEND_HTTP = httpx.AsyncClient(
-            timeout=httpx.Timeout(120.0, connect=60.0),  # High timeout for massive batches
+            timeout=httpx.Timeout(20.0, connect=15.0),
             limits=_http_limits(),
             headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
         )
         _BACKEND_HTTP_LOOP = loop
-        _http_client_created_at = now
-        if needs_refresh:
-            print("  🔄 HTTP client refreshed for long-running process")
     return _BACKEND_HTTP
 
 
@@ -96,7 +79,7 @@ async def _get_media_http() -> httpx.AsyncClient:
                 await _MEDIA_HTTP.aclose()
             except Exception:
                 pass
-        _MEDIA_HTTP = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=30.0), limits=_http_limits())
+        _MEDIA_HTTP = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=20.0), limits=_http_limits())
         _MEDIA_HTTP_LOOP = loop
     return _MEDIA_HTTP
 
@@ -161,76 +144,48 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
         return (ptype, host, int(port))
 
 
-def proxy_dict_from_tuple(proxy_tuple: tuple) -> Optional[dict]:
-    """Convert proxy tuple back to dict format."""
-    if not proxy_tuple or len(proxy_tuple) < 3:
-        return None
-    
-    ptype = proxy_tuple[0]
-    if ptype == socks.SOCKS5:
-        proxy_type = "socks5"
-    elif ptype == socks.SOCKS4:
-        proxy_type = "socks4"
-    elif ptype == socks.HTTP:
-        proxy_type = "http"
-    else:
-        proxy_type = "socks5"
-    
-    result = {
-        "proxy_type": proxy_type,
-        "host": proxy_tuple[1],
-        "port": proxy_tuple[2]
-    }
-    
-    if len(proxy_tuple) >= 6:
-        result["username"] = proxy_tuple[4]
-        result["password"] = proxy_tuple[5]
-    
-    return result
-
-
-async def get_random_proxy(exclude_host: str = None) -> Optional[dict]:
-    """Fetch a random active proxy from the database."""
-    try:
-        http = await _get_backend_http()
-        body = {"exclude_host": exclude_host} if exclude_host else {}
-        resp = await http.post(f"{BACKEND_URL}/get-random-proxy", json=body)
-        if resp.status_code == 200:
-            data = resp.json()
-            return data.get("proxy")
-        return None
-    except Exception as e:
-        print(f"  [WARN] Failed to get random proxy: {e}")
-        return None
-
-
-async def connect_with_retry(client: TelegramClient) -> tuple[bool, str]:
-    """Connect with single attempt - no retries, no delays."""
-    try:
-        await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-        return (True, "")
-    except asyncio.TimeoutError:
-        return (False, "Connection timeout - proxy may be slow or unresponsive")
-    except ConnectionRefusedError:
-        return (False, "Proxy connection refused")
-    except OSError as e:
-        error_str = str(e).lower()
-        if "proxy" in error_str or "socks" in error_str or "connect" in error_str:
-            return (False, f"Proxy error: {e}")
-        elif "network" in error_str or "unreachable" in error_str:
-            return (False, f"Network unreachable - proxy may be down: {e}")
-        else:
-            return (False, f"Connection error: {e}")
-    except Exception as e:
-        error_str = str(e).lower()
-        if any(x in error_str for x in ["proxy", "socks", "connection refused", "connect error", "unreachable"]):
-            return (False, f"Proxy error: {e}")
-        else:
-            return (False, f"Connection failed: {e}")
+async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> tuple[bool, str]:
+    """Connect with retry logic and exponential backoff."""
+    last_error = ""
+    for attempt in range(1, max_retries + 1):
+        try:
+            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+            return (True, "")
+        except asyncio.TimeoutError:
+            last_error = "Connection timeout - proxy may be slow or unresponsive"
+            print(f"    [TIMEOUT] Attempt {attempt}/{max_retries}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        except ConnectionRefusedError:
+            last_error = "Proxy connection refused"
+            print(f"    [REFUSED] Attempt {attempt}/{max_retries}: Connection refused")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        except OSError as e:
+            error_str = str(e).lower()
+            if "proxy" in error_str or "socks" in error_str or "connect" in error_str:
+                last_error = f"Proxy error: {e}"
+            elif "network" in error_str or "unreachable" in error_str:
+                last_error = f"Network unreachable - proxy may be down: {e}"
+            else:
+                last_error = f"Connection error: {e}"
+            print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+        except Exception as e:
+            error_str = str(e).lower()
+            if any(x in error_str for x in ["proxy", "socks", "connection refused", "connect error", "unreachable"]):
+                last_error = f"Proxy error: {e}"
+            else:
+                last_error = f"Connection failed: {e}"
+            print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
+            if attempt < max_retries:
+                await asyncio.sleep(RETRY_DELAY * attempt)
+    return (False, last_error)
 
 
 async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: bool = True, force_profile_sync: bool = False, task_proxy: dict = None) -> Optional[TelegramClient]:
-    """Get existing client or create new one with consistent device fingerprint."""
+    """Get existing client or create new one with unique device fingerprint."""
     account_id = account["id"]
     
     # Return cached client if connected
@@ -256,21 +211,14 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
     if not session_path:
         return None
     
-    # Get fingerprint - ALWAYS use stored values if available (consistency)
+    # Get or generate device fingerprint
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     app_version = account.get("app_version")
-    lang_code = account.get("lang_code")
-    system_lang_code = account.get("system_lang_code")
+    lang_code = account.get("lang_code") or "en"
+    system_lang_code = account.get("system_lang_code") or "en-US"
     
-    # Only generate new fingerprint if ALL fields are missing
-    if device_model and system_version and app_version:
-        # Use stored fingerprint - ensures same session = same device
-        lang_code = lang_code or "en"
-        system_lang_code = system_lang_code or "en-US"
-        print(f"  [FP] Using stored: {device_model} ({system_version})")
-    else:
-        # Generate new fingerprint only once per account
+    if not device_model or not system_version:
         fp = generate_fingerprint()
         device_model = fp["device_model"]
         system_version = fp["system_version"]
@@ -287,142 +235,107 @@ async def get_or_create_client(account: dict, setup_handler=None, skip_avatar: b
             "system_lang_code": system_lang_code
         })
     
-    # Get initial proxy
     proxy = get_proxy_settings(account, task_proxy)
-    original_proxy_host = proxy[1] if proxy else None
-    
     if proxy:
         print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
     else:
         print(f"  [WARN] No proxy configured for {account.get('phone_number', 'unknown')}")
     
-    # Get API credentials
-    api_creds = account.get("telegram_api_credentials")
-    if api_creds and api_creds.get("api_id") and api_creds.get("api_hash"):
-        api_id = api_creds["api_id"]
-        api_hash = api_creds["api_hash"]
-        print(f"  [API] Using credential: {api_creds.get('client_type', 'unknown')} ({api_id})")
-    else:
-        api_id = account.get("api_id") or TELEGRAM_API_ID
-        api_hash = account.get("api_hash") or TELEGRAM_API_HASH
-        print(f"  [API] Using account/default API: {api_id}")
-    
-    # Try to connect - with random proxy fallback on failure
-    for attempt in range(2):  # Max 2 attempts: original proxy + random proxy
-        try:
-            client = TelegramClient(
-                session_path, 
-                int(api_id), 
-                api_hash,
-                device_model=device_model,
-                system_version=system_version,
-                app_version=app_version,
-                lang_code=lang_code,
-                system_lang_code=system_lang_code,
-                proxy=proxy,
-                timeout=CONNECTION_TIMEOUT,
-                connection_retries=1,
-                retry_delay=0,
-                auto_reconnect=True,
-                request_retries=3
-            )
-            
-            print(f"  [CONNECT] {account['phone_number']} (attempt {attempt + 1})...")
-            connected, connect_error = await connect_with_retry(client)
-            
-            if not connected:
-                error_lower = connect_error.lower()
-                is_proxy_error = any(x in error_lower for x in ["proxy", "socks", "refused", "unreachable", "timeout"])
-                
-                # If first attempt failed with proxy error, try random proxy
-                if attempt == 0 and is_proxy_error:
-                    print(f"  [RETRY] Proxy failed, fetching random proxy...")
-                    
-                    # Report original proxy error
-                    await report_result("proxy_error", {
-                        "account_id": account_id, 
-                        "reason": connect_error,
-                        "proxy_id": original_proxy_host
-                    })
-                    
-                    # Get random proxy (excluding the failed one)
-                    random_proxy_dict = await get_random_proxy(exclude_host=original_proxy_host)
-                    if random_proxy_dict:
-                        proxy = get_proxy_settings({"proxy": random_proxy_dict})
-                        if proxy:
-                            print(f"  [PROXY] Trying random: {proxy[1]}:{proxy[2]}")
-                            continue  # Retry with new proxy
-                    
-                    print(f"  [FAIL] No random proxy available")
-                
-                # Final failure
-                print(f"  [FAIL] Could not connect: {account['phone_number']} - {connect_error}")
-                if is_proxy_error:
-                    await report_result("proxy_error", {
-                        "account_id": account_id, 
-                        "reason": connect_error,
-                        "proxy_id": proxy[1] + ":" + str(proxy[2]) if proxy else None
-                    })
-                else:
-                    await report_result("account_disconnected", {"account_id": account_id, "reason": connect_error})
-                return None
-            
-            # Connection successful
-            if not await client.is_user_authorized():
-                print(f"  [EXPIRED] Session expired: {account['phone_number']}")
-                await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
-                return None
-            
-            try:
-                me = await asyncio.wait_for(client.get_me(), timeout=15)
-                if not me:
-                    print(f"  [DELETED] Account deleted: {account['phone_number']}")
-                    await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted or banned"})
-                    return None
-            except Exception as me_error:
-                error_str = str(me_error).lower()
-                if any(x in error_str for x in ["user_deactivated", "deactivated"]):
-                    print(f"  [FROZEN] Account deleted by user: {account['phone_number']} - {me_error}")
-                    await report_result("account_frozen", {"account_id": account_id, "reason": str(me_error)})
-                    return None
-                elif any(x in error_str for x in ["banned", "deleted"]):
-                    print(f"  [BANNED] Account banned by Telegram: {account['phone_number']} - {me_error}")
-                    await report_result("account_banned", {"account_id": account_id, "reason": str(me_error)})
-                    return None
-                elif any(x in error_str for x in ["session", "revoked", "auth", "auth_key"]):
-                    print(f"  [EXPIRED] Session revoked: {account['phone_number']} - {me_error}")
-                    await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
-                    return None
-                else:
-                    print(f"  [WARN] get_me error: {me_error}")
-            
-            if setup_handler:
-                await setup_handler(client, account_id)
-                setattr(client, "_handler_installed", True)
-            
-            active_clients[account_id] = client
-            
-            # Only sync profile once per client (skip if already synced)
-            if not getattr(client, "_profile_synced", False):
-                await _sync_profile(client, account_id, skip_avatar=skip_avatar)
-                setattr(client, "_profile_synced", True)
-            
-            print(f"  [OK] Connected: {account['phone_number']}")
-            return client
-            
-        except Exception as e:
-            error_str = str(e).lower()
-            if any(x in error_str for x in ["user_deactivated", "deactivated"]):
-                print(f"  [FROZEN] {account['phone_number']}: {e}")
-                await report_result("account_frozen", {"account_id": account_id, "reason": str(e)})
-            elif any(x in error_str for x in ["deleted", "banned"]):
-                print(f"  [BANNED] {account['phone_number']}: {e}")
-                await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
+    try:
+        api_creds = account.get("telegram_api_credentials")
+        if api_creds and api_creds.get("api_id") and api_creds.get("api_hash"):
+            api_id = api_creds["api_id"]
+            api_hash = api_creds["api_hash"]
+            print(f"  [API] Using credential: {api_creds.get('client_type', 'unknown')} ({api_id})")
+        else:
+            api_id = account.get("api_id") or TELEGRAM_API_ID
+            api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+            print(f"  [API] Using account/default API: {api_id}")
+        
+        client = TelegramClient(
+            session_path, 
+            int(api_id), 
+            api_hash,
+            device_model=device_model,
+            system_version=system_version,
+            app_version=app_version,
+            lang_code=lang_code,
+            system_lang_code=system_lang_code,
+            proxy=proxy,
+            timeout=CONNECTION_TIMEOUT,
+            connection_retries=CONNECTION_RETRIES,
+            retry_delay=RETRY_DELAY,
+            auto_reconnect=True,
+            request_retries=3
+        )
+        
+        print(f"  [CONNECT] {account['phone_number']}...")
+        connected, connect_error = await connect_with_retry(client)
+        if not connected:
+            print(f"  [FAIL] Could not connect: {account['phone_number']} - {connect_error}")
+            error_lower = connect_error.lower()
+            if any(x in error_lower for x in ["proxy", "socks", "refused", "unreachable", "timeout"]):
+                await report_result("proxy_error", {
+                    "account_id": account_id, 
+                    "reason": connect_error,
+                    "proxy_id": proxy[1] + ":" + str(proxy[2]) if proxy else None
+                })
             else:
-                print(f"  [FAIL] {account['phone_number']}: {e}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": connect_error})
             return None
-    
-    return None
+        
+        if not await client.is_user_authorized():
+            print(f"  [EXPIRED] Session expired: {account['phone_number']}")
+            await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
+            return None
+        
+        try:
+            me = await asyncio.wait_for(client.get_me(), timeout=15)
+            if not me:
+                print(f"  [DELETED] Account deleted: {account['phone_number']}")
+                await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted or banned"})
+                return None
+        except Exception as me_error:
+            error_str = str(me_error).lower()
+            if any(x in error_str for x in ["user_deactivated", "deactivated"]):
+                print(f"  [FROZEN] Account deleted by user: {account['phone_number']} - {me_error}")
+                await report_result("account_frozen", {"account_id": account_id, "reason": str(me_error)})
+                return None
+            elif any(x in error_str for x in ["banned", "deleted"]):
+                print(f"  [BANNED] Account banned by Telegram: {account['phone_number']} - {me_error}")
+                await report_result("account_banned", {"account_id": account_id, "reason": str(me_error)})
+                return None
+            elif any(x in error_str for x in ["session", "revoked", "auth", "auth_key"]):
+                print(f"  [EXPIRED] Session revoked: {account['phone_number']} - {me_error}")
+                await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_error)})
+                return None
+            else:
+                print(f"  [WARN] get_me error: {me_error}")
+        
+        if setup_handler:
+            await setup_handler(client, account_id)
+            setattr(client, "_handler_installed", True)
+        
+        active_clients[account_id] = client
+        
+        # Only sync profile once per client (skip if already synced)
+        if not getattr(client, "_profile_synced", False):
+            await _sync_profile(client, account_id, skip_avatar=skip_avatar)
+            setattr(client, "_profile_synced", True)
+        
+        print(f"  [OK] Connected: {account['phone_number']}")
+        return client
+    except Exception as e:
+        error_str = str(e).lower()
+        if any(x in error_str for x in ["user_deactivated", "deactivated"]):
+            print(f"  [FROZEN] {account['phone_number']}: {e}")
+            await report_result("account_frozen", {"account_id": account_id, "reason": str(e)})
+        elif any(x in error_str for x in ["deleted", "banned"]):
+            print(f"  [BANNED] {account['phone_number']}: {e}")
+            await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
+        else:
+            print(f"  [FAIL] {account['phone_number']}: {e}")
+        return None
 
 
 async def _sync_profile(client: TelegramClient, account_id: str, skip_avatar: bool = True):
@@ -502,7 +415,7 @@ async def get_batch_tasks(runner: str = None) -> dict:
         print(f"  [BACKEND ERROR] get-batch-tasks: {type(e).__name__}: {e}")
         return {
             "tasks": [],
-            "delay_after": 0.1,  # Minimal delay on error - retry immediately
+            "delay_after": 7,
             "reason": f"Backend unreachable ({type(e).__name__})",
         }
 
@@ -549,7 +462,7 @@ async def report_batch_results(results: list) -> bool:
 
 
 async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
-    """Send a message and return (success, error, meta). No delays."""
+    """Send a message and return (success, error, meta)."""
     global _phone_cache
     meta = None
     original_recipient = recipient
@@ -612,8 +525,8 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                             break
                         elif result.retry_contacts:
                             if attempt < max_retries:
-                                print(f"  [RATE] Contact lookup rate limited, retrying immediately (attempt {attempt + 1}/{max_retries})")
-                                # No delay - retry immediately
+                                print(f"  [RATE] Contact lookup rate limited, retrying in 3s (attempt {attempt + 1}/{max_retries})")
+                                await asyncio.sleep(3)
                             else:
                                 try:
                                     from telethon.tl.functions.contacts import ResolvePhoneRequest
@@ -664,25 +577,25 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                 http = await _get_media_http()
                 media_resp = await http.get(media_url)
                 if media_resp.status_code == 200:
-                    from urllib.parse import urlparse, unquote
-                    url_path = urlparse(media_url).path
-                    filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+                        from urllib.parse import urlparse, unquote
+                        url_path = urlparse(media_url).path
+                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
 
-                    content_type = media_resp.headers.get("content-type", "").lower()
-                    ext = filename.split(".")[-1].lower() if "." in filename else ""
-                    is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+                        content_type = media_resp.headers.get("content-type", "").lower()
+                        ext = filename.split(".")[-1].lower() if "." in filename else ""
+                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
 
-                    file_bytes = io.BytesIO(media_resp.content)
-                    file_bytes.name = filename if "." in filename else "photo.jpg"
+                        file_bytes = io.BytesIO(media_resp.content)
+                        file_bytes.name = filename if "." in filename else "photo.jpg"
 
-                    print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
+                        print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
 
-                    await asyncio.wait_for(
-                        client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                        timeout=30
-                    )
-                else:
-                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+                        await asyncio.wait_for(
+                            client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
+                            timeout=30
+                        )
+                    else:
+                        await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)

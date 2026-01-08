@@ -45,14 +45,14 @@ serve(async (req) => {
       .from("app_settings")
       .select("key, value");
 
-    // Dynamic batch sizes from settings - HIGH CAPACITY DEFAULTS
-    let warmupBatchSize = 5000; // Default for warmup (was 100)
-    let campaignBatchSize = 5000; // Default for campaign (was 100)
+    // Dynamic batch sizes from settings
+    let warmupBatchSize = 100; // Default for warmup
+    let campaignBatchSize = 100; // Default for campaign
     
-    // Campaign speed settings - ZERO DELAY FOR INSTANT PROCESSING
-    let campaignStaggerMin = 0;  // NO stagger (was 0.3)
-    let campaignStaggerMax = 0;  // NO stagger (was 1.5)
-    let campaignPollingInterval = 0;  // INSTANT repoll (was 3)
+    // Campaign speed settings (server-controlled)
+    let campaignStaggerMin = 0.3;
+    let campaignStaggerMax = 1.5;
+    let campaignPollingInterval = 3;
     let campaignMessagesPerAccountPerDay = 25; // NEW: Messages per account per day for campaigns
     if (settingsData) {
       for (const setting of settingsData) {
@@ -468,7 +468,7 @@ serve(async (req) => {
         .select("*, campaigns!inner(id, status, message_template, batch_size)")
         .eq("status", "pending")
         .eq("campaigns.status", "running")
-        .limit(5000); // HIGH CAPACITY - fetch up to 5000 recipients
+        .limit(200); // Fetch more to account for filtering
 
       // Count total pending after recovery
       const totalPending = pendingRecipients?.length || 0;
