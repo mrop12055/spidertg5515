@@ -81,8 +81,17 @@ const Seats: React.FC = () => {
   useEffect(() => {
     fetchSeats();
     
-    // Subscribe to real-time changes
-    const channel = supabase
+    // Debounce timer for stats refresh
+    let statsRefreshTimer: NodeJS.Timeout | null = null;
+    const debouncedStatsRefresh = () => {
+      if (statsRefreshTimer) clearTimeout(statsRefreshTimer);
+      statsRefreshTimer = setTimeout(() => {
+        fetchSeats();
+      }, 1000); // Debounce 1 second
+    };
+    
+    // Subscribe to real-time changes on seats table
+    const seatsChannel = supabase
       .channel('seats-changes')
       .on(
         'postgres_changes',
@@ -96,9 +105,44 @@ const Seats: React.FC = () => {
         }
       )
       .subscribe();
+    
+    // Subscribe to messages for live stats updates (debounced)
+    const messagesChannel = supabase
+      .channel('messages-for-stats')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'messages'
+        },
+        () => {
+          debouncedStatsRefresh();
+        }
+      )
+      .subscribe();
+    
+    // Subscribe to conversations for new conversation counts
+    const convsChannel = supabase
+      .channel('convs-for-stats')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'conversations'
+        },
+        () => {
+          debouncedStatsRefresh();
+        }
+      )
+      .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      if (statsRefreshTimer) clearTimeout(statsRefreshTimer);
+      supabase.removeChannel(seatsChannel);
+      supabase.removeChannel(messagesChannel);
+      supabase.removeChannel(convsChannel);
     };
   }, [fetchSeats]);
 

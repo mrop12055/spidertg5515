@@ -1838,10 +1838,10 @@ echo.
 start "Campaign Runner" cmd /k "title Campaign Runner && color 0B && py campaign_runner.py"
 timeout /t 1 /nobreak >nul
 
-start "LiveChat Runner" cmd /k "title LiveChat Runner && color 0D && py livechat_runner.py"
+start "LiveChat Listener" cmd /k "title LiveChat Listener && color 0D && py live_chat_listener.py"
 timeout /t 1 /nobreak >nul
 
-start "Account Runner" cmd /k "title Account Runner && color 0E && py account_runner.py"
+start "Account Manager" cmd /k "title Account Manager && color 0E && py account_manager.py"
 timeout /t 1 /nobreak >nul
 
 start "Warmup Runner" cmd /k "title Warmup Runner && color 0A && py warmup_runner.py"
@@ -1852,8 +1852,8 @@ echo     All 4 runners started!
 echo  ================================================
 echo.
 echo     Blue   = Campaign Runner
-echo     Purple = LiveChat Runner  
-echo     Yellow = Account Runner
+echo     Purple = LiveChat Listener  
+echo     Yellow = Account Manager
 echo     Green  = Warmup Runner
 echo.
 echo     To STOP: Close all windows or press Ctrl+C
@@ -1903,11 +1903,11 @@ SUPABASE_URL = "${supabaseUrl}"
 SUPABASE_KEY = "${supabaseKey}"
 VPS_API_KEY = "REPLACE_WITH_YOUR_VPS_KEY"  # Will be set on first run
 
-# Runner definitions (block runner removed)
+# Runner definitions
 RUNNERS = {
     "campaign": "campaign_runner.py",
-    "livechat": "livechat_runner.py",
-    "account": "account_runner.py",
+    "livechat": "live_chat_listener.py",
+    "account": "account_manager.py",
     "warmup": "warmup_runner.py",
 }
 
@@ -2296,10 +2296,10 @@ if __name__ == "__main__":
     folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
     folder?.file("requirements.txt", requirementsTxt);
     
-    // Individual runners (block_runner removed)
+    // Individual runners - using correct filenames matching /python folder
     folder?.file("campaign_runner.py", campaignRunnerPy);
-    folder?.file("livechat_runner.py", livechatRunnerPy);
-    folder?.file("account_runner.py", accountRunnerPy);
+    folder?.file("live_chat_listener.py", livechatRunnerPy);
+    folder?.file("account_manager.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
     
     // Single BAT to run all
@@ -2329,10 +2329,10 @@ if __name__ == "__main__":
     folder?.file("fingerprint_generator.py", fingerprintGeneratorPy);
     folder?.file("requirements.txt", requirementsTxt);
     
-    // Individual runners (block_runner removed)
+    // Individual runners - using correct filenames matching /python folder
     folder?.file("campaign_runner.py", campaignRunnerPy);
-    folder?.file("livechat_runner.py", livechatRunnerPy);
-    folder?.file("account_runner.py", accountRunnerPy);
+    folder?.file("live_chat_listener.py", livechatRunnerPy);
+    folder?.file("account_manager.py", accountRunnerPy);
     folder?.file("warmup_runner.py", warmupRunnerPy);
     
     // VPS Agent
@@ -2433,16 +2433,15 @@ if __name__ == "__main__":
                 </Button>
 
                 <div className="text-left bg-muted rounded-lg p-4 space-y-3">
-                  <p className="font-medium">📁 Files included (10 total):</p>
+                  <p className="font-medium">📁 Files included (9 total):</p>
                   <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
-                    <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 5 runners</strong></li>
-                    <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + validation</li>
-                    <li><code className="text-purple-500">livechat_runner.py</code> - Incoming messages + replies</li>
-                    <li><code className="text-yellow-500">account_runner.py</code> - SpamBot, name, photo, privacy, import</li>
+                    <li><code className="text-green-600 dark:text-green-400">RUN.bat</code> - <strong>Double-click to START all 4 runners</strong></li>
+                    <li><code className="text-blue-500">campaign_runner.py</code> - Send messages + batch reporting</li>
+                    <li><code className="text-purple-500">live_chat_listener.py</code> - Incoming messages + replies</li>
+                    <li><code className="text-yellow-500">account_manager.py</code> - SpamBot, name, photo, privacy</li>
                     <li><code className="text-orange-500">warmup_runner.py</code> - Warmup chat (pairs) + join/view/react/bio</li>
-                    <li><code className="text-red-500">block_runner.py</code> - Block/unblock contacts</li>
                     <li><code>config.py</code> - Backend settings</li>
-                    <li><code>client_manager.py</code> - Shared Telegram logic</li>
+                    <li><code>client_manager.py</code> - Shared Telegram logic + batch reporting</li>
                     <li><code>fingerprint_generator.py</code> - Device fingerprints</li>
                     <li><code>requirements.txt</code> - Dependencies</li>
                   </ul>
@@ -2453,7 +2452,7 @@ if __name__ == "__main__":
                   <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
                     <li>Extract ZIP folder</li>
                     <li>Double-click <code className="bg-green-100 dark:bg-green-900 px-2 py-0.5 rounded">RUN.bat</code></li>
-                    <li>5 colored windows will open (one for each runner)</li>
+                    <li>4 colored windows will open (one for each runner)</li>
                     <li>To stop: Close all windows or press <kbd className="bg-background px-2 py-0.5 rounded border">Ctrl+C</kbd></li>
                   </ol>
                 </div>
