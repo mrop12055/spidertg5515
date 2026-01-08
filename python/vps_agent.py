@@ -12,7 +12,7 @@ import subprocess
 import zipfile
 import io
 import platform
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 import httpx
@@ -107,7 +107,7 @@ async def send_heartbeat(client: httpx.AsyncClient):
         params={"id": f"eq.{vps_id}"},
         json={
             "status": "online",
-            "last_seen": datetime.utcnow().isoformat(),
+            "last_seen": datetime.now(timezone.utc).isoformat(),
         }
     )
 
@@ -159,7 +159,7 @@ async def update_command(client: httpx.AsyncClient, cmd_id: str, status: str, re
         json={
             "status": status,
             "result": result,
-            "processed_at": datetime.utcnow().isoformat(),
+            "processed_at": datetime.now(timezone.utc).isoformat(),
         }
     )
 
