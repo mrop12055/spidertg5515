@@ -15,9 +15,10 @@ Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
 """
 
-BUILD_VERSION = "2026-01-08-instant-v1"
+BUILD_VERSION = "2026-01-08-robust-v2"
 
 import asyncio
+import gc
 import signal
 import time
 
@@ -30,6 +31,29 @@ from client_manager import (
 RUNNING = True
 POLL_WHEN_EMPTY = 0.1  # Only wait 0.1s when no tasks
 REPORT_CONCURRENCY = 1000
+
+# ========== HEALTH TRACKING ==========
+HEALTH_LOG_INTERVAL = 300  # Log health every 5 minutes
+runner_start_time = None
+last_health_log = 0
+total_messages_sent = 0
+total_polls = 0
+GC_INTERVAL = 1000  # Garbage collect every 1000 polls
+
+
+def format_uptime(start_time: float) -> str:
+    """Format uptime as human-readable string."""
+    if not start_time:
+        return "0s"
+    elapsed = time.time() - start_time
+    hours = int(elapsed // 3600)
+    minutes = int((elapsed % 3600) // 60)
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    elif minutes > 0:
+        return f"{minutes}m"
+    else:
+        return f"{int(elapsed)}s"
 
 
 def signal_handler(sig, frame):
@@ -213,16 +237,22 @@ async def report_results_parallel(results: list) -> tuple:
 
 
 async def main_loop():
-    """Main campaign loop - NO DELAYS, INSTANT PROCESSING"""
-    global RUNNING
+    """Main campaign loop - NO DELAYS, INSTANT PROCESSING, RUNS FOREVER"""
+    global RUNNING, runner_start_time, last_health_log, total_messages_sent, total_polls
+    
+    runner_start_time = time.time()
+    last_health_log = time.time()
+    total_messages_sent = 0
+    total_polls = 0
     
     print("=" * 60)
-    print("  TelegramCRM - Campaign Runner (INSTANT MODE)")
+    print("  TelegramCRM - Campaign Runner (ROBUST MODE)")
     print(f"  BUILD: {BUILD_VERSION}")
     print("=" * 60)
     print("  🚀 NO STAGGER - NO DELAYS - INSTANT PROCESSING")
     print("  ⚡ All tasks processed in parallel immediately")
     print("  ♾️  Runs forever - auto-restarts on errors")
+    print("  💪 Designed for 24/7 operation (days/weeks)")
     print("  ⏹ Stop: Ctrl+C")
     print("=" * 60)
     
@@ -230,7 +260,20 @@ async def main_loop():
     
     while RUNNING:
         try:
+            # ========== HEALTH LOG (every 5 minutes) ==========
+            now = time.time()
+            if now - last_health_log > HEALTH_LOG_INTERVAL:
+                uptime = format_uptime(runner_start_time)
+                print(f"  ♥ Runner healthy | Uptime: {uptime} | Polls: {total_polls} | Sent: {total_messages_sent}")
+                last_health_log = now
+            
+            # ========== MEMORY CLEANUP (every 1000 polls) ==========
+            if total_polls > 0 and total_polls % GC_INTERVAL == 0:
+                gc.collect()
+                print(f"  🧹 Memory cleanup (poll #{total_polls})")
+            
             batch_start = time.time()
+            total_polls += 1
             
             # Get batch of tasks
             batch_result = await get_batch_tasks(runner="campaign")
@@ -270,6 +313,9 @@ async def main_loop():
             # Report ALL results in parallel
             success_count, fail_count, report_time = await report_results_parallel(results)
             
+            # Update stats
+            total_messages_sent += len(tasks)
+            
             total_time = time.time() - batch_start
             msgs_per_min = (len(tasks) / total_time * 60) if total_time > 0 else 0
             
@@ -283,7 +329,8 @@ async def main_loop():
             print(f"  ⚠ Loop error: {e}")
             await asyncio.sleep(POLL_WHEN_EMPTY)
     
-    print("\n⏹ Campaign loop stopped.")
+    uptime = format_uptime(runner_start_time)
+    print(f"\n⏹ Campaign loop stopped. Total uptime: {uptime}, Messages sent: {total_messages_sent}")
     await shutdown_all()
 
 

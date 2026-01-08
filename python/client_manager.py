@@ -33,6 +33,10 @@ _phone_cache: Dict[str, int] = {}
 CONNECTION_TIMEOUT = 30
 CONNECTION_RETRIES = 1  # Single attempt, then try random proxy
 
+# HTTP client refresh for long-running processes
+HTTP_CLIENT_MAX_AGE = 3600  # Refresh HTTP clients every hour to prevent stale connections
+_http_client_created_at = None
+
 # Shared HTTP clients
 # - Prevents socket exhaustion from creating a new client for every request
 # - Also surfaces real connection/SSL errors instead of silently "waiting"
@@ -49,12 +53,22 @@ def _http_limits() -> httpx.Limits:
 
 
 async def _get_backend_http() -> httpx.AsyncClient:
-    global _BACKEND_HTTP, _BACKEND_HTTP_LOOP
+    global _BACKEND_HTTP, _BACKEND_HTTP_LOOP, _http_client_created_at
+    import time
     loop = asyncio.get_running_loop()
+    now = time.time()
+    
+    # Check if client needs refresh (stale after HTTP_CLIENT_MAX_AGE)
+    needs_refresh = (
+        _http_client_created_at is not None 
+        and (now - _http_client_created_at) > HTTP_CLIENT_MAX_AGE
+    )
+    
     if (
         _BACKEND_HTTP is None
         or getattr(_BACKEND_HTTP, "is_closed", False)
         or _BACKEND_HTTP_LOOP is not loop
+        or needs_refresh
     ):
         if _BACKEND_HTTP is not None and not getattr(_BACKEND_HTTP, "is_closed", False):
             try:
@@ -67,6 +81,9 @@ async def _get_backend_http() -> httpx.AsyncClient:
             headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
         )
         _BACKEND_HTTP_LOOP = loop
+        _http_client_created_at = now
+        if needs_refresh:
+            print("  🔄 HTTP client refreshed for long-running process")
     return _BACKEND_HTTP
 
 
@@ -485,7 +502,7 @@ async def get_batch_tasks(runner: str = None) -> dict:
         print(f"  [BACKEND ERROR] get-batch-tasks: {type(e).__name__}: {e}")
         return {
             "tasks": [],
-            "delay_after": 7,
+            "delay_after": 0.1,  # Minimal delay on error - retry immediately
             "reason": f"Backend unreachable ({type(e).__name__})",
         }
 
