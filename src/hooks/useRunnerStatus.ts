@@ -17,7 +17,7 @@ const runnerNames: Record<string, string> = {
   warmup: 'Warmup Runner',
 };
 
-const OFFLINE_THRESHOLD_MS = 180000; // 3 minutes (batch processing can take a while)
+const OFFLINE_THRESHOLD_MS = 60000; // 60 seconds - faster crash detection
 const OFFLINE_GRACE_PERIOD_MS = 15000; // 15 seconds grace period before showing red dot
 
 const normalizeRunnerKey = (runnerName: string) => {
