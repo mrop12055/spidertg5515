@@ -46,12 +46,12 @@ from fingerprint_generator import generate_fingerprint
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
-# Speed settings
-CONNECTION_TIMEOUT = 20  # Reduced from 30 for faster failure detection
-CONNECTION_RETRIES = 1   # Only 1 attempt - if proxy fails, switch immediately
-RETRY_DELAY = 1
+# Speed settings - OPTIMIZED FOR FAST LIVECHAT
+CONNECTION_TIMEOUT = 15  # Fast connection timeout
+CONNECTION_RETRIES = 1   # Fail fast, switch proxy immediately
+RETRY_DELAY = 0.5        # Minimal retry delay
 
-# Proxy error patterns - fail fast on these, don't retry
+# Proxy error patterns - fail fast on these
 PROXY_ERROR_PATTERNS = [
     "semaphore timeout", "winerror 121", "connection refused", 
     "proxy", "socks", "timed out", "timeout", "cannot connect",
@@ -68,8 +68,8 @@ def get_http_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
-            timeout=30,
-            limits=httpx.Limits(max_connections=100, max_keepalive_connections=20)
+            timeout=15,  # Faster HTTP timeout
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)  # More connections
         )
     return _http_client
 
@@ -217,7 +217,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         
         # Check if account is deleted/banned
         try:
-            me = await asyncio.wait_for(client.get_me(), timeout=15)
+            me = await asyncio.wait_for(client.get_me(), timeout=10)  # Faster check
             if not me:
                 print(f"  [BANNED] Account deleted: {account['phone_number']}")
                 await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"})
@@ -331,7 +331,7 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
     try:
         entity = None
         if recipient.startswith("@"):
-            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=15)
+            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)  # Faster
         else:
             from telethon.tl.functions.contacts import ImportContactsRequest
             from telethon.tl.types import InputPhoneContact
@@ -339,13 +339,13 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
             
             phone = recipient if recipient.startswith("+") else "+" + recipient
             try:
-                entity = await asyncio.wait_for(client.get_entity(phone), timeout=10)
+                entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)  # Faster
             except:
                 pass
             
             if not entity:
                 contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)  # Faster
                 if result.users:
                     entity = result.users[0]
                 elif result.retry_contacts:
@@ -399,15 +399,15 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                     # For images, use force_document=False to send as photo preview
                     await asyncio.wait_for(
                         client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                        timeout=30
+                        timeout=20  # Faster media send
                     )
                 else:
-                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
-                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
         else:
-            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=15)
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)  # Faster
         
         return True, None
     except asyncio.TimeoutError:
@@ -947,9 +947,9 @@ _u = urlparse(SUPABASE_URL)
 SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
 RUNNING = True
-CLEANUP_INTERVAL = 300  # 5 minutes
-HEARTBEAT_INTERVAL = 60  # 1 minute
-CONNECT_TIMEOUT_SECONDS = 45  # Prevent hangs during parallel connects
+CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
+HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
+CONNECT_TIMEOUT_SECONDS = 25  # Faster parallel connect timeout
 
 # Network error detection - these indicate LOCAL network issues, not account problems
 NETWORK_ERROR_PATTERNS = [
@@ -1290,11 +1290,11 @@ async def setup_message_handler(client, account_id: str):
 
 
 async def keep_clients_alive():
-    """Background task that keeps all clients receiving updates"""
+    """Background task that keeps all clients receiving updates - ULTRA FAST"""
     while RUNNING:
-        # Small sleep to yield control
-        await asyncio.sleep(0.1)
-        # Catch updates for all connected clients by yielding
+        # Ultra-fast loop for instant message reception
+        await asyncio.sleep(0.02)  # 50 checks per second
+        # Process updates for all connected clients
         for acc_id, client in list(active_clients.items()):
             try:
                 if client.is_connected():
@@ -1306,13 +1306,12 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (Smart Fingerprint + Proxy)")
-    print("  BUILD: 2026-01-08-v2-catchup-fix")
+    print("  LiveChat Runner (ULTRA FAST)")
+    print("  BUILD: 2026-01-08-v3-optimized")
     print("  [Incoming + Replies]")
-    print("  🔐 Uses fingerprint from DB or generates new")
-    print("  🔄 Auto-switches proxy on failure")
-    print("  📶 Detects wifi/network errors")
-    print("  🔁 Background update catcher enabled")
+    print("  ⚡ Optimized for speed - no delays")
+    print("  🔄 Instant proxy switch on failure")
+    print("  📨 50 update checks per second")
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
