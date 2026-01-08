@@ -289,18 +289,20 @@ serve(async (req) => {
           
           // Errors that should just SKIP the recipient (don't affect account status)
           // These are recipient-related issues, NOT account problems
+          // Privacy errors are PERMANENT - the recipient has blocked unknown users, no point retrying
           const skipRecipientErrors = [
             'user not found',        // Recipient doesn't have Telegram
             'no user',               // Recipient doesn't exist
             'peer_id_invalid',       // Invalid recipient ID
             'user was deleted',      // RECIPIENT deleted their account (not sender!)
             'specified user',        // "The specified user was deleted"
-            'privacy',               // Recipient has privacy settings - mark failed immediately
-            'privacy restricted',    // Recipient blocked unknown users - don't retry
+            'privacy',               // Recipient has privacy settings - PERMANENT failure
+            'privacy restricted',    // Recipient blocked unknown users - PERMANENT failure
           ];
           
           // Errors that should RETRY with a different account
           // These are SENDER-SIDE rate limits - the recipient is fine, just try with another account
+          // NOTE: Privacy errors are NO LONGER retryable - they are permanent recipient-side failures
           const retryWithDifferentAccountErrors = [
             'too many requests', // Rate limit on THIS account - try another (applies 12h restriction to account)
             'sendmessagerequest' // Rate limit error from SendMessageRequest
@@ -371,68 +373,21 @@ serve(async (req) => {
               console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED immediately (no retries) - account restricted for 12h`);
             }
           } else if (isRetryable && campaign_recipient_id && account_id) {
-            // RETRYABLE ERROR - try with a different account (up to 5 attempts)
-            // Includes: privacy restricted, too many requests (rate limit)
-            // Takes priority over temporary restriction since "privacy restricted" contains "restricted"
+            // RETRYABLE ERROR - rate limit only (too many requests)
+            // Apply 12h restriction to the account but retry with different account
+            console.log(`[report-task-result] Account ${account_id} hit rate limit - applying 12h restriction and retrying with different account`);
             
-            // Check if this is a "too many requests" error - apply 12h restriction to the account
-            const isTooManyRequests = errorLower.includes('too many requests') || errorLower.includes('sendmessagerequest');
+            await supabase
+              .from("telegram_accounts")
+              .update({
+                status: "restricted",
+                ban_reason: error,
+                restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+                last_active: new Date().toISOString(),
+              })
+              .eq("id", account_id);
             
-            if (isTooManyRequests) {
-              // Apply 12h restriction to the account but still retry with different account
-              console.log(`[report-task-result] Account ${account_id} hit rate limit (Too many requests) - applying 12h restriction and retrying with different account`);
-              
-              await supabase
-                .from("telegram_accounts")
-                .update({
-                  status: "restricted",
-                  ban_reason: error,
-                  restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-                  last_active: new Date().toISOString(),
-                })
-                .eq("id", account_id);
-            } else {
-              // Privacy error - count recent errors for this account
-              console.log(`[report-task-result] Privacy/skip error for recipient ${campaign_recipient_id} - checking for retry with different account (skip_account=${skip_account})`);
-              
-              const PRIVACY_ERROR_THRESHOLD = 3;  // 3+ privacy errors = switch accounts
-              const PRIVACY_COOLDOWN_SECONDS = 60;  // 1 minute cooldown
-              
-              const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-              const { count: recentPrivacyErrors } = await supabase
-                .from("campaign_recipients")
-                .select("id", { count: "exact", head: true })
-                .contains("failed_account_ids", [account_id])
-                .gte("sent_at", tenMinutesAgo);
-              
-              if ((recentPrivacyErrors || 0) >= PRIVACY_ERROR_THRESHOLD) {
-                // Too many privacy errors - apply short cooldown to force switch
-                const until = new Date(Date.now() + PRIVACY_COOLDOWN_SECONDS * 1000).toISOString();
-                await supabase
-                  .from("telegram_accounts")
-                  .update({
-                    status: "cooldown",
-                    restricted_until: until,
-                    last_active: new Date().toISOString(),
-                  })
-                  .eq("id", account_id)
-                  .eq("status", "active");
-                
-                console.log(`[report-task-result] Account ${account_id} hit ${recentPrivacyErrors} privacy errors - applying ${PRIVACY_COOLDOWN_SECONDS}s cooldown`);
-              } else {
-                // Just update last_active
-                await supabase
-                  .from("telegram_accounts")
-                  .update({
-                    last_active: new Date().toISOString(),
-                  })
-                  .eq("id", account_id);
-                
-                console.log(`[report-task-result] Privacy error is recipient-specific - account ${account_id} remains available`);
-              }
-            }
-            
-            // Get recipient's campaign_id for incrementing failed count
+            // Get recipient's campaign_id for updating
             const { data: recipientData } = await supabase
               .from("campaign_recipients")
               .select("campaign_id")
@@ -452,61 +407,20 @@ serve(async (req) => {
                 failedAccountIds.push(account_id);
               }
               
-              // IMPORTANT: Different retry limits for different error types
-              // - Rate limit errors (too many requests): UNLIMITED retries - these are sender-side issues
-              //   The recipient is fine, we just need a different sender account
-              // - Privacy errors: Limited to 3 attempts - recipient may have blocked unknown users
+              // RATE LIMIT ERROR: Always retry with different account (no limit)
+              // The recipient is NOT at fault - only the sender account hit rate limits
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  sent_by_account_id: null,  // Clear so different account picks it up
+                  failed_account_ids: failedAccountIds,
+                  failed_reason: null,
+                  retry_count: (currentRecipient?.retry_count || 0) + 1
+                })
+                .eq("id", campaign_recipient_id);
               
-              if (isTooManyRequests) {
-                // RATE LIMIT ERROR: Always retry with different account (no limit)
-                // The recipient is NOT at fault - only the sender account hit rate limits
-                await supabase
-                  .from("campaign_recipients")
-                  .update({
-                    status: "pending",
-                    sent_by_account_id: null,  // Clear so different account picks it up
-                    failed_account_ids: failedAccountIds,
-                    failed_reason: null,
-                    retry_count: (currentRecipient?.retry_count || 0) + 1
-                  })
-                  .eq("id", campaign_recipient_id);
-                
-                console.log(`[report-task-result] Rate limit - recipient reset to pending, will retry with different account (attempt ${failedAccountIds.length})`);
-              } else {
-                // PRIVACY ERROR: Limited retries (recipient may have privacy settings)
-                const MAX_PRIVACY_RETRIES = 2;  // 3 total attempts
-                
-                if (failedAccountIds.length > MAX_PRIVACY_RETRIES) {
-                  // 3 total attempts (1 original + 2 retries) - now mark as failed
-                  await supabase
-                    .from("campaign_recipients")
-                    .update({
-                      status: "failed",
-                      failed_reason: `Privacy restricted (tried ${failedAccountIds.length} accounts)`,
-                      sent_at: new Date().toISOString(),
-                      failed_account_ids: failedAccountIds,
-                    })
-                    .eq("id", campaign_recipient_id);
-                  
-                  // Increment campaign failed count
-                  await supabase.rpc("increment_campaign_failed_count", { cid: recipientData.campaign_id });
-                  
-                  console.log(`[report-task-result] Privacy restricted - recipient marked as failed after ${failedAccountIds.length} attempts`);
-                } else {
-                  // Reset to pending with updated failed_account_ids - will be picked up by different account
-                  await supabase
-                    .from("campaign_recipients")
-                    .update({
-                      status: "pending",
-                      sent_by_account_id: null,  // Clear so different account picks it up
-                      failed_account_ids: failedAccountIds,
-                      failed_reason: null,
-                    })
-                    .eq("id", campaign_recipient_id);
-                  
-                  console.log(`[report-task-result] Privacy restricted - retry ${failedAccountIds.length}/${MAX_PRIVACY_RETRIES + 1} with different account`);
-                }
-              }
+              console.log(`[report-task-result] Rate limit - recipient reset to pending, will retry with different account (attempt ${failedAccountIds.length})`);
             }
           } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
             // TEMPORARY - set to restricted status with 12h cooldown
