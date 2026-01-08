@@ -10,16 +10,12 @@
 ## Files
 
 ```
-RUN.bat                - Start the runner (double-click)
-INSTALL.bat            - Install dependencies (run once)
-config.py              - Your Supabase credentials (edit this)
-campaign_runner.py     - Campaign message sender
-live_chat_listener.py  - Receives replies from contacts
-account_manager.py     - SpamBot checks, name changes, privacy
-warmup_runner.py       - Account warmup tasks
-client_manager.py      - Telegram client management
-fingerprint_generator.py - Device fingerprint generation
-requirements.txt       - Python dependencies
+RUN.bat              - Start the runner (double-click)
+INSTALL.bat          - Install dependencies (run once)
+config.py            - Your Supabase credentials (edit this)
+main_runner.py       - Main runner (handles everything)
+client_manager.py    - Telegram client management
+requirements.txt     - Python dependencies
 ```
 
 ## Features
