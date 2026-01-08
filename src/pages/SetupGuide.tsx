@@ -904,12 +904,20 @@ if __name__ == "__main__":
 """
 LiveChat Runner - Handles incoming messages and live chat replies
 RUNS FOREVER with crash recovery, memory cleanup, and heartbeat logging
+
+BUILD: 2026-01-08-smart-fingerprint-proxy
+
+Features:
+- Uses fingerprint from DB if exists, generates new if not
+- On proxy failure, switches to a different random proxy (no retry same proxy)
+- Detects network/wifi disconnect and skips account updates
 """
 import asyncio
 import signal
 import base64
 import time
 import gc
+import random
 
 import httpx
 from telethon import events
@@ -918,6 +926,7 @@ from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client
 )
+from fingerprint_generator import generate_fingerprint
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
 
@@ -929,6 +938,39 @@ RUNNING = True
 CLEANUP_INTERVAL = 300  # 5 minutes
 HEARTBEAT_INTERVAL = 60  # 1 minute
 
+# Network error detection - these indicate LOCAL network issues, not account problems
+NETWORK_ERROR_PATTERNS = [
+    "temporary failure in name resolution",
+    "network is unreachable", 
+    "no route to host",
+    "connection refused",
+    "connection reset by peer",
+    "name or service not known",
+    "could not connect",
+    "timed out",
+    "timeout",
+    "cannot connect",
+    "connection timed out",
+    "connecterror",
+    "network error",
+    "socket error",
+    "dns lookup failed",
+    "errno 11001",  # Windows DNS error
+    "errno 110",    # Connection timed out
+    "errno 111",    # Connection refused
+    "errno 113",    # No route to host
+    "oserror",
+    "gaierror",
+]
+
+
+def is_network_error(error_str: str) -> bool:
+    """Check if error is a LOCAL network/wifi issue (not account problem)"""
+    if not error_str:
+        return False
+    error_lower = error_str.lower()
+    return any(p in error_lower for p in NETWORK_ERROR_PATTERNS)
+
 
 def signal_handler(sig, frame):
     global RUNNING
@@ -937,6 +979,141 @@ def signal_handler(sig, frame):
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
+
+
+async def fetch_random_proxy(exclude_proxy_id: str = None):
+    """Fetch a random active proxy from database, excluding the failed one"""
+    try:
+        http = get_http_client()
+        response = await http.get(
+            f"{SUPABASE_URL_BASE}/rest/v1/proxies",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
+            params={
+                "status": "eq.active",
+                "select": "id,host,port,username,password,proxy_type"
+            }
+        )
+        if response.status_code == 200:
+            proxies = response.json()
+            if exclude_proxy_id:
+                proxies = [p for p in proxies if p.get("id") != exclude_proxy_id]
+            if proxies:
+                return random.choice(proxies)
+        return None
+    except Exception as e:
+        print(f"  [WARN] Could not fetch proxy: {e}")
+        return None
+
+
+async def update_account_proxy(account_id: str, new_proxy_id: str):
+    """Update account's proxy in database"""
+    try:
+        http = get_http_client()
+        response = await http.patch(
+            f"{SUPABASE_URL_BASE}/rest/v1/telegram_accounts",
+            headers={
+                "apikey": SUPABASE_KEY, 
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            params={"id": f"eq.{account_id}"},
+            json={"proxy_id": new_proxy_id}
+        )
+        return response.status_code in (200, 204)
+    except Exception as e:
+        print(f"  [WARN] Could not update proxy: {e}")
+        return False
+
+
+async def connect_account_with_fingerprint(account: dict, setup_handler=None) -> tuple:
+    """
+    Connect account with smart fingerprint and proxy handling.
+    
+    1. Check if account has fingerprint in DB, use it
+    2. If no fingerprint, generate new and save to DB
+    3. If proxy fails, switch to different random proxy (no retry)
+    4. Detect network errors and skip account status updates
+    
+    Returns: (client, error_str or None)
+    """
+    account_id = account.get("id")
+    phone = account.get("phone_number", "???")[-4:]
+    
+    # Check fingerprint from database
+    device_model = account.get("device_model")
+    system_version = account.get("system_version")
+    app_version = account.get("app_version")
+    lang_code = account.get("lang_code")
+    system_lang_code = account.get("system_lang_code")
+    
+    fingerprint_exists = bool(device_model and system_version)
+    
+    # If no fingerprint in DB, generate new one
+    if not fingerprint_exists:
+        print(f"  [{phone}] No fingerprint in DB, generating new...")
+        fp = generate_fingerprint()
+        account["device_model"] = fp["device_model"]
+        account["system_version"] = fp["system_version"]
+        account["app_version"] = fp["app_version"]
+        account["lang_code"] = fp["lang_code"]
+        account["system_lang_code"] = fp["system_lang_code"]
+        
+        # Save fingerprint to database
+        await report_result("fingerprint_generated", {
+            "account_id": account_id,
+            "device_model": fp["device_model"],
+            "system_version": fp["system_version"],
+            "app_version": fp["app_version"],
+            "lang_code": fp["lang_code"],
+            "system_lang_code": fp["system_lang_code"]
+        })
+        print(f"  [{phone}] Saved fingerprint: {fp['device_model']} ({fp['system_version']})")
+    else:
+        print(f"  [{phone}] Using DB fingerprint: {device_model} ({system_version})")
+    
+    # Get current proxy
+    proxy = account.get("proxy")
+    current_proxy_id = proxy.get("id") if proxy else None
+    
+    # Try to connect
+    try:
+        client = await get_or_create_client(account, setup_handler=setup_handler, task_proxy=proxy)
+        if client:
+            return client, None
+        else:
+            # Connection failed - check if it's a proxy issue
+            return None, "Connection failed"
+    except Exception as e:
+        error_str = str(e)
+        
+        # Check if this is a LOCAL network error (wifi disconnect)
+        if is_network_error(error_str):
+            print(f"  [{phone}] NETWORK ERROR (wifi/internet issue): {error_str[:50]}")
+            # Return None but mark as network error - don't update account status
+            return None, f"NETWORK_ERROR:{error_str}"
+        
+        # Check if proxy-related error
+        proxy_error_patterns = ["proxy", "socks", "connection refused", "timeout", "timed out", "cannot connect"]
+        is_proxy_error = any(p in error_str.lower() for p in proxy_error_patterns)
+        
+        if is_proxy_error and current_proxy_id:
+            print(f"  [{phone}] Proxy failed, switching to different proxy...")
+            
+            # Fetch a different random proxy
+            new_proxy = await fetch_random_proxy(exclude_proxy_id=current_proxy_id)
+            if new_proxy:
+                # Update account's proxy in database
+                if await update_account_proxy(account_id, new_proxy["id"]):
+                    print(f"  [{phone}] Switched to new proxy: {new_proxy['host']}:{new_proxy['port']}")
+                    # Update account dict for next attempt (will be used in next iteration)
+                    account["proxy"] = new_proxy
+                else:
+                    print(f"  [{phone}] Could not update proxy in database")
+            else:
+                print(f"  [{phone}] No other proxies available")
+        
+        return None, error_str
 
 
 async def check_conversation_exists(account_id: str, sender_id: int, sender_username: str = None, sender_phone: str = None) -> bool:
@@ -995,6 +1172,10 @@ async def check_conversation_exists(account_id: str, sender_id: int, sender_user
         
         return False
     except Exception as e:
+        # Check if this is a network error
+        if is_network_error(str(e)):
+            print(f"    [WARN] Network error checking conversation (wifi issue?)")
+            return False
         print(f"    [WARN] Check conversation error: {e}")
         return False
 
@@ -1067,7 +1248,8 @@ async def setup_message_handler(client, account_id: str):
                             error_text = upload_response.text[:300] if upload_response.text else "No details"
                             print(f"    [WARN] Photo upload failed: {upload_response.status_code} - {error_text}")
                 except Exception as e:
-                    print(f"    [WARN] Could not upload photo: {e}")
+                    if not is_network_error(str(e)):
+                        print(f"    [WARN] Could not upload photo: {e}")
             
             avatar_base64 = None
             try:
@@ -1090,18 +1272,22 @@ async def setup_message_handler(client, account_id: str):
                 "media_type": media_type
             })
         except Exception as e:
-            print(f"  [WARN] Handler error: {e}")
+            if not is_network_error(str(e)):
+                print(f"  [WARN] Handler error: {e}")
 
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner")
+    print("  LiveChat Runner (Smart Fingerprint + Proxy)")
+    print("  BUILD: 2026-01-08-smart-fingerprint-proxy")
     print("  [Incoming + Replies]")
-    print("  🧹 Memory cleanup every 5 minutes")
-    print("  💓 Heartbeat every 60 seconds")
+    print("  🔐 Uses fingerprint from DB or generates new")
+    print("  🔄 Auto-switches proxy on failure")
+    print("  📶 Detects wifi/network errors")
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
+    failed_proxy_accounts = {}  # Track accounts that failed due to proxy {account_id: retry_time}
     last_cleanup = time.time()
     last_heartbeat = time.time()
     iteration_count = 0
@@ -1125,6 +1311,16 @@ async def main_loop():
                 if stale_ids:
                     print(f"  [CLEANUP] Removed {len(stale_ids)} stale IDs from connected_ids")
                 
+                # Allow failed proxy accounts to retry after 5 minutes
+                now = time.time()
+                expired_failures = [acc_id for acc_id, retry_time in failed_proxy_accounts.items() if now > retry_time]
+                for acc_id in expired_failures:
+                    del failed_proxy_accounts[acc_id]
+                    connected_ids.discard(acc_id)  # Allow re-connection attempt
+                
+                if expired_failures:
+                    print(f"  [CLEANUP] Allowing {len(expired_failures)} proxy-failed accounts to retry")
+                
                 # Clean up disconnected clients
                 await cleanup_stale_clients()
                 gc.collect()
@@ -1135,37 +1331,76 @@ async def main_loop():
             
             if task_type == "wait":
                 accounts = task.get("accounts", [])
-                # Only connect NEW accounts (skip already connected)
-                new_accounts = [acc for acc in accounts if acc.get("id") not in connected_ids]
+                # Only connect NEW accounts (skip already connected and recently failed)
+                new_accounts = [
+                    acc for acc in accounts 
+                    if acc.get("id") not in connected_ids 
+                    and acc.get("id") not in failed_proxy_accounts
+                ]
+                
                 if new_accounts:
-                    # Connect in parallel for speed
-                    results = await asyncio.gather(
-                        *[get_or_create_client(acc, setup_handler=setup_message_handler) for acc in new_accounts],
-                        return_exceptions=True
-                    )
+                    print(f"  [CONNECT] Connecting {len(new_accounts)} new accounts...")
+                    
+                    # Connect with smart fingerprint and proxy handling
                     for acc in new_accounts:
-                        if acc.get("id"):
-                            connected_ids.add(acc["id"])
+                        acc_id = acc.get("id")
+                        if not acc_id:
+                            continue
+                        
+                        client, error = await connect_account_with_fingerprint(acc, setup_handler=setup_message_handler)
+                        
+                        if client:
+                            connected_ids.add(acc_id)
+                        elif error:
+                            # Check if network error - don't mark as failed
+                            if error.startswith("NETWORK_ERROR:"):
+                                print(f"    [SKIP] Network issue, will retry later")
+                                # Don't add to any tracking - will retry next iteration
+                            else:
+                                # Proxy or other error - wait before retrying
+                                failed_proxy_accounts[acc_id] = time.time() + 300  # Retry in 5 min
+                                print(f"    [FAIL] Will retry in 5 minutes")
+                
                 # No artificial delay - server returns seconds=0 for instant polling
             
             elif task_type == "send":
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
                 account = task.get("account", {})
-                client = await get_or_create_client(account, setup_handler=setup_message_handler)
+                
+                client, error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler)
+                
                 if client and recipient:
                     print(f"  [REPLY] To {recipient}...")
-                    success, error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+                    success, send_error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+                    
+                    # Only report if not a network error
+                    if not is_network_error(str(send_error)):
+                        await report_result("send", {
+                            "message_id": msg.get("id"),
+                            "success": success,
+                            "error": send_error,
+                            "account_id": account.get("id")
+                        })
+                    else:
+                        print(f"  [SKIP REPORT] Network error, not updating status")
+                elif error and not error.startswith("NETWORK_ERROR:"):
+                    # Only report failure if not a network error
                     await report_result("send", {
                         "message_id": msg.get("id"),
-                        "success": success,
+                        "success": False,
                         "error": error,
                         "account_id": account.get("id")
                     })
         
         except Exception as e:
-            print(f"  [ERROR] {e}")
-            await asyncio.sleep(0.5)
+            # Check if this is a network error
+            if is_network_error(str(e)):
+                print(f"  [NETWORK] Wifi/internet issue: {str(e)[:50]}")
+                await asyncio.sleep(5)  # Wait longer for network recovery
+            else:
+                print(f"  [ERROR] {e}")
+                await asyncio.sleep(0.5)
     
     await shutdown_all()
 
@@ -1180,9 +1415,15 @@ if __name__ == "__main__":
             print("\\n⏹ Stopping...")
             break
         except Exception as e:
-            print(f"\\n⚠ LiveChat crashed: {e}")
-            print("  Restarting in 5 seconds...")
-            time.sleep(5)
+            # Check if network error
+            if is_network_error(str(e)):
+                print(f"\\n📶 Network error (wifi issue?): {e}")
+                print("  Waiting 10 seconds for network recovery...")
+                time.sleep(10)
+            else:
+                print(f"\\n⚠ LiveChat crashed: {e}")
+                print("  Restarting in 5 seconds...")
+                time.sleep(5)
     
     print("Goodbye!")
 `;
