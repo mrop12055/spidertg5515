@@ -329,10 +329,10 @@ serve(async (req) => {
 
     // CAMPAIGN RUNNER: Get pending campaign recipients
     if (runner === "campaign") {
-      // Get running campaigns with their batch_size settings
+      // Get running campaigns with their batch_size settings + seat_id and name for metadata
       const { data: runningCampaigns } = await supabase
         .from("campaigns")
-        .select("id, batch_size, message_template")
+        .select("id, batch_size, message_template, seat_id, name")
         .eq("status", "running");
 
       if (!runningCampaigns || runningCampaigns.length === 0) {
@@ -346,6 +346,12 @@ serve(async (req) => {
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
+      }
+
+      // Build campaign lookup for metadata
+      const campaignLookup = new Map<string, { seat_id: string | null; name: string }>();
+      for (const c of runningCampaigns) {
+        campaignLookup.set(c.id, { seat_id: c.seat_id, name: c.name });
       }
 
       const campaignIds = runningCampaigns.map(c => c.id);
@@ -643,6 +649,9 @@ serve(async (req) => {
 
           const apiCred = account.telegram_api_credentials;
 
+          // Get campaign metadata for this recipient
+          const campaignMeta = campaignLookup.get(recipient.campaign_id) || { seat_id: null, name: null };
+
           tasks.push({
             task: "send",
             message: {
@@ -651,6 +660,10 @@ serve(async (req) => {
             },
             recipient: recipient.phone_number,
             recipient_name: recipient.name,
+            // Include campaign metadata so report-task-result doesn't need to refetch
+            campaign_id: recipient.campaign_id,
+            campaign_seat_id: campaignMeta.seat_id,
+            campaign_name: campaignMeta.name,
             account: {
               id: account.id,
               phone_number: account.phone_number,
@@ -663,6 +676,7 @@ serve(async (req) => {
               api_id: apiCred?.api_id || account.api_id,
               api_hash: apiCred?.api_hash || account.api_hash,
               proxy_id: account.proxy_id,
+              api_credential_id: account.api_credential_id,
             },
             proxy: account.proxies
               ? {

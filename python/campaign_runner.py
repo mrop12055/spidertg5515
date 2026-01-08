@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-TelegramCRM - Campaign Runner (Server-Controlled Speed)
-=========================================================
+TelegramCRM - Campaign Runner (Server-Controlled Speed + Parallel Reporting)
+=============================================================================
 All speed settings controlled by admin dashboard.
 
 - Polls server for batch of tasks
 - Speed settings (stagger, polling) controlled by server
 - Executes ALL tasks in parallel
-- Reports results back to server
+- Reports results in parallel (bounded concurrency)
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
@@ -16,15 +16,17 @@ Stop: Ctrl+C or pause campaign from dashboard
 import asyncio
 import signal
 import random
+import time
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all, disconnect_batch
+    send_message, shutdown_all, disconnect_batch, report_batch_results
 )
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
 DEFAULT_POLL_INTERVAL = 3  # Default polling (server can override)
+REPORT_CONCURRENCY = 20    # Max parallel report calls
 
 
 def signal_handler(sig, frame):
@@ -88,6 +90,11 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
     account = task.get("account", {})
     proxy = task.get("proxy")
     content = msg.get("content", "")
+    
+    # Get campaign metadata from task (passed from get-batch-tasks)
+    campaign_seat_id = task.get("campaign_seat_id")
+    campaign_id = task.get("campaign_id")
+    campaign_name = task.get("campaign_name")
     
     account_id = account.get("id")
     account_phone = account.get("phone_number", "????")[-4:]
@@ -153,6 +160,10 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             "content": content,
             "recipient_phone": recipient,
             "recipient_name": recipient_name,
+            # Include campaign metadata for faster backend processing
+            "campaign_seat_id": campaign_seat_id,
+            "campaign_id": campaign_id,
+            "campaign_name": campaign_name,
         }
         
         if is_sender_error:
@@ -181,22 +192,71 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
         }
 
 
+async def report_results_parallel(results: list) -> tuple:
+    """Report all results to server in parallel with bounded concurrency.
+    
+    Returns: (success_count, fail_count, report_time_seconds)
+    """
+    start_time = time.time()
+    
+    # Filter out exceptions
+    valid_results = [r for r in results if not isinstance(r, Exception)]
+    
+    if not valid_results:
+        return 0, 0, 0
+    
+    # Try batch reporting first (much faster if available)
+    try:
+        batch_success = await report_batch_results(valid_results)
+        if batch_success:
+            elapsed = time.time() - start_time
+            success_count = sum(1 for r in valid_results if r.get("success"))
+            return success_count, len(valid_results) - success_count, elapsed
+    except Exception as e:
+        print(f"  ⚠ Batch report failed, falling back to parallel: {e}")
+    
+    # Fallback: parallel individual reports with bounded concurrency
+    semaphore = asyncio.Semaphore(REPORT_CONCURRENCY)
+    
+    async def report_one(result: dict) -> bool:
+        async with semaphore:
+            try:
+                await report_result("send", result)
+                return result.get("success", False)
+            except Exception as e:
+                print(f"    ⚠ Report error: {e}")
+                return False
+    
+    # Report all in parallel (bounded by semaphore)
+    report_results = await asyncio.gather(
+        *[report_one(r) for r in valid_results],
+        return_exceptions=True
+    )
+    
+    elapsed = time.time() - start_time
+    success_count = sum(1 for r in report_results if r is True)
+    fail_count = len(valid_results) - success_count
+    
+    return success_count, fail_count, elapsed
+
+
 async def main_loop():
     """Main campaign loop - Server-controlled speed settings
     
     Simple loop:
     1. Request tasks from server (server decides batch size + speed)
     2. Execute ALL tasks in parallel with server-controlled stagger
-    3. Report ALL results
+    3. Report ALL results in parallel (bounded concurrency)
     4. Wait delay_after seconds (server-controlled, can be 0)
     5. Repeat
     """
     global RUNNING
     
     print("=" * 60)
-    print("  TelegramCRM - Campaign Runner (Server-Controlled Speed)")
+    print("  TelegramCRM - Campaign Runner (Parallel Speed)")
     print("=" * 60)
     print("  🚀 Speed settings from admin dashboard")
+    print("  ⚡ Parallel sending + parallel reporting")
     print("  ♾️  RUNS FOREVER - auto-restarts on errors")
     print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
@@ -206,9 +266,13 @@ async def main_loop():
     
     while RUNNING:
         try:
+            batch_start = time.time()
+            
             # Request batch of tasks from server
             batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
+            
+            fetch_time = time.time() - batch_start
             
             # Get server-controlled speed settings
             stagger_min = batch_result.get("stagger_min", 0.3)
@@ -245,34 +309,31 @@ async def main_loop():
             
             consecutive_empty = 0
             print(f"\n  📦 Processing {len(tasks)} messages (stagger: {stagger_min:.1f}-{stagger_max:.1f}s)...")
+            print(f"     [fetch: {fetch_time:.2f}s]")
             
             # Pre-connect all accounts in parallel FIRST (major speedup)
+            connect_start = time.time()
             await pre_connect_batch(tasks)
+            connect_time = time.time() - connect_start
+            print(f"     [connect: {connect_time:.2f}s]")
             
             # Execute ALL tasks in parallel with server-controlled stagger
+            send_start = time.time()
             results = await asyncio.gather(
                 *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
                 return_exceptions=True
             )
+            send_time = time.time() - send_start
+            print(f"     [send: {send_time:.2f}s]")
             
-            # Report ALL results to server
-            success_count = 0
-            for result in results:
-                if isinstance(result, Exception):
-                    print(f"  ⚠ Task exception: {result}")
-                    continue
-                
-                if result.get("success"):
-                    success_count += 1
-                
-                await report_result("send", result)
+            # Report ALL results in parallel (bounded concurrency)
+            success_count, fail_count, report_time = await report_results_parallel(results)
             
-            fail_count = len(results) - success_count
-            print(f"  📊 Batch complete: {success_count} success, {fail_count} failed")
-
-            # NOTE: We no longer disconnect after every batch to allow client reuse
-            # Clients will be disconnected on shutdown or after extended idle
-            # This significantly speeds up consecutive batches
+            total_time = time.time() - batch_start
+            msgs_per_min = (len(tasks) / total_time * 60) if total_time > 0 else 0
+            
+            print(f"  📊 Batch: {success_count}✓ {fail_count}✗ | {total_time:.1f}s total ({msgs_per_min:.0f}/min)")
+            print(f"     [report: {report_time:.2f}s]")
 
             # Use server-controlled delay (can be 0 for immediate repoll if more pending)
             if RUNNING and delay_after > 0:
@@ -291,7 +352,7 @@ async def main_loop():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  Starting Campaign Runner - Server-Controlled Speed")
+    print("  Starting Campaign Runner - Parallel Speed")
     print("  Speed & batch settings from admin dashboard")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
