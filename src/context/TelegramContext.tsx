@@ -217,6 +217,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           phoneCountry: (acc as any).phone_country || undefined,
           geoMismatch: (acc as any).geo_mismatch || false,
           apiCredentialId: (acc as any).api_credential_id || undefined,
+          telegramId: (acc as any).telegram_id || undefined,
           // Tags
           tags: (acc as any).tags || [],
           // Health tracking
