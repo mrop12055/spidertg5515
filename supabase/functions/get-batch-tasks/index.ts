@@ -516,12 +516,13 @@ serve(async (req) => {
 
       // ========== GET PENDING RECIPIENTS ==========
       // Get pending recipients with their failed_account_ids
+      // Use campaignBatchSize for limit (before actualBatchSize is calculated)
       const { data: pendingRecipients } = await supabase
         .from("campaign_recipients")
         .select("*, campaigns!inner(id, status, message_template, batch_size)")
         .eq("status", "pending")
         .eq("campaigns.status", "running")
-        .limit(200); // Fetch more to account for filtering
+        .limit(campaignBatchSize === 0 ? 200 : campaignBatchSize * 2); // Fetch only what we need
 
       // Count total pending after recovery
       const totalPending = pendingRecipients?.length || 0;
