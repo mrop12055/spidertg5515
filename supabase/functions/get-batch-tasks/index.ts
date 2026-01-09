@@ -925,14 +925,15 @@ serve(async (req) => {
     if (runner === "account") {
       const accountBatchSize = Math.min(batch_size, 20); // Max 20 parallel account tasks
       
-      // Auto-recover stuck tasks (in_progress for more than 5 minutes)
+      // Auto-recover stuck tasks (in_progress for more than 90 seconds)
+      // This prevents tasks from sitting in "processing" for minutes when a local runner crashes.
       // We use created_at as a proxy for "claimed at" because this table has no updated_at.
-      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const stuckCutoffIso = new Date(Date.now() - 90 * 1000).toISOString();
       await supabase
         .from("account_check_tasks")
         .update({ status: "pending" })
         .eq("status", "in_progress")
-        .lt("created_at", fiveMinutesAgo);
+        .lt("created_at", stuckCutoffIso);
       
       // Get pending account tasks
       const { data: checkTasks } = await supabase
