@@ -77,33 +77,56 @@ serve(async (req) => {
 
     console.log(`[redistribute-api-credentials] Found ${allAccounts.length} accounts with valid sessions to redistribute`);
 
-    // Sort APIs by 24h usage (least used first) for assignment
-    const sortedCredentials = [...apiCredentials].sort((a, b) => {
-      const usageA = apiUsage24h.get(a.id) || 0;
-      const usageB = apiUsage24h.get(b.id) || 0;
-      return usageA - usageB; // Least used first
+    const API_DAILY_LIMIT = 80; // Max messages per API per 24 hours
+    
+    // Calculate remaining capacity for each API (limit - usage)
+    // APIs with more remaining capacity should get MORE accounts
+    const apiCapacity = apiCredentials.map(cred => {
+      const usage = apiUsage24h.get(cred.id) || 0;
+      const remaining = Math.max(0, API_DAILY_LIMIT - usage);
+      return { id: cred.id, name: cred.name, usage, remaining };
     });
 
+    // Sort by remaining capacity DESC (most capacity first)
+    apiCapacity.sort((a, b) => b.remaining - a.remaining);
+    
+    console.log('[redistribute-api-credentials] API capacity (remaining):', 
+      apiCapacity.map(c => `${c.name}: ${c.remaining} remaining (${c.usage} used)`));
+
+    // Calculate total remaining capacity
+    const totalCapacity = apiCapacity.reduce((sum, c) => sum + c.remaining, 0);
+    
     // Reset assignment counts for fresh redistribution
     const assignmentCounts = new Map<string, number>();
     apiCredentials.forEach(c => assignmentCounts.set(c.id, 0));
 
     const assignments: { id: string; api_credential_id: string }[] = [];
 
-    // Distribute accounts evenly across all credentials, preferring least-used APIs
+    // Distribute accounts proportionally based on remaining capacity
+    // APIs with more remaining capacity get more accounts
     for (let i = 0; i < allAccounts.length; i++) {
       const account = allAccounts[i];
       
-      // Round-robin through sorted credentials (least used get accounts first)
-      const credIndex = i % sortedCredentials.length;
-      const selectedCred = sortedCredentials[credIndex];
+      // Find the API with the highest remaining capacity that hasn't been over-assigned
+      // Weighted: pick API with best (remaining capacity / assigned ratio)
+      let bestApi = apiCapacity[0];
+      let bestScore = -1;
+      
+      for (const api of apiCapacity) {
+        const assigned = assignmentCounts.get(api.id) || 0;
+        // Score = remaining capacity - already assigned accounts (prefer APIs with more room)
+        const score = api.remaining - assigned;
+        if (score > bestScore) {
+          bestScore = score;
+          bestApi = api;
+        }
+      }
 
-      // Increment count for selected credential
-      assignmentCounts.set(selectedCred.id, (assignmentCounts.get(selectedCred.id) || 0) + 1);
+      assignmentCounts.set(bestApi.id, (assignmentCounts.get(bestApi.id) || 0) + 1);
       
       assignments.push({
         id: account.id,
-        api_credential_id: selectedCred.id
+        api_credential_id: bestApi.id
       });
     }
 
