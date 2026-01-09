@@ -1016,7 +1016,18 @@ const Accounts: React.FC = () => {
     if (selectedIds.size === 0) return;
     
     try {
-      const tasks = Array.from(selectedIds).map(accountId => ({
+      const accountIds = Array.from(selectedIds);
+      
+      // Delete any existing pending/in_progress sync_profile tasks for these accounts
+      // This prevents duplicate tasks if user clicks multiple times
+      await supabase
+        .from('account_check_tasks')
+        .delete()
+        .in('account_id', accountIds)
+        .eq('task_type', 'sync_profile')
+        .in('status', ['pending', 'in_progress']);
+      
+      const tasks = accountIds.map(accountId => ({
         account_id: accountId,
         task_type: 'sync_profile',
         status: 'pending',
