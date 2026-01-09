@@ -232,8 +232,8 @@ const Campaigns: React.FC = () => {
           needsRefresh = true;
         }
         
-        // Auto-complete running campaigns with no pending
-        if (campaign.status === 'running' && result.pendingCount === 0 && result.recipients.length > 0) {
+        // Auto-complete running OR paused campaigns with no pending recipients
+        if ((campaign.status === 'running' || campaign.status === 'paused') && result.pendingCount === 0 && result.recipients.length > 0) {
           updatePromises.push(
             (async () => {
               await supabase
