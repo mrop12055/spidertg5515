@@ -129,6 +129,19 @@ serve(async (req) => {
         .in("status", ["active", "restricted", "cooldown", "frozen"])
         .not("session_data", "is", null);
 
+      // OPTIMIZATION: Fetch known recipient telegram IDs for early filtering in Python
+      // Only messages from these IDs should be processed (campaign-initiated or existing conversations)
+      const { data: knownConversations } = await supabase
+        .from("conversations")
+        .select("recipient_telegram_id")
+        .not("recipient_telegram_id", "is", null);
+      
+      const knownRecipientIds = [...new Set(
+        (knownConversations || [])
+          .map((c: any) => c.recipient_telegram_id)
+          .filter((id: any) => id != null)
+      )];
+
       // Filter to accounts with active proxy
       const validAccounts = (livechatAccounts || [])
         .map(acc => {
@@ -151,12 +164,13 @@ serve(async (req) => {
         })
         .filter(Boolean);
 
-      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening`);
+      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening, ${knownRecipientIds.length} known recipients`);
 
       return new Response(JSON.stringify({
         task: "wait",
         seconds: 0,
         accounts: validAccounts,
+        known_recipients: knownRecipientIds,  // Python will filter messages using this list
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
