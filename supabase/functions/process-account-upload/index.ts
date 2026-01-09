@@ -359,6 +359,24 @@ serve(async (req) => {
       account_ids: [] as string[]
     };
 
+    // Fetch all existing accounts in one query for faster lookup
+    const phoneNumbers = accounts.map(a => a.phone_number).filter(Boolean);
+    const { data: existingAccountsList } = await supabase
+      .from('telegram_accounts')
+      .select('id, phone_number, device_model')
+      .in('phone_number', phoneNumbers);
+    
+    const existingAccountsMap = new Map<string, { id: string; device_model: string | null }>();
+    existingAccountsList?.forEach(acc => {
+      existingAccountsMap.set(acc.phone_number, { id: acc.id, device_model: acc.device_model });
+    });
+
+    console.log(`[process-account-upload] Found ${existingAccountsMap.size} existing accounts out of ${accounts.length}`);
+
+    // Prepare batch data
+    const accountsToInsert: any[] = [];
+    const accountsToUpdate: { id: string; data: any }[] = [];
+
     for (const account of accounts) {
       try {
         // Validate required fields
@@ -375,7 +393,6 @@ serve(async (req) => {
         // Select API credential with load balancing
         let selectedApiCredential: ApiCredential | null = null;
         if (apiCredentials && apiCredentials.length > 0) {
-          // Prefer matching client type based on existing fingerprint or random
           const preferredType = Math.random() < 0.8 ? 'android' : 'ios';
           selectedApiCredential = selectApiCredential(apiCredentials, preferredType === 'ios' ? 'iPhone' : 'Samsung');
         }
@@ -389,15 +406,7 @@ serve(async (req) => {
         // Extract phone country
         const phoneCountry = extractPhoneCountry(account.phone_number);
         
-        console.log(`[process-account-upload] ${account.phone_number}: valid=${extracted.isValid}, fingerprint=${fingerprint.device_model}, API=${selectedApiCredential?.client_type || 'default'}, country=${phoneCountry}`);
-
-
-        // Check if account already exists
-        const { data: existing } = await supabase
-          .from('telegram_accounts')
-          .select('id, device_model')
-          .eq('phone_number', account.phone_number)
-          .single();
+        const existing = existingAccountsMap.get(account.phone_number);
 
         const accountData = {
           session_data: account.session_data,
@@ -410,13 +419,11 @@ serve(async (req) => {
           status: status,
           last_active: extracted.isValid ? new Date().toISOString() : null,
           phone_country: phoneCountry,
-          // Assign API credential if not already set
           ...(existing ? {} : {
             api_credential_id: selectedApiCredential?.id || null,
             warmup_phase: 0,
             warmup_started_at: new Date().toISOString(),
           }),
-          // Only set fingerprint if not already set (preserve existing)
           ...(existing?.device_model ? {} : {
             device_model: fingerprint.device_model,
             system_version: fingerprint.system_version,
@@ -427,50 +434,84 @@ serve(async (req) => {
         };
 
         if (existing) {
-          // Update existing account
-          const { data, error } = await supabase
-            .from('telegram_accounts')
-            .update(accountData)
-            .eq('id', existing.id)
-            .select()
-            .single();
-
-          if (error) throw error;
-          results.successful++;
-          results.accounts.push(data);
-          results.account_ids.push(existing.id);
+          accountsToUpdate.push({ id: existing.id, data: accountData });
         } else {
-          // Insert new account with fingerprint and tags
-          const { data, error } = await supabase
-            .from('telegram_accounts')
-            .insert({
-              phone_number: account.phone_number,
-              ...accountData,
-              device_model: fingerprint.device_model,
-              system_version: fingerprint.system_version,
-              app_version: fingerprint.app_version,
-              lang_code: fingerprint.lang_code,
-              system_lang_code: fingerprint.system_lang_code,
-              maturity_score: 0,
-              maturity_days: 0,
-              daily_limit: 25,
-              messages_sent_today: 0,
-              tags: tags.length > 0 ? tags : [], // Assign tags to new accounts
-            })
-            .select()
-            .single();
-
-          if (error) throw error;
-          results.successful++;
-          results.accounts.push(data);
-          results.account_ids.push(data.id);
+          accountsToInsert.push({
+            phone_number: account.phone_number,
+            ...accountData,
+            device_model: fingerprint.device_model,
+            system_version: fingerprint.system_version,
+            app_version: fingerprint.app_version,
+            lang_code: fingerprint.lang_code,
+            system_lang_code: fingerprint.system_lang_code,
+            maturity_score: 0,
+            maturity_days: 0,
+            daily_limit: 25,
+            messages_sent_today: 0,
+            tags: tags.length > 0 ? tags : [],
+          });
         }
       } catch (err) {
         const error = err as Error;
-        console.error(`[process-account-upload] Error processing ${account.phone_number}:`, error.message);
+        console.error(`[process-account-upload] Error preparing ${account.phone_number}:`, error.message);
         results.failed++;
         results.errors.push(`${account.phone_number}: ${error.message}`);
       }
+    }
+
+    // Batch insert new accounts (up to 100 at a time to avoid payload limits)
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < accountsToInsert.length; i += BATCH_SIZE) {
+      const batch = accountsToInsert.slice(i, i + BATCH_SIZE);
+      const { data: insertedBatch, error: insertError } = await supabase
+        .from('telegram_accounts')
+        .insert(batch)
+        .select('id, phone_number');
+      
+      if (insertError) {
+        console.error(`[process-account-upload] Batch insert error:`, insertError.message);
+        // Try individual inserts as fallback
+        for (const acc of batch) {
+          try {
+            const { data, error } = await supabase
+              .from('telegram_accounts')
+              .insert(acc)
+              .select('id')
+              .single();
+            if (error) throw error;
+            results.successful++;
+            results.account_ids.push(data.id);
+          } catch (e) {
+            results.failed++;
+            results.errors.push(`${acc.phone_number}: ${(e as Error).message}`);
+          }
+        }
+      } else if (insertedBatch) {
+        results.successful += insertedBatch.length;
+        insertedBatch.forEach(acc => results.account_ids.push(acc.id));
+        console.log(`[process-account-upload] Batch inserted ${insertedBatch.length} accounts`);
+      }
+    }
+
+    // Batch update existing accounts (parallel updates)
+    const updatePromises = accountsToUpdate.map(async ({ id, data }) => {
+      const { error } = await supabase
+        .from('telegram_accounts')
+        .update(data)
+        .eq('id', id);
+      
+      if (error) {
+        results.failed++;
+        results.errors.push(`Update ${id}: ${error.message}`);
+      } else {
+        results.successful++;
+        results.account_ids.push(id);
+      }
+    });
+
+    // Process updates in parallel batches
+    for (let i = 0; i < updatePromises.length; i += BATCH_SIZE) {
+      await Promise.all(updatePromises.slice(i, i + BATCH_SIZE));
     }
 
     console.log(`[process-account-upload] Completed: ${results.successful} successful, ${results.failed} failed`);
