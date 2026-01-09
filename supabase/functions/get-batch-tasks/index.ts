@@ -921,6 +921,86 @@ serve(async (req) => {
       });
     }
 
+    // ACCOUNT RUNNER: Get batch of account management tasks (sync_profile, change_name, etc.)
+    if (runner === "account") {
+      const accountBatchSize = Math.min(batch_size, 20); // Max 20 parallel account tasks
+      
+      // Get pending account tasks
+      const { data: checkTasks } = await supabase
+        .from("account_check_tasks")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(*))")
+        .eq("status", "pending")
+        .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "sync_profile", "verify_session"])
+        .order("created_at", { ascending: true })
+        .limit(accountBatchSize);
+
+      if (checkTasks && checkTasks.length > 0) {
+        console.log(`[get-batch-tasks] Found ${checkTasks.length} pending account tasks`);
+        
+        const taskIds = checkTasks.map((t: any) => t.id);
+        
+        // Mark all tasks as in_progress atomically
+        await supabase
+          .from("account_check_tasks")
+          .update({ status: "in_progress" })
+          .in("id", taskIds);
+        
+        for (const task of checkTasks as any[]) {
+          const accountData = task.telegram_accounts;
+          if (!accountData) continue;
+          
+          const apiCred = accountData.telegram_api_credentials;
+          const proxyData = accountData.proxies;
+          
+          tasks.push({
+            task: task.task_type,
+            task_id: task.id,
+            task_data: task.result ? JSON.parse(task.result) : {},
+            account: {
+              id: accountData.id,
+              phone_number: accountData.phone_number,
+              session_data: accountData.session_data,
+              device_model: accountData.device_model,
+              system_version: accountData.system_version,
+              app_version: accountData.app_version,
+              lang_code: accountData.lang_code,
+              system_lang_code: accountData.system_lang_code,
+              api_id: apiCred?.api_id || accountData.api_id,
+              api_hash: apiCred?.api_hash || accountData.api_hash,
+              proxy_id: accountData.proxy_id,
+            },
+            proxy: proxyData ? {
+              host: proxyData.host,
+              port: proxyData.port,
+              username: proxyData.username,
+              password: proxyData.password,
+              proxy_type: proxyData.proxy_type,
+              type: proxyData.proxy_type,
+            } : null,
+          });
+        }
+        
+        console.log(`[get-batch-tasks] Returning ${tasks.length} account tasks for parallel processing`);
+        
+        return new Response(JSON.stringify({
+          tasks,
+          delay_after: tasks.length > 0 ? 1 : 3,
+          batch_mode: true,
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      
+      // No tasks - return empty
+      return new Response(JSON.stringify({
+        tasks: [],
+        delay_after: 3,
+        reason: "No pending account tasks",
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Calculate delay for next batch
     const delaySeconds = Math.floor(
       Math.random() * (MESSAGE_DELAY_MAX_SECONDS - MESSAGE_DELAY_MIN_SECONDS + 1) + MESSAGE_DELAY_MIN_SECONDS
