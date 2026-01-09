@@ -1892,12 +1892,62 @@ async def process_single_task(task):
                 print(f"    Error: {e}")
     
     except Exception as e:
-        # CRITICAL: Report failure to edge function so task doesn't stay stuck in "in_progress"
+        # CRITICAL: Report failure to backend so task doesn't stay stuck in "in_progress"
         print(f"  [ERROR] Task {task_type} failed: {e}")
-        try:
-            await report_result(task_type, {"task_id": task_id, "account_id": account.get("id"), "success": False, "error": str(e)})
-        except:
-            pass  # Best effort - at least we tried to report
+        await report_task_failure(task_type, task_id, account.get("id"), str(e))
+
+
+TASK_TIMEOUT_SECONDS = 120
+
+
+async def report_task_failure(task_type: str, task_id: str, account_id: str, error_message: str):
+    """Report a failure in a shape that the backend understands for each task type."""
+    try:
+        if task_type == "spambot_check":
+            await report_result("spambot_check", {
+                "task_id": task_id,
+                "account_id": account_id,
+                "status": "disconnected",
+                "ban_reason": error_message,
+                "response": f"Error: {error_message}",
+            })
+        elif task_type == "verify_session":
+            await report_result("verify_session", {
+                "task_id": task_id,
+                "account_id": account_id,
+                "status": "disconnected",
+                "error": error_message,
+                "user_data": None,
+            })
+        else:
+            await report_result(task_type, {
+                "task_id": task_id,
+                "account_id": account_id,
+                "success": False,
+                "error": error_message,
+            })
+    except Exception as e:
+        print(f"  [ERROR] Failed to report task failure: {type(e).__name__}: {repr(e)}")
+
+
+async def run_task_with_timeout(task: dict):
+    """Prevent one hanging Telegram call from stopping polling forever."""
+    task_type = task.get("task")
+    task_id = task.get("task_id")
+    account = task.get("account", {})
+    account_id = account.get("id")
+    phone = account.get("phone_number")
+
+    try:
+        await asyncio.wait_for(process_single_task(task), timeout=TASK_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        msg = f"Timeout after {TASK_TIMEOUT_SECONDS}s"
+        print(f"  [TIMEOUT] {task_type} for {phone}: {msg}")
+        await report_task_failure(task_type, task_id, account_id, msg)
+    except Exception as e:
+        # process_single_task already reports most errors; this is a safety net.
+        await report_task_failure(task_type, task_id, account_id, str(e))
+
 
 _http_client = None
 
@@ -1975,8 +2025,8 @@ async def main_loop():
             if tasks:
                 print(f"[BATCH] Found {len(tasks)} tasks! Processing in parallel...")
                 
-                # Process all tasks in parallel using asyncio.gather
-                await asyncio.gather(*[process_single_task(task) for task in tasks], return_exceptions=True)
+                # Process all tasks in parallel (with timeout safety)
+                await asyncio.gather(*[run_task_with_timeout(task) for task in tasks], return_exceptions=True)
                 
                 print(f"[DONE] Completed {len(tasks)} tasks")
                 # Quick re-poll to check for more tasks
