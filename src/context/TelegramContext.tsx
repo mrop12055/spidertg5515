@@ -148,11 +148,11 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       // Run ALL queries in parallel for maximum speed
       const [accountsResult, proxiesResult, campaignsResult, conversationsResult, messagesResult] = await Promise.all([
         // Fetch accounts - exclude large session_data column for performance
+        // No limit - fetch all accounts for proper display
         supabase
           .from('telegram_accounts')
           .select('id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id')
-          .order('created_at', { ascending: false })
-          .limit(500),
+          .order('created_at', { ascending: false }),
           
         // Fetch proxies - select only needed columns for performance
         supabase
