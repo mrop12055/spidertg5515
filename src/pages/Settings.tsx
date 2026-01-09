@@ -550,17 +550,19 @@ const Settings: React.FC = () => {
                           onChange={(e) => {
                             const text = e.target.value;
                             if (bulkApiType === 'random') {
-                              // Custom mode - keep as is
                               setBulkApiInput(text);
                             } else {
-                              // Device mode - extract only valid 32-char hex hashes
-                              const lines = text.split('\n');
-                              const cleaned = lines.map(line => {
-                                // Find 32-character hex string in the line
-                                const match = line.match(/[a-f0-9]{32}/i);
-                                return match ? match[0] : '';
-                              }).filter(h => h).join('\n');
-                              setBulkApiInput(cleaned || text); // Keep original if no valid hash found yet
+                              // Device mode - extract all 32-char hex hashes from the text
+                              const allHashes = text.match(/[a-f0-9]{32}/gi) || [];
+                              if (allHashes.length > 0) {
+                                setBulkApiInput(allHashes.join('\n'));
+                              } else {
+                                // Allow typing - only keep hex chars for partial input
+                                const cleanedLines = text.split('\n').map(line => 
+                                  line.replace(/[^a-f0-9\n]/gi, '')
+                                ).join('\n');
+                                setBulkApiInput(cleanedLines);
+                              }
                             }
                           }}
                           rows={6}
