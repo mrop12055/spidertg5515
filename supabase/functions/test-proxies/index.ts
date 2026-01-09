@@ -16,7 +16,17 @@ const getCountryFlag = (countryCode: string): string => {
   return String.fromCodePoint(...codePoints);
 };
 
-// Test proxy by making actual HTTP request through it
+// Helper to create a timeout promise
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => 
+      setTimeout(() => reject(new Error(errorMsg)), ms)
+    )
+  ]);
+}
+
+// Test proxy by making actual TCP connection with timeout
 async function testProxyConnection(proxy: {
   host: string;
   port: number;
@@ -25,69 +35,37 @@ async function testProxyConnection(proxy: {
   proxy_type: string;
 }): Promise<{ success: boolean; responseTime: number; ip?: string; country?: string; error?: string }> {
   const startTime = Date.now();
+  const CONNECTION_TIMEOUT_MS = 10000; // 10 second timeout per proxy
   
   try {
-    // Build proxy URL with authentication
-    let proxyAuth = '';
-    if (proxy.username && proxy.password) {
-      proxyAuth = `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password)}@`;
-    }
-    
-    const proxyUrl = `${proxy.proxy_type}://${proxyAuth}${proxy.host}:${proxy.port}`;
-    
-    console.log(`Testing proxy: ${proxy.host}:${proxy.port} (${proxy.proxy_type})`);
-    
-    // Use Deno's native proxy support for HTTP client
-    // First, try a simple TCP connection to verify the proxy is reachable
-    const conn = await Deno.connect({
-      hostname: proxy.host,
-      port: proxy.port,
-    });
+    // Try a simple TCP connection with timeout to verify the proxy is reachable
+    const conn = await withTimeout(
+      Deno.connect({
+        hostname: proxy.host,
+        port: proxy.port,
+      }),
+      CONNECTION_TIMEOUT_MS,
+      'Connection timeout'
+    );
     conn.close();
     
     const responseTime = Date.now() - startTime;
     
-    // For HTTP/HTTPS proxies, we can try to detect the IP via a separate service
-    // This is a best-effort approach since Deno doesn't have native proxy support in fetch
-    let detectedIp: string | undefined;
+    // Extract country from password if it contains country code like "IN", "US"
     let detectedCountry: string | undefined;
-    
-    try {
-      // Try to get IP info using ip-api.com (free, no auth needed)
-      // Note: This checks the edge function's IP, not the proxy's IP
-      // For actual proxy IP detection, we'd need a more complex setup
-      const ipResponse = await fetch('http://ip-api.com/json/?fields=status,country,countryCode,query', {
-        signal: AbortSignal.timeout(5000),
-      });
-      
-      if (ipResponse.ok) {
-        const ipData = await ipResponse.json();
-        if (ipData.status === 'success') {
-          // Since we can't actually route through proxy in Deno edge functions,
-          // we'll mark this as needing local runner for full detection
-          // For now, extract country from password if it contains country code like "IN", "US"
-          const passwordMatch = proxy.password?.match(/-([A-Z]{2})-/);
-          if (passwordMatch) {
-            detectedCountry = passwordMatch[1];
-          }
-        }
-      }
-    } catch (ipError) {
-      console.log('IP detection failed:', ipError);
+    const passwordMatch = proxy.password?.match(/-([A-Z]{2})-/);
+    if (passwordMatch) {
+      detectedCountry = passwordMatch[1];
     }
-    
-    console.log(`Proxy ${proxy.host}:${proxy.port} - Connected in ${responseTime}ms`);
     
     return {
       success: true,
       responseTime,
-      ip: detectedIp,
       country: detectedCountry,
     };
   } catch (e) {
     const responseTime = Date.now() - startTime;
     const errorMessage = e instanceof Error ? e.message : 'Connection failed';
-    console.log(`Proxy ${proxy.host}:${proxy.port} - Failed: ${errorMessage}`);
     
     return {
       success: false,
@@ -141,48 +119,57 @@ serve(async (req) => {
     
     console.log(`Fetched ${proxies.length} proxies to test`);
 
-    // Test ALL proxies in parallel at once for maximum speed
-    console.log(`Starting parallel test of ${proxies.length} proxies...`);
+    // Test proxies in batches of 50 to avoid overwhelming the proxy provider
+    // (All proxies often share the same host like gate.kookeey.info)
+    const TEST_BATCH_SIZE = 50;
+    const results: any[] = [];
     
-    const results = await Promise.all(
-      proxies.map(async (proxy) => {
-        const testResult = await testProxyConnection({
-          host: proxy.host,
-          port: proxy.port,
-          username: proxy.username || undefined,
-          password: proxy.password || undefined,
-          proxy_type: proxy.proxy_type || 'http',
-        });
+    for (let i = 0; i < proxies.length; i += TEST_BATCH_SIZE) {
+      const batch = proxies.slice(i, i + TEST_BATCH_SIZE);
+      console.log(`Testing batch ${Math.floor(i / TEST_BATCH_SIZE) + 1}/${Math.ceil(proxies.length / TEST_BATCH_SIZE)} (${batch.length} proxies)...`);
+      
+      const batchResults = await Promise.all(
+        batch.map(async (proxy) => {
+          const testResult = await testProxyConnection({
+            host: proxy.host,
+            port: proxy.port,
+            username: proxy.username || undefined,
+            password: proxy.password || undefined,
+            proxy_type: proxy.proxy_type || 'http',
+          });
 
-        const countryFlag = testResult.country ? getCountryFlag(testResult.country) : undefined;
+          const countryFlag = testResult.country ? getCountryFlag(testResult.country) : undefined;
 
-        // Update proxy status in database
-        const updateData: Record<string, unknown> = {
-          status: testResult.success ? 'active' : 'error',
-          response_time: testResult.responseTime,
-          last_checked: new Date().toISOString(),
-        };
+          // Update proxy status in database
+          const updateData: Record<string, unknown> = {
+            status: testResult.success ? 'active' : 'error',
+            response_time: testResult.responseTime,
+            last_checked: new Date().toISOString(),
+          };
 
-        if (testResult.country && auto_detect_country) {
-          updateData.detected_country = testResult.country;
-        }
+          if (testResult.country && auto_detect_country) {
+            updateData.detected_country = testResult.country;
+          }
 
-        await supabase
-          .from('proxies')
-          .update(updateData)
-          .eq('id', proxy.id);
+          await supabase
+            .from('proxies')
+            .update(updateData)
+            .eq('id', proxy.id);
 
-        return {
-          id: proxy.id,
-          success: testResult.success,
-          responseTime: testResult.responseTime,
-          ip: testResult.ip,
-          country: testResult.country,
-          countryFlag,
-          error: testResult.success ? undefined : testResult.error,
-        };
-      })
-    );
+          return {
+            id: proxy.id,
+            success: testResult.success,
+            responseTime: testResult.responseTime,
+            ip: testResult.ip,
+            country: testResult.country,
+            countryFlag,
+            error: testResult.success ? undefined : testResult.error,
+          };
+        })
+      );
+      
+      results.push(...batchResults);
+    }
 
     const workingCount = results.filter(r => r.success).length;
     const failedCount = results.filter(r => !r.success).length;
