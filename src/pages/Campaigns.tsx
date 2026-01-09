@@ -1529,8 +1529,8 @@ const Campaigns: React.FC = () => {
                     )}
                   />
                   
-                  <CardContent className="p-5 pt-6">
-                    <div className="flex items-center justify-between gap-4">
+                  <CardContent className="p-3 pt-4">
+                    <div className="flex items-center justify-between gap-3">
                       {/* Selection Checkbox */}
                       <Checkbox
                         checked={selectedCampaigns.has(campaign.id)}
@@ -1540,9 +1540,9 @@ const Campaigns: React.FC = () => {
                       />
                       
                       {/* Left Section - Name & Status */}
-                      <div className="flex items-center gap-4 min-w-0 flex-1">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
                         {/* Status Icon */}
-                        <div className={`shrink-0 w-10 h-10 rounded-xl flex items-center justify-center ${
+                        <div className={`shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
                           campaign.status === 'running' 
                             ? 'bg-primary/15 text-primary' 
                             : campaign.status === 'completed' 
@@ -1553,17 +1553,17 @@ const Campaigns: React.FC = () => {
                                   ? 'bg-yellow-500/15 text-yellow-600'
                                   : 'bg-muted text-muted-foreground'
                         }`}>
-                          {campaign.status === 'running' && <Play className="w-5 h-5" />}
-                          {campaign.status === 'completed' && <CheckCircle className="w-5 h-5" />}
-                          {campaign.status === 'failed' && <XCircle className="w-5 h-5" />}
-                          {campaign.status === 'paused' && <Pause className="w-5 h-5" />}
-                          {campaign.status === 'draft' && <FileText className="w-5 h-5" />}
+                          {campaign.status === 'running' && <Play className="w-4 h-4" />}
+                          {campaign.status === 'completed' && <CheckCircle className="w-4 h-4" />}
+                          {campaign.status === 'failed' && <XCircle className="w-4 h-4" />}
+                          {campaign.status === 'paused' && <Pause className="w-4 h-4" />}
+                          {campaign.status === 'draft' && <FileText className="w-4 h-4" />}
                         </div>
                         
                         <div className="min-w-0 flex-1">
-                          <h3 className="font-semibold text-base group-hover:text-primary transition-colors break-words">{campaign.name}</h3>
-                          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                            <span className={`text-xs font-medium uppercase tracking-wider ${
+                          <h3 className="font-medium text-sm group-hover:text-primary transition-colors truncate">{campaign.name}</h3>
+                          <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
+                            <span className={`text-[10px] font-medium uppercase tracking-wider ${
                               campaign.status === 'running' 
                                 ? 'text-primary' 
                                 : campaign.status === 'completed' 
@@ -1578,13 +1578,13 @@ const Campaigns: React.FC = () => {
                             </span>
                             {seatName && (
                               <>
-                                <span className="text-muted-foreground">•</span>
-                                <span className="text-xs text-muted-foreground">{seatName}</span>
+                                <span className="text-muted-foreground text-[10px]">•</span>
+                                <span className="text-[10px] text-muted-foreground">{seatName}</span>
                               </>
                             )}
                             {campaignStuck && (
-                              <span className="text-xs text-destructive flex items-center gap-1">
-                                <AlertCircle className="w-3 h-3" />
+                              <span className="text-[10px] text-destructive flex items-center gap-0.5">
+                                <AlertCircle className="w-2.5 h-2.5" />
                                 Stuck
                               </span>
                             )}
@@ -1592,8 +1592,8 @@ const Campaigns: React.FC = () => {
                         </div>
                       </div>
                       
-                      {/* Center Section - Stats */}
-                      <div className="hidden md:flex items-center gap-6 shrink-0">
+                      {/* Center Section - Stats (Compact) */}
+                      <div className="hidden md:flex items-center gap-1 shrink-0">
                         {(() => {
                           const total = report?.total || campaign.recipientCount || 0;
                           const sent = report?.successful ?? campaign.sentCount ?? 0;
@@ -1603,28 +1603,28 @@ const Campaigns: React.FC = () => {
                           
                           return (
                             <>
-                              <div className="text-center px-3">
-                                <p className="text-lg font-bold text-foreground">{total}</p>
-                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Total</p>
+                              <div className="text-center px-2 min-w-[40px]">
+                                <p className="text-sm font-semibold text-foreground">{total}</p>
+                                <p className="text-[9px] uppercase tracking-wider text-muted-foreground">Total</p>
                               </div>
-                              <div className="w-px h-8 bg-border" />
-                              <div className="text-center px-3">
-                                <p className="text-lg font-bold text-primary">{sent}</p>
-                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Sent</p>
+                              <div className="w-px h-6 bg-border" />
+                              <div className="text-center px-2 min-w-[40px]">
+                                <p className="text-sm font-semibold text-primary">{sent}</p>
+                                <p className="text-[9px] uppercase tracking-wider text-muted-foreground">Sent</p>
                               </div>
-                              <div className="w-px h-8 bg-border" />
-                              <div className="text-center px-3">
-                                <p className="text-lg font-bold text-yellow-600">{pending}</p>
-                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Pending</p>
+                              <div className="w-px h-6 bg-border" />
+                              <div className="text-center px-2 min-w-[40px]">
+                                <p className="text-sm font-semibold text-yellow-600">{pending}</p>
+                                <p className="text-[9px] uppercase tracking-wider text-muted-foreground">Pending</p>
                               </div>
-                              <div className="w-px h-8 bg-border" />
-                              <div className="text-center px-3">
-                                <p className="text-lg font-bold text-destructive">{failed}</p>
-                                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">Failed</p>
+                              <div className="w-px h-6 bg-border" />
+                              <div className="text-center px-2 min-w-[40px]">
+                                <p className="text-sm font-semibold text-destructive">{failed}</p>
+                                <p className="text-[9px] uppercase tracking-wider text-muted-foreground">Failed</p>
                               </div>
-                              <div className="w-px h-8 bg-border" />
-                              <div className="text-center px-4 py-1 rounded-lg bg-muted/50">
-                                <p className="text-xl font-bold text-foreground">{percent}%</p>
+                              <div className="w-px h-6 bg-border" />
+                              <div className="text-center px-2.5 py-0.5 rounded-md bg-muted/50">
+                                <p className="text-base font-bold text-foreground">{percent}%</p>
                               </div>
                             </>
                           );
