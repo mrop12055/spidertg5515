@@ -40,7 +40,7 @@ from typing import Dict, Optional
 from telethon import TelegramClient
 from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
 
-from config import BACKEND_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
+from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
 from fingerprint_generator import generate_fingerprint
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
