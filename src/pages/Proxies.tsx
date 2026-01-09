@@ -90,6 +90,7 @@ const Proxies: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [countryFilter, setCountryFilter] = useState<string>('all');
+  const [slowFilter, setSlowFilter] = useState<boolean>(false); // Filter for slow proxies (>300ms)
   const [showCredentials, setShowCredentials] = useState<Set<string>>(new Set());
   
   // Bulk selection
@@ -569,7 +570,8 @@ const Proxies: React.FC = () => {
     const proxyCountry = p.country;
     const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
     const matchesCountry = countryFilter === 'all' || proxyCountry === countryFilter;
-    return matchesSearch && matchesStatus && matchesCountry;
+    const matchesSlow = !slowFilter || (p.responseTime && p.responseTime > 300);
+    return matchesSearch && matchesStatus && matchesCountry && matchesSlow;
   });
 
   const toggleSelect = (id: string) => {
@@ -929,7 +931,7 @@ const Proxies: React.FC = () => {
       </div>
 
       {/* Stats - Clickable to filter */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
         <Card 
           className={cn(
             "cursor-pointer transition-all hover:border-primary/50",
@@ -995,6 +997,23 @@ const Proxies: React.FC = () => {
             <div>
               <p className="text-2xl font-bold">{proxies.filter(p => p.status === 'inactive').length}</p>
               <p className="text-sm text-muted-foreground">Inactive</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card 
+          className={cn(
+            "cursor-pointer transition-all hover:border-orange-500/50",
+            slowFilter && "ring-2 ring-orange-500"
+          )}
+          onClick={() => setSlowFilter(!slowFilter)}
+        >
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center">
+              <Clock className="w-6 h-6 text-orange-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{proxies.filter(p => p.responseTime && p.responseTime > 300).length}</p>
+              <p className="text-sm text-muted-foreground">Slow (&gt;300ms)</p>
             </div>
           </CardContent>
         </Card>
