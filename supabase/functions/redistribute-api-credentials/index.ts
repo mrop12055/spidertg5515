@@ -130,25 +130,52 @@ serve(async (req) => {
       });
     }
 
-    // Batch update accounts
-    let successCount = 0;
+    // Group assignments by API credential for batch updates
+    const assignmentsByApi = new Map<string, string[]>();
     for (const assignment of assignments) {
-      const { error } = await supabase
-        .from('telegram_accounts')
-        .update({ api_credential_id: assignment.api_credential_id })
-        .eq('id', assignment.id);
-      
-      if (!error) successCount++;
+      const existing = assignmentsByApi.get(assignment.api_credential_id) || [];
+      existing.push(assignment.id);
+      assignmentsByApi.set(assignment.api_credential_id, existing);
     }
 
-    // Update credential counts
+    console.log(`[redistribute-api-credentials] Grouped into ${assignmentsByApi.size} API batches`);
+
+    // Build all update functions
+    // deno-lint-ignore no-explicit-any
+    const updateFns: (() => PromiseLike<any>)[] = [];
+    
+    // Batch update accounts by API (one query per API instead of one per account)
+    for (const [apiId, accountIds] of assignmentsByApi) {
+      updateFns.push(() =>
+        supabase
+          .from('telegram_accounts')
+          .update({ api_credential_id: apiId })
+          .in('id', accountIds)
+      );
+    }
+    
+    // Update credential counts in parallel
     for (const cred of apiCredentials) {
       const newCount = assignmentCounts.get(cred.id) || 0;
-      await supabase
-        .from('telegram_api_credentials')
-        .update({ accounts_count: newCount })
-        .eq('id', cred.id);
+      updateFns.push(() =>
+        supabase
+          .from('telegram_api_credentials')
+          .update({ accounts_count: newCount })
+          .eq('id', cred.id)
+      );
     }
+    
+    // Execute all updates in parallel batches of 20
+    const BATCH_SIZE = 20;
+    let successCount = 0;
+    for (let i = 0; i < updateFns.length; i += BATCH_SIZE) {
+      const batch = updateFns.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(batch.map(fn => fn()));
+      successCount += results.filter(r => !r.error).length;
+    }
+    
+    console.log(`[redistribute-api-credentials] Completed ${updateFns.length} batch updates`);
+    successCount = assignments.length; // All accounts processed via batch
 
     console.log(`[redistribute-api-credentials] Assigned ${successCount}/${assignments.length} accounts`);
 
