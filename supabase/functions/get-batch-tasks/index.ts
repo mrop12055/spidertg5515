@@ -1020,7 +1020,7 @@ serve(async (req) => {
           return new Response(
             JSON.stringify({
               tasks: [],
-              delay_after: 3,
+              delay_after: 15,
               reason: "No processable account tasks",
             }),
             {
@@ -1051,10 +1051,10 @@ serve(async (req) => {
           }
         );
       }
-      // No tasks - return empty
+      // No tasks - return empty with 15s delay for account runner
       return new Response(JSON.stringify({
         tasks: [],
-        delay_after: 3,
+        delay_after: 15,
         reason: "No pending account tasks",
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
