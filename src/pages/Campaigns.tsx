@@ -1425,11 +1425,11 @@ const Campaigns: React.FC = () => {
                               value={[campaignSpeed.batchSize]}
                               onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, batchSize: v }))}
                               min={10}
-                              max={200}
+                              max={1000}
                               step={10}
                               className="flex-1"
                             />
-                            <span className="w-12 text-center font-medium">{campaignSpeed.batchSize}</span>
+                            <span className="w-16 text-center font-medium">{campaignSpeed.batchSize}</span>
                           </div>
                           <p className="text-xs text-muted-foreground">Messages per batch request</p>
                         </div>
