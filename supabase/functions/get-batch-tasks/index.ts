@@ -355,22 +355,23 @@ serve(async (req) => {
       // Get 24h usage per API credential
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-      // Get campaign recipients sent in last 24h with their API
+      // Get campaign recipients processed in last 24h with their API (sent, failed, or currently sending all count against quota)
       const { data: recentSends } = await supabase
         .from("campaign_recipients")
-        .select("api_credential_id")
-        .eq("status", "sent")
-        .not("api_credential_id", "is", null)
-        .gte("sent_at", oneDayAgo);
-
-      // Count usage per API
+        .select("api_credential_id, status, sent_at, scheduled_at")
+        .in("status", ["sent", "failed", "sending"])
+        .not("api_credential_id", "is", null);
+      
+      // Count usage per API - use sent_at or scheduled_at for timing
       const apiUsageCounts = new Map<string, number>();
       (recentSends || []).forEach((r: any) => {
         if (r.api_credential_id) {
-          apiUsageCounts.set(r.api_credential_id, (apiUsageCounts.get(r.api_credential_id) || 0) + 1);
+          const timestamp = r.sent_at || r.scheduled_at;
+          if (timestamp && new Date(timestamp) >= new Date(oneDayAgo)) {
+            apiUsageCounts.set(r.api_credential_id, (apiUsageCounts.get(r.api_credential_id) || 0) + 1);
+          }
         }
       });
-
       // Load API daily limit from settings (default 80)
       let apiDailyLimit = 80;
       const apiLimitSetting = settingsData?.find((s: any) => s.key === "api_limits");
