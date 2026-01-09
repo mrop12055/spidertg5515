@@ -146,6 +146,27 @@ const Proxies: React.FC = () => {
     fetchProxyErrors();
   }, [proxies]);
 
+  // Real-time subscription for proxy count updates when accounts change proxy
+  useEffect(() => {
+    const channel = supabase
+      .channel('proxy-account-changes')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'telegram_accounts' },
+        (payload) => {
+          // Refresh when proxy_id changes on any account
+          if (payload.old?.proxy_id !== payload.new?.proxy_id) {
+            refreshData();
+          }
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [refreshData]);
+
   // Load settings from localStorage
   useEffect(() => {
     const saved = localStorage.getItem('proxy_health_settings');

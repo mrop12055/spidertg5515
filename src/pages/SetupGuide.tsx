@@ -1094,25 +1094,32 @@ async def fetch_random_proxy(exclude_proxy_id: str = None):
         return None
 
 
-async def update_account_proxy(account_id: str, new_proxy_id: str):
-    """Update account's proxy in database"""
+async def switch_account_proxy_via_edge(account_id: str, old_proxy_id: str = None):
+    """Switch account's proxy using edge function for consistent DB updates.
+    
+    This ensures both telegram_accounts.proxy_id AND proxies.assigned_account_id are updated.
+    Returns new proxy dict or None.
+    """
     try:
         http = get_http_client()
-        response = await http.patch(
-            f"{SUPABASE_URL_BASE}/rest/v1/telegram_accounts",
+        response = await http.post(
+            f"{SUPABASE_URL_BASE}/functions/v1/switch-account-proxy",
             headers={
                 "apikey": SUPABASE_KEY, 
                 "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json",
-                "Prefer": "return=minimal"
+                "Content-Type": "application/json"
             },
-            params={"id": f"eq.{account_id}"},
-            json={"proxy_id": new_proxy_id}
+            json={"account_id": account_id, "old_proxy_id": old_proxy_id},
+            timeout=10
         )
-        return response.status_code in (200, 204)
+        if response.status_code == 200:
+            data = response.json()
+            if data.get("success"):
+                return data.get("new_proxy")
+        return None
     except Exception as e:
-        print(f"  [WARN] Could not update proxy: {e}")
-        return False
+        print(f"  [WARN] Could not switch proxy: {e}")
+        return None
 
 
 async def fetch_random_proxy_excluding(excluded_proxy_ids: list = None):
@@ -1214,12 +1221,14 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
                 excluded_proxies.append(current_proxy_id)
             
             print(f"  [{phone}] Proxy failed, trying different proxy (attempt {attempt + 2}/{MAX_PROXY_ATTEMPTS})...")
-            new_proxy = await fetch_random_proxy_excluding(excluded_proxies)
+            
+            # Use edge function for consistent proxy switching (updates both tables)
+            new_proxy = await switch_account_proxy_via_edge(account_id, current_proxy_id)
             
             if new_proxy:
-                # Update account's proxy in database
-                await update_account_proxy(account_id, new_proxy["id"])
                 account["proxy"] = new_proxy
+                if new_proxy.get("id"):
+                    excluded_proxies.append(new_proxy.get("id"))
                 print(f"  [{phone}] Switched to: {new_proxy['host']}:{new_proxy['port']}")
             else:
                 print(f"  [{phone}] No more proxies available to try")
