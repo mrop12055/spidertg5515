@@ -217,12 +217,23 @@ const Settings: React.FC = () => {
     }
   };
 
+  // Auto-redistribute based on least usage every 1 minute
+  const triggerAutoRedistribution = async () => {
+    try {
+      console.log('[Settings] Auto-triggering redistribution based on least usage...');
+      await supabase.functions.invoke('redistribute-api-credentials');
+      await fetchApiCredentials();
+    } catch (err) {
+      console.error('[Settings] Auto-redistribution failed:', err);
+    }
+  };
+
   useEffect(() => {
     fetchApiCredentials();
     
-    // Auto-refresh API usage every 1 minute while on page
+    // Auto-redistribute every 1 minute based on least API usage
     const interval = setInterval(() => {
-      fetchApiCredentials();
+      triggerAutoRedistribution();
     }, 60000); // 60 seconds = 1 minute
     
     return () => clearInterval(interval);

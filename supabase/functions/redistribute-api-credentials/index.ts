@@ -17,14 +17,13 @@ serve(async (req) => {
   try {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('[redistribute-api-credentials] Starting redistribution...');
+    console.log('[redistribute-api-credentials] Starting redistribution based on least 24h usage...');
 
-    // Fetch all API credentials - order by created_at DESC so newest are preferred
+    // Fetch all API credentials
     const { data: apiCredentials, error: credError } = await supabase
       .from('telegram_api_credentials')
       .select('*')
-      .eq('is_active', true)
-      .order('created_at', { ascending: false });
+      .eq('is_active', true);
 
     if (credError || !apiCredentials || apiCredentials.length === 0) {
       return new Response(
@@ -34,6 +33,28 @@ serve(async (req) => {
     }
 
     console.log(`[redistribute-api-credentials] Found ${apiCredentials.length} API credentials`);
+
+    // Get 24h usage for each API from campaign_recipients
+    const yesterday = new Date();
+    yesterday.setHours(yesterday.getHours() - 24);
+    
+    const { data: recipientsData } = await supabase
+      .from('campaign_recipients')
+      .select('api_credential_id')
+      .in('status', ['sent', 'failed'])
+      .not('api_credential_id', 'is', null)
+      .gte('sent_at', yesterday.toISOString());
+
+    // Count 24h usage per API
+    const apiUsage24h = new Map<string, number>();
+    apiCredentials.forEach(c => apiUsage24h.set(c.id, 0));
+    (recipientsData || []).forEach((rec: any) => {
+      if (rec.api_credential_id) {
+        apiUsage24h.set(rec.api_credential_id, (apiUsage24h.get(rec.api_credential_id) || 0) + 1);
+      }
+    });
+
+    console.log('[redistribute-api-credentials] 24h API usage:', Object.fromEntries(apiUsage24h));
 
     // Fetch ALL active accounts for redistribution (not just unassigned)
     // Exclude accounts with expired/null sessions
@@ -54,7 +75,14 @@ serve(async (req) => {
       );
     }
 
-    console.log(`[redistribute-api-credentials] Found ${allAccounts.length} accounts to redistribute`);
+    console.log(`[redistribute-api-credentials] Found ${allAccounts.length} accounts with valid sessions to redistribute`);
+
+    // Sort APIs by 24h usage (least used first) for assignment
+    const sortedCredentials = [...apiCredentials].sort((a, b) => {
+      const usageA = apiUsage24h.get(a.id) || 0;
+      const usageB = apiUsage24h.get(b.id) || 0;
+      return usageA - usageB; // Least used first
+    });
 
     // Reset assignment counts for fresh redistribution
     const assignmentCounts = new Map<string, number>();
@@ -62,13 +90,13 @@ serve(async (req) => {
 
     const assignments: { id: string; api_credential_id: string }[] = [];
 
-    // Distribute accounts evenly across all credentials using round-robin
+    // Distribute accounts evenly across all credentials, preferring least-used APIs
     for (let i = 0; i < allAccounts.length; i++) {
       const account = allAccounts[i];
       
-      // Round-robin: pick credential based on index modulo number of credentials
-      const credIndex = i % apiCredentials.length;
-      const selectedCred = apiCredentials[credIndex];
+      // Round-robin through sorted credentials (least used get accounts first)
+      const credIndex = i % sortedCredentials.length;
+      const selectedCred = sortedCredentials[credIndex];
 
       // Increment count for selected credential
       assignmentCounts.set(selectedCred.id, (assignmentCounts.get(selectedCred.id) || 0) + 1);
