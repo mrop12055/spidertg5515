@@ -88,67 +88,77 @@ Deno.serve(async (req) => {
       stats.stale_contact_import_tasks_cancelled = staleImportTasks?.length || 0;
     }
 
-    // 5. Clean completed tasks older than 7 days
+    // 5. Clean completed tasks older than 7 days - RUN IN PARALLEL
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     
-    // Clean old completed account_check_tasks
-    const { data: oldAccountTasks } = await supabase
-      .from('account_check_tasks')
-      .delete()
-      .in('status', ['completed', 'cancelled', 'failed'])
-      .lt('created_at', sevenDaysAgo)
-      .select('id');
-    
-    // Clean old completed block_contact_tasks
-    const { data: oldBlockTasks } = await supabase
-      .from('block_contact_tasks')
-      .delete()
-      .in('status', ['completed', 'cancelled', 'failed'])
-      .lt('created_at', sevenDaysAgo)
-      .select('id');
-    
-    // Clean old completed contact_import_tasks
-    const { data: oldImportTasks } = await supabase
-      .from('contact_import_tasks')
-      .delete()
-      .in('status', ['completed', 'cancelled', 'failed'])
-      .lt('created_at', sevenDaysAgo)
-      .select('id');
+    // Execute all cleanup operations in parallel for speed
+    const [
+      oldAccountTasksResult,
+      oldBlockTasksResult,
+      oldImportTasksResult,
+      oldHeartbeatsResult,
+      // These don't return data but run in parallel
+      ..._cleanupResults
+    ] = await Promise.all([
+      // Clean old completed account_check_tasks
+      supabase
+        .from('account_check_tasks')
+        .delete()
+        .in('status', ['completed', 'cancelled', 'failed'])
+        .lt('created_at', sevenDaysAgo)
+        .select('id'),
+      
+      // Clean old completed block_contact_tasks
+      supabase
+        .from('block_contact_tasks')
+        .delete()
+        .in('status', ['completed', 'cancelled', 'failed'])
+        .lt('created_at', sevenDaysAgo)
+        .select('id'),
+      
+      // Clean old completed contact_import_tasks
+      supabase
+        .from('contact_import_tasks')
+        .delete()
+        .in('status', ['completed', 'cancelled', 'failed'])
+        .lt('created_at', sevenDaysAgo)
+        .select('id'),
+      
+      // Clean old runner heartbeats older than 1 day
+      supabase
+        .from('runner_heartbeats')
+        .delete()
+        .lt('last_seen', oneDayAgo)
+        .select('id'),
+      
+      // Clean old completed warmup_schedule tasks older than 7 days
+      supabase
+        .from('warmup_schedule')
+        .delete()
+        .eq('status', 'completed')
+        .lt('completed_at', sevenDaysAgo),
+      
+      // Clean old completed interaction_scheduler tasks older than 7 days
+      supabase
+        .from('interaction_scheduler')
+        .delete()
+        .eq('status', 'completed')
+        .lt('sent_at', sevenDaysAgo),
+      
+      // Clean old completed maturation_tasks older than 7 days
+      supabase
+        .from('maturation_tasks')
+        .delete()
+        .eq('status', 'completed')
+        .lt('completed_at', sevenDaysAgo),
+    ]);
 
     stats.old_completed_tasks_cleaned = 
-      (oldAccountTasks?.length || 0) + 
-      (oldBlockTasks?.length || 0) + 
-      (oldImportTasks?.length || 0);
-
-    // 6. Clean old runner heartbeats older than 1 day
-    const { data: oldHeartbeats } = await supabase
-      .from('runner_heartbeats')
-      .delete()
-      .lt('last_seen', oneDayAgo)
-      .select('id');
+      (oldAccountTasksResult.data?.length || 0) + 
+      (oldBlockTasksResult.data?.length || 0) + 
+      (oldImportTasksResult.data?.length || 0);
     
-    stats.old_heartbeats_cleaned = oldHeartbeats?.length || 0;
-
-    // 7. Clean old completed warmup_schedule tasks older than 7 days
-    await supabase
-      .from('warmup_schedule')
-      .delete()
-      .eq('status', 'completed')
-      .lt('completed_at', sevenDaysAgo);
-
-    // 8. Clean old completed interaction_scheduler tasks older than 7 days
-    await supabase
-      .from('interaction_scheduler')
-      .delete()
-      .eq('status', 'completed')
-      .lt('sent_at', sevenDaysAgo);
-
-    // 9. Clean old completed maturation_tasks older than 7 days
-    await supabase
-      .from('maturation_tasks')
-      .delete()
-      .eq('status', 'completed')
-      .lt('completed_at', sevenDaysAgo);
+    stats.old_heartbeats_cleaned = oldHeartbeatsResult.data?.length || 0;
 
     // 10. Auto-recover frozen/restricted accounts with expired restriction timers
     // These are accounts that got temporary FloodWait errors and should be back to active
