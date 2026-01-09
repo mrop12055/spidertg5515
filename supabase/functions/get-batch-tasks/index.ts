@@ -121,9 +121,10 @@ serve(async (req) => {
       });
     }
 
-    // Filter to accounts under daily limit
+    // Filter to accounts under daily limit (uses campaign speed setting)
     const usableAccounts = accountsWithActiveProxy.filter((a: any) => {
-      const limit = a.daily_limit ?? DAILY_MESSAGE_LIMIT;
+      // Use campaign-specific limit from admin settings, fallback to account's own limit, then default
+      const limit = campaignMessagesPerAccountPerDay || a.daily_limit || DAILY_MESSAGE_LIMIT;
       const sentToday = a.messages_sent_today ?? 0;
       return sentToday < limit;
     });
