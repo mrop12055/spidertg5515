@@ -428,50 +428,43 @@ serve(async (req) => {
       // Track API usage in this batch to avoid over-assigning
       const batchApiUsage = new Map<string, number>();
 
-      // ========== STUCK SENDING RECOVERY ==========
-      // Find "sending" recipients that have been stuck for over 2 minutes (no message created)
-      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      // ========== STUCK SENDING RECOVERY (BATCH OPTIMIZED) ==========
+      // Find "sending" recipients that have been stuck for over 2 minutes
+      // Use a single batch update instead of individual queries to avoid timeouts
       const { data: stuckSendingRecipients } = await supabase
         .from("campaign_recipients")
         .select("id, campaign_id, sent_by_account_id")
         .eq("status", "sending")
         .in("campaign_id", campaignIds)
-        .limit(50);
+        .limit(100);
 
       if (stuckSendingRecipients && stuckSendingRecipients.length > 0) {
-        // Check which ones don't have a corresponding message
-        for (const stuck of stuckSendingRecipients) {
-          const { count: msgCount } = await supabase
-            .from("messages")
-            .select("id", { count: "exact", head: true })
-            .eq("campaign_recipient_id", stuck.id);
-
-          if (msgCount === 0) {
-            // No message exists - this is truly stuck, reset to pending
-            console.log(`[get-batch-tasks] Recovering stuck recipient ${stuck.id} - no message found`);
-            
-            // Add the stuck account to failed_account_ids to avoid retrying with same account
-            const { data: currentRecipient } = await supabase
-              .from("campaign_recipients")
-              .select("failed_account_ids")
-              .eq("id", stuck.id)
-              .single();
-            
-            const failedIds: string[] = currentRecipient?.failed_account_ids || [];
-            if (stuck.sent_by_account_id && !failedIds.includes(stuck.sent_by_account_id)) {
-              failedIds.push(stuck.sent_by_account_id);
-            }
-
-            await supabase
-              .from("campaign_recipients")
-              .update({
-                status: "pending",
-                sent_by_account_id: null,
-                failed_account_ids: failedIds,
-                failed_reason: null
-              })
-              .eq("id", stuck.id);
-          }
+        // Get all recipient IDs
+        const stuckIds = stuckSendingRecipients.map(r => r.id);
+        
+        // Single query to find which recipients have messages
+        const { data: recipientsWithMessages } = await supabase
+          .from("messages")
+          .select("campaign_recipient_id")
+          .in("campaign_recipient_id", stuckIds);
+        
+        const idsWithMessages = new Set((recipientsWithMessages || []).map(m => m.campaign_recipient_id));
+        
+        // Filter to only truly stuck recipients (no message created)
+        const trulyStuckIds = stuckIds.filter(id => !idsWithMessages.has(id));
+        
+        if (trulyStuckIds.length > 0) {
+          console.log(`[get-batch-tasks] Batch recovering ${trulyStuckIds.length} stuck recipients`);
+          
+          // Batch update all stuck recipients at once
+          await supabase
+            .from("campaign_recipients")
+            .update({
+              status: "pending",
+              sent_by_account_id: null,
+              failed_reason: null
+            })
+            .in("id", trulyStuckIds);
         }
       }
 
