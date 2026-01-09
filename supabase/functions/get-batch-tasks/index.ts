@@ -376,11 +376,11 @@ serve(async (req) => {
         }
       });
 
-      // Load API daily limit from settings (default 45)
-      let apiDailyLimit = 45;
+      // Load API daily limit from settings (default 60)
+      let apiDailyLimit = 60;
       const apiLimitSetting = settingsData?.find((s: any) => s.key === "api_limits");
       if (apiLimitSetting?.value?.dailyLimitPerApi) {
-        apiDailyLimit = (apiLimitSetting.value as { dailyLimitPerApi?: number }).dailyLimitPerApi || 45;
+        apiDailyLimit = (apiLimitSetting.value as { dailyLimitPerApi?: number }).dailyLimitPerApi || 60;
       }
 
       console.log(`[get-batch-tasks] API usage (24h): ${JSON.stringify(Object.fromEntries(apiUsageCounts))}, limit: ${apiDailyLimit}`);
