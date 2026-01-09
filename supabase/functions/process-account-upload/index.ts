@@ -356,12 +356,12 @@ serve(async (req) => {
     const phoneNumbers = accounts.map(a => a.phone_number).filter(Boolean);
     const { data: existingAccountsList } = await supabase
       .from('telegram_accounts')
-      .select('id, phone_number, device_model')
+      .select('id, phone_number, device_model, status')
       .in('phone_number', phoneNumbers);
     
-    const existingAccountsMap = new Map<string, { id: string; device_model: string | null }>();
+    const existingAccountsMap = new Map<string, { id: string; device_model: string | null; status: string }>();
     existingAccountsList?.forEach(acc => {
-      existingAccountsMap.set(acc.phone_number, { id: acc.id, device_model: acc.device_model });
+      existingAccountsMap.set(acc.phone_number, { id: acc.id, device_model: acc.device_model, status: acc.status || 'disconnected' });
     });
 
     console.log(`[process-account-upload] Found ${existingAccountsMap.size} existing accounts out of ${accounts.length}`);
@@ -401,6 +401,24 @@ serve(async (req) => {
         
         const existing = existingAccountsMap.get(account.phone_number);
 
+        // Determine the status - PRESERVE existing status for restricted/banned/frozen accounts
+        // Only set status for new accounts or if existing was 'disconnected'
+        let finalStatus: string;
+        if (existing) {
+          // Preserve important statuses, only update if it was disconnected and session is now valid
+          const preserveStatuses = ['banned', 'restricted', 'frozen', 'cooldown'];
+          if (preserveStatuses.includes(existing.status)) {
+            finalStatus = existing.status; // Keep the existing status
+          } else if (existing.status === 'disconnected' && extracted.isValid) {
+            finalStatus = 'active'; // Re-activate if was disconnected and session is valid
+          } else {
+            finalStatus = existing.status; // Keep current status
+          }
+        } else {
+          // New account - set based on session validity
+          finalStatus = extracted.isValid ? 'active' : 'disconnected';
+        }
+
         const accountData = {
           session_data: account.session_data,
           first_name: extracted.firstName || account.first_name || null,
@@ -409,7 +427,7 @@ serve(async (req) => {
           telegram_id: extracted.telegramId || null,
           api_id: account.api_id,
           api_hash: account.api_hash,
-          status: status,
+          status: finalStatus,
           last_active: extracted.isValid ? new Date().toISOString() : null,
           phone_country: phoneCountry,
           ...(existing ? {} : {

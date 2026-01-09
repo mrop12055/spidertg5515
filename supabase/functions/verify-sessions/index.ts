@@ -95,9 +95,14 @@ serve(async (req) => {
         reason
       });
 
+      // PRESERVE important statuses - don't overwrite banned/restricted/frozen/cooldown
+      const preserveStatuses = ['banned', 'restricted', 'frozen', 'cooldown'];
+      const shouldPreserveStatus = preserveStatuses.includes(account.status);
+      
       // Only update status - profile data should be fetched via Python runner
       const updateData: Record<string, unknown> = { 
-        status: newStatus,
+        // Only update status if not a preserved status, or if going from active to disconnected
+        ...(shouldPreserveStatus ? {} : { status: newStatus }),
         last_active: newStatus === 'active' ? new Date().toISOString() : null
       };
 
