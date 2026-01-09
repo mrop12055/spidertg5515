@@ -660,20 +660,47 @@ serve(async (req) => {
 
       if (runningCampaigns && runningCampaigns.length > 0) {
         let allCampaignsStopped = true;
+        
+        // BATCH OPTIMIZATION: Get all campaign account links in ONE query
+        const campaignIds = runningCampaigns.map(c => c.id);
+        const { data: allCampaignAccountLinks } = await supabase
+          .from("campaign_accounts")
+          .select("campaign_id, account_id, telegram_accounts!inner(id, status, messages_sent_today, daily_limit, restricted_until)")
+          .in("campaign_id", campaignIds);
+        
+        // BATCH: Get pending counts for all campaigns at once
+        const { data: pendingCounts } = await supabase
+          .from("campaign_recipients")
+          .select("campaign_id")
+          .in("campaign_id", campaignIds)
+          .eq("status", "pending");
+        
+        // Build pending count map
+        const pendingCountMap = new Map<string, number>();
+        for (const rec of (pendingCounts || [])) {
+          pendingCountMap.set(rec.campaign_id, (pendingCountMap.get(rec.campaign_id) || 0) + 1);
+        }
+        
+        // Group account links by campaign
+        const accountLinksByCampaign = new Map<string, any[]>();
+        for (const link of (allCampaignAccountLinks || [])) {
+          if (!accountLinksByCampaign.has(link.campaign_id)) {
+            accountLinksByCampaign.set(link.campaign_id, []);
+          }
+          accountLinksByCampaign.get(link.campaign_id)!.push(link);
+        }
+        
+        const eligibleAccountIds = new Set(accounts.map((a: any) => a.id));
+        const nowIso = new Date().toISOString();
+        
+        // Collect campaigns to update
+        const campaignsToFail: string[] = [];
+        const campaignsToComplete: string[] = [];
 
         for (const campaign of runningCampaigns) {
-          // Get accounts assigned to this specific campaign (include restricted_until for temp restriction check)
-          const { data: campaignAccountLinks } = await supabase
-            .from("campaign_accounts")
-            .select("account_id, telegram_accounts!inner(id, status, messages_sent_today, daily_limit, restricted_until)")
-            .eq("campaign_id", campaign.id);
+          const campaignAccountLinks = accountLinksByCampaign.get(campaign.id) || [];
 
-          // Check if any assigned account is usable (active AND under daily limit AND not temporarily restricted)
-          // AND present in the global eligible pool (accounts[]) so we don't keep campaigns running with unreachable accounts.
-          const eligibleAccountIds = new Set(accounts.map((a: any) => a.id));
-          const nowIso = new Date().toISOString();
-
-          const hasUsableAccount = (campaignAccountLinks || []).some((ca: any) => {
+          const hasUsableAccount = campaignAccountLinks.some((ca: any) => {
             const acc = ca.telegram_accounts;
             if (!acc) return false;
             if (!eligibleAccountIds.has(acc.id)) return false;
@@ -684,52 +711,44 @@ serve(async (req) => {
           });
 
           if (!hasUsableAccount) {
-            // Check if there are still pending recipients
-            const { count: pendingCount } = await supabase
-              .from("campaign_recipients")
-              .select("id", { count: "exact", head: true })
-              .eq("campaign_id", campaign.id)
-              .eq("status", "pending");
+            const pendingCount = pendingCountMap.get(campaign.id) || 0;
 
-            // If pending recipients exist, mark campaign as FAILED and mark ALL pending recipients as failed
-            if (pendingCount && pendingCount > 0) {
-              console.log(`[get-next-task] No usable accounts for campaign "${campaign.name}" - marking ${pendingCount} pending recipients as failed`);
-
-              await supabase
-                .from("campaign_recipients")
-                .update({
-                  status: "failed",
-                  failed_reason: "No accounts available to send message",
-                  sent_at: new Date().toISOString(),
-                })
-                .eq("campaign_id", campaign.id)
-                .eq("status", "pending");
-
-              const { count: existingFailedCount } = await supabase
-                .from("campaign_recipients")
-                .select("id", { count: "exact", head: true })
-                .eq("campaign_id", campaign.id)
-                .eq("status", "failed");
-
-              await supabase
-                .from("campaigns")
-                .update({
-                  status: "failed",
-                  failed_count: existingFailedCount || 0,
-                })
-                .eq("id", campaign.id);
-
-              console.log(`[get-next-task] Campaign "${campaign.name}" marked as FAILED - no accounts available`);
+            if (pendingCount > 0) {
+              console.log(`[get-next-task] No usable accounts for campaign "${campaign.name}" - marking ${pendingCount} pending as failed`);
+              campaignsToFail.push(campaign.id);
             } else {
-              console.log(`[get-next-task] Campaign "${campaign.name}" completed - all recipients processed`);
-              await supabase
-                .from("campaigns")
-                .update({ status: "completed" })
-                .eq("id", campaign.id);
+              console.log(`[get-next-task] Campaign "${campaign.name}" completed`);
+              campaignsToComplete.push(campaign.id);
             }
           } else {
             allCampaignsStopped = false;
           }
+        }
+        
+        // BATCH: Update failed campaigns
+        if (campaignsToFail.length > 0) {
+          await supabase
+            .from("campaign_recipients")
+            .update({
+              status: "failed",
+              failed_reason: "No accounts available to send message",
+              sent_at: new Date().toISOString(),
+            })
+            .in("campaign_id", campaignsToFail)
+            .eq("status", "pending");
+          
+          await supabase
+            .from("campaigns")
+            .update({ status: "failed" })
+            .in("id", campaignsToFail);
+        }
+        
+        // BATCH: Update completed campaigns
+        if (campaignsToComplete.length > 0) {
+          await supabase
+            .from("campaigns")
+            .update({ status: "completed" })
+            .in("id", campaignsToComplete);
         }
 
         // Only send stop signal if ALL campaigns have been completed
