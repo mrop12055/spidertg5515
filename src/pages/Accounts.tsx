@@ -187,14 +187,6 @@ const Accounts: React.FC = () => {
     };
   }, [refreshData]);
 
-  // Cleanup: Remove any lingering "Sync Profiles" state (feature was removed)
-  useEffect(() => {
-    if (accountTasksProgress.taskType === 'Sync Profiles' || (accountTasksProgress as any)?.internalTaskType === 'sync_profile') {
-      setAccountTasksProgress({ total: 0, completed: 0, failed: 0, taskType: '', logs: [] });
-      setIsAccountTaskRunning(false);
-      setShowAccountTaskLogs(false);
-    }
-  }, [accountTasksProgress.taskType, setAccountTasksProgress, setIsAccountTaskRunning, setShowAccountTaskLogs]);
   
   // Realtime subscription for SpamBot check tasks
   useEffect(() => {
