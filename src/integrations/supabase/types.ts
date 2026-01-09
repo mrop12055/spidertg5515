@@ -23,6 +23,7 @@ export type Database = {
           result: string | null
           status: string
           task_type: string
+          updated_at: string | null
         }
         Insert: {
           account_id: string
@@ -32,6 +33,7 @@ export type Database = {
           result?: string | null
           status?: string
           task_type?: string
+          updated_at?: string | null
         }
         Update: {
           account_id?: string
@@ -41,6 +43,7 @@ export type Database = {
           result?: string | null
           status?: string
           task_type?: string
+          updated_at?: string | null
         }
         Relationships: [
           {
