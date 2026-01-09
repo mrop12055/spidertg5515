@@ -504,33 +504,25 @@ serve(async (req) => {
     
     console.log(`[get-next-task] Available APIs with capacity: ${availableApis.length}/${(allApiCredentials || []).length}`);
 
-    // Function to get best available API for an account
+    // Function to get best available API for an account - ALWAYS pick least used API
     const getBestApiForAccount = (account: any): any => {
+      if (availableApis.length === 0) {
+        return null;
+      }
+      
+      // ALWAYS pick the API with lowest usage (first in sorted list)
+      // This ensures even distribution across all APIs
+      const bestApi = availableApis[0];
+      const bestApiUsage = apiSendCounts.get(bestApi.id) || 0;
       const currentApiId = account.api_credential_id;
-      const currentSent = apiSendCounts.get(currentApiId) || 0;
-      const currentRate = apiSuccessRates.get(currentApiId) ?? 100;
-      const currentTotal = (apiSuccessCounts.get(currentApiId) || 0) + (apiFailureCounts.get(currentApiId) || 0);
+      const currentApiUsage = apiSendCounts.get(currentApiId) || 0;
       
-      // Check if current API is still good
-      const currentApiOk = currentApiId && 
-        currentSent < API_DAILY_LIMIT && 
-        (currentTotal < 10 || currentRate >= MIN_API_SUCCESS_RATE);
-      
-      if (currentApiOk) {
-        // Current API is fine, use it
-        return account.telegram_api_credentials;
+      // Log if we're switching from account's default API
+      if (currentApiId && currentApiId !== bestApi.id) {
+        console.log(`[get-next-task] LOAD BALANCE: Account ${account.phone_number} switching from API (${currentApiUsage}/${API_DAILY_LIMIT}) to ${bestApi.name} (${bestApiUsage}/${API_DAILY_LIMIT})`);
       }
       
-      // Current API is at limit or has low success rate - find alternative
-      if (availableApis.length > 0) {
-        // Pick the API with lowest usage (first in sorted list)
-        const bestApi = availableApis[0];
-        console.log(`[get-next-task] SMART ROUTE: Account ${account.phone_number} API at limit/low rate, routing to ${bestApi.name} (${apiSendCounts.get(bestApi.id) || 0}/${API_DAILY_LIMIT})`);
-        return bestApi;
-      }
-      
-      // No APIs available - return null
-      return null;
+      return bestApi;
     };
 
     // Process accounts: allow accounts under daily campaign limit but dynamically route their API
