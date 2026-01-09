@@ -1607,10 +1607,11 @@ import asyncio
 import signal
 import os
 import base64
+import httpx
 
 from client_manager import (
-    get_or_create_client, get_next_task, report_result, shutdown_all, 
-    validate_contact, SESSION_FOLDER
+    get_or_create_client, report_result, shutdown_all, 
+    validate_contact, SESSION_FOLDER, SUPABASE_URL, SUPABASE_KEY
 )
 
 RUNNING = True
