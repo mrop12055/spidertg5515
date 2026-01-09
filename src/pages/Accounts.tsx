@@ -1443,7 +1443,8 @@ const Accounts: React.FC = () => {
     
     const matchesStatus = statusFilter === 'all' || acc.status === statusFilter;
     
-    const matchesTag = tagFilter === 'all' || 
+    const matchesTag = 
+      tagFilter === 'all' ? true :
       tagFilter === 'no_tags' ? (!acc.tags || acc.tags.length === 0) : 
       (acc.tags || []).includes(tagFilter);
     
