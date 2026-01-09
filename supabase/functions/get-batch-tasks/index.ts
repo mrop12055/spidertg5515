@@ -475,6 +475,52 @@ serve(async (req) => {
         }
       }
 
+      // ========== RELEASE QUEUED RECIPIENTS TO PENDING ==========
+      // This is the core queue mechanism - gradually release recipients based on batch settings
+      for (const campaign of runningCampaigns) {
+        // Count currently processing (pending + sending)
+        const { count: inProgressCount } = await supabase
+          .from("campaign_recipients")
+          .select("id", { count: "exact", head: true })
+          .eq("campaign_id", campaign.id)
+          .in("status", ["pending", "sending"]);
+
+        const currentInProgress = inProgressCount || 0;
+
+        // Only release more if below batch threshold
+        if (currentInProgress < campaignBatchSize) {
+          const toRelease = campaignBatchSize - currentInProgress;
+          
+          // Get queued recipients to release (oldest first)
+          const { data: queuedToRelease } = await supabase
+            .from("campaign_recipients")
+            .select("id")
+            .eq("campaign_id", campaign.id)
+            .eq("status", "queued")
+            .order("id", { ascending: true })
+            .limit(toRelease);
+
+          if (queuedToRelease && queuedToRelease.length > 0) {
+            const idsToRelease = queuedToRelease.map(r => r.id);
+            
+            // Release to pending with timestamp and assign least-used API
+            // Find the least used API for this batch
+            const leastUsedApi = availableApis[0]; // Already sorted by usage
+            
+            await supabase
+              .from("campaign_recipients")
+              .update({ 
+                status: "pending",
+                scheduled_at: new Date().toISOString(),
+                api_credential_id: leastUsedApi?.id || null
+              })
+              .in("id", idsToRelease);
+
+            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} from queued to pending (was ${currentInProgress}, now ${currentInProgress + queuedToRelease.length})`);
+          }
+        }
+      }
+
       // ========== GET PENDING RECIPIENTS ==========
       // Get pending recipients with their failed_account_ids
       const { data: pendingRecipients } = await supabase
@@ -487,32 +533,42 @@ serve(async (req) => {
       // Count total pending after recovery
       const totalPending = pendingRecipients?.length || 0;
 
-      // ========== NO PENDING RECIPIENTS = AUTO-COMPLETE ==========
+      // ========== NO PENDING RECIPIENTS = CHECK QUEUE OR AUTO-COMPLETE ==========
       if (totalPending === 0) {
-        console.log(`[get-batch-tasks] No pending recipients - checking if campaigns should complete`);
+        console.log(`[get-batch-tasks] No pending recipients - checking queue and completion status`);
         
         // Check each running campaign
         for (const campaign of runningCampaigns) {
-          const { count: stillPending } = await supabase
+          // Check if there are still queued recipients
+          const { count: stillQueued } = await supabase
+            .from("campaign_recipients")
+            .select("id", { count: "exact", head: true })
+            .eq("campaign_id", campaign.id)
+            .eq("status", "queued");
+
+          const { count: stillPendingOrSending } = await supabase
             .from("campaign_recipients")
             .select("id", { count: "exact", head: true })
             .eq("campaign_id", campaign.id)
             .in("status", ["pending", "sending"]);
 
-          if (stillPending === 0) {
-            console.log(`[get-batch-tasks] Auto-completing campaign ${campaign.id} - no pending/sending recipients`);
+          // Only complete if BOTH queue and pending/sending are empty
+          if ((stillQueued || 0) === 0 && (stillPendingOrSending || 0) === 0) {
+            console.log(`[get-batch-tasks] Auto-completing campaign ${campaign.id} - no queued/pending/sending recipients`);
             await supabase
               .from("campaigns")
               .update({ status: "completed", updated_at: new Date().toISOString() })
               .eq("id", campaign.id);
+          } else if ((stillQueued || 0) > 0) {
+            console.log(`[get-batch-tasks] Campaign ${campaign.id} has ${stillQueued} queued - waiting for next release cycle`);
           }
         }
 
         return new Response(JSON.stringify({
           tasks: [],
           delay_after: campaignPollingInterval,
-          reason: "No pending recipients",
-          stop_signal: true
+          reason: "No pending recipients - waiting for queue release",
+          stop_signal: false // Don't stop if there are queued recipients
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
