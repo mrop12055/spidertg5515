@@ -348,14 +348,30 @@ const Settings: React.FC = () => {
   // Manual redistribute
   const handleManualRedistribute = async () => {
     setIsRedistributing(true);
+    toast.info('Redistributing accounts... This may take up to 60 seconds for large account sets.');
     try {
-      const { data, error } = await supabase.functions.invoke('redistribute-api-credentials');
-      if (error) throw error;
+      // Use fetch with longer timeout for large account sets
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redistribute-api-credentials`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+            'Content-Type': 'application/json',
+          },
+        }
+      );
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+      }
+      
+      const data = await response.json();
       toast.success(`Redistributed! ${data?.assigned || 0} accounts assigned across ${data?.distribution?.length || 0} APIs.`);
       await fetchApiCredentials();
     } catch (error) {
       console.error('Redistribute failed:', error);
-      toast.error('Failed to redistribute accounts');
+      toast.error(`Failed to redistribute: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setIsRedistributing(false);
     }
