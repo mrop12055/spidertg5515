@@ -255,54 +255,9 @@ const Settings: React.FC = () => {
 
   // Bulk import API credentials
   const handleBulkImport = async () => {
-    // If a specific device type is selected (not random), use predefined API
-    if (bulkApiType !== 'random') {
-      const creds = deviceApiCredentials[bulkApiType];
-      if (!creds) {
-        toast.error('Invalid device type selected');
-        return;
-      }
-      
-      setIsImportingBulk(true);
-      try {
-        const randomName = generateRandomName(0);
-        const { error } = await supabase
-          .from('telegram_api_credentials')
-          .insert({
-            name: randomName,
-            api_id: creds.api_id,
-            api_hash: creds.api_hash,
-            client_type: bulkApiType,
-            is_active: true,
-            accounts_count: 0,
-          });
-        
-        if (error) {
-          console.error('Failed to add API:', error);
-          toast.error('Failed to add API credential');
-        } else {
-          toast.success(`Added 1 API credential (${bulkApiType})`);
-          setBulkApiInput('');
-          setIsBulkApiOpen(false);
-          fetchApiCredentials();
-          
-          // Auto redistribute after adding
-          try {
-            await supabase.functions.invoke('redistribute-api-credentials');
-          } catch (e) {
-            console.error('Auto redistribute failed:', e);
-          }
-        }
-      } finally {
-        setIsImportingBulk(false);
-      }
-      return;
-    }
-    
-    // Random mode - parse from textarea
     const lines = bulkApiInput.trim().split('\n').filter(line => line.trim());
     if (lines.length === 0) {
-      toast.error('Please enter at least one API credential');
+      toast.error('Please enter at least one API hash');
       return;
     }
     
@@ -313,35 +268,52 @@ const Settings: React.FC = () => {
     try {
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
-        // Parse format: api_id:api_hash or api_id,api_hash
-        const parts = line.split(/[,:]/);
-        if (parts.length >= 2) {
-          const apiId = parts[0].trim();
-          const apiHash = parts[1].trim();
-          
-          if (apiId && apiHash) {
-            const randomName = generateRandomName(i);
-            const deviceType = getRandomDeviceType();
-            
-            const { error } = await supabase
-              .from('telegram_api_credentials')
-              .insert({
-                name: randomName,
-                api_id: apiId,
-                api_hash: apiHash,
-                client_type: deviceType,
-                is_active: true,
-                accounts_count: 0,
-              });
-            
-            if (error) {
-              console.error('Failed to add API:', error);
-              failCount++;
-            } else {
-              successCount++;
-            }
+        let apiId: string;
+        let apiHash: string;
+        let deviceType: string;
+        
+        if (bulkApiType === 'random') {
+          // Custom mode - parse api_id:api_hash format
+          const parts = line.split(/[,:]/);
+          if (parts.length >= 2) {
+            apiId = parts[0].trim();
+            apiHash = parts[1].trim();
+            deviceType = getRandomDeviceType();
           } else {
             failCount++;
+            continue;
+          }
+        } else {
+          // Device selected - use predefined api_id, user provides api_hash only
+          const creds = deviceApiCredentials[bulkApiType];
+          if (!creds) {
+            failCount++;
+            continue;
+          }
+          apiId = creds.api_id;
+          apiHash = line; // User only enters api_hash
+          deviceType = bulkApiType;
+        }
+        
+        if (apiId && apiHash) {
+          const randomName = generateRandomName(i);
+          
+          const { error } = await supabase
+            .from('telegram_api_credentials')
+            .insert({
+              name: randomName,
+              api_id: apiId,
+              api_hash: apiHash,
+              client_type: deviceType,
+              is_active: true,
+              accounts_count: 0,
+            });
+          
+          if (error) {
+            console.error('Failed to add API:', error);
+            failCount++;
+          } else {
+            successCount++;
           }
         } else {
           failCount++;
@@ -363,7 +335,7 @@ const Settings: React.FC = () => {
         
         fetchApiCredentials();
       } else {
-        toast.error('Failed to add any API credentials. Check format: api_id:api_hash');
+        toast.error('Failed to add any API credentials');
       }
     } catch (error) {
       console.error('Bulk import error:', error);
@@ -541,7 +513,7 @@ const Settings: React.FC = () => {
                     <DialogHeader>
                       <DialogTitle>Bulk Import API Credentials</DialogTitle>
                       <DialogDescription>
-                        Select a device type to add its API credentials automatically, or choose Random to enter custom APIs.
+                        Select a device type and enter API hashes (one per line). API ID is auto-filled.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 pt-4">
@@ -551,47 +523,38 @@ const Settings: React.FC = () => {
                           value={bulkApiType} 
                           onValueChange={(value) => {
                             setBulkApiType(value);
-                            // Auto-fill API when device is selected
-                            if (value !== 'random') {
-                              const creds = {
-                                android: '2040:b18441a1ff607e10a989891a5462e627',
-                                ios: '21724:3e0cb5efcd52300aec5994fdfc5bdc16',
-                                desktop: '2496:8da85b0d5bfe62527e5b244c209159c3',
-                                macos: '2834:68875f756c9b437a8b916ca3de215571',
-                              }[value];
-                              if (creds) setBulkApiInput(creds);
-                            } else {
-                              setBulkApiInput('');
-                            }
+                            setBulkApiInput('');
                           }}
                         >
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="android">📱 Android</SelectItem>
-                            <SelectItem value="ios">🍎 iOS</SelectItem>
-                            <SelectItem value="desktop">🖥️ Desktop</SelectItem>
-                            <SelectItem value="macos">💻 macOS</SelectItem>
-                            <SelectItem value="random">🎲 Custom (enter manually)</SelectItem>
+                            <SelectItem value="android">📱 Android (API ID: 2040)</SelectItem>
+                            <SelectItem value="ios">🍎 iOS (API ID: 21724)</SelectItem>
+                            <SelectItem value="desktop">🖥️ Desktop (API ID: 2496)</SelectItem>
+                            <SelectItem value="macos">💻 macOS (API ID: 2834)</SelectItem>
+                            <SelectItem value="random">🎲 Custom (enter api_id:api_hash)</SelectItem>
                           </SelectContent>
                         </Select>
                       </div>
                       
                       <div className="space-y-2">
-                        <Label>API Credentials</Label>
+                        <Label>{bulkApiType === 'random' ? 'API Credentials' : 'API Hashes'}</Label>
                         <Textarea
-                          placeholder="12345678:a1b2c3d4e5f6g7h8i9j0&#10;87654321:k1l2m3n4o5p6q7r8s9t0"
+                          placeholder={bulkApiType === 'random' 
+                            ? "12345678:a1b2c3d4e5f6g7h8i9j0\n87654321:k1l2m3n4o5p6q7r8s9t0"
+                            : "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6\nq7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2"
+                          }
                           value={bulkApiInput}
                           onChange={(e) => setBulkApiInput(e.target.value)}
                           rows={6}
                           className="font-mono text-sm"
-                          readOnly={bulkApiType !== 'random'}
                         />
                         <p className="text-xs text-muted-foreground">
                           {bulkApiType === 'random' 
-                            ? 'Enter one API per line as: api_id:api_hash — Random device types assigned'
-                            : `API credentials for ${bulkApiType} auto-filled`
+                            ? 'Enter one API per line as: api_id:api_hash'
+                            : `Enter API hashes only (one per line) — API ID ${deviceApiCredentials[bulkApiType]?.api_id} will be used`
                           }
                         </p>
                       </div>
