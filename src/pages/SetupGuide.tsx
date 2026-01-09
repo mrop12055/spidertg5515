@@ -1892,7 +1892,12 @@ async def process_single_task(task):
                 print(f"    Error: {e}")
     
     except Exception as e:
+        # CRITICAL: Report failure to edge function so task doesn't stay stuck in "in_progress"
         print(f"  [ERROR] Task {task_type} failed: {e}")
+        try:
+            await report_result(task_type, {"task_id": task_id, "account_id": account.get("id"), "success": False, "error": str(e)})
+        except:
+            pass  # Best effort - at least we tried to report
 
 
 async def get_batch_tasks(runner="account", batch_size=20):
