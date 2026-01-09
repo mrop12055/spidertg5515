@@ -27,8 +27,11 @@ import {
   X,
   Trash2,
   Save,
-  Settings as SettingsIcon
+  Settings as SettingsIcon,
+  Upload,
+  RefreshCw
 } from 'lucide-react';
+import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 
@@ -78,6 +81,15 @@ const Settings: React.FC = () => {
   const [newApiHash, setNewApiHash] = useState('');
   const [newApiType, setNewApiType] = useState<string>('android');
   const [isAddingApi, setIsAddingApi] = useState(false);
+  
+  // Bulk API import
+  const [isBulkApiOpen, setIsBulkApiOpen] = useState(false);
+  const [bulkApiInput, setBulkApiInput] = useState('');
+  const [bulkApiType, setBulkApiType] = useState<string>('android');
+  const [isImportingBulk, setIsImportingBulk] = useState(false);
+  
+  // Manual redistribute
+  const [isRedistributing, setIsRedistributing] = useState(false);
 
   // Fetch API credentials with 24h send counts and success rates
   const fetchApiCredentials = async () => {
@@ -217,6 +229,106 @@ const Settings: React.FC = () => {
     }
   };
 
+  // Generate random name for API
+  const generateRandomName = (index: number) => {
+    const adjectives = ['Swift', 'Rapid', 'Quick', 'Fast', 'Prime', 'Ultra', 'Super', 'Mega', 'Turbo', 'Hyper'];
+    const nouns = ['Thunder', 'Storm', 'Wave', 'Flash', 'Bolt', 'Star', 'Nova', 'Pulse', 'Stream', 'Flow'];
+    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
+    const noun = nouns[Math.floor(Math.random() * nouns.length)];
+    const num = Math.floor(Math.random() * 900) + 100;
+    return `${adj}${noun}_${num}`;
+  };
+
+  // Bulk import API credentials
+  const handleBulkImport = async () => {
+    const lines = bulkApiInput.trim().split('\n').filter(line => line.trim());
+    if (lines.length === 0) {
+      toast.error('Please enter at least one API credential');
+      return;
+    }
+    
+    setIsImportingBulk(true);
+    let successCount = 0;
+    let failCount = 0;
+    
+    try {
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        // Parse format: api_id:api_hash or api_id,api_hash
+        const parts = line.split(/[,:]/);
+        if (parts.length >= 2) {
+          const apiId = parts[0].trim();
+          const apiHash = parts[1].trim();
+          
+          if (apiId && apiHash) {
+            const randomName = generateRandomName(i);
+            
+            const { error } = await supabase
+              .from('telegram_api_credentials')
+              .insert({
+                name: randomName,
+                api_id: apiId,
+                api_hash: apiHash,
+                client_type: bulkApiType,
+                is_active: true,
+                accounts_count: 0,
+              });
+            
+            if (error) {
+              console.error('Failed to add API:', error);
+              failCount++;
+            } else {
+              successCount++;
+            }
+          } else {
+            failCount++;
+          }
+        } else {
+          failCount++;
+        }
+      }
+      
+      if (successCount > 0) {
+        toast.success(`Added ${successCount} API credentials${failCount > 0 ? `, ${failCount} failed` : ''}`);
+        setBulkApiInput('');
+        setIsBulkApiOpen(false);
+        
+        // Auto-redistribute after bulk import
+        try {
+          const { data } = await supabase.functions.invoke('redistribute-api-credentials');
+          toast.success(`Accounts redistributed! ${data?.assigned || 0} accounts assigned.`);
+        } catch (err) {
+          console.error('Auto-redistribution failed:', err);
+        }
+        
+        fetchApiCredentials();
+      } else {
+        toast.error('Failed to add any API credentials. Check format: api_id:api_hash');
+      }
+    } catch (error) {
+      console.error('Bulk import error:', error);
+      toast.error('Bulk import failed');
+    } finally {
+      setIsImportingBulk(false);
+    }
+  };
+
+  // Manual redistribute
+  const handleManualRedistribute = async () => {
+    setIsRedistributing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('redistribute-api-credentials');
+      if (error) throw error;
+      toast.success(`Redistributed! ${data?.assigned || 0} accounts assigned across ${data?.distribution?.length || 0} APIs.`);
+      await fetchApiCredentials();
+    } catch (error) {
+      console.error('Redistribute failed:', error);
+      toast.error('Failed to redistribute accounts');
+    } finally {
+      setIsRedistributing(false);
+    }
+  };
+
   // Auto-redistribute based on least usage every 1 minute
   const triggerAutoRedistribution = async () => {
     try {
@@ -340,76 +452,159 @@ const Settings: React.FC = () => {
                   Distribute accounts across multiple API IDs to reduce ban risk
                 </CardDescription>
               </div>
-              <Dialog open={isAddApiOpen} onOpenChange={setIsAddApiOpen}>
-                <DialogTrigger asChild>
-                  <Button size="sm" className="gap-2">
-                    <Plus className="w-4 h-4" />
-                    Add API
-                  </Button>
-                </DialogTrigger>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Add API Credential</DialogTitle>
-                    <DialogDescription>
-                      Add a custom Telegram API ID/Hash pair for account distribution
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="space-y-4 pt-4">
-                    <div className="space-y-2">
-                      <Label>Name</Label>
-                      <Input
-                        placeholder="e.g., Custom Android 1"
-                        value={newApiName}
-                        onChange={(e) => setNewApiName(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>API ID</Label>
-                      <Input
-                        placeholder="e.g., 12345678"
-                        value={newApiId}
-                        onChange={(e) => setNewApiId(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>API Hash</Label>
-                      <Input
-                        placeholder="e.g., abc123def456..."
-                        value={newApiHash}
-                        onChange={(e) => setNewApiHash(e.target.value)}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Client Type</Label>
-                      <Select value={newApiType} onValueChange={setNewApiType}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="android">Android</SelectItem>
-                          <SelectItem value="ios">iOS</SelectItem>
-                          <SelectItem value="desktop">Desktop</SelectItem>
-                          <SelectItem value="macos">macOS</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <Button 
-                      onClick={handleAddApiCredential} 
-                      disabled={isAddingApi}
-                      className="w-full"
-                    >
-                      {isAddingApi ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Adding...
-                        </>
-                      ) : (
-                        'Add API Credential'
-                      )}
+              <div className="flex gap-2">
+                {/* Manual Redistribute Button */}
+                <Button 
+                  size="sm" 
+                  variant="outline" 
+                  className="gap-2"
+                  onClick={handleManualRedistribute}
+                  disabled={isRedistributing}
+                >
+                  {isRedistributing ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="w-4 h-4" />
+                  )}
+                  Redistribute
+                </Button>
+
+                {/* Bulk Import Dialog */}
+                <Dialog open={isBulkApiOpen} onOpenChange={setIsBulkApiOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" variant="outline" className="gap-2">
+                      <Upload className="w-4 h-4" />
+                      Bulk Import
                     </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Bulk Import API Credentials</DialogTitle>
+                      <DialogDescription>
+                        Paste multiple API credentials (one per line). Format: api_id:api_hash
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 pt-4">
+                      <div className="space-y-2">
+                        <Label>API Credentials</Label>
+                        <Textarea
+                          placeholder="12345678:abc123def456...&#10;87654321:xyz789ghi012...&#10;..."
+                          value={bulkApiInput}
+                          onChange={(e) => setBulkApiInput(e.target.value)}
+                          rows={8}
+                          className="font-mono text-sm"
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Random names will be auto-generated for each API
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Client Type</Label>
+                        <Select value={bulkApiType} onValueChange={setBulkApiType}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="android">Android</SelectItem>
+                            <SelectItem value="ios">iOS</SelectItem>
+                            <SelectItem value="desktop">Desktop</SelectItem>
+                            <SelectItem value="macos">macOS</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button 
+                        onClick={handleBulkImport} 
+                        disabled={isImportingBulk}
+                        className="w-full"
+                      >
+                        {isImportingBulk ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Importing...
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-4 h-4 mr-2" />
+                            Import APIs
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+
+                {/* Single Add Dialog */}
+                <Dialog open={isAddApiOpen} onOpenChange={setIsAddApiOpen}>
+                  <DialogTrigger asChild>
+                    <Button size="sm" className="gap-2">
+                      <Plus className="w-4 h-4" />
+                      Add API
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Add API Credential</DialogTitle>
+                      <DialogDescription>
+                        Add a custom Telegram API ID/Hash pair for account distribution
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4 pt-4">
+                      <div className="space-y-2">
+                        <Label>Name</Label>
+                        <Input
+                          placeholder="e.g., Custom Android 1"
+                          value={newApiName}
+                          onChange={(e) => setNewApiName(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>API ID</Label>
+                        <Input
+                          placeholder="e.g., 12345678"
+                          value={newApiId}
+                          onChange={(e) => setNewApiId(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>API Hash</Label>
+                        <Input
+                          placeholder="e.g., abc123def456..."
+                          value={newApiHash}
+                          onChange={(e) => setNewApiHash(e.target.value)}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Client Type</Label>
+                        <Select value={newApiType} onValueChange={setNewApiType}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="android">Android</SelectItem>
+                            <SelectItem value="ios">iOS</SelectItem>
+                            <SelectItem value="desktop">Desktop</SelectItem>
+                            <SelectItem value="macos">macOS</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button 
+                        onClick={handleAddApiCredential} 
+                        disabled={isAddingApi}
+                        className="w-full"
+                      >
+                        {isAddingApi ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Adding...
+                          </>
+                        ) : (
+                          'Add API Credential'
+                        )}
+                      </Button>
+                    </div>
+                  </DialogContent>
+                </Dialog>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="pt-0">
