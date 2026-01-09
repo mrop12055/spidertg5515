@@ -1397,7 +1397,9 @@ const Accounts: React.FC = () => {
     
     const matchesStatus = statusFilter === 'all' || acc.status === statusFilter;
     
-    const matchesTag = tagFilter === 'all' || (acc.tags || []).includes(tagFilter);
+    const matchesTag = tagFilter === 'all' || 
+      tagFilter === 'no_tags' ? (!acc.tags || acc.tags.length === 0) : 
+      (acc.tags || []).includes(tagFilter);
     
     const matchesProxy = 
       proxyFilter === 'all' || 
@@ -2373,25 +2375,29 @@ const Accounts: React.FC = () => {
           )}
           
           {/* Tag Filter */}
-          {availableTags.length > 0 && (
-            <Select value={tagFilter} onValueChange={setTagFilter}>
-              <SelectTrigger className="w-40 h-9">
-                <Tag className="w-4 h-4 mr-2" />
-                <SelectValue placeholder="Tag" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Tags</SelectItem>
-                {availableTags.map(tag => (
-                  <SelectItem key={tag} value={tag}>
-                    <span className="flex items-center gap-2">
-                      <Tag className="w-3 h-3" />
-                      {tag}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          )}
+          <Select value={tagFilter} onValueChange={setTagFilter}>
+            <SelectTrigger className="w-40 h-9">
+              <Tag className="w-4 h-4 mr-2" />
+              <SelectValue placeholder="Tag" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Tags</SelectItem>
+              <SelectItem value="no_tags">
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <X className="w-3 h-3" />
+                  No Tags
+                </span>
+              </SelectItem>
+              {availableTags.map(tag => (
+                <SelectItem key={tag} value={tag}>
+                  <span className="flex items-center gap-2">
+                    <Tag className="w-3 h-3" />
+                    {tag}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           
           {/* Proxy Filter */}
           <Select value={proxyFilter} onValueChange={setProxyFilter}>
