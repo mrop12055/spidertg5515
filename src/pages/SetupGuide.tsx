@@ -53,7 +53,7 @@ RETRY_DELAY = 0              # No retry delay
 
 # HTTP Timeouts - split by purpose
 HTTP_TIMEOUT_DISPATCH = 15   # Task fetching (get-next-task, get-batch-tasks)
-HTTP_TIMEOUT_REPORT = 1      # Reporting (report-task-result, report-batch-results) - fast
+HTTP_TIMEOUT_REPORT = 10     # Reporting (report-task-result, report-batch-results)
 HTTP_TIMEOUT_PROXY = 5       # Proxy switch calls
 HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
 
@@ -409,16 +409,19 @@ async def get_batch_tasks(runner: str = None, batch_size: int = 50) -> dict:
 
 
 async def report_result(task_type: str, result: dict):
-    """Report task result using shared HTTP client"""
+    """Report task result (never block the runner; log failures)."""
     try:
         http = get_http_client()
-        await http.post(
+        resp = await http.post(
             f"{BACKEND_URL}/report-task-result",
             headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json={"task_type": task_type, "result": result}
+            json={"task_type": task_type, "result": result},
+            timeout=HTTP_TIMEOUT_REPORT,
         )
-    except:
-        pass
+        if resp.status_code >= 300:
+            print(f"  [REPORT ERROR] {task_type}: status={resp.status_code}, body={resp.text[:200]}")
+    except Exception as e:
+        print(f"  [REPORT EXC] {task_type}: {type(e).__name__}: {repr(e)}")
 
 
 async def report_batch_results(results: list) -> bool:
@@ -428,14 +431,15 @@ async def report_batch_results(results: list) -> bool:
         resp = await http.post(
             f"{BACKEND_URL}/report-batch-results",
             headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json={"results": results}
+            json={"results": results},
+            timeout=HTTP_TIMEOUT_REPORT,
         )
         if 200 <= resp.status_code < 300:
             return True
         print(f"  [BATCH REPORT] {resp.status_code}: {resp.text[:200]}")
         return False
     except Exception as e:
-        print(f"  [BATCH REPORT ERROR] {e}")
+        print(f"  [BATCH REPORT ERROR] {type(e).__name__}: {repr(e)}")
         return False
 
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
