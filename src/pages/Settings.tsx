@@ -552,13 +552,31 @@ const Settings: React.FC = () => {
                             if (bulkApiType === 'random') {
                               setBulkApiInput(text);
                             } else {
-                              // Device mode - extract all 32-char hex hashes from the text
-                              const allHashes = text.match(/[a-f0-9]{32}/gi) || [];
-                              if (allHashes.length > 0) {
-                                setBulkApiInput(allHashes.join('\n'));
+                              // Device mode - extract API hashes from text
+                              const lines = text.split('\n');
+                              const hashes: string[] = [];
+                              
+                              for (const line of lines) {
+                                // First try to find UUID format (8-4-4-4-12 with dashes) and remove dashes
+                                const uuidMatch = line.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi);
+                                if (uuidMatch) {
+                                  uuidMatch.forEach(uuid => {
+                                    hashes.push(uuid.replace(/-/g, ''));
+                                  });
+                                } else {
+                                  // Fallback to finding 32 consecutive hex chars
+                                  const hexMatch = line.match(/[a-f0-9]{32}/gi);
+                                  if (hexMatch) {
+                                    hashes.push(...hexMatch);
+                                  }
+                                }
+                              }
+                              
+                              if (hashes.length > 0) {
+                                setBulkApiInput(hashes.join('\n'));
                               } else {
                                 // Allow typing - only keep hex chars for partial input
-                                const cleanedLines = text.split('\n').map(line => 
+                                const cleanedLines = lines.map(line => 
                                   line.replace(/[^a-f0-9\n]/gi, '')
                                 ).join('\n');
                                 setBulkApiInput(cleanedLines);
