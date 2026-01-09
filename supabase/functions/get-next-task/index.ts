@@ -239,40 +239,24 @@ serve(async (req) => {
 
     const now = new Date();
 
-    // Get all active accounts with joins but LIMIT to prevent timeout
-    // NOTE: select only the columns runners actually need (session_data is large but required for connection)
-    // IMPORTANT: last_campaign_send_at is required for server-side rate limiting
-    // IMPORTANT: api_credential_id is required for API-level rate limiting
+    // OPTIMIZED: Single query for ALL account statuses instead of 4 separate queries
+    // This reduces DB round-trips from 4 to 1, dramatically improving response time
     const ACCOUNT_WITH_JOINS_SELECT =
       "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,last_campaign_send_at,api_credential_id,auto_disabled,success_rate,telegram_api_credentials(id,api_id,api_hash,client_type,is_active),proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
 
-    const { data: activeAccountsRaw, error: activeAccountsError } = await supabase
+    // Single query for all statuses - much faster than 4 separate queries
+    const { data: allAccountsRaw, error: allAccountsError } = await supabase
       .from("telegram_accounts")
       .select(ACCOUNT_WITH_JOINS_SELECT as any)
-      .eq("status", "active")
+      .in("status", ["active", "restricted", "cooldown", "frozen"])
       .not("session_data", "is", null)
-      .limit(100);
+      .limit(300);
 
-    // Get restricted accounts with limit
-    const { data: restrictedAccountsRaw } = await supabase
-      .from("telegram_accounts")
-      .select(ACCOUNT_WITH_JOINS_SELECT as any)
-      .eq("status", "restricted")
-      .limit(40);
-
-    // Get cooldown accounts with limit (auto-rotation cooldown)
-    const { data: cooldownAccountsRaw } = await supabase
-      .from("telegram_accounts")
-      .select(ACCOUNT_WITH_JOINS_SELECT as any)
-      .eq("status", "cooldown")
-      .limit(40);
-
-    // Get frozen accounts with limit (for live chat only)
-    const { data: frozenAccountsRaw } = await supabase
-      .from("telegram_accounts")
-      .select(ACCOUNT_WITH_JOINS_SELECT as any)
-      .eq("status", "frozen")
-      .limit(40);
+    // Split by status locally (instant, no DB overhead)
+    const activeAccountsRaw = (allAccountsRaw || []).filter((a: any) => a.status === "active");
+    const restrictedAccountsRaw = (allAccountsRaw || []).filter((a: any) => a.status === "restricted");
+    const cooldownAccountsRaw = (allAccountsRaw || []).filter((a: any) => a.status === "cooldown");
+    const frozenAccountsRaw = (allAccountsRaw || []).filter((a: any) => a.status === "frozen");
 
     const activeAccounts = (activeAccountsRaw as any[]) || [];
     const restrictedAccounts = (restrictedAccountsRaw as any[]) || [];
@@ -369,28 +353,55 @@ serve(async (req) => {
 
     // ========== SMART API ROUTING: Dynamic API assignment based on capacity ==========
     const cutoff24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const cutoff7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
     
-    // Fetch ALL active API credentials for dynamic routing
-    const { data: allApiCredentials } = await supabase
-      .from("telegram_api_credentials")
-      .select("id, api_id, api_hash, client_type, name, is_active")
-      .eq("is_active", true);
+    // OPTIMIZED: Run all API-related queries in PARALLEL instead of sequential
+    const [
+      apiCredentialsResult,
+      recentMessagesResult,
+      oldMessagesResult,
+      recentRecipientsResult
+    ] = await Promise.all([
+      // Fetch ALL active API credentials for dynamic routing
+      supabase
+        .from("telegram_api_credentials")
+        .select("id, api_id, api_hash, client_type, name, is_active")
+        .eq("is_active", true),
+      
+      // Get all sent messages in last 24h WITH api_credential_id
+      supabase
+        .from("messages")
+        .select("api_credential_id")
+        .eq("direction", "outgoing")
+        .eq("status", "sent")
+        .not("api_credential_id", "is", null)
+        .gte("created_at", cutoff24h),
+      
+      // For messages without api_credential_id (old data)
+      supabase
+        .from("messages")
+        .select("account_id")
+        .eq("direction", "outgoing")
+        .eq("status", "sent")
+        .is("api_credential_id", null)
+        .gte("created_at", cutoff24h),
+      
+      // Calculate API success rates from campaign_recipients (last 24h)
+      supabase
+        .from("campaign_recipients")
+        .select("api_credential_id, sent_by_account_id, status")
+        .in("status", ["sent", "failed"])
+        .gte("sent_at", cutoff24h)
+    ]);
+    
+    const allApiCredentials = apiCredentialsResult.data;
+    const recentMessages = recentMessagesResult.data;
+    const oldMessages = oldMessagesResult.data;
+    const recentRecipients = recentRecipientsResult.data;
     
     const apiCredentialsMap = new Map<string, any>();
     for (const cred of (allApiCredentials || [])) {
       apiCredentialsMap.set(cred.id, cred);
     }
-    
-    // Get all sent messages in last 24h WITH api_credential_id for accurate tracking
-    // This uses the stored api_credential_id (which API was actually used) rather than current account assignment
-    const { data: recentMessages } = await supabase
-      .from("messages")
-      .select("api_credential_id")
-      .eq("direction", "outgoing")
-      .eq("status", "sent")
-      .not("api_credential_id", "is", null)
-      .gte("created_at", cutoff24h);
 
     // Count successful sends per API in last 24h (using stored api_credential_id)
     const apiSendCounts = new Map<string, number>();
@@ -399,15 +410,6 @@ serve(async (req) => {
         apiSendCounts.set(msg.api_credential_id, (apiSendCounts.get(msg.api_credential_id) || 0) + 1);
       }
     }
-    
-    // For messages without api_credential_id (old data), fall back to account mapping
-    const { data: oldMessages } = await supabase
-      .from("messages")
-      .select("account_id")
-      .eq("direction", "outgoing")
-      .eq("status", "sent")
-      .is("api_credential_id", null)
-      .gte("created_at", cutoff24h);
     
     // Build account -> API mapping for fallback
     const accountToApi = new Map<string, string>();
@@ -423,14 +425,6 @@ serve(async (req) => {
         apiSendCounts.set(apiId, (apiSendCounts.get(apiId) || 0) + 1);
       }
     }
-    
-    // Calculate API success rates from campaign_recipients (last 24h for faster response)
-    // Use stored api_credential_id when available
-    const { data: recentRecipients } = await supabase
-      .from("campaign_recipients")
-      .select("api_credential_id, sent_by_account_id, status")
-      .in("status", ["sent", "failed"])
-      .gte("sent_at", cutoff24h);
     
     // Count success/failure per API (using stored api_credential_id when available)
     const apiSuccessCounts = new Map<string, number>();
@@ -555,8 +549,8 @@ serve(async (req) => {
     console.log(`[get-next-task] API stats: ${apiStats || 'none tracked yet'}`);
     console.log(`[get-next-task] Smart-routed accounts: ${accounts.length}/${accountsBeforeApiLimit.length}`);
 
-    if (activeAccountsError) {
-      console.error("[get-next-task] Error fetching accounts:", activeAccountsError);
+    if (allAccountsError) {
+      console.error("[get-next-task] Error fetching accounts:", allAccountsError);
       return new Response(JSON.stringify({ task: "wait", seconds: 5, reason: "Database error" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
