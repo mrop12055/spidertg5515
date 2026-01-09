@@ -1288,6 +1288,7 @@ const Accounts: React.FC = () => {
 
   // Bulk tag assignment - optimized with parallel updates
   const [isTagAssigning, setIsTagAssigning] = useState(false);
+  const [tagAssignMode, setTagAssignMode] = useState<'add' | 'replace'>('add');
   
   const handleBulkTagAssign = async () => {
     if (selectedIds.size === 0) return;
@@ -1309,7 +1310,11 @@ const Accounts: React.FC = () => {
         Array.from(selectedIds).map(async (accountId) => {
           const account = accounts.find(a => a.id === accountId);
           const existingTags = account?.tags || [];
-          const newTags = Array.from(new Set([...existingTags, ...tagsToAssign]));
+          
+          // If replace mode, use only new tags; if add mode, merge with existing
+          const newTags = tagAssignMode === 'replace' 
+            ? tagsToAssign 
+            : Array.from(new Set([...existingTags, ...tagsToAssign]));
           
           return supabase
             .from('telegram_accounts')
@@ -1318,7 +1323,8 @@ const Accounts: React.FC = () => {
         })
       );
       
-      toast.success(`Added ${tagsToAssign.length} tag(s) to ${selectedIds.size} account(s)`);
+      const actionText = tagAssignMode === 'replace' ? 'Replaced tags with' : 'Added';
+      toast.success(`${actionText} ${tagsToAssign.length} tag(s) on ${selectedIds.size} account(s)`);
       setIsTagDialogOpen(false);
       setNewTagName('');
       setSelectedTagsForBulk([]);
@@ -3143,13 +3149,41 @@ const Accounts: React.FC = () => {
                 />
               </div>
               
+              {/* Add vs Replace Mode */}
+              <div className="space-y-2 p-3 rounded-lg border bg-muted/30">
+                <Label>Assignment Mode</Label>
+                <RadioGroup 
+                  value={tagAssignMode} 
+                  onValueChange={(v) => setTagAssignMode(v as 'add' | 'replace')}
+                  className="flex gap-4"
+                >
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="add" id="tag-add" />
+                    <Label htmlFor="tag-add" className="font-normal cursor-pointer">
+                      Add to existing tags
+                    </Label>
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <RadioGroupItem value="replace" id="tag-replace" />
+                    <Label htmlFor="tag-replace" className="font-normal cursor-pointer">
+                      Replace all tags
+                    </Label>
+                  </div>
+                </RadioGroup>
+                <p className="text-xs text-muted-foreground">
+                  {tagAssignMode === 'add' 
+                    ? 'Selected tags will be added to accounts\' existing tags' 
+                    : 'All existing tags will be removed and replaced with selected tags'}
+                </p>
+              </div>
+              
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => { setIsTagDialogOpen(false); setNewTagName(''); setSelectedTagsForBulk([]); setEditingTagName(''); setEditedTagValue(''); }}>
                   Cancel
                 </Button>
                 <Button onClick={handleBulkTagAssign} disabled={isTagAssigning || (selectedTagsForBulk.length === 0 && !newTagName.trim())}>
                   {isTagAssigning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Tag className="w-4 h-4 mr-2" />}
-                  {isTagAssigning ? 'Assigning...' : 'Assign Tags'}
+                  {isTagAssigning ? 'Assigning...' : tagAssignMode === 'replace' ? 'Replace Tags' : 'Add Tags'}
                 </Button>
               </div>
             </div>
