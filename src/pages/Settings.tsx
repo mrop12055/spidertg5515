@@ -94,16 +94,8 @@ const Settings: React.FC = () => {
       const yesterday = new Date();
       yesterday.setHours(yesterday.getHours() - 24);
       
-      // Get messages sent in last 24h WITH api_credential_id for accurate tracking
-      const { data: messagesData } = await supabase
-        .from('messages')
-        .select('api_credential_id')
-        .eq('direction', 'outgoing')
-        .eq('status', 'sent')
-        .not('api_credential_id', 'is', null)
-        .gte('created_at', yesterday.toISOString());
-      
       // Get campaign recipients from last 24 hours WITH api_credential_id
+      // This is the CORRECT source - matches what get-batch-tasks uses for rate limiting
       const { data: recipientsData } = await supabase
         .from('campaign_recipients')
         .select('api_credential_id, status')
@@ -111,21 +103,13 @@ const Settings: React.FC = () => {
         .not('api_credential_id', 'is', null)
         .gte('sent_at', yesterday.toISOString());
       
-      // Count 24h messages per API (using stored api_credential_id)
-      const apiCounts = new Map<string, number>();
-      (messagesData || []).forEach((msg: any) => {
-        if (msg.api_credential_id) {
-          apiCounts.set(msg.api_credential_id, (apiCounts.get(msg.api_credential_id) || 0) + 1);
-        }
-      });
-      
-      // Count 24h success/fail per API (using stored api_credential_id)
-      const apiSuccess = new Map<string, number>();
+      // Count 24h sends per API (using campaign_recipients - matches backend logic)
+      const apiSentCounts = new Map<string, number>();
       const apiFailed = new Map<string, number>();
       (recipientsData || []).forEach((rec: any) => {
         if (rec.api_credential_id) {
           if (rec.status === 'sent') {
-            apiSuccess.set(rec.api_credential_id, (apiSuccess.get(rec.api_credential_id) || 0) + 1);
+            apiSentCounts.set(rec.api_credential_id, (apiSentCounts.get(rec.api_credential_id) || 0) + 1);
           } else if (rec.status === 'failed') {
             apiFailed.set(rec.api_credential_id, (apiFailed.get(rec.api_credential_id) || 0) + 1);
           }
@@ -134,14 +118,14 @@ const Settings: React.FC = () => {
       
       // Merge counts into credentials
       const credentialsWithCounts = (data || []).map((cred: ApiCredential) => {
-        const sent = apiSuccess.get(cred.id) || 0;
+        const sent = apiSentCounts.get(cred.id) || 0;
         const failed = apiFailed.get(cred.id) || 0;
         const total = sent + failed;
         const successRate = total > 0 ? (sent / total) * 100 : null;
         
         return {
           ...cred,
-          sent_24h: apiCounts.get(cred.id) || 0,
+          sent_24h: sent,  // Use campaign_recipients count (matches backend rate limiting)
           success_rate_24h: successRate,
           sent_count_24h: sent,
           failed_count_24h: failed,
