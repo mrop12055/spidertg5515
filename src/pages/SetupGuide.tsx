@@ -1021,12 +1021,9 @@ HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
 CONNECT_TIMEOUT_SECONDS = 25  # Faster parallel connect timeout
 RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
 
-# ========== EARLY FILTERING: Known recipients ==========
-# Messages from these telegram IDs OR phone numbers will be processed
-# This drastically reduces server requests and CPU usage
-known_recipient_ids = set()      # telegram IDs (for users who already replied)
-known_recipient_phones = set()   # phone numbers (for first-time campaign replies)
-last_recipient_refresh = 0
+# ========== EARLY FILTERING: Contacts only ==========
+# Only process messages from users who are in the account's contact list
+# This is simple and efficient - no server-side lookups needed
 
 # Network error detection - these indicate LOCAL network issues, not account problems
 NETWORK_ERROR_PATTERNS = [
@@ -1324,22 +1321,10 @@ async def setup_message_handler(client, account_id: str):
                 sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
             sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
             
-            # ========== EARLY FILTER: Check known recipients ==========
-            # Accept message if:
-            # 1. Sender is in account's contact list (already a contact)
-            # 2. Sender ID is in known recipients (previous conversations)
-            # 3. Sender phone is in known phones (campaign recipients)
-            is_contact = getattr(sender, 'contact', False)  # Already in contact list
-            is_known_id = sender.id in known_recipient_ids if known_recipient_ids else False
-            is_known_phone = sender_phone in known_recipient_phones if (sender_phone and known_recipient_phones) else False
-            
-            if known_recipient_ids and not is_contact and not is_known_id and not is_known_phone:
-                # Rate-limited logging (only once per sender per 5 minutes)
-                if not hasattr(handler, '_filtered_log') or time.time() - handler._filtered_log.get(sender.id, 0) > 300:
-                    if not hasattr(handler, '_filtered_log'):
-                        handler._filtered_log = {}
-                    handler._filtered_log[sender.id] = time.time()
-                    print(f"    [FILTERED] {sender_name} (id={sender.id}): not contact, not in known recipients")
+            # ========== EARLY FILTER: Contacts only ==========
+            # Only accept messages from users in account's contact list
+            is_contact = getattr(sender, 'contact', False)
+            if not is_contact:
                 return
             
             content = event.message.text or "[Media]"
@@ -1477,19 +1462,6 @@ async def main_loop():
             task = await get_next_task(runner="livechat")
             task_type = task.get("task", "wait")
             
-            # ========== UPDATE KNOWN RECIPIENTS from server ==========
-            global known_recipient_ids, known_recipient_phones, last_recipient_refresh
-            new_ids = task.get("known_recipients", [])
-            new_phones = task.get("known_phones", [])
-            
-            if new_ids or new_phones:
-                old_id_count = len(known_recipient_ids)
-                old_phone_count = len(known_recipient_phones)
-                known_recipient_ids = set(new_ids) if new_ids else known_recipient_ids
-                known_recipient_phones = set(new_phones) if new_phones else known_recipient_phones
-                if len(known_recipient_ids) != old_id_count or len(known_recipient_phones) != old_phone_count:
-                    print(f"  [FILTER] Updated known recipients: {len(known_recipient_ids)} IDs, {len(known_recipient_phones)} phones")
-                last_recipient_refresh = time.time()
             
             if task_type == "wait":
                 accounts = task.get("accounts", [])
