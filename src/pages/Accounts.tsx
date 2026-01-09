@@ -589,10 +589,56 @@ const Accounts: React.FC = () => {
     
     setIsBulkDeleting(true);
     try {
+      const idsToDelete = Array.from(selectedIds);
+      
+      // First, clear warmup_pair_id references that might block deletion
+      // (accounts can reference each other via warmup_pair_id)
+      await supabase
+        .from('telegram_accounts')
+        .update({ warmup_pair_id: null, interaction_pair_id: null })
+        .in('id', idsToDelete);
+      
+      // Also clear references FROM other accounts TO these accounts
+      await supabase
+        .from('telegram_accounts')
+        .update({ warmup_pair_id: null })
+        .in('warmup_pair_id', idsToDelete);
+      
+      await supabase
+        .from('telegram_accounts')
+        .update({ interaction_pair_id: null })
+        .in('interaction_pair_id', idsToDelete);
+      
+      // Clear proxy assignments
+      await supabase
+        .from('proxies')
+        .update({ assigned_account_id: null })
+        .in('assigned_account_id', idsToDelete);
+      
+      // Delete related records in other tables that reference these accounts
+      await Promise.all([
+        supabase.from('account_check_tasks').delete().in('account_id', idsToDelete),
+        supabase.from('warmup_messages').delete().in('sender_account_id', idsToDelete),
+        supabase.from('warmup_messages').delete().in('receiver_account_id', idsToDelete),
+        supabase.from('warmup_schedule').delete().in('account_id', idsToDelete),
+        supabase.from('maturation_tasks').delete().in('account_id', idsToDelete),
+        supabase.from('scheduled_interactions').delete().in('sender_account_id', idsToDelete),
+        supabase.from('scheduled_interactions').delete().in('receiver_account_id', idsToDelete),
+        supabase.from('interaction_scheduler').delete().in('sender_account_id', idsToDelete),
+        supabase.from('interaction_scheduler').delete().in('receiver_account_id', idsToDelete),
+        supabase.from('block_contact_tasks').delete().in('account_id', idsToDelete),
+        supabase.from('contact_import_tasks').delete().in('account_id', idsToDelete),
+      ]);
+      
+      // Delete warmup pairs that involve these accounts
+      await supabase.from('warmup_pairs').delete().in('account_a_id', idsToDelete);
+      await supabase.from('warmup_pairs').delete().in('account_b_id', idsToDelete);
+      
+      // Now delete the accounts
       const { error } = await supabase
         .from('telegram_accounts')
         .delete()
-        .in('id', Array.from(selectedIds));
+        .in('id', idsToDelete);
 
       if (error) throw error;
       
@@ -601,7 +647,7 @@ const Accounts: React.FC = () => {
       refreshData();
     } catch (error) {
       console.error('Error bulk deleting:', error);
-      toast.error('Failed to delete accounts');
+      toast.error('Failed to delete accounts: ' + (error as Error).message);
     } finally {
       setIsBulkDeleting(false);
     }
