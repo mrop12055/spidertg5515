@@ -36,10 +36,12 @@ serve(async (req) => {
     console.log(`[redistribute-api-credentials] Found ${apiCredentials.length} API credentials`);
 
     // Fetch ALL active accounts for redistribution (not just unassigned)
+    // Exclude accounts with expired/null sessions
     const { data: allAccounts, error: accError } = await supabase
       .from('telegram_accounts')
-      .select('id, device_model, status')
-      .in('status', ['active', 'restricted', 'cooldown']);
+      .select('id, device_model, status, session_data')
+      .in('status', ['active', 'restricted', 'cooldown'])
+      .not('session_data', 'is', null);
 
     if (accError) {
       throw accError;
