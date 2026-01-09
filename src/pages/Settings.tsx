@@ -547,7 +547,22 @@ const Settings: React.FC = () => {
                             : "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6\nq7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2"
                           }
                           value={bulkApiInput}
-                          onChange={(e) => setBulkApiInput(e.target.value)}
+                          onChange={(e) => {
+                            const text = e.target.value;
+                            if (bulkApiType === 'random') {
+                              // Custom mode - keep as is
+                              setBulkApiInput(text);
+                            } else {
+                              // Device mode - extract only valid 32-char hex hashes
+                              const lines = text.split('\n');
+                              const cleaned = lines.map(line => {
+                                // Find 32-character hex string in the line
+                                const match = line.match(/[a-f0-9]{32}/i);
+                                return match ? match[0] : '';
+                              }).filter(h => h).join('\n');
+                              setBulkApiInput(cleaned || text); // Keep original if no valid hash found yet
+                            }
+                          }}
                           rows={6}
                           className="font-mono text-sm"
                         />
