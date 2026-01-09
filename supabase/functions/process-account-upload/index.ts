@@ -237,6 +237,36 @@ function extractUserDataFromSession(sessionData: string): {
 } {
   const result: { firstName?: string; lastName?: string; username?: string; telegramId?: number; isValid: boolean } = { isValid: false };
   
+  // SQLite keywords and table names to exclude
+  const SQLITE_KEYWORDS = new Set([
+    'sqlite', 'format', 'table', 'create', 'index', 'integer', 'primary', 'unique',
+    'text', 'blob', 'null', 'version', 'sessions', 'entities', 'sent_files', 
+    'update_state', 'dc_id', 'server_address', 'auth_key', 'takeout_id', 'pts',
+    'qts', 'date', 'seq', 'unread_count', 'api_layer', 'autoincrement', 'varchar',
+    'boolean', 'datetime', 'timestamp', 'session', 'entity', 'channel', 'group',
+    'chat', 'user', 'message', 'media', 'photo', 'document', 'video', 'audio',
+    'voice', 'sticker', 'animation', 'contact', 'location', 'venue', 'poll',
+    'game', 'invoice', 'payment', 'shipping', 'input', 'output', 'peer', 'access',
+    'hash', 'layer', 'config', 'state', 'update', 'delete', 'select', 'insert',
+    'where', 'from', 'join', 'left', 'right', 'inner', 'outer', 'order', 'limit',
+    'offset', 'count', 'group', 'having', 'distinct', 'union', 'except', 'intersect',
+    'values', 'default', 'check', 'foreign', 'references', 'cascade', 'restrict',
+    'action', 'constraint', 'trigger', 'view', 'procedure', 'function', 'begin',
+    'commit', 'rollback', 'transaction', 'savepoint', 'release', 'vacuum', 'analyze',
+    'explain', 'pragma', 'attach', 'detach', 'reindex', 'rename', 'alter', 'drop',
+    'column', 'database', 'schema', 'type', 'enum', 'array', 'object', 'string',
+    'number', 'float', 'double', 'real', 'numeric', 'decimal', 'money', 'serial',
+    'bigint', 'smallint', 'tinyint', 'mediumint', 'unsigned', 'signed', 'zerofill',
+    'binary', 'varbinary', 'char', 'nchar', 'nvarchar', 'clob', 'nclob', 'rowid',
+    'oid', 'ctid', 'xmin', 'xmax', 'cmin', 'cmax', 'tableoid', 'users', 'accounts',
+    'messages', 'chats', 'dialogs', 'files', 'downloads', 'uploads', 'cache',
+    'gtable', 'stable', 'mtable', 'ltable', 'atable', 'btable', 'ctable', 'dtable',
+    'etable', 'ftable', 'htable', 'itable', 'jtable', 'ktable', 'ntable', 'otable',
+    'ptable', 'qtable', 'rtable', 'ttable', 'utable', 'vtable', 'wtable', 'xtable',
+    'ytable', 'ztable', 'gtableupdate', 'update_stateupdate', 'stateupdate_state',
+    'lite', 'autoindex', 'rowindex', 'keyindex'
+  ]);
+  
   try {
     const binaryString = atob(sessionData);
     const bytes = new Uint8Array(binaryString.length);
@@ -251,48 +281,11 @@ function extractUserDataFromSession(sessionData: string): {
       // Valid SQLite session - check size
       result.isValid = bytes.length >= 1000;
       
-      // Extract readable content
-      const fileContent = new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+      // DO NOT try to extract username/names from SQLite binary data
+      // The session file contains encrypted/binary data that looks like random text
+      // Extracting usernames from here causes garbage data like "Gtableupdate_stateupdate_state"
+      // The username/names should come from the uploaded file metadata, not session extraction
       
-      // Look for username pattern
-      const usernameMatch = fileContent.match(/[a-zA-Z][a-zA-Z0-9_]{4,31}/g);
-      if (usernameMatch) {
-        const filtered = usernameMatch.filter(u => 
-          !u.match(/^(sqlite|format|table|create|index|integer|primary|unique|text|blob|null|version|sessions|entities|sent_files|update_state|dc_id|server_address|auth_key|takeout_id|pts|qts|date|seq|unread_count|api_layer)$/i) &&
-          u.length >= 5 && u.length <= 32
-        );
-        if (filtered.length > 0) {
-          result.username = filtered[0];
-        }
-      }
-
-      // Look for name patterns
-      const namePattern = /([A-Z][a-z]+(?:\s[A-Z][a-z]+)?)/g;
-      const nameMatches = fileContent.match(namePattern);
-      if (nameMatches) {
-        const validNames = nameMatches.filter(n => 
-          n.length >= 2 && n.length <= 64 &&
-          !n.match(/^(SQLite|Session|Version|Create|Table|Index|Primary|Integer|Update|Delete|Select|Insert)$/i)
-        );
-        if (validNames.length > 0) {
-          const parts = validNames[0].split(' ');
-          result.firstName = parts[0];
-          if (parts[1]) result.lastName = parts[1];
-        }
-      }
-
-      // Look for Telegram ID
-      const idPattern = /\b([1-9]\d{6,10})\b/g;
-      const idMatches = fileContent.match(idPattern);
-      if (idMatches) {
-        const validIds = idMatches.filter(id => {
-          const num = parseInt(id);
-          return num > 1000000 && num < 10000000000;
-        });
-        if (validIds.length > 0) {
-          result.telegramId = parseInt(validIds[0]);
-        }
-      }
     } else if (sessionData.length > 200) {
       // Might be a Pyrogram string session
       result.isValid = true;
