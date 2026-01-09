@@ -1357,7 +1357,7 @@ const Campaigns: React.FC = () => {
                       <div>
                         <h3 className="font-semibold">Campaign Speed Settings</h3>
                         <p className="text-xs text-muted-foreground">
-                          {campaignSpeed.messagesPerAccountPerDay} msgs/account today • Delay: {campaignSpeed.staggerMin}s - {campaignSpeed.staggerMax}s • Batch: {campaignSpeed.batchSize}
+                          {campaignSpeed.messagesPerAccountPerDay} msgs/account today • Batch: {campaignSpeed.batchSize}
                         </p>
                       </div>
                     </div>
@@ -1401,37 +1401,6 @@ const Campaigns: React.FC = () => {
                           <p className="text-xs text-muted-foreground">Messages each account can send today (resets at midnight)</p>
                         </div>
                         
-                        <div className="space-y-2">
-                          <Label>Min Delay Between Messages</Label>
-                          <div className="flex items-center gap-4">
-                            <Slider
-                              value={[campaignSpeed.staggerMin]}
-                              onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, staggerMin: v }))}
-                              min={0}
-                              max={3}
-                              step={0.1}
-                              className="flex-1"
-                            />
-                            <span className="w-12 text-center font-medium">{campaignSpeed.staggerMin}s</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground">Minimum pause before sending (0 = instant)</p>
-                        </div>
-                        
-                        <div className="space-y-2">
-                          <Label>Max Delay Between Messages</Label>
-                          <div className="flex items-center gap-4">
-                            <Slider
-                              value={[campaignSpeed.staggerMax]}
-                              onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, staggerMax: v }))}
-                              min={0}
-                              max={5}
-                              step={0.1}
-                              className="flex-1"
-                            />
-                            <span className="w-12 text-center font-medium">{campaignSpeed.staggerMax}s</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground">Maximum pause before sending</p>
-                        </div>
                         
                         <div className="space-y-2">
                           <Label>Wait Between Batches</Label>
