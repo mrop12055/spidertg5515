@@ -129,27 +129,6 @@ serve(async (req) => {
         .in("status", ["active", "restricted", "cooldown", "frozen"])
         .not("session_data", "is", null);
 
-      // OPTIMIZATION: Fetch known recipients for early filtering in Python
-      // Include BOTH telegram IDs AND phone numbers to catch first-time replies from campaign recipients
-      // Campaign conversations may not have telegram_id until the recipient replies
-      const { data: knownConversations } = await supabase
-        .from("conversations")
-        .select("recipient_telegram_id, recipient_phone")
-        .eq("first_message_sent", true);  // All campaign-initiated conversations
-      
-      const knownRecipientIds = [...new Set(
-        (knownConversations || [])
-          .map((c: any) => c.recipient_telegram_id)
-          .filter((id: any) => id != null)
-      )];
-      
-      // Also include phone numbers for matching first-time replies
-      const knownRecipientPhones = [...new Set(
-        (knownConversations || [])
-          .map((c: any) => c.recipient_phone)
-          .filter((phone: any) => phone != null)
-      )];
-
       // Filter to accounts with active proxy
       const validAccounts = (livechatAccounts || [])
         .map(acc => {
@@ -172,14 +151,12 @@ serve(async (req) => {
         })
         .filter(Boolean);
 
-      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening, ${knownRecipientIds.length} known IDs, ${knownRecipientPhones.length} known phones`);
+      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening (contact-only filtering)`);
 
       return new Response(JSON.stringify({
         task: "wait",
         seconds: 0,
         accounts: validAccounts,
-        known_recipients: knownRecipientIds,  // Python will filter messages using this list
-        known_phones: knownRecipientPhones,   // Also match by phone for first-time replies
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
