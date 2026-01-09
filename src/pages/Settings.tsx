@@ -46,7 +46,7 @@ interface ApiCredential {
   failed_count_24h?: number; // Dynamic: fails in last 24 hours
 }
 
-const API_DAILY_LIMIT = 45; // Max messages per API per 24 hours
+const API_DAILY_LIMIT = 80; // Max messages per API per 24 hours
 
 const Settings: React.FC = () => {
   const { toast: showToast } = useToast();

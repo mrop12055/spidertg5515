@@ -22,8 +22,8 @@ let SCHEDULER_ENABLED = true;
 let MAX_MESSAGES_BEFORE_ROTATION = 10;
 let COOLDOWN_DURATION_SECONDS = 300;
 
-// API rate limiting - 60 messages per API per 24 hours
-const API_DAILY_LIMIT = 60;
+// API rate limiting - 80 messages per API per 24 hours
+const API_DAILY_LIMIT = 80;
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
