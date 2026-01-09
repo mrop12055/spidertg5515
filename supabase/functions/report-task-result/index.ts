@@ -271,14 +271,15 @@ serve(async (req) => {
           ];
           
           // Errors that should RESTRICT account (12h cooldown for new messages, but can still chat)
+          // IMPORTANT: Do NOT include 'restricted' alone - it matches "Privacy restricted" which is a RECIPIENT error!
           const temporaryRestrictionErrors = [
-            'restricted',
             'flood',
             'spam',
             'user_is_blocked',
             'frozen',            // Frozen accounts get restricted status
             'frozen accounts',   // ImportContactsRequest errors on frozen accounts
-            'floodwaiterror'     // Telegram flood wait error
+            'floodwaiterror',    // Telegram flood wait error
+            'account restricted' // Only match if it says "account restricted" not "privacy restricted"
           ];
           
           // NOTE: "Too many requests" moved to retryWithDifferentAccountErrors
@@ -290,6 +291,7 @@ serve(async (req) => {
           // Errors that should just SKIP the recipient (don't affect account status)
           // These are recipient-related issues, NOT account problems
           // Privacy errors are PERMANENT - the recipient has blocked unknown users, no point retrying
+          // IMPORTANT: Check these FIRST before other error types!
           const skipRecipientErrors = [
             'user not found',        // Recipient doesn't have Telegram
             'no user',               // Recipient doesn't exist
@@ -298,6 +300,7 @@ serve(async (req) => {
             'specified user',        // "The specified user was deleted"
             'privacy',               // Recipient has privacy settings - PERMANENT failure
             'privacy restricted',    // Recipient blocked unknown users - PERMANENT failure
+            'user deleted',          // Recipient deleted their account
           ];
           
           // Errors that should RETRY with a different account
@@ -305,16 +308,19 @@ serve(async (req) => {
           // NOTE: Privacy errors are NO LONGER retryable - they are permanent recipient-side failures
           const retryWithDifferentAccountErrors = [
             'too many requests', // Rate limit on THIS account - try another (applies 12h restriction to account)
-            'sendmessagerequest' // Rate limit error from SendMessageRequest
           ];
           
           const errorLower = (error || '').toLowerCase();
-          const isPermanentBan = permanentBanErrors.some(r => errorLower.includes(r));
-          const isTemporaryRestriction = temporaryRestrictionErrors.some(r => errorLower.includes(r));
-          const isImmediateRestriction = immediateRestrictionErrors.some(r => errorLower.includes(r));
+          
+          // CRITICAL: Check skip-only errors FIRST - these are recipient problems, NOT account problems
           const isSkipOnly = skipRecipientErrors.some(r => errorLower.includes(r));
+          
+          // Only check account-related errors if it's NOT a recipient error
+          const isPermanentBan = !isSkipOnly && permanentBanErrors.some(r => errorLower.includes(r));
+          const isTemporaryRestriction = !isSkipOnly && temporaryRestrictionErrors.some(r => errorLower.includes(r));
+          const isImmediateRestriction = !isSkipOnly && immediateRestrictionErrors.some(r => errorLower.includes(r));
           // Also check for explicit skip_account flag from Python runner
-          const isRetryable = retryWithDifferentAccountErrors.some(r => errorLower.includes(r)) || (skip_account && retry_with_different_account);
+          const isRetryable = !isSkipOnly && (retryWithDifferentAccountErrors.some(r => errorLower.includes(r)) || (skip_account && retry_with_different_account));
           
           // Track account failure for health monitoring (only for account-related errors, not recipient issues)
           // Skip-only errors are recipient problems, not account problems
