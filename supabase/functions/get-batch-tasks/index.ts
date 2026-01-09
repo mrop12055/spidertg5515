@@ -925,51 +925,53 @@ serve(async (req) => {
     if (runner === "account") {
       const accountBatchSize = Math.min(batch_size, 20); // Max 20 parallel account tasks
       
-      // Auto-recover ALL in_progress tasks that have been stuck for more than 2 minutes
-      // These tasks were picked up but never completed (runner crashed, timeout, etc.)
-      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-      const { data: stuckTasks } = await supabase
+      // Auto-recover stuck tasks (in_progress for more than 5 minutes)
+      // We use created_at as a proxy for "claimed at" because this table has no updated_at.
+      const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      await supabase
         .from("account_check_tasks")
-        .select("id, task_type, created_at")
-        .eq("status", "in_progress");
-      
-      if (stuckTasks && stuckTasks.length > 0) {
-        // Reset all in_progress tasks - they're stuck regardless of created_at
-        console.log(`[get-batch-tasks] Recovering ${stuckTasks.length} stuck account tasks`);
-        const stuckIds = stuckTasks.map((t: any) => t.id);
-        await supabase
-          .from("account_check_tasks")
-          .update({ status: "pending" })
-          .in("id", stuckIds);
-      }
+        .update({ status: "pending" })
+        .eq("status", "in_progress")
+        .lt("created_at", fiveMinutesAgo);
       
       // Get pending account tasks
       const { data: checkTasks } = await supabase
         .from("account_check_tasks")
+        // IMPORTANT: Only tasks with a resolvable telegram_accounts relation can be processed.
         .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(*))")
         .eq("status", "pending")
-        .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "sync_profile", "verify_session"])
+        .in("task_type", [
+          "spambot_check",
+          "change_name",
+          "privacy_settings",
+          "change_password",
+          "logout_sessions",
+          "change_photo",
+          "sync_profile",
+          "verify_session",
+        ])
         .order("created_at", { ascending: true })
         .limit(accountBatchSize);
 
       if (checkTasks && checkTasks.length > 0) {
-        console.log(`[get-batch-tasks] Found ${checkTasks.length} pending account tasks`);
-        
-        const taskIds = checkTasks.map((t: any) => t.id);
-        
-        // Mark all tasks as in_progress atomically
-        await supabase
-          .from("account_check_tasks")
-          .update({ status: "in_progress" })
-          .in("id", taskIds);
-        
+        // Build the tasks we can actually execute BEFORE claiming them.
+        const nowIso = new Date().toISOString();
+        const claimIds: string[] = [];
+        const failIds: string[] = [];
+
         for (const task of checkTasks as any[]) {
           const accountData = task.telegram_accounts;
-          if (!accountData) continue;
-          
+          if (!accountData) {
+            // If this happens, the row cannot be processed (usually missing/invalid relation).
+            // Mark failed so it doesn't get stuck in_progress and doesn't loop forever.
+            failIds.push(task.id);
+            continue;
+          }
+
           const apiCred = accountData.telegram_api_credentials;
           const proxyData = accountData.proxies;
-          
+
+          claimIds.push(task.id);
           tasks.push({
             task: task.task_type,
             task_id: task.id,
@@ -987,28 +989,68 @@ serve(async (req) => {
               api_hash: apiCred?.api_hash || accountData.api_hash,
               proxy_id: accountData.proxy_id,
             },
-            proxy: proxyData ? {
-              host: proxyData.host,
-              port: proxyData.port,
-              username: proxyData.username,
-              password: proxyData.password,
-              proxy_type: proxyData.proxy_type,
-              type: proxyData.proxy_type,
-            } : null,
+            proxy: proxyData
+              ? {
+                  host: proxyData.host,
+                  port: proxyData.port,
+                  username: proxyData.username,
+                  password: proxyData.password,
+                  proxy_type: proxyData.proxy_type,
+                  type: proxyData.proxy_type,
+                }
+              : null,
           });
         }
-        
-        console.log(`[get-batch-tasks] Returning ${tasks.length} account tasks for parallel processing`);
-        
-        return new Response(JSON.stringify({
-          tasks,
-          delay_after: tasks.length > 0 ? 1 : 3,
-          batch_mode: true,
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+
+        if (failIds.length > 0) {
+          console.warn(
+            `[get-batch-tasks] ${failIds.length} account tasks missing account data; marking as failed`
+          );
+          await supabase
+            .from("account_check_tasks")
+            .update({
+              status: "failed",
+              completed_at: nowIso,
+              result: "Task cannot be processed: missing account data (relation not resolved)",
+            })
+            .in("id", failIds);
+        }
+
+        if (claimIds.length === 0) {
+          return new Response(
+            JSON.stringify({
+              tasks: [],
+              delay_after: 3,
+              reason: "No processable account tasks",
+            }),
+            {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        // Claim ONLY the tasks we are returning.
+        await supabase
+          .from("account_check_tasks")
+          .update({ status: "in_progress" })
+          .in("id", claimIds)
+          .eq("status", "pending");
+
+        console.log(
+          `[get-batch-tasks] Returning ${tasks.length} account tasks for parallel processing`
+        );
+
+        return new Response(
+          JSON.stringify({
+            tasks,
+            delay_after: tasks.length > 0 ? 1 : 3,
+            batch_mode: true,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
-      
       // No tasks - return empty
       return new Response(JSON.stringify({
         tasks: [],
