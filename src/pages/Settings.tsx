@@ -488,21 +488,21 @@ const Settings: React.FC = () => {
                     <DialogHeader>
                       <DialogTitle>Bulk Import API Credentials</DialogTitle>
                       <DialogDescription>
-                        Paste multiple API credentials (one per line). Format: api_id:api_hash
+                        Paste API credentials in format: api_id:api_hash (one per line)
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 pt-4">
                       <div className="space-y-2">
                         <Label>API Credentials</Label>
                         <Textarea
-                          placeholder="12345678:abc123def456...&#10;87654321:xyz789ghi012...&#10;..."
+                          placeholder="12345678:a1b2c3d4e5f6g7h8i9j0&#10;87654321:k1l2m3n4o5p6q7r8s9t0&#10;11223344:u1v2w3x4y5z6a7b8c9d0"
                           value={bulkApiInput}
                           onChange={(e) => setBulkApiInput(e.target.value)}
                           rows={8}
                           className="font-mono text-sm"
                         />
                       <p className="text-xs text-muted-foreground">
-                        Random names will be auto-generated
+                        Enter one API per line as: api_id:api_hash — Names auto-generated
                       </p>
                     </div>
                     <div className="space-y-2">
