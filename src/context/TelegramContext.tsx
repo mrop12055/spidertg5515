@@ -145,15 +145,48 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     try {
       setIsLoading(true);
       
-      // Fetch accounts - exclude large session_data column for performance
-      const { data: accountsData } = await supabase
-        .from('telegram_accounts')
-        .select('id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id')
-        .order('created_at', { ascending: false })
-        .limit(500);
+      // Run ALL queries in parallel for maximum speed
+      const [accountsResult, proxiesResult, campaignsResult, conversationsResult, messagesResult] = await Promise.all([
+        // Fetch accounts - exclude large session_data column for performance
+        supabase
+          .from('telegram_accounts')
+          .select('id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id')
+          .order('created_at', { ascending: false })
+          .limit(500),
+          
+        // Fetch proxies - select only needed columns for performance
+        supabase
+          .from('proxies')
+          .select('id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country')
+          .order('created_at', { ascending: false })
+          .limit(1000),
+          
+        // Fetch campaigns
+        supabase
+          .from('campaigns')
+          .select('*, campaign_accounts(account_id)')
+          .order('created_at', { ascending: false }),
+          
+        // Fetch conversations (limit to recent ones for performance)
+        supabase
+          .from('conversations')
+          .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply')
+          .eq('first_message_sent', true)
+          .not('last_message_at', 'is', null)
+          .order('created_at', { ascending: false })
+          .limit(500),
+          
+        // Fetch messages
+        supabase
+          .from('messages')
+          .select('*, conversations(recipient_phone)')
+          .order('created_at', { ascending: false })
+          .limit(500),
+      ]);
 
-      if (accountsData) {
-        setAccounts(accountsData.map(acc => ({
+      // Process accounts
+      if (accountsResult.data) {
+        setAccounts(accountsResult.data.map(acc => ({
           id: acc.id,
           phoneNumber: acc.phone_number,
           username: acc.username || undefined,
@@ -195,14 +228,9 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         })));
       }
 
-      // Fetch proxies
-      const { data: proxiesData } = await supabase
-        .from('proxies')
-        .select('*')
-        .order('created_at', { ascending: false });
-
-      if (proxiesData) {
-        setProxies(proxiesData.map(p => ({
+      // Process proxies
+      if (proxiesResult.data) {
+        setProxies(proxiesResult.data.map(p => ({
           id: p.id,
           host: p.host,
           port: p.port,
@@ -217,14 +245,9 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         })));
       }
 
-      // Fetch campaigns
-      const { data: campaignsData } = await supabase
-        .from('campaigns')
-        .select('*, campaign_accounts(account_id)')
-        .order('created_at', { ascending: false });
-
-      if (campaignsData) {
-        setCampaigns(campaignsData.map(c => ({
+      // Process campaigns
+      if (campaignsResult.data) {
+        setCampaigns(campaignsResult.data.map(c => ({
           id: c.id,
           name: c.name,
           messageTemplate: c.message_template,
@@ -241,46 +264,13 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         })));
       }
 
-      // Fetch conversations (limit to recent ones for performance)
-      // NOTE: We avoid "select *" here because the REST query can timeout under load.
-      const conversationsSelect =
-        'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply' as const;
-
-      const fetchConversations = async () => {
-        // Fetch campaign conversations (first_message_sent = true) with higher limit for multi-day filtering
-        const primary = await supabase
-          .from('conversations')
-          .select(conversationsSelect)
-          .eq('first_message_sent', true)
-          .not('last_message_at', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(500);
-
-        if (!primary.error) return primary;
-
-        // Fallback if the DB is under load/timeouts
-        const fallback = await supabase
-          .from('conversations')
-          .select(conversationsSelect)
-          .eq('first_message_sent', true)
-          .order('created_at', { ascending: false })
-          .limit(100);
-
-        return fallback;
-      };
-
-      const { data: conversationsData, error: conversationsError } = await fetchConversations();
-
-      if (conversationsError) {
-        console.error('Error fetching conversations:', conversationsError);
-        toast.error('Failed to load conversations', {
-          description: conversationsError.message,
-        });
+      // Process conversations
+      if (conversationsResult.error) {
+        console.error('Error fetching conversations:', conversationsResult.error);
       }
-
-      if (conversationsData) {
+      if (conversationsResult.data) {
         setConversations(
-          conversationsData.map((c: any) => ({
+          conversationsResult.data.map((c: any) => ({
             id: c.id,
             accountId: c.account_id,
             recipientPhone: c.recipient_phone || '',
@@ -300,15 +290,9 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         );
       }
 
-      // Fetch messages
-      const { data: messagesData } = await supabase
-        .from('messages')
-        .select('*, conversations(recipient_phone)')
-        .order('created_at', { ascending: false })
-        .limit(500);
-
-      if (messagesData) {
-        setMessages(messagesData.map(m => ({
+      // Process messages
+      if (messagesResult.data) {
+        setMessages(messagesResult.data.map(m => ({
           id: m.id,
           conversationId: m.conversation_id,
           accountId: m.account_id,
