@@ -188,6 +188,8 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         client = active_clients[account_id]
         try:
             if client.is_connected():
+                # Client already connected with correct proxy/fingerprint - reuse it
+                print(f"  [CACHED] Reusing existing connection for {phone}")
                 if setup_handler and not getattr(client, "_handler", False):
                     await setup_handler(client, account_id)
                     setattr(client, "_handler", True)
