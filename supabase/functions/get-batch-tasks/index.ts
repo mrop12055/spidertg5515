@@ -50,10 +50,8 @@ serve(async (req) => {
     let campaignBatchSize = 100; // Default for campaign
     
     // Campaign speed settings (server-controlled)
-    let campaignStaggerMin = 0.3;
-    let campaignStaggerMax = 1.5;
     let campaignPollingInterval = 3;
-    let campaignMessagesPerAccountPerDay = 25; // NEW: Messages per account per day for campaigns
+    let campaignMessagesPerAccountPerDay = 25;
     if (settingsData) {
       for (const setting of settingsData) {
         const value = setting.value as Record<string, unknown>;
@@ -67,8 +65,6 @@ serve(async (req) => {
           warmupBatchSize = (value.batchSize as number) || warmupBatchSize;
         } else if (setting.key === "campaign_speed" && value) {
           // Campaign speed settings
-          campaignStaggerMin = (value.staggerMin as number) ?? campaignStaggerMin;
-          campaignStaggerMax = (value.staggerMax as number) ?? campaignStaggerMax;
           campaignPollingInterval = (value.pollingInterval as number) ?? campaignPollingInterval;
           campaignBatchSize = (value.batchSize as number) ?? campaignBatchSize;
           campaignMessagesPerAccountPerDay = (value.messagesPerAccountPerDay as number) ?? campaignMessagesPerAccountPerDay;
@@ -340,8 +336,6 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           tasks: [],
           delay_after: campaignPollingInterval,
-          stagger_min: campaignStaggerMin,
-          stagger_max: campaignStaggerMax,
           reason: "No running campaigns",
           stop_signal: true
         }), {
@@ -517,8 +511,6 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           tasks: [],
           delay_after: campaignPollingInterval,
-          stagger_min: campaignStaggerMin,
-          stagger_max: campaignStaggerMax,
           reason: "No pending recipients",
           stop_signal: true
         }), {
@@ -557,8 +549,6 @@ serve(async (req) => {
         return new Response(JSON.stringify({
           tasks: [],
           delay_after: campaignPollingInterval,
-          stagger_min: campaignStaggerMin,
-          stagger_max: campaignStaggerMax,
           reason: "All accounts restricted or at daily limit - campaigns failed",
           stop_signal: true
         }), {
@@ -734,8 +724,6 @@ serve(async (req) => {
       return new Response(JSON.stringify({
         tasks,
         delay_after: delayAfter,
-        stagger_min: campaignStaggerMin,
-        stagger_max: campaignStaggerMax,
         more_pending: morePending,
         accounts_available: campaignUsableAccounts.length,
         api_usage: Object.fromEntries(apiUsageCounts),
