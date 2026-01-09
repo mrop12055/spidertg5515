@@ -1899,18 +1899,32 @@ async def process_single_task(task):
         except:
             pass  # Best effort - at least we tried to report
 
+_http_client = None
+
+async def get_http_client():
+    """Reuse a single HTTP client to avoid socket/resource leaks on some systems."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=120.0)
+    return _http_client
+
 
 async def get_batch_tasks(runner="account", batch_size=20):
     """Get a batch of tasks for parallel processing"""
     try:
-        # Use 120s timeout to handle large account sets (500+ accounts)
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(
-                f"{BACKEND_URL}/get-batch-tasks",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json={"runner": runner, "batch_size": batch_size},
-            )
-            return resp.json()
+        client = await get_http_client()
+        resp = await client.post(
+            f"{BACKEND_URL}/get-batch-tasks",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json={"runner": runner, "batch_size": batch_size},
+            timeout=120.0,
+        )
+
+        if resp.status_code != 200:
+            print(f"[HTTP ERROR] get_batch_tasks: status={resp.status_code} body={resp.text[:200]}")
+            return {"tasks": [], "delay_after": 5}
+
+        return resp.json()
     except Exception as e:
         print(f"[HTTP ERROR] get_batch_tasks: {type(e).__name__}: {repr(e)}")
         return {"tasks": [], "delay_after": 5}
@@ -1919,14 +1933,16 @@ async def get_batch_tasks(runner="account", batch_size=20):
 async def send_heartbeat():
     """Send heartbeat to register this runner"""
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(
-                f"{BACKEND_URL}/get-next-task",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json={"runner": "account"},
-            )
-    except:
-        pass
+        client = await get_http_client()
+        await client.post(
+            f"{BACKEND_URL}/get-next-task",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json={"runner": "account"},
+            timeout=5.0,
+        )
+    except Exception as e:
+        # Log so we can distinguish "runner stuck" vs "cannot reach backend"
+        print(f"[HTTP ERROR] heartbeat: {type(e).__name__}: {repr(e)}")
 
 
 async def main_loop():
@@ -1974,6 +1990,15 @@ async def main_loop():
             print(f"[ERROR] {e}")
             await asyncio.sleep(5)
     
+    # Close shared HTTP client (prevents hangs after many polls on some systems)
+    global _http_client
+    try:
+        if _http_client is not None:
+            await _http_client.aclose()
+            _http_client = None
+    except:
+        pass
+
     await shutdown_all()
 
 
