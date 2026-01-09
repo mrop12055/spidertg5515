@@ -1757,176 +1757,147 @@ async def verify_session(client, account_id):
         return "disconnected", str(e), None
 
 
+async def process_single_task(task):
+    """Process a single account task - runs in parallel with others"""
+    task_type = task.get("task")
+    account = task.get("account", {})
+    task_id = task.get("task_id")
+    task_data = task.get("task_data", {})
+    
+    try:
+        if task_type == "spambot_check":
+            client = await get_or_create_client(account)
+            if client:
+                print(f"  [SPAM] Checking {account.get('phone_number')}...")
+                status, ban_reason, response = await check_spambot(client)
+                await report_result("spambot_check", {"task_id": task_id, "account_id": account.get("id"), "status": status, "ban_reason": ban_reason, "response": response})
+                print(f"    Result: {status}")
+        
+        elif task_type == "change_name":
+            client = await get_or_create_client(account)
+            if client:
+                print(f"  [NAME] Changing for {account.get('phone_number')}...")
+                success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
+                await report_result("change_name", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error, "first_name": task_data.get("first_name"), "last_name": task_data.get("last_name")})
+        
+        elif task_type == "change_photo":
+            client = await get_or_create_client(account)
+            if client:
+                print(f"  [PHOTO] Changing for {account.get('phone_number')}...")
+                photo_source = task_data.get("photo_url") or task_data.get("photo_base64", "")
+                success, error = await change_profile_photo(client, photo_source)
+                await report_result("change_photo", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error})
+        
+        elif task_type == "privacy_settings":
+            client = await get_or_create_client(account)
+            if client:
+                print(f"  [PRIVACY] Updating for {account.get('phone_number')}...")
+                success, error = await update_privacy(client, task_data.get("hidePhone", False), task_data.get("hideLastSeen", False), task_data.get("disableCalls", False))
+                await report_result("privacy_settings", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error})
+        
+        elif task_type == "change_password":
+            client = await get_or_create_client(account)
+            if client:
+                print(f"  [PASS] Changing for {account.get('phone_number')}...")
+                success, error = await change_password(client, task_data.get("existing_password", ""), task_data.get("new_password", ""))
+                await report_result("change_password", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error})
+        
+        elif task_type == "logout_sessions":
+            client = await get_or_create_client(account)
+            if client:
+                print(f"  [LOGOUT] Logging out other sessions for {account.get('phone_number')}...")
+                success, error = await logout_other_sessions(client)
+                await report_result("logout_sessions", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error})
+        
+        elif task_type == "verify_session":
+            print(f"  [VERIFY] Checking {account.get('phone_number')}...")
+            try:
+                client = await get_or_create_client(account)
+                if client:
+                    status, error, user_data = await verify_session(client, account.get("id"))
+                    await report_result("verify_session", {"task_id": task_id, "account_id": account.get("id"), "status": status, "error": error, "user_data": user_data})
+                    print(f"    Status: {status}" + (f" ({error})" if error else ""))
+                else:
+                    await report_result("verify_session", {"task_id": task_id, "account_id": account.get("id"), "status": "disconnected", "error": "Could not connect"})
+            except Exception as e:
+                await report_result("verify_session", {"task_id": task_id, "account_id": account.get("id"), "status": "disconnected", "error": str(e)})
+        
+        elif task_type == "sync_profile":
+            print(f"  [SYNC] Syncing profile for {account.get('phone_number')}...")
+            try:
+                client = await get_or_create_client(account)
+                if client:
+                    me = await client.get_me()
+                    if me:
+                        avatar_url = None
+                        try:
+                            photos = await client.get_profile_photos("me", limit=1)
+                            if photos:
+                                photo_bytes = await client.download_media(photos[0], bytes)
+                                if photo_bytes:
+                                    avatar_url = f"data:image/jpeg;base64,{base64.b64encode(photo_bytes).decode()}"
+                        except:
+                            pass
+                        
+                        await report_result("sync_profile", {
+                            "task_id": task_id,
+                            "account_id": account.get("id"),
+                            "success": True,
+                            "first_name": me.first_name,
+                            "last_name": me.last_name or "",
+                            "username": me.username,
+                            "telegram_id": me.id,
+                            "avatar_url": avatar_url
+                        })
+                        print(f"    Synced: {me.first_name} {me.last_name or ''}")
+                    else:
+                        await report_result("sync_profile", {"task_id": task_id, "account_id": account.get("id"), "success": False, "error": "Could not get user info"})
+                else:
+                    await report_result("sync_profile", {"task_id": task_id, "account_id": account.get("id"), "success": False, "error": "Could not connect"})
+            except Exception as e:
+                await report_result("sync_profile", {"task_id": task_id, "account_id": account.get("id"), "success": False, "error": str(e)})
+                print(f"    Error: {e}")
+    
+    except Exception as e:
+        print(f"  [ERROR] Task {task_type} failed: {e}")
+
+
+async def get_batch_tasks(runner="account", batch_size=20):
+    """Get a batch of tasks for parallel processing"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{SUPABASE_URL}/functions/v1/get-batch-tasks", 
+                headers={"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+                json={"runner": runner, "batch_size": batch_size})
+            return resp.json()
+    except Exception as e:
+        print(f"[HTTP ERROR] get_batch_tasks: {e}")
+        return {"tasks": [], "delay_after": 5}
+
+
 async def main_loop():
     print("=" * 50)
-    print("  Account Runner")
+    print("  Account Runner (PARALLEL MODE)")
     print("  [SpamBot, Name, Photo, Privacy, Import]")
     print("=" * 50)
     
     while RUNNING:
         try:
-            task = await get_next_task(runner="account")
-            task_type = task.get("task", "wait")
+            # Get batch of tasks
+            batch = await get_batch_tasks(runner="account", batch_size=20)
+            tasks = batch.get("tasks", [])
+            delay_after = batch.get("delay_after", 3)
             
-            if task_type == "wait":
-                await asyncio.sleep(task.get("seconds", 2))
-            
-            elif task_type == "spambot_check":
-                account = task.get("account", {})
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  [SPAM] Checking {account.get('phone_number')}...")
-                    status, ban_reason, response = await check_spambot(client)
-                    await report_result("spambot_check", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": status, "ban_reason": ban_reason, "response": response})
-                    print(f"    Result: {status}")
-            
-            elif task_type == "contact_import":
-                account = task.get("account", {})
-                task_id = task.get("task_id")
-                phone_numbers = task.get("phone_numbers", [])
-                valid_numbers = list(task.get("valid_numbers", []))
-                invalid_numbers = list(task.get("invalid_numbers", []))
+            if tasks:
+                print(f"\\n[BATCH] Processing {len(tasks)} tasks in parallel...")
                 
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  [IMPORT] Validating {len(phone_numbers)} contacts...")
-                    for phone in phone_numbers:
-                        if not RUNNING:
-                            break
-                        try:
-                            exists, name, telegram_id = await validate_contact(client, phone)
-                            if exists:
-                                valid_numbers.append(phone)
-                                print(f"    + {phone} valid")
-                            else:
-                                invalid_numbers.append(phone)
-                                print(f"    - {phone} invalid")
-                        except Exception as e:
-                            err = str(e).lower()
-                            if "flood" in err or "restricted" in err or "banned" in err:
-                                remaining = [p for p in phone_numbers if p not in valid_numbers and p not in invalid_numbers]
-                                await report_result("contact_import", {
-                                    "task_id": task_id,
-                                    "success": False,
-                                    "account_failed": True,
-                                    "failed_account_id": account.get("id"),
-                                    "remaining_numbers": remaining,
-                                    "valid_numbers": valid_numbers,
-                                    "invalid_numbers": invalid_numbers,
-                                    "error": str(e)
-                                })
-                                print(f"  [WARN] Account restricted, switching...")
-                                break
-                            invalid_numbers.append(phone)
-                    else:
-                        await report_result("contact_import", {
-                            "task_id": task_id,
-                            "success": True,
-                            "valid_numbers": valid_numbers,
-                            "invalid_numbers": invalid_numbers
-                        })
-                        print(f"  [OK] Import: {len(valid_numbers)} valid, {len(invalid_numbers)} invalid")
-            
-            elif task_type == "change_name":
-                task_data = task.get("task_data", {})
-                account = task.get("account", {})
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  [NAME] Changing...")
-                    success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
-                    await report_result("change_name", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error, "first_name": task_data.get("first_name"), "last_name": task_data.get("last_name")})
-            
-            elif task_type == "change_photo":
-                task_data = task.get("task_data", {})
-                account = task.get("account", {})
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  [PHOTO] Changing...")
-                    # Support both photo_url and photo_base64
-                    photo_source = task_data.get("photo_url") or task_data.get("photo_base64", "")
-                    success, error = await change_profile_photo(client, photo_source)
-                    await report_result("change_photo", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error})
-            
-            elif task_type == "privacy_settings":
-                task_data = task.get("task_data", {})
-                account = task.get("account", {})
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  [PRIVACY] Updating...")
-                    success, error = await update_privacy(client, task_data.get("hidePhone", False), task_data.get("hideLastSeen", False), task_data.get("disableCalls", False))
-                    await report_result("privacy_settings", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error})
-            
-            elif task_type == "change_password":
-                task_data = task.get("task_data", {})
-                account = task.get("account", {})
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  [PASS] Changing...")
-                    success, error = await change_password(client, task_data.get("existing_password", ""), task_data.get("new_password", ""))
-                    await report_result("change_password", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error})
-            
-            elif task_type == "logout_sessions":
-                account = task.get("account", {})
-                client = await get_or_create_client(account)
-                if client:
-                    print(f"  [LOGOUT] Logging out other sessions...")
-                    success, error = await logout_other_sessions(client)
-                    await report_result("logout_sessions", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": success, "error": error})
-            
-            elif task_type == "verify_session":
-                account = task.get("account", {})
-                print(f"  [VERIFY] Checking {account.get('phone_number')}...")
-                try:
-                    client = await get_or_create_client(account)
-                    if client:
-                        status, error, user_data = await verify_session(client, account.get("id"))
-                        await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": status, "error": error, "user_data": user_data})
-                        print(f"    Status: {status}" + (f" ({error})" if error else ""))
-                    else:
-                        await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": "disconnected", "error": "Could not connect"})
-                        print(f"    Could not connect")
-                except Exception as e:
-                    await report_result("verify_session", {"task_id": task.get("task_id"), "account_id": account.get("id"), "status": "disconnected", "error": str(e)})
-                    print(f"    Error: {e}")
-            
-            elif task_type == "sync_profile":
-                account = task.get("account", {})
-                print(f"  [SYNC] Syncing profile for {account.get('phone_number')}...")
-                try:
-                    client = await get_or_create_client(account)
-                    if client:
-                        me = await client.get_me()
-                        if me:
-                            # Get profile photo if available
-                            avatar_url = None
-                            try:
-                                photos = await client.get_profile_photos("me", limit=1)
-                                if photos:
-                                    # Download to bytes and encode
-                                    photo_bytes = await client.download_media(photos[0], bytes)
-                                    if photo_bytes:
-                                        avatar_url = f"data:image/jpeg;base64,{base64.b64encode(photo_bytes).decode()}"
-                            except:
-                                pass
-                            
-                            await report_result("sync_profile", {
-                                "task_id": task.get("task_id"),
-                                "account_id": account.get("id"),
-                                "success": True,
-                                "first_name": me.first_name,
-                                "last_name": me.last_name or "",
-                                "username": me.username,
-                                "telegram_id": me.id,
-                                "avatar_url": avatar_url
-                            })
-                            print(f"    Synced: {me.first_name} {me.last_name or ''}")
-                        else:
-                            await report_result("sync_profile", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": False, "error": "Could not get user info"})
-                    else:
-                        await report_result("sync_profile", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": False, "error": "Could not connect"})
-                except Exception as e:
-                    await report_result("sync_profile", {"task_id": task.get("task_id"), "account_id": account.get("id"), "success": False, "error": str(e)})
-                    print(f"    Error: {e}")
+                # Process all tasks in parallel using asyncio.gather
+                await asyncio.gather(*[process_single_task(task) for task in tasks], return_exceptions=True)
+                
+                print(f"[BATCH] Completed {len(tasks)} tasks")
+            else:
+                # No tasks, wait before polling again
+                await asyncio.sleep(delay_after)
         
         except Exception as e:
             print(f"  [ERROR] {e}")
