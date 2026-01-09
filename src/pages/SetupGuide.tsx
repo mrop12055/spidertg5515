@@ -590,6 +590,20 @@ async def cleanup_stale_clients():
     return len(stale)
 
 
+async def disconnect_client(account_id: str, phone: str = None):
+    """Disconnect and remove client from cache to free session file for other runners."""
+    if account_id in active_clients:
+        try:
+            client = active_clients[account_id]
+            await client.disconnect()
+            del active_clients[account_id]
+            if phone:
+                print(f"  [DISCONNECT] Released {phone}")
+        except Exception as e:
+            # Still remove from cache even if disconnect fails
+            active_clients.pop(account_id, None)
+
+
 async def shutdown_all():
     print("\\n[SHUTDOWN] Disconnecting...")
     for account_id, client in list(active_clients.items()):
@@ -1643,8 +1657,8 @@ import base64
 import httpx
 
 from client_manager import (
-    get_or_create_client, report_result, shutdown_all,
-    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL
+    get_or_create_client, report_result, shutdown_all, disconnect_client,
+    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL, active_clients
 )
 
 RUNNING = True
@@ -1789,19 +1803,6 @@ async def verify_session(client, account_id):
         elif "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
             return "banned", str(e), None
         return "disconnected", str(e), None
-
-async def disconnect_client(account_id: str, phone: str = None):
-    """Disconnect and remove client from cache to free session file for LiveChat runner."""
-    if account_id in active_clients:
-        try:
-            client = active_clients[account_id]
-            await client.disconnect()
-            del active_clients[account_id]
-            if phone:
-                print(f"  [DISCONNECT] Released {phone}")
-        except Exception as e:
-            # Still remove from cache even if disconnect fails
-            active_clients.pop(account_id, None)
 
 
 async def process_single_task(task):
