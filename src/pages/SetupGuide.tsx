@@ -1894,7 +1894,8 @@ async def process_single_task(task):
 async def get_batch_tasks(runner="account", batch_size=20):
     """Get a batch of tasks for parallel processing"""
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        # Use 120s timeout to handle large account sets (500+ accounts)
+        async with httpx.AsyncClient(timeout=120.0) as client:
             resp = await client.post(
                 f"{BACKEND_URL}/get-batch-tasks",
                 headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
