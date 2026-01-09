@@ -43,12 +43,30 @@ serve(async (req) => {
     
     // ========== BATCH PROCESS SUCCESSES ==========
     if (successResults.length > 0) {
-      // 1. Batch update campaign_recipients to 'sent'
-      const successRecipientIds = successResults.map(r => r.campaign_recipient_id);
-      await supabase
-        .from("campaign_recipients")
-        .update({ status: "sent", sent_at: now })
-        .in("id", successRecipientIds);
+      // 1. Batch update campaign_recipients to 'sent' AND set api_credential_id if provided
+      // Group by whether they have api_credential_id or not
+      const withApiId = successResults.filter(r => r.api_credential_id);
+      const withoutApiId = successResults.filter(r => !r.api_credential_id);
+      
+      // Update those WITH api_credential_id (include it in the update)
+      if (withApiId.length > 0) {
+        // We need to update each one individually to set the correct api_credential_id
+        for (const r of withApiId) {
+          await supabase
+            .from("campaign_recipients")
+            .update({ status: "sent", sent_at: now, api_credential_id: r.api_credential_id })
+            .eq("id", r.campaign_recipient_id);
+        }
+      }
+      
+      // Update those WITHOUT api_credential_id (just update status)
+      if (withoutApiId.length > 0) {
+        const idsWithoutApi = withoutApiId.map(r => r.campaign_recipient_id);
+        await supabase
+          .from("campaign_recipients")
+          .update({ status: "sent", sent_at: now })
+          .in("id", idsWithoutApi);
+      }
 
       // 2. Group by campaign for batch sent_count updates
       const campaignCounts = new Map<string, number>();
