@@ -39,7 +39,6 @@ import { CountdownTimer } from '@/components/ui/countdown-timer';
 
 // Status options for stat cards (merged categories)
 const statCardOptions: { value: string; label: string; color: string; icon: React.ReactNode }[] = [
-  { value: 'all', label: 'All', color: 'bg-muted text-foreground border-border', icon: <Users className="w-3 h-3" /> },
   { value: 'active', label: 'Active', color: 'bg-status-active/15 text-status-active border-status-active/30', icon: <Wifi className="w-3 h-3" /> },
   { value: 'restricted', label: 'Restricted', color: 'bg-status-restricted/15 text-status-restricted border-status-restricted/30', icon: <AlertTriangle className="w-3 h-3" /> },
   { value: 'inactive', label: 'Inactive', color: 'bg-status-disconnected/15 text-status-disconnected border-status-disconnected/30', icon: <WifiOff className="w-3 h-3" /> },
