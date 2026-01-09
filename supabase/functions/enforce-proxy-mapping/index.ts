@@ -91,49 +91,78 @@ serve(async (req) => {
       targetCount: baseAccountsPerProxy + (index < extraAccounts ? 1 : 0),
     }));
     
-    // Step 5: Assign accounts to proxies
+    // Step 5: Build assignment plan (group accounts by proxy for batch updates)
     let accountIndex = 0;
+    const assignmentPlan: Map<string, { 
+      proxy: typeof proxies[0], 
+      accountIds: string[], 
+      geoMatchIds: string[],
+      geoMismatchIds: string[],
+      firstAccountId: string | null 
+    }> = new Map();
     
     for (const { proxy, targetCount } of proxyDistribution) {
       if (targetCount === 0) continue;
       
-      const assignedAccounts: string[] = [];
+      const accountIds: string[] = [];
+      const geoMatchIds: string[] = [];
+      const geoMismatchIds: string[] = [];
+      let firstAccountId: string | null = null;
       
       for (let i = 0; i < targetCount && accountIndex < shuffledAccounts.length; i++) {
         const account = shuffledAccounts[accountIndex];
         accountIndex++;
         
+        accountIds.push(account.id);
+        if (!firstAccountId) firstAccountId = account.id;
+        
         // Check for geo-match
         const geoMatch = proxy.detected_country === account.phone_country;
-        if (geoMatch) stats.geo_matches_found++;
+        if (geoMatch) {
+          stats.geo_matches_found++;
+          geoMatchIds.push(account.id);
+        } else if (account.phone_country && proxy.detected_country) {
+          geoMismatchIds.push(account.id);
+        } else {
+          geoMatchIds.push(account.id); // No country data = no mismatch
+        }
         
-        // Update account with proxy
-        await supabase
-          .from("telegram_accounts")
-          .update({ 
-            proxy_id: proxy.id,
-            geo_mismatch: !geoMatch && !!account.phone_country && !!proxy.detected_country,
-          })
-          .eq("id", account.id);
-        
-        assignedAccounts.push(account.phone_number);
         stats.assignments_made++;
       }
       
-      // Update proxy with first assigned account (for backwards compatibility)
-      if (assignedAccounts.length > 0) {
-        const firstAccount = shuffledAccounts.find(a => a.phone_number === assignedAccounts[0]);
+      if (accountIds.length > 0) {
+        assignmentPlan.set(proxy.id, { proxy, accountIds, geoMatchIds, geoMismatchIds, firstAccountId });
+        stats.accounts_per_proxy[proxy.host] = accountIds.length;
+      }
+    }
+    
+    // Step 6: Execute batch updates (much faster than individual updates)
+    console.log(`[enforce-proxy-mapping] Executing ${assignmentPlan.size} batch updates...`);
+    
+    for (const [proxyId, { proxy, accountIds, geoMatchIds, geoMismatchIds, firstAccountId }] of assignmentPlan) {
+      // Batch update accounts with geo-match (no mismatch flag)
+      if (geoMatchIds.length > 0) {
         await supabase
-          .from("proxies")
-          .update({ assigned_account_id: firstAccount?.id || null })
-          .eq("id", proxy.id);
+          .from("telegram_accounts")
+          .update({ proxy_id: proxyId, geo_mismatch: false })
+          .in("id", geoMatchIds);
       }
       
-      stats.accounts_per_proxy[proxy.host] = assignedAccounts.length;
-      
-      if (assignedAccounts.length > 0) {
-        console.log(`[enforce-proxy-mapping] Proxy ${proxy.host}: assigned ${assignedAccounts.length} account(s)`);
+      // Batch update accounts with geo-mismatch
+      if (geoMismatchIds.length > 0) {
+        await supabase
+          .from("telegram_accounts")
+          .update({ proxy_id: proxyId, geo_mismatch: true })
+          .in("id", geoMismatchIds);
       }
+      
+      // Update proxy with first assigned account
+      await supabase
+        .from("proxies")
+        .update({ assigned_account_id: firstAccountId })
+        .eq("id", proxyId);
+      
+      console.log(`[enforce-proxy-mapping] Proxy ${proxy.host}: assigned ${accountIds.length} account(s)`);
     }
 
     // Generate distribution summary
