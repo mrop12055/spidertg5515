@@ -1391,8 +1391,8 @@ const Campaigns: React.FC = () => {
                           <Slider
                               value={[campaignSpeed.messagesPerAccountPerDay]}
                               onValueChange={([v]) => setCampaignSpeed(prev => ({ ...prev, messagesPerAccountPerDay: v }))}
-                              min={1}
-                              max={100}
+                              min={3}
+                              max={10}
                               step={1}
                               className="flex-1"
                             />
