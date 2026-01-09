@@ -141,67 +141,48 @@ serve(async (req) => {
     
     console.log(`Fetched ${proxies.length} proxies to test`);
 
-    const results: { 
-      id: string; 
-      success: boolean; 
-      responseTime?: number; 
-      ip?: string;
-      country?: string;
-      countryFlag?: string;
-      error?: string;
-    }[] = [];
+    // Test ALL proxies in parallel at once for maximum speed
+    console.log(`Starting parallel test of ${proxies.length} proxies...`);
+    
+    const results = await Promise.all(
+      proxies.map(async (proxy) => {
+        const testResult = await testProxyConnection({
+          host: proxy.host,
+          port: proxy.port,
+          username: proxy.username || undefined,
+          password: proxy.password || undefined,
+          proxy_type: proxy.proxy_type || 'http',
+        });
 
-    // Test proxies in parallel batches of 10 for performance
-    const batchSize = 10;
-    for (let i = 0; i < (proxies || []).length; i += batchSize) {
-      const batch = (proxies || []).slice(i, i + batchSize);
-      
-      const batchResults = await Promise.all(
-        batch.map(async (proxy) => {
-          const testResult = await testProxyConnection({
-            host: proxy.host,
-            port: proxy.port,
-            username: proxy.username || undefined,
-            password: proxy.password || undefined,
-            proxy_type: proxy.proxy_type || 'http',
-          });
+        const countryFlag = testResult.country ? getCountryFlag(testResult.country) : undefined;
 
-          const countryFlag = testResult.country ? getCountryFlag(testResult.country) : undefined;
+        // Update proxy status in database
+        const updateData: Record<string, unknown> = {
+          status: testResult.success ? 'active' : 'error',
+          response_time: testResult.responseTime,
+          last_checked: new Date().toISOString(),
+        };
 
-          // Update proxy status in database
-          const updateData: Record<string, unknown> = {
-            status: testResult.success ? 'active' : 'error',
-            response_time: testResult.responseTime,
-            last_checked: new Date().toISOString(),
-          };
+        if (testResult.country && auto_detect_country) {
+          updateData.detected_country = testResult.country;
+        }
 
-          if (testResult.country && auto_detect_country) {
-            updateData.detected_country = testResult.country;
-          }
+        await supabase
+          .from('proxies')
+          .update(updateData)
+          .eq('id', proxy.id);
 
-          const { error: updateError } = await supabase
-            .from('proxies')
-            .update(updateData)
-            .eq('id', proxy.id);
-
-          if (updateError) {
-            console.error(`Error updating proxy ${proxy.id}:`, updateError);
-          }
-
-          return {
-            id: proxy.id,
-            success: testResult.success,
-            responseTime: testResult.responseTime,
-            ip: testResult.ip,
-            country: testResult.country,
-            countryFlag,
-            error: testResult.success ? undefined : testResult.error,
-          };
-        })
-      );
-
-      results.push(...batchResults);
-    }
+        return {
+          id: proxy.id,
+          success: testResult.success,
+          responseTime: testResult.responseTime,
+          ip: testResult.ip,
+          country: testResult.country,
+          countryFlag,
+          error: testResult.success ? undefined : testResult.error,
+        };
+      })
+    );
 
     const workingCount = results.filter(r => r.success).length;
     const failedCount = results.filter(r => !r.success).length;
