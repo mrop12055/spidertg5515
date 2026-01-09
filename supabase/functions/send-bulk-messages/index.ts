@@ -138,13 +138,14 @@ serve(async (req) => {
         );
       }
 
-      // Insert valid recipients - set to 'pending' directly for immediate sending
-      // (Python validation is optional - it will mark as 'invalid' if needed)
+      // Insert valid recipients as 'queued' - they will be released to 'pending' by the scheduler
+      // based on batch settings and timing intervals (gradual release system)
       const recipientRecords = validRecipients.map(r => ({
         campaign_id,
         phone_number: r.phone_number,
         name: r.name || null,
-        status: 'pending', // Ready to send immediately
+        status: 'queued', // Waiting in queue - will be released gradually
+        scheduled_at: null, // Will be set when released to pending
       }));
 
       const { data, error } = await supabase
@@ -226,16 +227,24 @@ serve(async (req) => {
         );
       }
 
-      // Count pending recipients
+      // Count queued + pending recipients
+      const { count: queuedCount } = await supabase
+        .from('campaign_recipients')
+        .select('id', { count: 'exact', head: true })
+        .eq('campaign_id', campaign_id)
+        .eq('status', 'queued');
+
       const { count: pendingCount } = await supabase
         .from('campaign_recipients')
         .select('id', { count: 'exact', head: true })
         .eq('campaign_id', campaign_id)
         .eq('status', 'pending');
 
-      const totalRecipients = pendingCount || 0;
+      const totalQueued = queuedCount || 0;
+      const totalPending = pendingCount || 0;
+      const totalRecipients = totalQueued + totalPending;
       
-      console.log(`[send-bulk-messages] Starting campaign ${campaign_id}: ${totalRecipients} pending recipients, ${accounts.length} active accounts (LAZY assignment mode)`);
+      console.log(`[send-bulk-messages] Starting campaign ${campaign_id}: ${totalQueued} queued, ${totalPending} pending, ${accounts.length} active accounts (QUEUE mode)`);
 
       // Update campaign status to running - NO recipient updates here!
       await supabase
@@ -246,9 +255,11 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ 
           success: true, 
-          queued: totalRecipients,
+          queued: totalQueued,
+          pending: totalPending,
+          total: totalRecipients,
           accounts: accounts.length,
-          message: `Campaign started with ${totalRecipients} recipients. Accounts will be assigned on-demand by runners.`
+          message: `Campaign started with ${totalQueued} queued recipients. Batches will be released gradually based on settings.`
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
