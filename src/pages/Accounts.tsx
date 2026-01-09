@@ -19,7 +19,8 @@ import {
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
   Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock, 
   LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone, 
-  Flame, Bot, MapPin, Key, Tag, X, History, ClipboardList, Shuffle
+  Flame, Bot, MapPin, Key, Tag, X, History, ClipboardList, Shuffle,
+  CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
@@ -151,6 +152,7 @@ const Accounts: React.FC = () => {
   const [availableTags, setAvailableTags] = useState<string[]>([]);
   const [tagFilter, setTagFilter] = useState<string>('all');
   const [proxyFilter, setProxyFilter] = useState<string>('all'); // 'all' | 'with_proxy' | 'without_proxy'
+  const [profileFilter, setProfileFilter] = useState<string>('all'); // 'all' | 'synced' | 'not_synced'
   const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [selectedTagsForBulk, setSelectedTagsForBulk] = useState<string[]>([]);
@@ -1451,7 +1453,14 @@ const Accounts: React.FC = () => {
       (proxyFilter === 'with_proxy' && acc.proxyId) ||
       (proxyFilter === 'without_proxy' && !acc.proxyId);
     
-    return matchesSearch && matchesStatus && matchesTag && matchesProxy;
+    // Profile is "synced" if it has telegram_id and first_name (basic profile data)
+    const isProfileSynced = acc.telegramId && acc.firstName;
+    const matchesProfile = 
+      profileFilter === 'all' || 
+      (profileFilter === 'synced' && isProfileSynced) ||
+      (profileFilter === 'not_synced' && !isProfileSynced);
+    
+    return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile;
   });
 
   // Split accounts by status
@@ -2462,6 +2471,29 @@ const Accounts: React.FC = () => {
                 <span className="flex items-center gap-2">
                   <Unlink className="w-3 h-3 text-red-500" />
                   Without Proxy
+                </span>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          
+          {/* Profile Sync Filter */}
+          <Select value={profileFilter} onValueChange={setProfileFilter}>
+            <SelectTrigger className="w-44 h-9">
+              <RefreshCw className="w-4 h-4 mr-2" />
+              <SelectValue placeholder="Profile" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Profiles</SelectItem>
+              <SelectItem value="synced">
+                <span className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3 h-3 text-green-500" />
+                  Synced
+                </span>
+              </SelectItem>
+              <SelectItem value="not_synced">
+                <span className="flex items-center gap-2">
+                  <AlertCircle className="w-3 h-3 text-orange-500" />
+                  Not Synced
                 </span>
               </SelectItem>
             </SelectContent>

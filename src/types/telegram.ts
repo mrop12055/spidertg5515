@@ -32,6 +32,7 @@ export interface TelegramAccount {
   phoneCountry?: string;
   geoMismatch?: boolean;
   apiCredentialId?: string;
+  telegramId?: number;
   // Tags for organization
   tags?: string[];
   // Health tracking
