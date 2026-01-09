@@ -26,7 +26,7 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
   // ========== 2. CLIENT_MANAGER.PY (ULTRA-FAST + Proxy Auto-Switch) ==========
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (ULTRA-FAST)
-Zero stagger, unlimited concurrency, 1s timeouts, proxy auto-switch
+Zero stagger, unlimited concurrency, split timeouts, proxy auto-switch
 """
 
 import os
@@ -46,11 +46,20 @@ from fingerprint_generator import generate_fingerprint
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
-# ULTRA-FAST settings
-CONNECTION_TIMEOUT = 10   # Fast connection timeout
-CONNECTION_RETRIES = 1    # Fail fast, switch proxy immediately
-RETRY_DELAY = 0            # No retry delay
-HTTP_TIMEOUT = 1           # 1 second for HTTP calls (reports)
+# ========== SPLIT TIMEOUTS ==========
+CONNECTION_TIMEOUT = 10      # Telegram connection timeout
+CONNECTION_RETRIES = 1       # Fail fast, switch proxy immediately
+RETRY_DELAY = 0              # No retry delay
+
+# HTTP Timeouts - split by purpose
+HTTP_TIMEOUT_DISPATCH = 15   # Task fetching (get-next-task, get-batch-tasks)
+HTTP_TIMEOUT_REPORT = 1      # Reporting (report-task-result, report-batch-results) - fast
+HTTP_TIMEOUT_PROXY = 5       # Proxy switch calls
+HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
+
+# Backoff tracking for HTTP errors
+_consecutive_http_errors = 0
+MAX_HTTP_BACKOFF = 30
 
 # Proxy error patterns - fail fast on these
 PROXY_ERROR_PATTERNS = [
@@ -64,12 +73,12 @@ _http_client: Optional[httpx.AsyncClient] = None
 
 
 def get_http_client() -> httpx.AsyncClient:
-    """Get shared HTTP client with connection pooling - 1s timeout for reports"""
+    """Get shared HTTP client with connection pooling - no default timeout (set per-request)"""
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
-            timeout=HTTP_TIMEOUT,  # 1 second for fast reports
-            limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)  # Unlimited connections
+            timeout=HTTP_TIMEOUT_DEFAULT,
+            limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)
         )
     return _http_client
 
@@ -142,9 +151,10 @@ async def switch_account_proxy(account_id: str, old_proxy_id: str = None) -> dic
             http.post(
                 f"{BACKEND_URL}/switch-account-proxy",
                 headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json={"account_id": account_id, "old_proxy_id": old_proxy_id}
+                json={"account_id": account_id, "old_proxy_id": old_proxy_id},
+                timeout=HTTP_TIMEOUT_PROXY
             ),
-            timeout=5.0
+            timeout=HTTP_TIMEOUT_PROXY + 1
         )
         if resp.status_code == 200:
             data = resp.json()
@@ -284,35 +294,91 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
 
 
 async def get_next_task(runner: str = None) -> dict:
-    """Fetch single task using shared HTTP client"""
+    """Fetch single task using shared HTTP client with proper timeout and error handling"""
+    global _consecutive_http_errors
     try:
         body = {"runner": runner} if runner else {}
         http = get_http_client()
-        resp = await http.post(
-            f"{BACKEND_URL}/get-next-task",
-            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json=body
+        resp = await asyncio.wait_for(
+            http.post(
+                f"{BACKEND_URL}/get-next-task",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json=body,
+                timeout=HTTP_TIMEOUT_DISPATCH
+            ),
+            timeout=HTTP_TIMEOUT_DISPATCH + 1
         )
-        return resp.json()
+        
+        if resp.status_code != 200:
+            print(f"  [HTTP ERROR] get_next_task: status={resp.status_code}, body={resp.text[:200]}")
+            _consecutive_http_errors += 1
+            backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+            return {"task": "wait", "seconds": backoff}
+        
+        try:
+            data = resp.json()
+            _consecutive_http_errors = 0  # Reset on success
+            return data
+        except Exception as json_err:
+            print(f"  [HTTP ERROR] get_next_task: JSON decode failed: {json_err}, body={resp.text[:200]}")
+            _consecutive_http_errors += 1
+            backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+            return {"task": "wait", "seconds": backoff}
+            
+    except asyncio.TimeoutError:
+        print(f"  [HTTP ERROR] get_next_task: Timeout after {HTTP_TIMEOUT_DISPATCH}s")
+        _consecutive_http_errors += 1
+        backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+        return {"task": "wait", "seconds": backoff}
     except Exception as e:
-        print(f"  [HTTP ERROR] get_next_task: {e}")
-        return {"task": "wait", "seconds": 1}
+        print(f"  [HTTP ERROR] get_next_task: {type(e).__name__}: {repr(e)}")
+        _consecutive_http_errors += 1
+        backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+        return {"task": "wait", "seconds": backoff}
 
 
 async def get_batch_tasks(runner: str = None, batch_size: int = 50) -> dict:
-    """Fetch batch of tasks using shared HTTP client"""
+    """Fetch batch of tasks using shared HTTP client with proper timeout and error handling"""
+    global _consecutive_http_errors
     try:
         body = {"runner": runner, "batch_size": batch_size}
         http = get_http_client()
-        resp = await http.post(
-            f"{BACKEND_URL}/get-batch-tasks",
-            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json=body
+        resp = await asyncio.wait_for(
+            http.post(
+                f"{BACKEND_URL}/get-batch-tasks",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json=body,
+                timeout=HTTP_TIMEOUT_DISPATCH
+            ),
+            timeout=HTTP_TIMEOUT_DISPATCH + 1
         )
-        return resp.json()
+        
+        if resp.status_code != 200:
+            print(f"  [HTTP ERROR] get_batch_tasks: status={resp.status_code}, body={resp.text[:200]}")
+            _consecutive_http_errors += 1
+            backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+            return {"tasks": [], "delay_after": backoff}
+        
+        try:
+            data = resp.json()
+            _consecutive_http_errors = 0  # Reset on success
+            return data
+        except Exception as json_err:
+            print(f"  [HTTP ERROR] get_batch_tasks: JSON decode failed: {json_err}, body={resp.text[:200]}")
+            _consecutive_http_errors += 1
+            backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+            return {"tasks": [], "delay_after": backoff}
+            
+    except asyncio.TimeoutError:
+        print(f"  [HTTP ERROR] get_batch_tasks: Timeout after {HTTP_TIMEOUT_DISPATCH}s")
+        _consecutive_http_errors += 1
+        backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+        return {"tasks": [], "delay_after": backoff}
     except Exception as e:
-        print(f"  [HTTP ERROR] get_batch_tasks: {e}")
-        return {"tasks": [], "delay_after": 1}
+        print(f"  [HTTP ERROR] get_batch_tasks: {type(e).__name__}: {repr(e)}")
+        _consecutive_http_errors += 1
+        backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+        return {"tasks": [], "delay_after": backoff}
 
 
 async def report_result(task_type: str, result: dict):
@@ -550,26 +616,26 @@ def generate_fingerprint():
   // ========== 4. CAMPAIGN_RUNNER.PY ==========
   const campaignRunnerPy = String.raw`#!/usr/bin/env python3
 """
-TelegramCRM - Campaign Runner (ULTRA-FAST)
-===========================================
-BUILD: 2026-01-08-ultra-fast
+TelegramCRM - Campaign Runner (Admin-Controlled Speed)
+=======================================================
+BUILD: 2026-01-09-admin-speed
 
-ULTRA-FAST SETTINGS:
-- Zero stagger delay (all messages fire instantly)
-- Unlimited report concurrency
-- 5 second delay between batches
-- Unlimited batch size (0 = all available)
+SPEED CONTROL via Admin Dashboard:
+- staggerMin/staggerMax: delay between messages (0 = instant ultra-fast)
+- batchSize: messages per batch (0 = unlimited)
+- pollingInterval: wait between batches
 - Proxy auto-switch on timeout
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
 """
 
-BUILD_VERSION = "2026-01-08-ultra-fast"
+BUILD_VERSION = "2026-01-09-admin-speed"
 
 import asyncio
 import signal
 import time
+import random
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
@@ -578,7 +644,7 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-DEFAULT_POLL_INTERVAL = 5  # 5 seconds between batches
+DEFAULT_POLL_INTERVAL = 5  # Fallback if server doesn't specify
 REPORT_CONCURRENCY = None  # Unlimited parallel reports
 
 
@@ -631,8 +697,11 @@ async def pre_connect_batch(tasks: list) -> int:
     return success_count
 
 
-async def process_single_task(task: dict) -> dict:
-    """Process a single campaign send task - NO STAGGER DELAY (ultra-fast).
+async def process_single_task(task: dict, stagger_min: float, stagger_max: float) -> dict:
+    """Process a single campaign send task with admin-controlled stagger.
+
+    stagger_min/stagger_max = 0: Ultra-fast mode (no delay)
+    stagger_min/stagger_max > 0: Controlled speed from admin dashboard
 
     IMPORTANT: This function is fully isolated - any exception here
     only affects this task, never crashes the whole runner.
@@ -675,7 +744,12 @@ async def process_single_task(task: dict) -> dict:
             print(f"    ✗ [{account_phone}] No client")
             return result
 
-        # NO STAGGER DELAY - send immediately (ultra-fast mode)
+        # ADMIN-CONTROLLED STAGGER: if stagger_max > 0, add delay
+        if stagger_max > 0:
+            stagger_delay = random.uniform(stagger_min, stagger_max)
+            if stagger_delay > 0:
+                await asyncio.sleep(stagger_delay)
+
         print(f"  📨 [{account_phone}] → {recipient}")
 
         send_res = await send_message(
@@ -783,19 +857,21 @@ async def report_results_parallel(results: list) -> tuple:
 
 
 async def main_loop():
-    """Main campaign loop - ULTRA-FAST (zero stagger, 5s delay)"""
+    """Main campaign loop - Admin-controlled speed via dashboard settings"""
     global RUNNING
 
     print("=" * 60)
-    print("  TelegramCRM - Campaign Runner (ULTRA-FAST)")
+    print("  TelegramCRM - Campaign Runner (Admin-Controlled Speed)")
     print(f"  BUILD: {BUILD_VERSION}")
     print("=" * 60)
-    print("  🚀 ZERO stagger delay - instant parallel sending")
-    print("  ⚡ Unlimited report concurrency (1s timeout)")
+    print("  📊 Speed controlled via Admin Dashboard:")
+    print("     - staggerMin/staggerMax = 0 → Ultra-fast (instant)")
+    print("     - staggerMin/staggerMax > 0 → Controlled delay")
+    print("     - batchSize = 0 → Unlimited batch size")
     print("  🔄 Proxy auto-switch on timeout")
     print("  ♾️  RUNS FOREVER - auto-restarts on errors")
     print("=" * 60)
-    print("\n✓ Starting ultra-fast campaign runner...\n")
+    print("\n✓ Starting campaign runner...\n")
 
     consecutive_empty = 0
 
@@ -806,7 +882,10 @@ async def main_loop():
             tasks = batch_result.get("tasks", [])
             fetch_time = time.time() - batch_start
 
+            # Get speed settings from server (admin dashboard controls these)
             delay_after = batch_result.get("delay_after", DEFAULT_POLL_INTERVAL)
+            stagger_min = batch_result.get("stagger_min", 0)
+            stagger_max = batch_result.get("stagger_max", 0)
             more_pending = batch_result.get("more_pending", False)
 
             if batch_result.get("stop_signal"):
@@ -829,7 +908,14 @@ async def main_loop():
                 continue
 
             consecutive_empty = 0
-            print(f"\n  📦 Processing {len(tasks)} messages (ZERO stagger)...")
+            
+            # Show current speed mode
+            if stagger_max == 0:
+                speed_mode = "ULTRA-FAST (zero stagger)"
+            else:
+                speed_mode = f"stagger {stagger_min:.1f}-{stagger_max:.1f}s"
+            
+            print(f"\n  📦 Processing {len(tasks)} messages [{speed_mode}]...")
             print(f"     [fetch: {fetch_time:.2f}s]")
 
             connect_start = time.time()
@@ -837,10 +923,10 @@ async def main_loop():
             connect_time = time.time() - connect_start
             print(f"     [connect: {connect_time:.2f}s]")
 
-            # Execute ALL tasks in parallel - NO STAGGER (ultra-fast)
+            # Execute ALL tasks in parallel with admin-controlled stagger
             send_start = time.time()
             results = await asyncio.gather(
-                *[process_single_task(task) for task in tasks],
+                *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
                 return_exceptions=True
             )
             send_time = time.time() - send_start
@@ -872,7 +958,7 @@ async def main_loop():
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("  Starting Campaign Runner - Parallel Speed")
+    print("  Starting Campaign Runner - Admin-Controlled Speed")
     print("  Speed & batch settings from admin dashboard")
     print("  Press Ctrl+C to stop")
     print("=" * 60)
