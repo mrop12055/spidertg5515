@@ -1944,6 +1944,7 @@ async def main_loop():
             batch = await get_batch_tasks(runner="account", batch_size=20)
             tasks = batch.get("tasks", [])
             delay_after = batch.get("delay_after", 3)
+            reason = batch.get("reason", "")
             
             if tasks:
                 print(f"\\n[BATCH] Processing {len(tasks)} tasks in parallel...")
@@ -1953,7 +1954,8 @@ async def main_loop():
                 
                 print(f"[BATCH] Completed {len(tasks)} tasks")
             else:
-                # No tasks, wait before polling again
+                # Print waiting status so user knows runner is alive
+                print(f"[WAIT] No tasks. Polling again in {delay_after}s..." + (f" ({reason})" if reason else ""))
                 await asyncio.sleep(delay_after)
         
         except Exception as e:
