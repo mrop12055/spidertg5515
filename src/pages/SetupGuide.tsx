@@ -1325,18 +1325,21 @@ async def setup_message_handler(client, account_id: str):
             sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
             
             # ========== EARLY FILTER: Check known recipients ==========
-            # Accept message if: sender ID is known OR sender phone is in campaign recipients
-            # This catches first-time replies from campaign recipients whose ID we don't know yet
+            # Accept message if:
+            # 1. Sender is in account's contact list (already a contact)
+            # 2. Sender ID is in known recipients (previous conversations)
+            # 3. Sender phone is in known phones (campaign recipients)
+            is_contact = getattr(sender, 'contact', False)  # Already in contact list
             is_known_id = sender.id in known_recipient_ids if known_recipient_ids else False
             is_known_phone = sender_phone in known_recipient_phones if (sender_phone and known_recipient_phones) else False
             
-            if known_recipient_ids and not is_known_id and not is_known_phone:
+            if known_recipient_ids and not is_contact and not is_known_id and not is_known_phone:
                 # Rate-limited logging (only once per sender per 5 minutes)
                 if not hasattr(handler, '_filtered_log') or time.time() - handler._filtered_log.get(sender.id, 0) > 300:
                     if not hasattr(handler, '_filtered_log'):
                         handler._filtered_log = {}
                     handler._filtered_log[sender.id] = time.time()
-                    print(f"    [FILTERED] {sender_name} (id={sender.id}, phone={sender_phone}): not in known recipients")
+                    print(f"    [FILTERED] {sender_name} (id={sender.id}): not contact, not in known recipients")
                 return
             
             content = event.message.text or "[Media]"
