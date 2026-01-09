@@ -59,3 +59,6 @@ verify_jwt = false
 
 [functions.report-batch-results]
 verify_jwt = false
+
+[functions.switch-account-proxy]
+verify_jwt = false

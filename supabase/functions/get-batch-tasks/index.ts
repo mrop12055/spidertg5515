@@ -547,8 +547,10 @@ serve(async (req) => {
       }
 
       // Use campaignBatchSize from settings, limited by available accounts
-      const actualBatchSize = Math.min(campaignBatchSize, campaignUsableAccounts.length);
-      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (settings: ${campaignBatchSize}, accounts: ${campaignUsableAccounts.length}, limit: ${campaignMessagesPerAccountPerDay}/account)`);
+      // If batchSize is 0, treat as "unlimited" - use all available accounts
+      const effectiveBatchSize = campaignBatchSize === 0 ? 9999 : campaignBatchSize;
+      const actualBatchSize = Math.min(effectiveBatchSize, campaignUsableAccounts.length);
+      console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (settings: ${campaignBatchSize}${campaignBatchSize === 0 ? ' [unlimited]' : ''}, accounts: ${campaignUsableAccounts.length}, limit: ${campaignMessagesPerAccountPerDay}/account)`);
 
       // Track recipients with no eligible accounts (all accounts in their failed_account_ids)
       let recipientsWithNoAccounts = 0;

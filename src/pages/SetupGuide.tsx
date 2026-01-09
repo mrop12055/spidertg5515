@@ -23,10 +23,10 @@ TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
-  // ========== 2. CLIENT_MANAGER.PY (Optimized for Speed + Connection Pooling) ==========
+  // ========== 2. CLIENT_MANAGER.PY (ULTRA-FAST + Proxy Auto-Switch) ==========
   const clientManagerPy = `"""
-TelegramCRM - Client Manager (Optimized)
-Fast connections with retry logic, timeouts, proxy support, and HTTP connection pooling
+TelegramCRM - Client Manager (ULTRA-FAST)
+Zero stagger, unlimited concurrency, 1s timeouts, proxy auto-switch
 """
 
 import os
@@ -46,10 +46,11 @@ from fingerprint_generator import generate_fingerprint
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
-# Speed settings - OPTIMIZED FOR FAST LIVECHAT
-CONNECTION_TIMEOUT = 15  # Fast connection timeout
-CONNECTION_RETRIES = 1   # Fail fast, switch proxy immediately
-RETRY_DELAY = 0.5        # Minimal retry delay
+# ULTRA-FAST settings
+CONNECTION_TIMEOUT = 10   # Fast connection timeout
+CONNECTION_RETRIES = 1    # Fail fast, switch proxy immediately
+RETRY_DELAY = 0            # No retry delay
+HTTP_TIMEOUT = 1           # 1 second for HTTP calls (reports)
 
 # Proxy error patterns - fail fast on these
 PROXY_ERROR_PATTERNS = [
@@ -59,17 +60,16 @@ PROXY_ERROR_PATTERNS = [
 ]
 
 # ========== SHARED HTTP CLIENT POOL ==========
-# Prevents socket exhaustion by reusing connections
 _http_client: Optional[httpx.AsyncClient] = None
 
 
 def get_http_client() -> httpx.AsyncClient:
-    """Get shared HTTP client with connection pooling"""
+    """Get shared HTTP client with connection pooling - 1s timeout for reports"""
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
-            timeout=15,  # Faster HTTP timeout
-            limits=httpx.Limits(max_connections=200, max_keepalive_connections=50)  # More connections
+            timeout=HTTP_TIMEOUT,  # 1 second for fast reports
+            limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)  # Unlimited connections
         )
     return _http_client
 
@@ -118,27 +118,46 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
 
 
 async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> bool:
-    for attempt in range(1, max_retries + 1):
-        try:
-            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-            return True
-        except asyncio.TimeoutError:
-            print(f"    [TIMEOUT] Attempt {attempt}/{max_retries}")
-            # Don't retry timeouts - likely proxy issue
+    """Fast connect - fail immediately on timeout/proxy error"""
+    try:
+        await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+        return True
+    except asyncio.TimeoutError:
+        print(f"    [TIMEOUT] Connection timeout")
+        return False
+    except Exception as e:
+        err_str = str(e).lower()
+        if any(p in err_str for p in PROXY_ERROR_PATTERNS):
+            print(f"    [PROXY FAIL] {e}")
             return False
-        except Exception as e:
-            err_str = str(e).lower()
-            # Check if this is a proxy error - fail immediately, don't retry
-            if any(p in err_str for p in PROXY_ERROR_PATTERNS):
-                print(f"    [PROXY FAIL] {e}")
-                return False
-            print(f"    [ERROR] Attempt {attempt}/{max_retries}: {e}")
-            if attempt < max_retries:
-                await asyncio.sleep(RETRY_DELAY * attempt)
-    return False
+        print(f"    [ERROR] {e}")
+        return False
 
 
-async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None) -> Optional[TelegramClient]:
+async def switch_account_proxy(account_id: str, old_proxy_id: str = None) -> dict:
+    """Call edge function to switch account proxy and save to DB"""
+    try:
+        http = get_http_client()
+        resp = await asyncio.wait_for(
+            http.post(
+                f"{BACKEND_URL}/switch-account-proxy",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json={"account_id": account_id, "old_proxy_id": old_proxy_id}
+            ),
+            timeout=5.0
+        )
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("success"):
+                return data.get("new_proxy")
+        return None
+    except Exception as e:
+        print(f"    [PROXY SWITCH ERROR] {e}")
+        return None
+
+
+async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,
+                                auto_switch_proxy: bool = True, skip_avatar: bool = False) -> Optional[TelegramClient]:
     account_id = account["id"]
     
     if account_id in active_clients:
@@ -174,18 +193,21 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         lang_code = fp["lang_code"]
         system_lang_code = fp["system_lang_code"]
         print(f"  [FP] Generated: {device_model} ({system_version})")
-        await report_result("fingerprint_generated", {
+        asyncio.create_task(report_result("fingerprint_generated", {
             "account_id": account_id,
             "device_model": device_model,
             "system_version": system_version,
             "app_version": app_version,
             "lang_code": lang_code,
             "system_lang_code": system_lang_code
-        })
+        }))
     
     proxy = get_proxy_settings(account, task_proxy=task_proxy)
+    old_proxy_id = task_proxy.get("id") if task_proxy else account.get("proxy_id")
+    
     if proxy:
         print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
+    
     try:
         api_id = account.get("api_id") or TELEGRAM_API_ID
         api_hash = account.get("api_hash") or TELEGRAM_API_HASH
@@ -199,59 +221,55 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             system_lang_code=system_lang_code,
             proxy=proxy,
             timeout=CONNECTION_TIMEOUT,
-            connection_retries=CONNECTION_RETRIES,
-            retry_delay=RETRY_DELAY,
+            connection_retries=0,
+            retry_delay=0,
             auto_reconnect=True,
-            request_retries=3
+            request_retries=1
         )
         
         print(f"  [CONNECT] {account['phone_number']}...")
         if not await connect_with_retry(client):
-            print(f"  [FAIL] Proxy/timeout - will retry with different proxy: {account['phone_number']}")
-            # DO NOT mark account as disconnected - it's a proxy issue, not account issue
+            # Proxy timeout - switch proxy and retry immediately
+            if auto_switch_proxy:
+                print(f"  [PROXY SWITCH] Trying new proxy for {account['phone_number']}...")
+                new_proxy = await switch_account_proxy(account_id, old_proxy_id)
+                if new_proxy:
+                    print(f"  [PROXY SWITCH] Got: {new_proxy['host']}:{new_proxy['port']}")
+                    account["proxy"] = new_proxy
+                    return await get_or_create_client(account, setup_handler, task_proxy=new_proxy,
+                                                       auto_switch_proxy=False, skip_avatar=skip_avatar)
+            print(f"  [FAIL] No proxy: {account['phone_number']}")
             return None
         
         if not await client.is_user_authorized():
-            await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
+            asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"}))
             return None
         
-        # Check if account is deleted/banned
-        try:
-            me = await asyncio.wait_for(client.get_me(), timeout=10)  # Faster check
-            if not me:
-                print(f"  [BANNED] Account deleted: {account['phone_number']}")
-                await report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"})
-                return None
-        except Exception as me_err:
-            err_str = str(me_err).lower()
-            if any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
-                print(f"  [BANNED] {account['phone_number']}: {me_err}")
-                await report_result("account_banned", {"account_id": account_id, "reason": str(me_err)})
-                return None
-            elif any(x in err_str for x in ["session", "revoked", "auth"]):
-                print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
-                await report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)})
-                return None
+        me = None
+        if not skip_avatar:
+            try:
+                me = await asyncio.wait_for(client.get_me(), timeout=5)
+                if not me:
+                    print(f"  [BANNED] Account deleted: {account['phone_number']}")
+                    asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"}))
+                    return None
+            except Exception as me_err:
+                err_str = str(me_err).lower()
+                if any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
+                    print(f"  [BANNED] {account['phone_number']}: {me_err}")
+                    asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": str(me_err)}))
+                    return None
+                elif any(x in err_str for x in ["session", "revoked", "auth"]):
+                    print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
+                    asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)}))
+                    return None
         
         if setup_handler:
             await setup_handler(client, account_id)
             setattr(client, "_handler", True)
         
         active_clients[account_id] = client
-        
-        # Fast mode: skip profile if cached
-        if account.get("first_name") or account.get("username"):
-            await report_result("account_connected", {"account_id": account_id, "skip_profile_update": True})
-        else:
-            if me:
-                await report_result("account_connected", {
-                    "account_id": account_id,
-                    "first_name": me.first_name,
-                    "last_name": me.last_name,
-                    "username": me.username,
-                    "telegram_id": me.id,
-                    "phone": me.phone
-                })
+        asyncio.create_task(report_result("account_connected", {"account_id": account_id, "skip_profile_update": True}))
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
@@ -259,7 +277,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         err_str = str(e).lower()
         if any(x in err_str for x in ["deleted", "deactivated", "banned"]):
             print(f"  [BANNED] {account['phone_number']}: {e}")
-            await report_result("account_banned", {"account_id": account_id, "reason": str(e)})
+            asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": str(e)}))
         else:
             print(f"  [FAIL] {account['phone_number']}: {e}")
         return None
@@ -532,27 +550,25 @@ def generate_fingerprint():
   // ========== 4. CAMPAIGN_RUNNER.PY ==========
   const campaignRunnerPy = String.raw`#!/usr/bin/env python3
 """
-TelegramCRM - Campaign Runner (Server-Controlled Speed + Parallel Reporting)
-=============================================================================
-BUILD: 2026-01-08-batch-reporting-v2
+TelegramCRM - Campaign Runner (ULTRA-FAST)
+===========================================
+BUILD: 2026-01-08-ultra-fast
 
-All speed settings controlled by admin dashboard.
-
-- Polls server for batch of tasks
-- Speed settings (stagger, polling) controlled by server
-- Executes ALL tasks in parallel
-- Reports results in parallel (bounded concurrency)
-- Uses batch reporting endpoint for speed
+ULTRA-FAST SETTINGS:
+- Zero stagger delay (all messages fire instantly)
+- Unlimited report concurrency
+- 5 second delay between batches
+- Unlimited batch size (0 = all available)
+- Proxy auto-switch on timeout
 
 Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
 """
 
-BUILD_VERSION = "2026-01-08-batch-reporting-v2"
+BUILD_VERSION = "2026-01-08-ultra-fast"
 
 import asyncio
 import signal
-import random
 import time
 
 from client_manager import (
@@ -562,8 +578,8 @@ from client_manager import (
 
 # ========== GLOBAL STATE ==========
 RUNNING = True
-DEFAULT_POLL_INTERVAL = 3  # Default polling (server can override)
-REPORT_CONCURRENCY = 20    # Max parallel report calls
+DEFAULT_POLL_INTERVAL = 5  # 5 seconds between batches
+REPORT_CONCURRENCY = None  # Unlimited parallel reports
 
 
 def signal_handler(sig, frame):
@@ -615,8 +631,8 @@ async def pre_connect_batch(tasks: list) -> int:
     return success_count
 
 
-async def process_single_task(task: dict, stagger_min: float, stagger_max: float) -> dict:
-    """Process a single campaign send task.
+async def process_single_task(task: dict) -> dict:
+    """Process a single campaign send task - NO STAGGER DELAY (ultra-fast).
 
     IMPORTANT: This function is fully isolated - any exception here
     only affects this task, never crashes the whole runner.
@@ -645,8 +661,8 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
         }
 
     try:
-        # Get or create client with task-level proxy
-        client = await get_or_create_client(account, task_proxy=proxy)
+        # Get or create client with task-level proxy (auto-switch enabled)
+        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True)
 
         if not client:
             result = {
@@ -659,10 +675,7 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             print(f"    ✗ [{account_phone}] No client")
             return result
 
-        # Server-controlled stagger delay
-        stagger_delay = random.uniform(stagger_min, stagger_max)
-        await asyncio.sleep(stagger_delay)
-
+        # NO STAGGER DELAY - send immediately (ultra-fast mode)
         print(f"  📨 [{account_phone}] → {recipient}")
 
         send_res = await send_message(
@@ -730,41 +743,35 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
 
 
 async def report_results_parallel(results: list) -> tuple:
-    """Report all results to server in parallel with bounded concurrency.
-
-    Returns: (success_count, fail_count, report_time_seconds)
-    """
+    """Report all results - UNLIMITED concurrency, 1s timeout."""
     start_time = time.time()
-
-    # Filter out exceptions
     valid_results = [r for r in results if not isinstance(r, Exception)]
 
     if not valid_results:
         return 0, 0, 0
 
-    # Try batch reporting first (much faster if available)
+    # Try batch reporting first (1s timeout)
     try:
-        batch_success = await report_batch_results(valid_results)
+        batch_success = await asyncio.wait_for(report_batch_results(valid_results), timeout=1.0)
         if batch_success:
             elapsed = time.time() - start_time
             success_count = sum(1 for r in valid_results if r.get("success"))
             return success_count, len(valid_results) - success_count, elapsed
+    except asyncio.TimeoutError:
+        print(f"  ⚠ Batch report timeout (1s)")
     except Exception as e:
-        print(f"  ⚠ Batch report failed, falling back to parallel: {e}")
+        print(f"  ⚠ Batch report failed: {e}")
 
-    # Fallback: parallel individual reports with bounded concurrency
-    semaphore = asyncio.Semaphore(REPORT_CONCURRENCY)
-
+    # Fallback: UNLIMITED parallel reports with 1s timeout each
     async def report_one(result: dict) -> bool:
-        async with semaphore:
-            try:
-                await report_result("send", result)
-                return result.get("success", False)
-            except Exception as e:
-                print(f"    ⚠ Report error: {e}")
-                return False
+        try:
+            await asyncio.wait_for(report_result("send", result), timeout=1.0)
+            return result.get("success", False)
+        except asyncio.TimeoutError:
+            return False
+        except:
+            return False
 
-    # Report all in parallel (bounded by semaphore)
     report_results = await asyncio.gather(
         *[report_one(r) for r in valid_results],
         return_exceptions=True
@@ -772,93 +779,68 @@ async def report_results_parallel(results: list) -> tuple:
 
     elapsed = time.time() - start_time
     success_count = sum(1 for r in report_results if r is True)
-    fail_count = len(valid_results) - success_count
-
-    return success_count, fail_count, elapsed
+    return success_count, len(valid_results) - success_count, elapsed
 
 
 async def main_loop():
-    """Main campaign loop - Server-controlled speed settings
-
-    Simple loop:
-    1. Request tasks from server (server decides batch size + speed)
-    2. Execute ALL tasks in parallel with server-controlled stagger
-    3. Report ALL results in parallel (bounded concurrency)
-    4. Wait delay_after seconds (server-controlled, can be 0)
-    5. Repeat
-    """
+    """Main campaign loop - ULTRA-FAST (zero stagger, 5s delay)"""
     global RUNNING
 
     print("=" * 60)
-    print("  TelegramCRM - Campaign Runner (Parallel Speed)")
+    print("  TelegramCRM - Campaign Runner (ULTRA-FAST)")
     print(f"  BUILD: {BUILD_VERSION}")
     print("=" * 60)
-    print("  🚀 Speed settings from admin dashboard")
-    print("  ⚡ Parallel sending + batch reporting")
+    print("  🚀 ZERO stagger delay - instant parallel sending")
+    print("  ⚡ Unlimited report concurrency (1s timeout)")
+    print("  🔄 Proxy auto-switch on timeout")
     print("  ♾️  RUNS FOREVER - auto-restarts on errors")
-    print("  ⏹ Stop: Press Ctrl+C or pause campaign in dashboard")
     print("=" * 60)
-    print("\n✓ Starting campaign runner...\n")
+    print("\n✓ Starting ultra-fast campaign runner...\n")
 
     consecutive_empty = 0
 
     while RUNNING:
         try:
             batch_start = time.time()
-
-            # Request batch of tasks from server
             batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
-
             fetch_time = time.time() - batch_start
 
-            # Get server-controlled speed settings
-            stagger_min = batch_result.get("stagger_min", 0.3)
-            stagger_max = batch_result.get("stagger_max", 1.5)
             delay_after = batch_result.get("delay_after", DEFAULT_POLL_INTERVAL)
             more_pending = batch_result.get("more_pending", False)
 
-            # Check for stop signal from server - now just waits instead of stopping
             if batch_result.get("stop_signal"):
-                reason = batch_result.get("reason", "Campaign paused from dashboard")
+                reason = batch_result.get("reason", "Campaign paused")
                 consecutive_empty += 1
                 if consecutive_empty == 1:
-                    print(f"  ⏸️  {reason} — waiting for campaign to resume...")
+                    print(f"  ⏸️  {reason} — waiting...")
                 elif consecutive_empty % 20 == 0:
-                    print("  ⏸️  Still waiting for campaign to resume...")
+                    print("  ⏸️  Still waiting...")
                 await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
                 continue
 
-            # Handle no tasks
             if not tasks:
-                reason = batch_result.get("reason", "")
                 consecutive_empty += 1
-
                 if consecutive_empty == 1:
-                    if reason:
-                        print(f"  ⏳ {reason}")
-                    else:
-                        print("  ⏳ No pending campaign tasks, waiting...")
+                    print(f"  ⏳ {batch_result.get('reason', 'No tasks')}")
                 elif consecutive_empty % 10 == 0:
-                    print("  ⏳ Still waiting for campaign tasks...")
-
+                    print("  ⏳ Still waiting...")
                 await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
                 continue
 
             consecutive_empty = 0
-            print(f"\n  📦 Processing {len(tasks)} messages (stagger: {stagger_min:.1f}-{stagger_max:.1f}s)...")
+            print(f"\n  📦 Processing {len(tasks)} messages (ZERO stagger)...")
             print(f"     [fetch: {fetch_time:.2f}s]")
 
-            # Pre-connect all accounts in parallel FIRST (major speedup)
             connect_start = time.time()
             await pre_connect_batch(tasks)
             connect_time = time.time() - connect_start
             print(f"     [connect: {connect_time:.2f}s]")
 
-            # Execute ALL tasks in parallel with server-controlled stagger
+            # Execute ALL tasks in parallel - NO STAGGER (ultra-fast)
             send_start = time.time()
             results = await asyncio.gather(
-                *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
+                *[process_single_task(task) for task in tasks],
                 return_exceptions=True
             )
             send_time = time.time() - send_start
