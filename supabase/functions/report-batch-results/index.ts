@@ -160,10 +160,28 @@ serve(async (req) => {
         }
       }
 
-      // 4. Create messages in batch
+      // 4. Create messages in batch - CHECK FOR DUPLICATES FIRST
+      // Get campaign_recipient_ids that already have messages
+      const recipientIds = successResults.map(r => r.campaign_recipient_id).filter(Boolean);
+      const { data: existingMessages } = await supabase
+        .from("messages")
+        .select("campaign_recipient_id")
+        .in("campaign_recipient_id", recipientIds);
+      
+      const existingRecipientIds = new Set((existingMessages || []).map(m => m.campaign_recipient_id));
+      
       const messagesToInsert: any[] = [];
+      let skippedDuplicates = 0;
+      
       for (const r of successResults) {
         const convId = resultToConvId.get(r.campaign_recipient_id);
+        
+        // Skip if message already exists for this recipient
+        if (existingRecipientIds.has(r.campaign_recipient_id)) {
+          skippedDuplicates++;
+          continue;
+        }
+        
         if (convId) {
           messagesToInsert.push({
             account_id: r.account_id,
@@ -175,7 +193,13 @@ serve(async (req) => {
             campaign_recipient_id: r.campaign_recipient_id,
             api_credential_id: r.api_credential_id || null,
           });
+          // Add to set to prevent duplicates within same batch
+          existingRecipientIds.add(r.campaign_recipient_id);
         }
+      }
+      
+      if (skippedDuplicates > 0) {
+        console.log(`[report-batch-results] Skipped ${skippedDuplicates} duplicate messages`);
       }
 
       if (messagesToInsert.length > 0) {
