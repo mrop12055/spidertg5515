@@ -1637,8 +1637,8 @@ import base64
 import httpx
 
 from client_manager import (
-    get_or_create_client, report_result, shutdown_all, 
-    validate_contact, SESSION_FOLDER, SUPABASE_URL, SUPABASE_KEY
+    get_or_create_client, report_result, shutdown_all,
+    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL
 )
 
 RUNNING = True
@@ -1895,12 +1895,14 @@ async def get_batch_tasks(runner="account", batch_size=20):
     """Get a batch of tasks for parallel processing"""
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(f"{SUPABASE_URL}/functions/v1/get-batch-tasks", 
-                headers={"Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-                json={"runner": runner, "batch_size": batch_size})
+            resp = await client.post(
+                f"{BACKEND_URL}/get-batch-tasks",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json={"runner": runner, "batch_size": batch_size},
+            )
             return resp.json()
     except Exception as e:
-        print(f"[HTTP ERROR] get_batch_tasks: {e}")
+        print(f"[HTTP ERROR] get_batch_tasks: {type(e).__name__}: {repr(e)}")
         return {"tasks": [], "delay_after": 5}
 
 
