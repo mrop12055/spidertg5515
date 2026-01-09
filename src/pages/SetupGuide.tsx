@@ -1791,10 +1791,11 @@ async def process_single_task(task):
     account = task.get("account", {})
     task_id = task.get("task_id")
     task_data = task.get("task_data", {})
+    task_proxy = task.get("proxy")  # Get proxy from task (sent by get-batch-tasks)
     
     try:
         if task_type == "spambot_check":
-            client = await get_or_create_client(account)
+            client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [SPAM] Checking {account.get('phone_number')}...")
                 status, ban_reason, response = await check_spambot(client)
@@ -1802,14 +1803,14 @@ async def process_single_task(task):
                 print(f"    Result: {status}")
         
         elif task_type == "change_name":
-            client = await get_or_create_client(account)
+            client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [NAME] Changing for {account.get('phone_number')}...")
                 success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
                 await report_result("change_name", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error, "first_name": task_data.get("first_name"), "last_name": task_data.get("last_name")})
         
         elif task_type == "change_photo":
-            client = await get_or_create_client(account)
+            client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [PHOTO] Changing for {account.get('phone_number')}...")
                 photo_source = task_data.get("photo_url") or task_data.get("photo_base64", "")
@@ -1817,21 +1818,21 @@ async def process_single_task(task):
                 await report_result("change_photo", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error})
         
         elif task_type == "privacy_settings":
-            client = await get_or_create_client(account)
+            client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [PRIVACY] Updating for {account.get('phone_number')}...")
                 success, error = await update_privacy(client, task_data.get("hidePhone", False), task_data.get("hideLastSeen", False), task_data.get("disableCalls", False))
                 await report_result("privacy_settings", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error})
         
         elif task_type == "change_password":
-            client = await get_or_create_client(account)
+            client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [PASS] Changing for {account.get('phone_number')}...")
                 success, error = await change_password(client, task_data.get("existing_password", ""), task_data.get("new_password", ""))
                 await report_result("change_password", {"task_id": task_id, "account_id": account.get("id"), "success": success, "error": error})
         
         elif task_type == "logout_sessions":
-            client = await get_or_create_client(account)
+            client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [LOGOUT] Logging out other sessions for {account.get('phone_number')}...")
                 success, error = await logout_other_sessions(client)
@@ -1840,7 +1841,7 @@ async def process_single_task(task):
         elif task_type == "verify_session":
             print(f"  [VERIFY] Checking {account.get('phone_number')}...")
             try:
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     status, error, user_data = await verify_session(client, account.get("id"))
                     await report_result("verify_session", {"task_id": task_id, "account_id": account.get("id"), "status": status, "error": error, "user_data": user_data})
@@ -1853,7 +1854,7 @@ async def process_single_task(task):
         elif task_type == "sync_profile":
             print(f"  [SYNC] Syncing profile for {account.get('phone_number')}...")
             try:
-                client = await get_or_create_client(account)
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
                     me = await client.get_me()
                     if me:
