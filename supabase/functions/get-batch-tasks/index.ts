@@ -385,25 +385,44 @@ serve(async (req) => {
 
       console.log(`[get-batch-tasks] API usage (24h): ${JSON.stringify(Object.fromEntries(apiUsageCounts))}, limit: ${apiDailyLimit}`);
 
-      // Filter accounts to only those whose API is under the 24h limit
-      const accountsWithAvailableApi = usableAccounts.filter((a: any) => {
-        if (!a.api_credential_id) return true; // Allow accounts without API (will use default)
-        const apiUsed = apiUsageCounts.get(a.api_credential_id) || 0;
-        if (apiUsed >= apiDailyLimit) {
-          console.log(`[get-batch-tasks] Skipping account ${a.phone_number} - API at limit (${apiUsed}/${apiDailyLimit})`);
-          return false;
+      // Get all available APIs sorted by usage (least used first)
+      const { data: allApis } = await supabase
+        .from("telegram_api_credentials")
+        .select("id, name, is_active")
+        .eq("is_active", true);
+      
+      const availableApis = (allApis || [])
+        .filter((api: any) => (apiUsageCounts.get(api.id) || 0) < apiDailyLimit)
+        .sort((a: any, b: any) => {
+          const usageA = apiUsageCounts.get(a.id) || 0;
+          const usageB = apiUsageCounts.get(b.id) || 0;
+          return usageA - usageB; // Least used first
+        });
+      
+      console.log(`[get-batch-tasks] Available APIs: ${availableApis.map((a: any) => `${a.name}:${apiUsageCounts.get(a.id) || 0}/${apiDailyLimit}`).join(', ')}`);
+      
+      // If no APIs available, skip all accounts
+      if (availableApis.length === 0) {
+        console.log(`[get-batch-tasks] No APIs available under limit - skipping all accounts`);
+        return new Response(JSON.stringify({ tasks: [], message: "All APIs at daily limit" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // ALWAYS assign the least-used API to each account (ignore account's default API)
+      const accountsWithAvailableApi = usableAccounts.map((a: any) => {
+        // Find the API with least usage that's still under limit
+        const bestApi = availableApis[0]; // Already sorted by usage ascending
+        const bestApiUsage = apiUsageCounts.get(bestApi.id) || 0;
+        
+        if (a.api_credential_id !== bestApi.id) {
+          console.log(`[get-batch-tasks] LOAD BALANCE: Account ${a.phone_number} -> ${bestApi.name} (${bestApiUsage}/${apiDailyLimit})`);
         }
-        return true;
+        
+        return { ...a, api_credential_id: bestApi.id, _bestApi: bestApi };
       });
 
-      // Sort by API usage (least-used first for even distribution)
-      accountsWithAvailableApi.sort((a: any, b: any) => {
-        const usageA = apiUsageCounts.get(a.api_credential_id) || 0;
-        const usageB = apiUsageCounts.get(b.api_credential_id) || 0;
-        return usageA - usageB; // Least used first
-      });
-
-      console.log(`[get-batch-tasks] ${accountsWithAvailableApi.length} accounts have API under limit (of ${usableAccounts.length} total)`);
+      console.log(`[get-batch-tasks] ${accountsWithAvailableApi.length} accounts assigned to least-used APIs`);
 
       // Filter accounts for campaigns using campaign-specific per-account limit
       const campaignUsableAccounts = accountsWithAvailableApi.filter((a: any) => {
