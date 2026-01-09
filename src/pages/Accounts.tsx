@@ -1039,7 +1039,7 @@ const Accounts: React.FC = () => {
       }
       
       if (selectedProxyId !== 'auto') {
-        // Single proxy to all accounts - parallel update
+        // Single proxy to all selected accounts - parallel update
         await Promise.all(
           selectedAccountIds.map(accountId =>
             supabase
@@ -1050,18 +1050,23 @@ const Accounts: React.FC = () => {
         );
         toast.success(`Assigned proxy to ${selectedAccountIds.length} account(s)`);
       } else {
-        // Use smart distribution edge function
-        toast.info('Running smart proxy distribution...');
+        // Random distribution - only for selected accounts
+        // Randomly assign available proxies to selected accounts only
+        let assignedCount = 0;
         
-        const { data, error } = await supabase.functions.invoke('enforce-proxy-mapping');
-        
-        if (error) throw error;
-        
-        if (data?.success) {
-          toast.success(data.message || `Smart distribution completed: ${data.stats?.assignments_made || 0} assignments`);
-        } else {
-          toast.error(data?.error || 'Distribution failed');
+        for (const accountId of selectedAccountIds) {
+          // Pick a random proxy from active proxies
+          const randomProxy = activeProxies[Math.floor(Math.random() * activeProxies.length)];
+          
+          const { error } = await supabase
+            .from('telegram_accounts')
+            .update({ proxy_id: randomProxy.id })
+            .eq('id', accountId);
+          
+          if (!error) assignedCount++;
         }
+        
+        toast.success(`Randomly assigned proxies to ${assignedCount} selected account(s)`);
       }
       
       setIsBulkProxyOpen(false);
