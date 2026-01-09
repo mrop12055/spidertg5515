@@ -547,7 +547,24 @@ const Settings: React.FC = () => {
                     <div className="space-y-4 pt-4">
                       <div className="space-y-2">
                         <Label>Device Type</Label>
-                        <Select value={bulkApiType} onValueChange={setBulkApiType}>
+                        <Select 
+                          value={bulkApiType} 
+                          onValueChange={(value) => {
+                            setBulkApiType(value);
+                            // Auto-fill API when device is selected
+                            if (value !== 'random') {
+                              const creds = {
+                                android: '2040:b18441a1ff607e10a989891a5462e627',
+                                ios: '21724:3e0cb5efcd52300aec5994fdfc5bdc16',
+                                desktop: '2496:8da85b0d5bfe62527e5b244c209159c3',
+                                macos: '2834:68875f756c9b437a8b916ca3de215571',
+                              }[value];
+                              if (creds) setBulkApiInput(creds);
+                            } else {
+                              setBulkApiInput('');
+                            }
+                          }}
+                        >
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
@@ -559,28 +576,25 @@ const Settings: React.FC = () => {
                             <SelectItem value="random">🎲 Custom (enter manually)</SelectItem>
                           </SelectContent>
                         </Select>
-                        {bulkApiType !== 'random' && (
-                          <p className="text-xs text-muted-foreground">
-                            API credentials for {bulkApiType} will be added automatically
-                          </p>
-                        )}
                       </div>
                       
-                      {bulkApiType === 'random' && (
-                        <div className="space-y-2">
-                          <Label>Custom API Credentials</Label>
-                          <Textarea
-                            placeholder="12345678:a1b2c3d4e5f6g7h8i9j0&#10;87654321:k1l2m3n4o5p6q7r8s9t0"
-                            value={bulkApiInput}
-                            onChange={(e) => setBulkApiInput(e.target.value)}
-                            rows={6}
-                            className="font-mono text-sm"
-                          />
-                          <p className="text-xs text-muted-foreground">
-                            Enter one API per line as: api_id:api_hash — Random device types assigned
-                          </p>
-                        </div>
-                      )}
+                      <div className="space-y-2">
+                        <Label>API Credentials</Label>
+                        <Textarea
+                          placeholder="12345678:a1b2c3d4e5f6g7h8i9j0&#10;87654321:k1l2m3n4o5p6q7r8s9t0"
+                          value={bulkApiInput}
+                          onChange={(e) => setBulkApiInput(e.target.value)}
+                          rows={6}
+                          className="font-mono text-sm"
+                          readOnly={bulkApiType !== 'random'}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          {bulkApiType === 'random' 
+                            ? 'Enter one API per line as: api_id:api_hash — Random device types assigned'
+                            : `API credentials for ${bulkApiType} auto-filled`
+                          }
+                        </p>
+                      </div>
                       
                       <Button 
                         onClick={handleBulkImport} 
