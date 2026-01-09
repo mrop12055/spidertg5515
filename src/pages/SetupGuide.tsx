@@ -167,9 +167,23 @@ async def switch_account_proxy(account_id: str, old_proxy_id: str = None) -> dic
 
 
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,
-                                auto_switch_proxy: bool = True, skip_avatar: bool = False) -> Optional[TelegramClient]:
-    account_id = account["id"]
+                                auto_switch_proxy: bool = True, skip_avatar: bool = False,
+                                require_proxy: bool = True) -> Optional[TelegramClient]:
+    """
+    Get or create a Telegram client for an account.
     
+    Args:
+        account: Account data with session, fingerprint, proxy info
+        setup_handler: Optional handler to setup after connection
+        task_proxy: Proxy from task (overrides account.proxy)
+        auto_switch_proxy: If True, switch proxy on connection failure
+        skip_avatar: If True, skip profile sync
+        require_proxy: If True (default), skip account if no proxy assigned
+    """
+    account_id = account["id"]
+    phone = account.get("phone_number", account_id[:8])
+    
+    # ========== STEP 1: CHECK EXISTING CLIENT ==========
     if account_id in active_clients:
         client = active_clients[account_id]
         try:
@@ -181,20 +195,33 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         except:
             del active_clients[account_id]
     
+    # ========== STEP 2: CHECK SESSION DATA ==========
     session_data = account.get("session_data")
     if not session_data:
+        print(f"  [SKIP] {phone} - No session data")
         return None
     
+    # ========== STEP 3: CHECK PROXY (CRITICAL SAFETY) ==========
+    proxy = get_proxy_settings(account, task_proxy=task_proxy)
+    old_proxy_id = task_proxy.get("id") if task_proxy else account.get("proxy_id")
+    
+    if require_proxy and not proxy:
+        print(f"  [SKIP] {phone} - No proxy assigned (safety: accounts without proxy are skipped)")
+        return None
+    
+    # ========== STEP 4: DECODE SESSION FILE ==========
     session_path = decode_session_file(account["phone_number"], session_data)
     if not session_path:
         return None
     
+    # ========== STEP 5: USE OR GENERATE FINGERPRINT ==========
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     app_version = account.get("app_version") or "10.14.2"
     lang_code = account.get("lang_code") or "en"
     system_lang_code = account.get("system_lang_code") or "en-US"
     
+    # If fingerprint is missing, generate one and save to DB
     if not device_model or not system_version:
         fp = generate_fingerprint()
         device_model = fp["device_model"]
@@ -202,7 +229,8 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         app_version = fp["app_version"]
         lang_code = fp["lang_code"]
         system_lang_code = fp["system_lang_code"]
-        print(f"  [FP] Generated: {device_model} ({system_version})")
+        print(f"  [FP] Generated new fingerprint: {device_model} ({system_version})")
+        # Save fingerprint to database immediately
         asyncio.create_task(report_result("fingerprint_generated", {
             "account_id": account_id,
             "device_model": device_model,
@@ -211,9 +239,8 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             "lang_code": lang_code,
             "system_lang_code": system_lang_code
         }))
-    
-    proxy = get_proxy_settings(account, task_proxy=task_proxy)
-    old_proxy_id = task_proxy.get("id") if task_proxy else account.get("proxy_id")
+    else:
+        print(f"  [FP] Using existing: {device_model} ({system_version})")
     
     if proxy:
         print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
@@ -247,8 +274,8 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                     print(f"  [PROXY SWITCH] Got: {new_proxy['host']}:{new_proxy['port']}")
                     account["proxy"] = new_proxy
                     return await get_or_create_client(account, setup_handler, task_proxy=new_proxy,
-                                                       auto_switch_proxy=False, skip_avatar=skip_avatar)
-            print(f"  [FAIL] No proxy: {account['phone_number']}")
+                                                       auto_switch_proxy=False, skip_avatar=skip_avatar, require_proxy=False)
+            print(f"  [FAIL] Could not connect (proxy failed): {account['phone_number']}")
             return None
         
         if not await client.is_user_authorized():
