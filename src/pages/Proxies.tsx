@@ -928,9 +928,15 @@ const Proxies: React.FC = () => {
         </Button>
       </div>
 
-      {/* Stats */}
+      {/* Stats - Clickable to filter */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
-        <Card>
+        <Card 
+          className={cn(
+            "cursor-pointer transition-all hover:border-primary/50",
+            statusFilter === 'all' && "ring-2 ring-primary"
+          )}
+          onClick={() => setStatusFilter('all')}
+        >
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
               <Server className="w-6 h-6 text-primary" />
@@ -941,7 +947,13 @@ const Proxies: React.FC = () => {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card 
+          className={cn(
+            "cursor-pointer transition-all hover:border-green-500/50",
+            statusFilter === 'active' && "ring-2 ring-green-500"
+          )}
+          onClick={() => setStatusFilter(statusFilter === 'active' ? 'all' : 'active')}
+        >
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-green-500/10 flex items-center justify-center">
               <Wifi className="w-6 h-6 text-green-500" />
@@ -952,7 +964,13 @@ const Proxies: React.FC = () => {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card 
+          className={cn(
+            "cursor-pointer transition-all hover:border-destructive/50",
+            statusFilter === 'error' && "ring-2 ring-destructive"
+          )}
+          onClick={() => setStatusFilter(statusFilter === 'error' ? 'all' : 'error')}
+        >
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-destructive/10 flex items-center justify-center">
               <WifiOff className="w-6 h-6 text-destructive" />
@@ -963,16 +981,20 @@ const Proxies: React.FC = () => {
             </div>
           </CardContent>
         </Card>
-        <Card>
+        <Card 
+          className={cn(
+            "cursor-pointer transition-all hover:border-muted-foreground/50",
+            statusFilter === 'inactive' && "ring-2 ring-muted-foreground"
+          )}
+          onClick={() => setStatusFilter(statusFilter === 'inactive' ? 'all' : 'inactive')}
+        >
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
               <User className="w-6 h-6 text-muted-foreground" />
             </div>
             <div>
-              <p className="text-2xl font-bold">
-                {proxies.filter(p => accounts.some(a => a.proxyId === p.id)).length}
-              </p>
-              <p className="text-sm text-muted-foreground">In Use</p>
+              <p className="text-2xl font-bold">{proxies.filter(p => p.status === 'inactive').length}</p>
+              <p className="text-sm text-muted-foreground">Inactive</p>
             </div>
           </CardContent>
         </Card>
