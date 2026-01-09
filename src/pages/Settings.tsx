@@ -220,10 +220,10 @@ const Settings: React.FC = () => {
   useEffect(() => {
     fetchApiCredentials();
     
-    // Auto-refresh API usage every 30 seconds while on page
+    // Auto-refresh API usage every 1 minute while on page
     const interval = setInterval(() => {
       fetchApiCredentials();
-    }, 30000);
+    }, 60000); // 60 seconds = 1 minute
     
     return () => clearInterval(interval);
   }, []);
