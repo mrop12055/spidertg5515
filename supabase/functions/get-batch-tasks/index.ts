@@ -468,9 +468,10 @@ serve(async (req) => {
         }
       }
 
-      // ========== RELEASE QUEUED RECIPIENTS TO PENDING ==========
+      // ========== RELEASE QUEUED RECIPIENTS TO PENDING (PARALLEL) ==========
       // This is the core queue mechanism - gradually release recipients based on batch settings
-      for (const campaign of runningCampaigns) {
+      // Process all campaigns in parallel to avoid sequential delays
+      await Promise.all(runningCampaigns.map(async (campaign) => {
         // Count currently processing (pending + sending)
         const { count: inProgressCount } = await supabase
           .from("campaign_recipients")
@@ -497,8 +498,7 @@ serve(async (req) => {
             const idsToRelease = queuedToRelease.map(r => r.id);
             
             // Release to pending with timestamp and assign least-used API
-            // Find the least used API for this batch
-            const leastUsedApi = availableApis[0]; // Already sorted by usage
+            const leastUsedApi = availableApis[0];
             
             await supabase
               .from("campaign_recipients")
@@ -512,7 +512,7 @@ serve(async (req) => {
             console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} from queued to pending (was ${currentInProgress}, now ${currentInProgress + queuedToRelease.length})`);
           }
         }
-      }
+      }));
 
       // ========== GET PENDING RECIPIENTS ==========
       // Get pending recipients with their failed_account_ids
@@ -531,20 +531,21 @@ serve(async (req) => {
       if (totalPending === 0) {
         console.log(`[get-batch-tasks] No pending recipients - checking queue and completion status`);
         
-        // Check each running campaign
-        for (const campaign of runningCampaigns) {
-          // Check if there are still queued recipients
-          const { count: stillQueued } = await supabase
-            .from("campaign_recipients")
-            .select("id", { count: "exact", head: true })
-            .eq("campaign_id", campaign.id)
-            .eq("status", "queued");
-
-          const { count: stillPendingOrSending } = await supabase
-            .from("campaign_recipients")
-            .select("id", { count: "exact", head: true })
-            .eq("campaign_id", campaign.id)
-            .in("status", ["pending", "sending"]);
+        // Check all running campaigns in parallel
+        await Promise.all(runningCampaigns.map(async (campaign) => {
+          // Check if there are still queued or pending/sending recipients (parallel)
+          const [{ count: stillQueued }, { count: stillPendingOrSending }] = await Promise.all([
+            supabase
+              .from("campaign_recipients")
+              .select("id", { count: "exact", head: true })
+              .eq("campaign_id", campaign.id)
+              .eq("status", "queued"),
+            supabase
+              .from("campaign_recipients")
+              .select("id", { count: "exact", head: true })
+              .eq("campaign_id", campaign.id)
+              .in("status", ["pending", "sending"])
+          ]);
 
           // Only complete if BOTH queue and pending/sending are empty
           if ((stillQueued || 0) === 0 && (stillPendingOrSending || 0) === 0) {
@@ -556,7 +557,7 @@ serve(async (req) => {
           } else if ((stillQueued || 0) > 0) {
             console.log(`[get-batch-tasks] Campaign ${campaign.id} has ${stillQueued} queued - waiting for next release cycle`);
           }
-        }
+        }));
 
         return new Response(JSON.stringify({
           tasks: [],
@@ -572,7 +573,8 @@ serve(async (req) => {
       if (campaignUsableAccounts.length === 0) {
         console.log(`[get-batch-tasks] No usable accounts - marking campaigns as completed (pending recipients preserved)`);
         
-        for (const campaign of runningCampaigns) {
+        // Process all campaigns in parallel
+        await Promise.all(runningCampaigns.map(async (campaign) => {
           // Count pending recipients for this campaign
           const { count: pendingCount } = await supabase
             .from("campaign_recipients")
@@ -590,7 +592,7 @@ serve(async (req) => {
             .eq("id", campaign.id);
 
           console.log(`[get-batch-tasks] Campaign ${campaign.id} completed - no usable accounts, ${pendingCount || 0} pending recipients preserved`);
-        }
+        }));
 
         return new Response(JSON.stringify({
           tasks: [],
@@ -762,16 +764,19 @@ serve(async (req) => {
           })
           .in("id", failIds);
         
-        // Increment failed counts (batch RPC calls)
+        // Increment failed counts in parallel (batch RPC calls)
         const failedByCampaign = new Map<string, number>();
         recipientsToFail.forEach(r => {
           failedByCampaign.set(r.campaign_id, (failedByCampaign.get(r.campaign_id) || 0) + 1);
         });
+        // Execute all RPC calls in parallel
+        const rpcCalls = [];
         for (const [cid, count] of failedByCampaign) {
           for (let i = 0; i < count; i++) {
-            await supabase.rpc("increment_campaign_failed_count", { cid });
+            rpcCalls.push(supabase.rpc("increment_campaign_failed_count", { cid }).then(() => {}));
           }
         }
+        await Promise.all(rpcCalls);
         console.log(`[get-batch-tasks] Batch failed ${recipientsToFail.length} recipients with no accounts`);
       }
 
