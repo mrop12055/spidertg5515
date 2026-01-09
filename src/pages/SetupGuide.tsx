@@ -1928,39 +1928,46 @@ async def main_loop():
     print("=" * 50)
     print("  Account Runner (PARALLEL MODE)")
     print("  [SpamBot, Name, Photo, Privacy, Sync Profile]")
+    print("  Polling every 15 seconds for new tasks...")
     print("=" * 50)
     
     last_heartbeat = 0
+    poll_count = 0
     
     while RUNNING:
         try:
+            poll_count += 1
+            
             # Send heartbeat every 10 seconds
             now = asyncio.get_event_loop().time()
             if now - last_heartbeat > 10:
                 asyncio.create_task(send_heartbeat())
                 last_heartbeat = now
             
-            # Get batch of tasks
+            # Get batch of tasks from edge function
+            print(f"\\n[POLL #{poll_count}] Checking for account tasks...")
             batch = await get_batch_tasks(runner="account", batch_size=20)
             tasks = batch.get("tasks", [])
-            delay_after = batch.get("delay_after", 3)
+            delay_after = batch.get("delay_after", 15)  # Default 15s for account runner
             reason = batch.get("reason", "")
             
             if tasks:
-                print(f"\\n[BATCH] Processing {len(tasks)} tasks in parallel...")
+                print(f"[BATCH] Found {len(tasks)} tasks! Processing in parallel...")
                 
                 # Process all tasks in parallel using asyncio.gather
                 await asyncio.gather(*[process_single_task(task) for task in tasks], return_exceptions=True)
                 
-                print(f"[BATCH] Completed {len(tasks)} tasks")
+                print(f"[DONE] Completed {len(tasks)} tasks")
+                # Quick re-poll to check for more tasks
+                await asyncio.sleep(1)
             else:
-                # Print waiting status so user knows runner is alive
-                print(f"[WAIT] No tasks. Polling again in {delay_after}s..." + (f" ({reason})" if reason else ""))
+                # No tasks - wait and poll again
+                print(f"[WAIT] No tasks found. Waiting {delay_after} seconds..." + (f" ({reason})" if reason else ""))
                 await asyncio.sleep(delay_after)
         
         except Exception as e:
-            print(f"  [ERROR] {e}")
-            await asyncio.sleep(1)
+            print(f"[ERROR] {e}")
+            await asyncio.sleep(5)
     
     await shutdown_all()
 
