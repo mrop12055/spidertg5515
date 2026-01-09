@@ -136,34 +136,51 @@ serve(async (req) => {
       }
     }
     
-    // Step 6: Execute batch updates (much faster than individual updates)
-    console.log(`[enforce-proxy-mapping] Executing ${assignmentPlan.size} batch updates...`);
+    // Step 6: Execute batch updates IN PARALLEL (much faster!)
+    console.log(`[enforce-proxy-mapping] Executing ${assignmentPlan.size} batch updates in parallel...`);
     
-    for (const [proxyId, { proxy, accountIds, geoMatchIds, geoMismatchIds, firstAccountId }] of assignmentPlan) {
+    // Build all update functions - using 'any' to avoid Supabase type issues
+    // deno-lint-ignore no-explicit-any
+    const updateFns: (() => PromiseLike<any>)[] = [];
+    
+    for (const [proxyId, { geoMatchIds, geoMismatchIds, firstAccountId }] of assignmentPlan) {
       // Batch update accounts with geo-match (no mismatch flag)
       if (geoMatchIds.length > 0) {
-        await supabase
-          .from("telegram_accounts")
-          .update({ proxy_id: proxyId, geo_mismatch: false })
-          .in("id", geoMatchIds);
+        updateFns.push(() =>
+          supabase
+            .from("telegram_accounts")
+            .update({ proxy_id: proxyId, geo_mismatch: false })
+            .in("id", geoMatchIds)
+        );
       }
       
       // Batch update accounts with geo-mismatch
       if (geoMismatchIds.length > 0) {
-        await supabase
-          .from("telegram_accounts")
-          .update({ proxy_id: proxyId, geo_mismatch: true })
-          .in("id", geoMismatchIds);
+        updateFns.push(() =>
+          supabase
+            .from("telegram_accounts")
+            .update({ proxy_id: proxyId, geo_mismatch: true })
+            .in("id", geoMismatchIds)
+        );
       }
       
       // Update proxy with first assigned account
-      await supabase
-        .from("proxies")
-        .update({ assigned_account_id: firstAccountId })
-        .eq("id", proxyId);
-      
-      console.log(`[enforce-proxy-mapping] Proxy ${proxy.host}: assigned ${accountIds.length} account(s)`);
+      updateFns.push(() =>
+        supabase
+          .from("proxies")
+          .update({ assigned_account_id: firstAccountId })
+          .eq("id", proxyId)
+      );
     }
+    
+    // Execute all updates in parallel batches of 50 to avoid overwhelming the DB
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < updateFns.length; i += BATCH_SIZE) {
+      const batch = updateFns.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(fn => fn()));
+    }
+    
+    console.log(`[enforce-proxy-mapping] All ${updateFns.length} updates completed in parallel batches`);
 
     // Generate distribution summary
     const distribution = Object.values(stats.accounts_per_proxy);
