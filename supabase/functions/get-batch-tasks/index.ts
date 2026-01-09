@@ -925,13 +925,23 @@ serve(async (req) => {
     if (runner === "account") {
       const accountBatchSize = Math.min(batch_size, 20); // Max 20 parallel account tasks
       
-      // Auto-recover stuck tasks (in_progress for more than 2 minutes)
+      // Auto-recover ALL in_progress tasks that have been stuck for more than 2 minutes
+      // These tasks were picked up but never completed (runner crashed, timeout, etc.)
       const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
-      await supabase
+      const { data: stuckTasks } = await supabase
         .from("account_check_tasks")
-        .update({ status: "pending" })
-        .eq("status", "in_progress")
-        .lt("created_at", twoMinutesAgo);
+        .select("id, task_type, created_at")
+        .eq("status", "in_progress");
+      
+      if (stuckTasks && stuckTasks.length > 0) {
+        // Reset all in_progress tasks - they're stuck regardless of created_at
+        console.log(`[get-batch-tasks] Recovering ${stuckTasks.length} stuck account tasks`);
+        const stuckIds = stuckTasks.map((t: any) => t.id);
+        await supabase
+          .from("account_check_tasks")
+          .update({ status: "pending" })
+          .in("id", stuckIds);
+      }
       
       // Get pending account tasks
       const { data: checkTasks } = await supabase

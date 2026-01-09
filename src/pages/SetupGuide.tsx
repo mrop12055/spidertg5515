@@ -1911,14 +1911,35 @@ async def get_batch_tasks(runner="account", batch_size=20):
         return {"tasks": [], "delay_after": 5}
 
 
+async def send_heartbeat():
+    """Send heartbeat to register this runner"""
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(
+                f"{BACKEND_URL}/get-next-task",
+                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                json={"runner": "account"},
+            )
+    except:
+        pass
+
+
 async def main_loop():
     print("=" * 50)
     print("  Account Runner (PARALLEL MODE)")
-    print("  [SpamBot, Name, Photo, Privacy, Import]")
+    print("  [SpamBot, Name, Photo, Privacy, Sync Profile]")
     print("=" * 50)
+    
+    last_heartbeat = 0
     
     while RUNNING:
         try:
+            # Send heartbeat every 10 seconds
+            now = asyncio.get_event_loop().time()
+            if now - last_heartbeat > 10:
+                asyncio.create_task(send_heartbeat())
+                last_heartbeat = now
+            
             # Get batch of tasks
             batch = await get_batch_tasks(runner="account", batch_size=20)
             tasks = batch.get("tasks", [])
