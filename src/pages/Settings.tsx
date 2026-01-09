@@ -85,6 +85,7 @@ const Settings: React.FC = () => {
   // Bulk API import
   const [isBulkApiOpen, setIsBulkApiOpen] = useState(false);
   const [bulkApiInput, setBulkApiInput] = useState('');
+  const [bulkApiType, setBulkApiType] = useState<string>('random');
   const [isImportingBulk, setIsImportingBulk] = useState(false);
   
   // Manual redistribute
@@ -267,7 +268,7 @@ const Settings: React.FC = () => {
           
           if (apiId && apiHash) {
             const randomName = generateRandomName(i);
-            const randomDevice = getRandomDeviceType();
+            const deviceType = bulkApiType === 'random' ? getRandomDeviceType() : bulkApiType;
             
             const { error } = await supabase
               .from('telegram_api_credentials')
@@ -275,7 +276,7 @@ const Settings: React.FC = () => {
                 name: randomName,
                 api_id: apiId,
                 api_hash: apiHash,
-                client_type: randomDevice,
+                client_type: deviceType,
                 is_active: true,
                 accounts_count: 0,
               });
@@ -501,8 +502,23 @@ const Settings: React.FC = () => {
                           className="font-mono text-sm"
                         />
                       <p className="text-xs text-muted-foreground">
-                        Random names and device types will be auto-generated
+                        Random names will be auto-generated
                       </p>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Device Type</Label>
+                      <Select value={bulkApiType} onValueChange={setBulkApiType}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="random">🎲 Random</SelectItem>
+                          <SelectItem value="android">Android</SelectItem>
+                          <SelectItem value="ios">iOS</SelectItem>
+                          <SelectItem value="desktop">Desktop</SelectItem>
+                          <SelectItem value="macos">macOS</SelectItem>
+                        </SelectContent>
+                      </Select>
                     </div>
                       <Button 
                         onClick={handleBulkImport} 
