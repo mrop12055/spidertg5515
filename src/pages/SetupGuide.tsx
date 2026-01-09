@@ -1981,18 +1981,20 @@ async def get_batch_tasks(runner="account", batch_size=20):
 
 
 async def send_heartbeat():
-    """Send heartbeat to register this runner"""
+    """Send heartbeat to register this runner.
+    Note: get-batch-tasks already records a heartbeat, so this is a backup 
+    for when we're idle. Use a longer timeout to reduce noise.
+    """
     try:
         client = await get_http_client()
         await client.post(
-            f"{BACKEND_URL}/get-next-task",
+            f"{BACKEND_URL}/get-batch-tasks",
             headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json={"runner": "account"},
-            timeout=5.0,
+            json={"runner": "account", "batch_size": 0},  # batch_size=0 = heartbeat only
+            timeout=15.0,
         )
-    except Exception as e:
-        # Log so we can distinguish "runner stuck" vs "cannot reach backend"
-        print(f"[HTTP ERROR] heartbeat: {type(e).__name__}: {repr(e)}")
+    except Exception:
+        pass  # Heartbeat failure is not critical - suppress to reduce log noise
 
 
 async def main_loop():
