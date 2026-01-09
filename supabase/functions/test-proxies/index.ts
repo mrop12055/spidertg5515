@@ -118,16 +118,28 @@ serve(async (req) => {
 
     console.log(`Testing ${proxy_ids.length} proxies (country detection: ${auto_detect_country})...`);
 
-    // Fetch proxies
-    const { data: proxies, error: fetchError } = await supabase
-      .from('proxies')
-      .select('*')
-      .in('id', proxy_ids);
+    // Fetch proxies in batches to avoid "Bad Request" error with large IN clauses
+    const fetchBatchSize = 100;
+    const proxies: any[] = [];
+    
+    for (let i = 0; i < proxy_ids.length; i += fetchBatchSize) {
+      const batchIds = proxy_ids.slice(i, i + fetchBatchSize);
+      const { data: batchProxies, error: fetchError } = await supabase
+        .from('proxies')
+        .select('*')
+        .in('id', batchIds);
 
-    if (fetchError) {
-      console.error('Error fetching proxies:', fetchError);
-      throw fetchError;
+      if (fetchError) {
+        console.error('Error fetching proxies batch:', fetchError);
+        throw fetchError;
+      }
+      
+      if (batchProxies) {
+        proxies.push(...batchProxies);
+      }
     }
+    
+    console.log(`Fetched ${proxies.length} proxies to test`);
 
     const results: { 
       id: string; 
