@@ -239,6 +239,14 @@ const Settings: React.FC = () => {
     return `${adj}${noun}_${num}`;
   };
 
+  // Predefined API credentials for each device type
+  const deviceApiCredentials: Record<string, { api_id: string; api_hash: string }> = {
+    android: { api_id: '2040', api_hash: 'b18441a1ff607e10a989891a5462e627' },
+    ios: { api_id: '21724', api_hash: '3e0cb5efcd52300aec5994fdfc5bdc16' },
+    desktop: { api_id: '2496', api_hash: '8da85b0d5bfe62527e5b244c209159c3' },
+    macos: { api_id: '2834', api_hash: '68875f756c9b437a8b916ca3de215571' },
+  };
+
   // Generate random device type
   const getRandomDeviceType = () => {
     const types = ['android', 'ios', 'desktop', 'macos'];
@@ -247,6 +255,51 @@ const Settings: React.FC = () => {
 
   // Bulk import API credentials
   const handleBulkImport = async () => {
+    // If a specific device type is selected (not random), use predefined API
+    if (bulkApiType !== 'random') {
+      const creds = deviceApiCredentials[bulkApiType];
+      if (!creds) {
+        toast.error('Invalid device type selected');
+        return;
+      }
+      
+      setIsImportingBulk(true);
+      try {
+        const randomName = generateRandomName(0);
+        const { error } = await supabase
+          .from('telegram_api_credentials')
+          .insert({
+            name: randomName,
+            api_id: creds.api_id,
+            api_hash: creds.api_hash,
+            client_type: bulkApiType,
+            is_active: true,
+            accounts_count: 0,
+          });
+        
+        if (error) {
+          console.error('Failed to add API:', error);
+          toast.error('Failed to add API credential');
+        } else {
+          toast.success(`Added 1 API credential (${bulkApiType})`);
+          setBulkApiInput('');
+          setIsBulkApiOpen(false);
+          fetchApiCredentials();
+          
+          // Auto redistribute after adding
+          try {
+            await supabase.functions.invoke('redistribute-api-credentials');
+          } catch (e) {
+            console.error('Auto redistribute failed:', e);
+          }
+        }
+      } finally {
+        setIsImportingBulk(false);
+      }
+      return;
+    }
+    
+    // Random mode - parse from textarea
     const lines = bulkApiInput.trim().split('\n').filter(line => line.trim());
     if (lines.length === 0) {
       toast.error('Please enter at least one API credential');
@@ -268,7 +321,7 @@ const Settings: React.FC = () => {
           
           if (apiId && apiHash) {
             const randomName = generateRandomName(i);
-            const deviceType = bulkApiType === 'random' ? getRandomDeviceType() : bulkApiType;
+            const deviceType = getRandomDeviceType();
             
             const { error } = await supabase
               .from('telegram_api_credentials')
@@ -488,38 +541,47 @@ const Settings: React.FC = () => {
                     <DialogHeader>
                       <DialogTitle>Bulk Import API Credentials</DialogTitle>
                       <DialogDescription>
-                        Paste API credentials in format: api_id:api_hash (one per line)
+                        Select a device type to add its API credentials automatically, or choose Random to enter custom APIs.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 pt-4">
                       <div className="space-y-2">
-                        <Label>API Credentials</Label>
-                        <Textarea
-                          placeholder="12345678:a1b2c3d4e5f6g7h8i9j0&#10;87654321:k1l2m3n4o5p6q7r8s9t0&#10;11223344:u1v2w3x4y5z6a7b8c9d0"
-                          value={bulkApiInput}
-                          onChange={(e) => setBulkApiInput(e.target.value)}
-                          rows={8}
-                          className="font-mono text-sm"
-                        />
-                      <p className="text-xs text-muted-foreground">
-                        Enter one API per line as: api_id:api_hash — Names auto-generated
-                      </p>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Device Type</Label>
-                      <Select value={bulkApiType} onValueChange={setBulkApiType}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="random">🎲 Random</SelectItem>
-                          <SelectItem value="android">Android</SelectItem>
-                          <SelectItem value="ios">iOS</SelectItem>
-                          <SelectItem value="desktop">Desktop</SelectItem>
-                          <SelectItem value="macos">macOS</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                        <Label>Device Type</Label>
+                        <Select value={bulkApiType} onValueChange={setBulkApiType}>
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="android">📱 Android</SelectItem>
+                            <SelectItem value="ios">🍎 iOS</SelectItem>
+                            <SelectItem value="desktop">🖥️ Desktop</SelectItem>
+                            <SelectItem value="macos">💻 macOS</SelectItem>
+                            <SelectItem value="random">🎲 Custom (enter manually)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        {bulkApiType !== 'random' && (
+                          <p className="text-xs text-muted-foreground">
+                            API credentials for {bulkApiType} will be added automatically
+                          </p>
+                        )}
+                      </div>
+                      
+                      {bulkApiType === 'random' && (
+                        <div className="space-y-2">
+                          <Label>Custom API Credentials</Label>
+                          <Textarea
+                            placeholder="12345678:a1b2c3d4e5f6g7h8i9j0&#10;87654321:k1l2m3n4o5p6q7r8s9t0"
+                            value={bulkApiInput}
+                            onChange={(e) => setBulkApiInput(e.target.value)}
+                            rows={6}
+                            className="font-mono text-sm"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Enter one API per line as: api_id:api_hash — Random device types assigned
+                          </p>
+                        </div>
+                      )}
+                      
                       <Button 
                         onClick={handleBulkImport} 
                         disabled={isImportingBulk}
@@ -528,12 +590,12 @@ const Settings: React.FC = () => {
                         {isImportingBulk ? (
                           <>
                             <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Importing...
+                            Adding...
                           </>
                         ) : (
                           <>
                             <Upload className="w-4 h-4 mr-2" />
-                            Import APIs
+                            {bulkApiType === 'random' ? 'Import APIs' : `Add ${bulkApiType} API`}
                           </>
                         )}
                       </Button>
