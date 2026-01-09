@@ -985,9 +985,10 @@ if __name__ == "__main__":
 LiveChat Runner - Handles incoming messages and live chat replies
 RUNS FOREVER with crash recovery, memory cleanup, and heartbeat logging
 
-BUILD: 2026-01-08-smart-fingerprint-proxy
+BUILD: 2026-01-09-optimized-filtering
 
 Features:
+- EARLY FILTERING: Only processes messages from known campaign recipients
 - Uses fingerprint from DB if exists, generates new if not
 - On proxy failure, switches to a different random proxy (no retry same proxy)
 - Detects network/wifi disconnect and skips account updates
@@ -1018,6 +1019,13 @@ RUNNING = True
 CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
 HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
 CONNECT_TIMEOUT_SECONDS = 25  # Faster parallel connect timeout
+RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
+
+# ========== EARLY FILTERING: Known recipient IDs ==========
+# Only messages from these telegram IDs will be processed
+# This drastically reduces server requests and CPU usage
+known_recipient_ids = set()
+last_recipient_refresh = 0
 
 # Network error detection - these indicate LOCAL network issues, not account problems
 NETWORK_ERROR_PATTERNS = [
@@ -1299,23 +1307,25 @@ async def setup_message_handler(client, account_id: str):
             if getattr(sender, 'bot', False):
                 return
             
+            # ========== EARLY FILTER: Check known_recipient_ids FIRST ==========
+            # This is the optimization - skip server calls for unknown senders
+            if known_recipient_ids and sender.id not in known_recipient_ids:
+                # Silently ignore - don't log, don't send to server
+                # Rate-limited logging (only once per sender per 5 minutes)
+                if not hasattr(handler, '_filtered_log') or time.time() - handler._filtered_log.get(sender.id, 0) > 300:
+                    if not hasattr(handler, '_filtered_log'):
+                        handler._filtered_log = {}
+                    handler._filtered_log[sender.id] = time.time()
+                    sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
+                    print(f"    [FILTERED] {sender_name} (id={sender.id}): not in known recipients")
+                return
+            
             # Get sender info for matching
             sender_username = getattr(sender, 'username', None)
             sender_phone = None
             if hasattr(sender, 'phone') and sender.phone:
                 sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
             sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
-            
-            # Multi-strategy conversation check
-            conversation_exists = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
-            if not conversation_exists:
-                # Rate-limited logging for ignored messages
-                if not hasattr(handler, '_ignored_log') or time.time() - handler._ignored_log.get(sender.id, 0) > 60:
-                    if not hasattr(handler, '_ignored_log'):
-                        handler._ignored_log = {}
-                    handler._ignored_log[sender.id] = time.time()
-                    print(f"    [IGNORED] {sender_name} (id={sender.id}): no campaign conversation")
-                return
             
             content = event.message.text or "[Media]"
             media_url = None
@@ -1451,6 +1461,16 @@ async def main_loop():
             
             task = await get_next_task(runner="livechat")
             task_type = task.get("task", "wait")
+            
+            # ========== UPDATE KNOWN RECIPIENTS from server ==========
+            global known_recipient_ids, last_recipient_refresh
+            new_recipients = task.get("known_recipients", [])
+            if new_recipients:
+                old_count = len(known_recipient_ids)
+                known_recipient_ids = set(new_recipients)
+                if len(known_recipient_ids) != old_count:
+                    print(f"  [FILTER] Updated known recipients: {len(known_recipient_ids)} IDs")
+                last_recipient_refresh = time.time()
             
             if task_type == "wait":
                 accounts = task.get("accounts", [])
