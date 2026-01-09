@@ -608,8 +608,10 @@ serve(async (req) => {
       const actualBatchSize = Math.min(effectiveBatchSize, campaignUsableAccounts.length);
       console.log(`[get-batch-tasks] Campaign using batch size: ${actualBatchSize} (settings: ${campaignBatchSize}${campaignBatchSize === 0 ? ' [unlimited]' : ''}, accounts: ${campaignUsableAccounts.length}, limit: ${campaignMessagesPerAccountPerDay}/account)`);
 
-      // Track recipients with no eligible accounts (all accounts in their failed_account_ids)
-      let recipientsWithNoAccounts = 0;
+      // ========== OPTIMIZED BATCH PROCESSING ==========
+      // Collect all updates to perform in single batch at the end
+      const recipientsToUpdate: { id: string; account_id: string; api_credential_id: string | null }[] = [];
+      const recipientsToFail: { id: string; campaign_id: string; failedCount: number }[] = [];
 
       if (pendingRecipients && pendingRecipients.length > 0) {
         for (const recipient of pendingRecipients) {
@@ -618,21 +620,15 @@ serve(async (req) => {
           const campaign = recipient.campaigns;
           const failedAccountIds: string[] = recipient.failed_account_ids || [];
           
-          // ========== KEY FIX: Filter out accounts in failed_account_ids ==========
+          // Find eligible account
           let account = null;
           
           if (recipient.sent_by_account_id) {
-            // Use pre-assigned account ONLY if:
-            // 1. It's not in failed_account_ids
-            // 2. It's in campaignUsableAccounts (active, under limit)
-            // 3. Not already used in this batch
-            // 4. API not at limit
             const isNotFailed = !failedAccountIds.includes(recipient.sent_by_account_id);
             account = isNotFailed 
               ? campaignUsableAccounts.find((a: any) => {
                   if (a.id !== recipient.sent_by_account_id) return false;
                   if (usedAccountIds.has(a.id)) return false;
-                  // Check API limit with batch usage
                   if (a.api_credential_id) {
                     const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
                     const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
@@ -643,12 +639,10 @@ serve(async (req) => {
               : null;
           }
 
-          // If no assigned account or it's already used/failed/API-limited, find another
           if (!account) {
             account = campaignUsableAccounts.find((a: any) => {
               if (usedAccountIds.has(a.id)) return false;
               if (failedAccountIds.includes(a.id)) return false;
-              // Check API limit with batch usage
               if (a.api_credential_id) {
                 const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
                 const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
@@ -659,38 +653,26 @@ serve(async (req) => {
           }
 
           if (!account) {
-            // Check if this recipient has exhausted all possible accounts
             const eligibleAccounts = campaignUsableAccounts.filter((a: any) => 
               !failedAccountIds.includes(a.id)
             );
             
             if (eligibleAccounts.length === 0 && failedAccountIds.length > 0) {
-              // This recipient has tried all possible accounts - mark as failed
-              console.log(`[get-batch-tasks] Recipient ${recipient.id} has no eligible accounts (tried ${failedAccountIds.length}) - marking failed`);
-              
-              await supabase
-                .from("campaign_recipients")
-                .update({
-                  status: "failed",
-                  failed_reason: `No eligible accounts left (tried ${failedAccountIds.length} accounts)`,
-                  sent_at: new Date().toISOString()
-                })
-                .eq("id", recipient.id);
-
-              // Increment campaign failed count
-              await supabase.rpc("increment_campaign_failed_count", { cid: recipient.campaign_id });
-              recipientsWithNoAccounts++;
+              recipientsToFail.push({ 
+                id: recipient.id, 
+                campaign_id: recipient.campaign_id, 
+                failedCount: failedAccountIds.length 
+              });
             }
-            // Skip this recipient for now (accounts may become available later)
             continue;
           }
 
-          // Mark recipient as "sending" and assign account + track API usage
-          await supabase
-            .from("campaign_recipients")
-            .update({ status: "sending", sent_by_account_id: account.id, api_credential_id: account.api_credential_id })
-            .eq("id", recipient.id)
-            .eq("status", "pending");
+          // Collect for batch update
+          recipientsToUpdate.push({
+            id: recipient.id,
+            account_id: account.id,
+            api_credential_id: account.api_credential_id
+          });
 
           // Track API usage in this batch
           if (account.api_credential_id) {
@@ -706,8 +688,6 @@ serve(async (req) => {
             .replace(/{phone}/g, recipient.phone_number);
 
           const apiCred = account.telegram_api_credentials;
-
-          // Get campaign metadata for this recipient
           const campaignMeta = campaignLookup.get(recipient.campaign_id) || { seat_id: null, name: null };
 
           tasks.push({
@@ -718,7 +698,6 @@ serve(async (req) => {
             },
             recipient: recipient.phone_number,
             recipient_name: recipient.name,
-            // Include campaign metadata so report-task-result doesn't need to refetch
             campaign_id: recipient.campaign_id,
             campaign_seat_id: campaignMeta.seat_id,
             campaign_name: campaignMeta.name,
@@ -750,8 +729,50 @@ serve(async (req) => {
           });
 
           usedAccountIds.add(account.id);
-          console.log(`[get-batch-tasks] Added task for ${recipient.phone_number} via ${account.phone_number}`);
         }
+      }
+
+      // ========== BATCH UPDATE ALL RECIPIENTS AT ONCE ==========
+      if (recipientsToUpdate.length > 0) {
+        // Group by account+api combo and update in batches
+        const updatePromises = recipientsToUpdate.map(r =>
+          supabase
+            .from("campaign_recipients")
+            .update({ 
+              status: "sending", 
+              sent_by_account_id: r.account_id, 
+              api_credential_id: r.api_credential_id 
+            })
+            .eq("id", r.id)
+            .eq("status", "pending")
+        );
+        await Promise.all(updatePromises);
+        console.log(`[get-batch-tasks] Batch updated ${recipientsToUpdate.length} recipients to sending`);
+      }
+
+      // Batch fail recipients with no eligible accounts
+      if (recipientsToFail.length > 0) {
+        const failIds = recipientsToFail.map(r => r.id);
+        await supabase
+          .from("campaign_recipients")
+          .update({
+            status: "failed",
+            failed_reason: "No eligible accounts left",
+            sent_at: new Date().toISOString()
+          })
+          .in("id", failIds);
+        
+        // Increment failed counts (batch RPC calls)
+        const failedByCampaign = new Map<string, number>();
+        recipientsToFail.forEach(r => {
+          failedByCampaign.set(r.campaign_id, (failedByCampaign.get(r.campaign_id) || 0) + 1);
+        });
+        for (const [cid, count] of failedByCampaign) {
+          for (let i = 0; i < count; i++) {
+            await supabase.rpc("increment_campaign_failed_count", { cid });
+          }
+        }
+        console.log(`[get-batch-tasks] Batch failed ${recipientsToFail.length} recipients with no accounts`);
       }
 
       // Recount pending after potential failures
