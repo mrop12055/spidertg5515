@@ -574,38 +574,34 @@ serve(async (req) => {
         });
       }
 
-      // ========== NO USABLE ACCOUNTS = AUTO-FAIL ==========
+      // ========== NO USABLE ACCOUNTS = PAUSE/COMPLETE (keep pending as pending) ==========
       if (campaignUsableAccounts.length === 0) {
-        console.log(`[get-batch-tasks] No usable accounts - AUTO-FAILING campaigns with pending recipients`);
+        console.log(`[get-batch-tasks] No usable accounts - marking campaigns as completed (pending recipients preserved)`);
         
         for (const campaign of runningCampaigns) {
-          // Mark campaign as failed
+          // Count pending recipients for this campaign
+          const { count: pendingCount } = await supabase
+            .from("campaign_recipients")
+            .select("id", { count: "exact", head: true })
+            .eq("campaign_id", campaign.id)
+            .in("status", ["pending", "queued"]);
+
+          // Mark campaign as COMPLETED (not failed) - pending recipients stay as pending
           await supabase
             .from("campaigns")
             .update({ 
-              status: "failed", 
+              status: "completed", 
               updated_at: new Date().toISOString() 
             })
             .eq("id", campaign.id);
 
-          // Mark all pending recipients as failed
-          await supabase
-            .from("campaign_recipients")
-            .update({
-              status: "failed",
-              failed_reason: "No accounts available - all restricted or at daily limit",
-              sent_at: new Date().toISOString()
-            })
-            .eq("campaign_id", campaign.id)
-            .eq("status", "pending");
-
-          console.log(`[get-batch-tasks] Campaign ${campaign.id} auto-failed - no usable accounts`);
+          console.log(`[get-batch-tasks] Campaign ${campaign.id} completed - no usable accounts, ${pendingCount || 0} pending recipients preserved`);
         }
 
         return new Response(JSON.stringify({
           tasks: [],
           delay_after: campaignPollingInterval,
-          reason: "All accounts restricted or at daily limit - campaigns failed",
+          reason: "All accounts restricted or at daily limit - campaigns completed, pending preserved",
           stop_signal: true
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
