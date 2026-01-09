@@ -85,7 +85,6 @@ const Settings: React.FC = () => {
   // Bulk API import
   const [isBulkApiOpen, setIsBulkApiOpen] = useState(false);
   const [bulkApiInput, setBulkApiInput] = useState('');
-  const [bulkApiType, setBulkApiType] = useState<string>('android');
   const [isImportingBulk, setIsImportingBulk] = useState(false);
   
   // Manual redistribute
@@ -239,6 +238,12 @@ const Settings: React.FC = () => {
     return `${adj}${noun}_${num}`;
   };
 
+  // Generate random device type
+  const getRandomDeviceType = () => {
+    const types = ['android', 'ios', 'desktop', 'macos'];
+    return types[Math.floor(Math.random() * types.length)];
+  };
+
   // Bulk import API credentials
   const handleBulkImport = async () => {
     const lines = bulkApiInput.trim().split('\n').filter(line => line.trim());
@@ -262,6 +267,7 @@ const Settings: React.FC = () => {
           
           if (apiId && apiHash) {
             const randomName = generateRandomName(i);
+            const randomDevice = getRandomDeviceType();
             
             const { error } = await supabase
               .from('telegram_api_credentials')
@@ -269,7 +275,7 @@ const Settings: React.FC = () => {
                 name: randomName,
                 api_id: apiId,
                 api_hash: apiHash,
-                client_type: bulkApiType,
+                client_type: randomDevice,
                 is_active: true,
                 accounts_count: 0,
               });
@@ -494,24 +500,10 @@ const Settings: React.FC = () => {
                           rows={8}
                           className="font-mono text-sm"
                         />
-                        <p className="text-xs text-muted-foreground">
-                          Random names will be auto-generated for each API
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Client Type</Label>
-                        <Select value={bulkApiType} onValueChange={setBulkApiType}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="android">Android</SelectItem>
-                            <SelectItem value="ios">iOS</SelectItem>
-                            <SelectItem value="desktop">Desktop</SelectItem>
-                            <SelectItem value="macos">macOS</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Random names and device types will be auto-generated
+                      </p>
+                    </div>
                       <Button 
                         onClick={handleBulkImport} 
                         disabled={isImportingBulk}
