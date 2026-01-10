@@ -816,27 +816,30 @@ const Campaigns: React.FC = () => {
     const failedRecipientsList = allRecipients.filter((r: any) => r.status === 'failed');
     const pendingRecipients = allRecipients.filter((r: any) => r.status === 'pending');
 
+    // Helper to remove + from phone numbers
+    const cleanPhone = (phone: string | null) => (phone || '').replace(/^\+/, '');
+
     // Prepare data for each sheet
     const allData = allRecipients.map((r: any) => ({
-      'Phone Number': r.phone_number || '',
+      'Phone Number': cleanPhone(r.phone_number),
       'Name': r.name || '',
       'Status': r.status === 'sent' ? 'Successful' : r.status === 'failed' ? 'Failed' : 'Pending',
       'Error Reason': r.status === 'failed' ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error') : ''
     }));
 
     const successfulData = successfulRecipients.map((r: any) => ({
-      'Phone Number': r.phone_number || '',
+      'Phone Number': cleanPhone(r.phone_number),
       'Name': r.name || ''
     }));
 
     const failedData = failedRecipientsList.map((r: any) => ({
-      'Phone Number': r.phone_number || '',
+      'Phone Number': cleanPhone(r.phone_number),
       'Name': r.name || '',
       'Error Reason': failedReasons.get(r.id) || r.failed_reason || 'Unknown error'
     }));
 
     const pendingData = pendingRecipients.map((r: any) => ({
-      'Phone Number': r.phone_number || '',
+      'Phone Number': cleanPhone(r.phone_number),
       'Name': r.name || ''
     }));
 
