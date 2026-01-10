@@ -699,9 +699,9 @@ const Chat: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <div className="h-[calc(100vh-100px)] flex rounded-xl overflow-hidden border border-border bg-card shadow-lg">
+      <div className="h-[calc(100vh-48px)] -m-6 flex overflow-hidden border border-border bg-card shadow-lg">
         {/* Sidebar - Conversation List */}
-        <div className="w-[340px] border-r border-border flex flex-col bg-card">
+        <div className="w-[340px] min-w-[320px] flex-shrink-0 border-r border-border flex flex-col bg-card">
           {/* Header */}
           <div className="p-4 border-b border-border">
             {isSelectionMode ? (
