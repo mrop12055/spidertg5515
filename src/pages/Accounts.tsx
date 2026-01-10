@@ -2297,10 +2297,6 @@ const Accounts: React.FC = () => {
                     <Image className="w-4 h-4 mr-2" />
                     Change Profile Picture
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleBulkRemoveProfilePicture}>
-                    <X className="w-4 h-4 mr-2" />
-                    Remove Profile Picture
-                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
                     <EyeOff className="w-4 h-4 mr-2" />
                     Privacy Settings
