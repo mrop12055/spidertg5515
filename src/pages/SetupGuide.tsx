@@ -2679,6 +2679,80 @@ async def save_proxy_assignment(account_id: str, proxy_id: str):
         print(f"  [DB ERROR] save_proxy_assignment: {e}")
 
 
+async def switch_to_new_proxy(account_id: str, old_proxy_id: str | None) -> dict | None:
+    """
+    Switch account to a different proxy when current one fails.
+    1. Mark old proxy as having an error
+    2. Find a new active proxy
+    3. Assign new proxy to account
+    """
+    try:
+        http = get_http_client()
+        
+        # Mark old proxy as error if provided
+        if old_proxy_id:
+            await http.patch(
+                f"{SUPABASE_URL}/rest/v1/proxies?id=eq.{old_proxy_id}",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json"
+                },
+                json={"status": "error", "assigned_account_id": None}
+            )
+            print(f"  [PROXY] Marked {old_proxy_id[:8]}... as error")
+        
+        # Find a new active proxy (prefer unassigned)
+        resp = await http.get(
+            f"{SUPABASE_URL}/rest/v1/proxies",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json"
+            },
+            params={
+                "status": "eq.active",
+                "assigned_account_id": "is.null",
+                "limit": "1"
+            }
+        )
+        
+        if resp.status_code != 200:
+            return None
+        
+        proxies = resp.json()
+        if not proxies:
+            # No unassigned proxies, try any active proxy
+            resp = await http.get(
+                f"{SUPABASE_URL}/rest/v1/proxies",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json"
+                },
+                params={
+                    "status": "eq.active",
+                    "id": f"neq.{old_proxy_id}" if old_proxy_id else None,
+                    "limit": "1"
+                }
+            )
+            if resp.status_code == 200:
+                proxies = resp.json()
+        
+        if not proxies:
+            return None
+        
+        new_proxy = proxies[0]
+        
+        # Assign new proxy to account
+        await save_proxy_assignment(account_id, new_proxy["id"])
+        
+        return new_proxy
+        
+    except Exception as e:
+        print(f"  [DB ERROR] switch_to_new_proxy: {e}")
+        return None
+
 async def fetch_account_fingerprint(account_id: str) -> dict | None:
     """Fetch device_model, system_version, app_version from account"""
     try:
@@ -3148,13 +3222,51 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         return client
         
     except asyncio.TimeoutError:
-        print(f"  [TIMEOUT] {phone} - Connection timeout (proxy issue?)")
+        print(f"  [TIMEOUT] {phone} - Proxy not working, trying to switch...")
+        # Try to get a different proxy
+        new_proxy = await switch_to_new_proxy(account_id, account.get("proxy", {}).get("id"))
+        if new_proxy:
+            print(f"  [SWITCH] {phone} - Trying new proxy: {new_proxy['host']}:{new_proxy['port']}")
+            account["proxy"] = new_proxy
+            # Retry connection with new proxy (one retry only)
+            try:
+                proxy = get_proxy_settings(new_proxy)
+                client = TelegramClient(
+                    session_path, int(account.get("api_id") or "31812270"), 
+                    account.get("api_hash") or "4cce3baadfdb22bd5930f9d8f5063f98",
+                    device_model=account.get("device_model"),
+                    system_version=account.get("system_version"),
+                    app_version=account.get("app_version", "10.14.2"),
+                    lang_code=account.get("lang_code", "en"),
+                    system_lang_code=account.get("system_lang_code", "en-US"),
+                    proxy=proxy,
+                    timeout=CONNECTION_TIMEOUT,
+                    connection_retries=1,
+                    auto_reconnect=True
+                )
+                await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+                if await client.is_user_authorized():
+                    if setup_handler:
+                        await setup_handler(client, account_id)
+                    active_clients[account_id] = client
+                    print(f"  [OK] Connected with new proxy: {phone}")
+                    return client
+            except Exception as retry_err:
+                print(f"  [FAIL] {phone} - New proxy also failed: {retry_err}")
+        else:
+            print(f"  [FAIL] {phone} - No alternative proxy available")
         return None
     except Exception as e:
         err_str = str(e).lower()
         if any(x in err_str for x in ["deleted", "deactivated", "banned"]):
             print(f"  [BANNED] {phone}: {e}")
             await update_account_status(account_id, "banned", str(e))
+        elif "proxy" in err_str or "connection" in err_str or "timeout" in err_str:
+            print(f"  [PROXY ERROR] {phone}: {e} - Trying to switch proxy...")
+            new_proxy = await switch_to_new_proxy(account_id, account.get("proxy", {}).get("id"))
+            if new_proxy:
+                print(f"  [INFO] {phone} - New proxy assigned: {new_proxy['host']}:{new_proxy['port']}")
+                print(f"  [INFO] Will use new proxy on next connection attempt")
         else:
             print(f"  [FAIL] {phone}: {e}")
         return None
