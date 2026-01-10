@@ -3175,7 +3175,7 @@ async def send_heartbeat():
             },
             json={
                 "runner_name": "unified",
-                "last_seen": datetime.utcnow().isoformat(),
+                "last_seen": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z",
                 "status": "online"
             }
         )
