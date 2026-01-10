@@ -1711,66 +1711,36 @@ async def change_name(client, first_name: str, last_name: str = ""):
 
 
 async def change_profile_photo(client, photo_source: str):
-    """Change profile photo - accepts base64 or URL. Uses unique temp files to avoid conflicts."""
-    import uuid
-    temp_path = None
+    """Change profile photo - accepts base64 or URL"""
     try:
         from telethon.tl.functions.photos import UploadProfilePhotoRequest
         import aiohttp
-        from PIL import Image
-        import io
         
-        # Use unique temp file name to avoid WinError 32 when running parallel tasks
-        unique_id = uuid.uuid4().hex[:8]
-        temp_path = os.path.join(SESSION_FOLDER, f"temp_photo_{unique_id}.jpg")
+        temp_path = os.path.join(SESSION_FOLDER, "temp_photo.jpg")
         
         # Check if it's a URL or base64
         if photo_source.startswith("http://") or photo_source.startswith("https://"):
             # Download from URL
             async with aiohttp.ClientSession() as session:
-                async with session.get(photo_source, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                async with session.get(photo_source) as resp:
                     if resp.status == 200:
                         photo_bytes = await resp.read()
+                        with open(temp_path, "wb") as f:
+                            f.write(photo_bytes)
                     else:
                         return False, f"Failed to download image: HTTP {resp.status}"
         else:
             # Assume base64
             photo_bytes = base64.b64decode(photo_source)
-        
-        # Convert image to proper format (JPEG RGB) to avoid Telegram upload errors
-        try:
-            image = Image.open(io.BytesIO(photo_bytes))
-            # Convert to RGB if necessary (handles PNG with transparency, etc.)
-            if image.mode in ('RGBA', 'LA', 'P'):
-                # Create white background for transparent images
-                background = Image.new('RGB', image.size, (255, 255, 255))
-                if image.mode == 'P':
-                    image = image.convert('RGBA')
-                background.paste(image, mask=image.split()[-1] if image.mode == 'RGBA' else None)
-                image = background
-            elif image.mode != 'RGB':
-                image = image.convert('RGB')
-            
-            # Save as high-quality JPEG
-            image.save(temp_path, 'JPEG', quality=95, optimize=True)
-        except Exception as img_err:
-            # Fallback: save raw bytes if PIL fails
-            print(f"    [WARN] PIL conversion failed, using raw bytes: {img_err}")
             with open(temp_path, "wb") as f:
                 f.write(photo_bytes)
         
         file = await client.upload_file(temp_path)
         await client(UploadProfilePhotoRequest(file=file))
+        os.remove(temp_path)
         return True, None
     except Exception as e:
         return False, str(e)
-    finally:
-        # Always clean up temp file
-        if temp_path and os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except:
-                pass
 
 
 async def update_privacy(client, hide_phone, hide_last_seen, disable_calls):
