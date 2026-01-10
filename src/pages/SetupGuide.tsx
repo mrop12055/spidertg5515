@@ -3879,6 +3879,53 @@ async def handle_warmup_task(task: dict, account: dict):
         print(f"    [WARMUP FAIL] {e}")
 
 
+# ========== CONNECTION STATUS MONITOR ==========
+async def check_connection_status():
+    """Check how many accounts are still connected"""
+    connected = 0
+    disconnected = 0
+    
+    for account_id, client in list(active_clients.items()):
+        try:
+            if client.is_connected():
+                connected += 1
+            else:
+                disconnected += 1
+        except:
+            disconnected += 1
+    
+    return connected, disconnected
+
+
+async def connection_monitor_loop():
+    """Background task: Print connection status every 1 minute"""
+    while RUNNING:
+        await asyncio.sleep(60)  # Wait 1 minute
+        
+        connected, disconnected = await check_connection_status()
+        total = len(active_clients)
+        
+        print()
+        print(f"  [STATUS] Accounts: {connected} connected | {disconnected} disconnected | {total} total")
+        
+        # Attempt to reconnect disconnected clients
+        if disconnected > 0:
+            print(f"  [RECONNECT] Attempting to reconnect {disconnected} accounts...")
+            reconnected = 0
+            
+            for account_id, client in list(active_clients.items()):
+                try:
+                    if not client.is_connected():
+                        await client.connect()
+                        if client.is_connected():
+                            reconnected += 1
+                except:
+                    pass
+            
+            if reconnected > 0:
+                print(f"  [RECONNECT] Reconnected {reconnected} accounts")
+
+
 # ========== SHUTDOWN ==========
 async def shutdown_all():
     """Disconnect all clients"""
@@ -3932,6 +3979,9 @@ async def main_loop():
     print("  PHASE 2: Starting Task Processing Loop")
     print("=" * 60)
     print()
+    
+    # Start connection monitor in background (prints status every 1 minute)
+    asyncio.create_task(connection_monitor_loop())
     
     consecutive_errors = 0
     last_heartbeat = 0
