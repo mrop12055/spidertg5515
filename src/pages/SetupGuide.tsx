@@ -3160,6 +3160,106 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         return None
 
 
+# ========== FETCH ALL ACTIVE ACCOUNTS ==========
+async def fetch_all_active_accounts() -> list:
+    """Fetch all active accounts with session, proxy, and fingerprint for LiveChat"""
+    try:
+        http = get_http_client()
+        
+        # Fetch active accounts with all required data
+        resp = await http.get(
+            f"{SUPABASE_URL}/rest/v1/telegram_accounts",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json"
+            },
+            params={
+                "select": "id,phone_number,session_data,device_model,system_version,app_version,lang_code,system_lang_code,api_id,api_hash,proxy_id",
+                "status": "eq.active",
+                "session_data": "not.is.null"
+            }
+        )
+        
+        if resp.status_code != 200:
+            print(f"  [ERROR] Fetch accounts: HTTP {resp.status_code}")
+            return []
+        
+        accounts = resp.json()
+        
+        # Fetch proxies for all accounts
+        proxy_ids = [a.get("proxy_id") for a in accounts if a.get("proxy_id")]
+        proxies_map = {}
+        
+        if proxy_ids:
+            proxy_resp = await http.get(
+                f"{SUPABASE_URL}/rest/v1/proxies",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                    "Content-Type": "application/json"
+                },
+                params={
+                    "select": "id,host,port,username,password,proxy_type,status",
+                    "id": f"in.({','.join(proxy_ids)})"
+                }
+            )
+            if proxy_resp.status_code == 200:
+                for proxy in proxy_resp.json():
+                    proxies_map[proxy["id"]] = proxy
+        
+        # Attach proxies to accounts
+        for account in accounts:
+            if account.get("proxy_id") and account["proxy_id"] in proxies_map:
+                account["proxy"] = proxies_map[account["proxy_id"]]
+        
+        print(f"  [ACCOUNTS] Fetched {len(accounts)} active accounts with sessions")
+        return accounts
+        
+    except Exception as e:
+        print(f"  [ERROR] Fetch accounts: {e}")
+        return []
+
+
+# ========== STARTUP: CONNECT ALL ACCOUNTS FOR LIVECHAT ==========
+async def connect_all_accounts_for_livechat():
+    """Connect ALL active accounts at startup for LiveChat receiving"""
+    print()
+    print("=" * 60)
+    print("  PHASE 1: Connecting ALL Accounts for LiveChat")
+    print("=" * 60)
+    
+    accounts = await fetch_all_active_accounts()
+    if not accounts:
+        print("  [WARN] No active accounts found to connect")
+        return
+    
+    connected = 0
+    skipped = 0
+    
+    for account in accounts:
+        phone = account.get("phone_number", "???")[-4:]
+        
+        # Prepare account (check session, proxy, fingerprint)
+        prepared, error = await prepare_account(account)
+        if error:
+            print(f"  {error}")
+            skipped += 1
+            continue
+        
+        # Connect with livechat handler
+        client = await get_or_create_client(prepared, setup_handler=setup_livechat_handler)
+        if client:
+            connected += 1
+        else:
+            skipped += 1
+    
+    print()
+    print(f"  [LIVECHAT] Connected: {connected} | Skipped: {skipped}")
+    print(f"  [LIVECHAT] All accounts are now receiving incoming messages")
+    print()
+
+
 # ========== API FUNCTIONS ==========
 async def send_heartbeat():
     """Send heartbeat to backend to show runner is online"""
@@ -3687,6 +3787,7 @@ async def main_loop():
     print("    ✓ Never runs without FINGERPRINT")
     print()
     print("  AUTO FEATURES:")
+    print("    ✓ Auto-connects ALL accounts at startup for LiveChat")
     print("    ✓ Auto-generates and saves fingerprint if missing")
     print("    ✓ Auto-assigns proxy if not assigned")
     print("    ✓ Auto-restart on any crash")
@@ -3697,6 +3798,16 @@ async def main_loop():
     print("    ✓ No stagger/delay in campaigns")
     print()
     print("=" * 60)
+    
+    # ========== PHASE 1: CONNECT ALL ACCOUNTS FOR LIVECHAT ==========
+    # This is CRITICAL - connects all accounts at startup so they can
+    # receive incoming messages for LiveChat functionality
+    await connect_all_accounts_for_livechat()
+    
+    print("=" * 60)
+    print("  PHASE 2: Starting Task Processing Loop")
+    print("=" * 60)
+    print()
     
     consecutive_errors = 0
     last_heartbeat = 0
