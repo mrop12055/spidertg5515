@@ -166,6 +166,7 @@ const Campaigns: React.FC = () => {
   accountsRef.current = accounts;
 
   // FAST: Fetch only basic counts for all campaigns in parallel
+  // IMPORTANT: This should NOT call refreshData() to avoid infinite loops
   const fetchReports = useCallback(async () => {
     const currentCampaigns = campaignsRef.current;
     if (currentCampaigns.length === 0) return;
@@ -201,8 +202,7 @@ const Campaigns: React.FC = () => {
       })
     );
 
-    // Process results and update state
-    let needsRefresh = false;
+    // Process results and update state - NO refreshData() to prevent loops
     const updatePromises: Promise<any>[] = [];
     
     for (const result of results) {
@@ -216,6 +216,7 @@ const Campaigns: React.FC = () => {
           campaign.failedCount === result.failedCount &&
           campaign.recipientCount === result.recipients.length;
         
+        // Only update if counts are significantly different (avoid micro-updates)
         if (!countsMatch) {
           updatePromises.push(
             (async () => {
@@ -230,7 +231,6 @@ const Campaigns: React.FC = () => {
                 .eq('id', result.campaignId);
             })()
           );
-          needsRefresh = true;
         }
         
         // Auto-complete running OR paused campaigns with no pending recipients
@@ -243,14 +243,13 @@ const Campaigns: React.FC = () => {
                 .eq('id', result.campaignId);
             })()
           );
-          needsRefresh = true;
         }
       }
     }
     
-    // Execute all updates in parallel
+    // Execute all updates in parallel (fire and forget - no need to wait)
     if (updatePromises.length > 0) {
-      await Promise.all(updatePromises);
+      Promise.all(updatePromises).catch(console.error);
     }
     
     // Merge new basic reports with existing detailed reports (don't overwrite detailed data)
@@ -274,8 +273,8 @@ const Campaigns: React.FC = () => {
       });
       return merged;
     });
-    if (needsRefresh) refreshData();
-  }, [refreshData]);
+    // REMOVED: refreshData() call that was causing infinite loops
+  }, []); // Empty deps - uses refs for current data
 
   // DETAILED: Fetch full report for a single campaign (on-demand when dialog opens)
   const fetchSingleCampaignReport = useCallback(async (campaignId: string) => {
@@ -385,25 +384,33 @@ const Campaigns: React.FC = () => {
     if (campaignsLength > 0) fetchReports();
   }, [campaignsLength, fetchReports]);
 
-  // Debounced fetch to prevent too many updates
+  // Debounced fetch to prevent too many updates - longer debounce for stability
   const debounceTimerRef = useRef<number | null>(null);
+  const isFetchingRef = useRef(false);
+  
   const debouncedFetchReports = useCallback(() => {
     if (debounceTimerRef.current) {
       window.clearTimeout(debounceTimerRef.current);
     }
-    debounceTimerRef.current = window.setTimeout(() => {
-      fetchReports();
-    }, 500); // Wait 500ms before fetching to batch multiple updates
+    debounceTimerRef.current = window.setTimeout(async () => {
+      // Prevent concurrent fetches
+      if (isFetchingRef.current) return;
+      isFetchingRef.current = true;
+      try {
+        await fetchReports();
+      } finally {
+        isFetchingRef.current = false;
+      }
+    }, 2000); // Increased to 2 seconds to batch multiple rapid updates
   }, [fetchReports]);
 
-  // Real-time subscriptions for campaign_recipients and campaigns for live updates
+  // Real-time subscriptions - use stable channel names and longer debounce
   useEffect(() => {
     if (campaignsLength === 0) return;
     
-    // Subscribe to campaign_recipients changes for instant progress updates
-    // This is the primary source of truth for campaign progress
-    const recipientsChannel = supabase
-      .channel('campaign-recipients-realtime')
+    // Single channel for both tables to reduce overhead
+    const channel = supabase
+      .channel('campaigns-page-updates')
       .on(
         'postgres_changes',
         {
@@ -411,15 +418,8 @@ const Campaigns: React.FC = () => {
           schema: 'public',
           table: 'campaign_recipients'
         },
-        () => {
-          debouncedFetchReports();
-        }
+        debouncedFetchReports
       )
-      .subscribe();
-
-    // Subscribe to campaigns table for status changes only
-    const campaignsChannel = supabase
-      .channel('campaigns-page-realtime')
       .on(
         'postgres_changes',
         {
@@ -427,23 +427,18 @@ const Campaigns: React.FC = () => {
           schema: 'public',
           table: 'campaigns'
         },
-        () => {
-          debouncedFetchReports();
-        }
+        debouncedFetchReports
       )
       .subscribe();
 
-    // Fallback polling every 30 seconds (reduced since realtime handles most updates)
-    const interval = window.setInterval(() => {
-      fetchReports();
-    }, 30000);
+    // Reduced polling to 60 seconds since realtime handles most updates
+    const interval = window.setInterval(fetchReports, 60000);
 
     return () => {
       if (debounceTimerRef.current) {
         window.clearTimeout(debounceTimerRef.current);
       }
-      supabase.removeChannel(recipientsChannel);
-      supabase.removeChannel(campaignsChannel);
+      supabase.removeChannel(channel);
       window.clearInterval(interval);
     };
   }, [campaignsLength, debouncedFetchReports, fetchReports]);
@@ -484,11 +479,9 @@ const Campaigns: React.FC = () => {
     setAccountUniqueRecipients(countMap);
   }, []);
 
+  // Only fetch account unique recipients once on mount - no interval needed
   useEffect(() => {
     fetchAccountUniqueRecipients();
-    // Refresh every 30 seconds
-    const interval = setInterval(fetchAccountUniqueRecipients, 30000);
-    return () => clearInterval(interval);
   }, [fetchAccountUniqueRecipients]);
 
   // Fetch seats for campaign assignment
