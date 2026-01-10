@@ -838,7 +838,7 @@ const Chat: React.FC = () => {
 
           {/* Conversation List */}
           <ScrollArea className="flex-1">
-            <div>
+            <div className="pr-3">
               {filteredConversations.length === 0 ? (
                 <div className="px-4 py-12 text-center">
                   <MessageSquare className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
@@ -872,7 +872,7 @@ const Chat: React.FC = () => {
                     <div
                       key={conv.id}
                       className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3.5 transition-all duration-200 text-left group border-b border-border/30 last:border-b-0",
+                        "w-full flex items-center gap-3 px-4 py-3 transition-all duration-200 text-left group border-b border-border/30 last:border-b-0",
                         isSelected && !isSelectionMode && "bg-primary/10 border-l-2 border-l-primary",
                         isChecked && isSelectionMode && "bg-primary/10",
                         !isSelected && "hover:bg-accent/50"
@@ -927,7 +927,7 @@ const Chat: React.FC = () => {
                               )}
                             </div>
                             <span className={cn(
-                              "text-[11px] flex-shrink-0 ml-2",
+                              "text-[11px] flex-shrink-0 ml-2 whitespace-nowrap tabular-nums",
                               conv.unreadCount > 0 ? "text-primary font-semibold" : "text-muted-foreground"
                             )}>
                               {formatMessageDate(conv.updatedAt)}
