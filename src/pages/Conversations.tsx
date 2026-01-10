@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
+import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { 
   Send, 
   Search, 
@@ -699,9 +700,9 @@ const Chat: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <div className="h-[calc(100vh-48px)] -m-6 flex overflow-hidden border border-border bg-card shadow-lg">
+      <ResizablePanelGroup direction="horizontal" className="h-[calc(100vh-48px)] -m-6 overflow-hidden border border-border bg-card shadow-lg">
         {/* Sidebar - Conversation List */}
-        <div className="w-[340px] min-w-[320px] flex-shrink-0 border-r border-border flex flex-col bg-card">
+        <ResizablePanel defaultSize={25} minSize={20} maxSize={40} className="flex flex-col bg-card">
           {/* Header */}
           <div className="p-4 border-b border-border">
             {isSelectionMode ? (
@@ -998,10 +999,12 @@ const Chat: React.FC = () => {
               )}
             </div>
           </ScrollArea>
-        </div>
+        </ResizablePanel>
+
+        <ResizableHandle withHandle className="bg-border hover:bg-primary/20 transition-colors" />
 
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col bg-secondary/30 dark:bg-background/50">
+        <ResizablePanel defaultSize={75} minSize={50} className="flex flex-col bg-secondary/30 dark:bg-background/50">
           {selectedConv ? (
             <>
               {/* Chat Header */}
@@ -1319,8 +1322,8 @@ const Chat: React.FC = () => {
               </div>
             </div>
           )}
-        </div>
-      </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
     </DashboardLayout>
   );
 };
