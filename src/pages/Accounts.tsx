@@ -1342,6 +1342,106 @@ const Accounts: React.FC = () => {
     }
   };
 
+  // Bulk remove all tags from selected accounts
+  const handleBulkRemoveAllTags = async () => {
+    if (selectedIds.size === 0) return;
+    
+    try {
+      await Promise.all(
+        Array.from(selectedIds).map(accountId =>
+          supabase
+            .from('telegram_accounts')
+            .update({ tags: [] })
+            .eq('id', accountId)
+        )
+      );
+      
+      toast.success(`Removed all tags from ${selectedIds.size} account(s)`);
+      setSelectedIds(new Set());
+      refreshData();
+    } catch (error) {
+      console.error('Error removing tags:', error);
+      toast.error('Failed to remove tags');
+    }
+  };
+
+  // Bulk remove proxies from selected accounts
+  const handleBulkRemoveProxy = async () => {
+    if (selectedIds.size === 0) return;
+    
+    try {
+      const accountsWithProxy = accounts.filter(a => selectedIds.has(a.id) && a.proxyId);
+      
+      if (accountsWithProxy.length === 0) {
+        toast.info('No selected accounts have proxies assigned');
+        return;
+      }
+      
+      // Remove proxy from accounts
+      await Promise.all(
+        accountsWithProxy.map(async (account) => {
+          await supabase
+            .from('telegram_accounts')
+            .update({ proxy_id: null })
+            .eq('id', account.id);
+          
+          // Also clear assigned_account_id from proxy
+          if (account.proxyId) {
+            await supabase
+              .from('proxies')
+              .update({ assigned_account_id: null })
+              .eq('id', account.proxyId);
+          }
+        })
+      );
+      
+      toast.success(`Removed proxy from ${accountsWithProxy.length} account(s)`);
+      setSelectedIds(new Set());
+      refreshData();
+    } catch (error) {
+      console.error('Error removing proxies:', error);
+      toast.error('Failed to remove proxies');
+    }
+  };
+
+  // Bulk remove profile pictures from selected accounts (creates tasks)
+  const handleBulkRemoveProfilePicture = async () => {
+    if (selectedIds.size === 0) return;
+    
+    try {
+      const tasksToInsert = Array.from(selectedIds).map(accountId => ({
+        account_id: accountId,
+        task_type: 'remove_photo',
+        status: 'pending',
+      }));
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasksToInsert);
+      
+      if (error) throw error;
+      
+      // Start progress tracking
+      setAccountTasksProgress({
+        total: selectedIds.size,
+        completed: 0,
+        failed: 0,
+        taskType: 'Remove Profile Picture',
+        logs: [],
+        startedAt: new Date().toISOString(),
+        internalTaskType: 'remove_photo',
+      } as any);
+      setIsAccountTaskRunning(true);
+      setShowAccountTaskLogs(true);
+      
+      toast.success(`Queued profile picture removal for ${selectedIds.size} account(s)`);
+      setSelectedIds(new Set());
+    } catch (error) {
+      console.error('Error removing profile pictures:', error);
+      toast.error('Failed to queue profile picture removal');
+    }
+  };
+
   // Remove tag from single account
   const handleRemoveTag = async (accountId: string, tagToRemove: string) => {
     try {
@@ -2188,7 +2288,7 @@ const Accounts: React.FC = () => {
                     <ChevronDown className="w-3 h-3" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-52">
+                <DropdownMenuContent align="start" className="w-56">
                   <DropdownMenuItem onClick={() => { setIsBulkNameOpen(true); fetchNameTags(); }}>
                     <UserCircle className="w-4 h-4 mr-2" />
                     Change Name
@@ -2196,6 +2296,10 @@ const Accounts: React.FC = () => {
                   <DropdownMenuItem onClick={() => { setIsProfilePicOpen(true); fetchPictureTags(); }}>
                     <Image className="w-4 h-4 mr-2" />
                     Change Profile Picture
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleBulkRemoveProfilePicture}>
+                    <X className="w-4 h-4 mr-2" />
+                    Remove Profile Picture
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
                     <EyeOff className="w-4 h-4 mr-2" />
@@ -2214,9 +2318,18 @@ const Accounts: React.FC = () => {
                     <Tag className="w-4 h-4 mr-2" />
                     Assign Tags
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleBulkRemoveAllTags} className="text-orange-600">
+                    <X className="w-4 h-4 mr-2" />
+                    Remove All Tags
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setIsBulkProxyOpen(true)}>
                     <Globe className="w-4 h-4 mr-2" />
                     Assign Proxy
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleBulkRemoveProxy} className="text-orange-600">
+                    <Unlink className="w-4 h-4 mr-2" />
+                    Remove Proxy
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setShowAccountTaskLogs(!showAccountTaskLogs)}>
