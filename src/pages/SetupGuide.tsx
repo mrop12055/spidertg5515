@@ -3184,10 +3184,16 @@ async def handle_campaign_send(task: dict, account: dict):
     Server controls batch size, runner processes immediately
     """
     client = await get_or_create_client(account)
-    if not client:
-        return {"success": False, "error": "Failed to connect", "recipient_id": task.get("recipient_id")}
+    campaign_recipient_id = task.get("campaign_recipient_id")
     
-    recipient_id = task.get("recipient_id")
+    if not client:
+        return {
+            "success": False, 
+            "error": "Failed to connect", 
+            "campaign_recipient_id": campaign_recipient_id,
+            "account_id": account.get("id")
+        }
+    
     recipient_phone = task.get("recipient_phone")
     message = task.get("message", "")
     
@@ -3207,23 +3213,50 @@ async def handle_campaign_send(task: dict, account: dict):
                 pass
         
         if not entity:
-            return {"success": False, "error": "User not found", "recipient_id": recipient_id}
+            return {
+                "success": False, 
+                "error": "User not found", 
+                "campaign_recipient_id": campaign_recipient_id,
+                "account_id": account.get("id")
+            }
         
         # Send message immediately (no delay!)
         await client.send_message(entity, message)
         
         return {
             "success": True,
-            "recipient_id": recipient_id,
-            "account_id": account.get("id")
+            "campaign_recipient_id": campaign_recipient_id,
+            "campaign_id": task.get("campaign_id"),
+            "campaign_seat_id": task.get("campaign_seat_id"),
+            "campaign_name": task.get("campaign_name"),
+            "account_id": account.get("id"),
+            "recipient_phone": recipient_phone,
+            "recipient_name": task.get("recipient_name"),
+            "content": message
         }
         
     except FloodWaitError as e:
-        return {"success": False, "error": f"FloodWait {e.seconds}s", "recipient_id": recipient_id}
+        return {
+            "success": False, 
+            "error": f"FloodWait {e.seconds}s", 
+            "campaign_recipient_id": campaign_recipient_id,
+            "account_id": account.get("id"),
+            "retry_with_different_account": True
+        }
     except UserPrivacyRestrictedError:
-        return {"success": False, "error": "Privacy restricted", "recipient_id": recipient_id}
+        return {
+            "success": False, 
+            "error": "Privacy restricted", 
+            "campaign_recipient_id": campaign_recipient_id,
+            "account_id": account.get("id")
+        }
     except Exception as e:
-        return {"success": False, "error": str(e), "recipient_id": recipient_id}
+        return {
+            "success": False, 
+            "error": str(e), 
+            "campaign_recipient_id": campaign_recipient_id,
+            "account_id": account.get("id")
+        }
 
 
 async def process_campaign_batch(tasks: list):
@@ -3246,7 +3279,8 @@ async def process_campaign_batch(tasks: list):
             final_results.append({
                 "success": False,
                 "error": str(r),
-                "recipient_id": tasks[i].get("recipient_id")
+                "campaign_recipient_id": tasks[i].get("campaign_recipient_id"),
+                "account_id": tasks[i].get("account", {}).get("id")
             })
         elif r:
             final_results.append(r)
@@ -3484,6 +3518,88 @@ async def handle_verify_session(task: dict, account: dict):
     print(f"    [SESSION] Status: {status}")
 
 
+# ========== WARMUP HANDLER ==========
+async def handle_warmup_task(task: dict, account: dict):
+    """Handle warmup chat or add_contact task"""
+    task_id = task.get("task_id")
+    pair_id = task.get("pair_id")
+    task_type = task.get("task", "warmup_chat")
+    task_data = task.get("task_data", {})
+    
+    client = await get_or_create_client(account)
+    if not client:
+        await report_result("warmup_chat", {
+            "task_id": task_id,
+            "pair_id": pair_id,
+            "success": False,
+            "error": "Failed to connect"
+        })
+        return
+    
+    recipient_phone = task_data.get("recipient_phone")
+    recipient_telegram_id = task_data.get("recipient_telegram_id")
+    message = task_data.get("message", "")
+    
+    try:
+        # Get entity
+        entity = None
+        if recipient_telegram_id:
+            try:
+                entity = await client.get_entity(recipient_telegram_id)
+            except:
+                pass
+        
+        if not entity and recipient_phone:
+            try:
+                entity = await client.get_entity(recipient_phone)
+            except:
+                pass
+        
+        if not entity:
+            await report_result("warmup_chat", {
+                "task_id": task_id,
+                "pair_id": pair_id,
+                "success": False,
+                "error": "User not found"
+            })
+            return
+        
+        if task_type == "warmup_add_contact":
+            # Add contact
+            from telethon.tl.functions.contacts import ImportContactsRequest
+            from telethon.tl.types import InputPhoneContact
+            
+            contact = InputPhoneContact(
+                client_id=0,
+                phone=recipient_phone,
+                first_name=task_data.get("first_name", "Contact"),
+                last_name=""
+            )
+            await client(ImportContactsRequest([contact]))
+            print(f"    [WARMUP] Added contact: {recipient_phone}")
+        else:
+            # Send warmup message
+            await client.send_message(entity, message)
+            print(f"    [WARMUP] Sent: {message[:30]}...")
+        
+        await report_result("warmup_chat", {
+            "task_id": task_id,
+            "pair_id": pair_id,
+            "is_cycle_last": task.get("is_cycle_last", False),
+            "account_id": account.get("id"),
+            "success": True
+        })
+        
+    except Exception as e:
+        await report_result("warmup_chat", {
+            "task_id": task_id,
+            "pair_id": pair_id,
+            "success": False,
+            "error": str(e)
+        })
+        print(f"    [WARMUP FAIL] {e}")
+
+
 # ========== SHUTDOWN ==========
 async def shutdown_all():
     """Disconnect all clients"""
@@ -3535,6 +3651,7 @@ async def main_loop():
             livechat_tasks = []
             photo_tasks = []
             name_tasks = []
+            warmup_tasks = []
             other_tasks = []
             
             for task in tasks:
@@ -3547,6 +3664,8 @@ async def main_loop():
                     photo_tasks.append(task)
                 elif task_type == "change_name":
                     name_tasks.append(task)
+                elif task_type in ("warmup_chat", "warmup_add_contact"):
+                    warmup_tasks.append(task)
                 else:
                     other_tasks.append(task)
             
@@ -3557,6 +3676,10 @@ async def main_loop():
             # Process live chat sends
             for task in livechat_tasks:
                 await handle_livechat_send(task, task.get("account", {}))
+            
+            # Process warmup tasks
+            for task in warmup_tasks:
+                await handle_warmup_task(task, task.get("account", {}))
             
             # Process photo changes (batch limit: 10)
             if photo_tasks:
