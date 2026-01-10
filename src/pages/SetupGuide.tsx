@@ -3272,13 +3272,19 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
         return None
 
 
-# ========== FETCH ALL ACTIVE ACCOUNTS ==========
-async def fetch_all_active_accounts() -> list:
-    """Fetch all active accounts with session, proxy, and fingerprint for LiveChat"""
+# ========== FETCH ALL ACTIVE ACCOUNTS WITH EVERYTHING ==========
+async def fetch_all_accounts_ready() -> list:
+    """
+    Fetch ALL accounts with session, proxy, and fingerprint in ONE go.
+    Pre-assigns proxies and generates fingerprints for accounts missing them.
+    Returns only accounts that are READY to connect (have all 3 requirements).
+    """
     try:
         http = get_http_client()
         
-        # Fetch active accounts with all required data
+        print("  [STEP 1] Fetching all active accounts...")
+        
+        # Fetch ALL active accounts with sessions
         resp = await http.get(
             f"{SUPABASE_URL}/rest/v1/telegram_accounts",
             headers={
@@ -3298,86 +3304,181 @@ async def fetch_all_active_accounts() -> list:
             return []
         
         accounts = resp.json()
+        print(f"  [STEP 1] Found {len(accounts)} active accounts with sessions")
         
-        # Fetch proxies for all accounts
-        proxy_ids = [a.get("proxy_id") for a in accounts if a.get("proxy_id")]
-        proxies_map = {}
+        # ========== STEP 2: FETCH ALL PROXIES AT ONCE ==========
+        print("  [STEP 2] Fetching all active proxies...")
         
-        if proxy_ids:
-            proxy_resp = await http.get(
-                f"{SUPABASE_URL}/rest/v1/proxies",
-                headers={
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}",
-                    "Content-Type": "application/json"
-                },
-                params={
-                    "select": "id,host,port,username,password,proxy_type,status",
-                    "id": f"in.({','.join(proxy_ids)})"
-                }
-            )
-            if proxy_resp.status_code == 200:
-                for proxy in proxy_resp.json():
-                    proxies_map[proxy["id"]] = proxy
+        proxy_resp = await http.get(
+            f"{SUPABASE_URL}/rest/v1/proxies",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json"
+            },
+            params={
+                "select": "id,host,port,username,password,proxy_type,status,assigned_account_id",
+                "status": "eq.active"
+            }
+        )
         
-        # Attach proxies to accounts
+        all_proxies = proxy_resp.json() if proxy_resp.status_code == 200 else []
+        print(f"  [STEP 2] Found {len(all_proxies)} active proxies")
+        
+        # Build proxy maps
+        proxies_by_id = {p["id"]: p for p in all_proxies}
+        assigned_proxies = {p["assigned_account_id"]: p for p in all_proxies if p.get("assigned_account_id")}
+        unassigned_proxies = [p for p in all_proxies if not p.get("assigned_account_id")]
+        
+        # ========== STEP 3: ASSIGN PROXIES & FINGERPRINTS ==========
+        print("  [STEP 3] Assigning proxies & generating fingerprints...")
+        
+        ready_accounts = []
+        skipped_no_proxy = 0
+        fingerprints_generated = 0
+        proxies_assigned = 0
+        
+        unassigned_idx = 0
+        
         for account in accounts:
-            if account.get("proxy_id") and account["proxy_id"] in proxies_map:
-                account["proxy"] = proxies_map[account["proxy_id"]]
+            account_id = account["id"]
+            phone = account.get("phone_number", "???")[-4:]
+            
+            # Check/assign proxy
+            proxy = None
+            if account.get("proxy_id") and account["proxy_id"] in proxies_by_id:
+                proxy = proxies_by_id[account["proxy_id"]]
+            elif account_id in assigned_proxies:
+                proxy = assigned_proxies[account_id]
+            elif unassigned_idx < len(unassigned_proxies):
+                # Assign an unassigned proxy
+                proxy = unassigned_proxies[unassigned_idx]
+                unassigned_idx += 1
+                proxies_assigned += 1
+            
+            if not proxy or not proxy.get("host"):
+                skipped_no_proxy += 1
+                continue
+            
+            account["proxy"] = proxy
+            
+            # Check/generate fingerprint
+            if not account.get("device_model") or not account.get("system_version"):
+                fp = generate_fingerprint()
+                account.update(fp)
+                fingerprints_generated += 1
+            
+            ready_accounts.append(account)
         
-        print(f"  [ACCOUNTS] Fetched {len(accounts)} active accounts with sessions")
-        return accounts
+        print(f"  [STEP 3] Ready: {len(ready_accounts)} | No proxy: {skipped_no_proxy}")
+        print(f"  [STEP 3] Proxies assigned: {proxies_assigned} | Fingerprints generated: {fingerprints_generated}")
+        
+        return ready_accounts
         
     except Exception as e:
-        print(f"  [ERROR] Fetch accounts: {e}")
+        print(f"  [ERROR] fetch_all_accounts_ready: {e}")
         return []
 
 
-# ========== STARTUP: CONNECT ALL ACCOUNTS FOR LIVECHAT (ALL AT ONCE) ==========
-async def connect_single_account(account: dict) -> bool:
-    """Connect a single account - used for parallel execution"""
+# ========== INSTANT CONNECT (NO DB CALLS DURING CONNECTION) ==========
+async def instant_connect(account: dict) -> bool:
+    """
+    Connect account INSTANTLY - no DB calls, everything pre-loaded.
+    Only does: decode session → create client → connect → setup handler
+    """
+    account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
+    
     try:
-        client = await get_or_create_client(account, setup_handler=setup_livechat_handler)
-        return client is not None
+        # Check if already connected
+        if account_id in active_clients:
+            client = active_clients[account_id]
+            if client.is_connected():
+                return True
+            del active_clients[account_id]
+        
+        # Get proxy settings (already loaded)
+        proxy = get_proxy_settings(account.get("proxy"))
+        if not proxy:
+            return False
+        
+        # Decode session
+        session_path = decode_session_file(phone, account.get("session_data"))
+        if not session_path:
+            return False
+        
+        # Create client with fingerprint (already loaded)
+        api_id = account.get("api_id") or "31812270"
+        api_hash = account.get("api_hash") or "4cce3baadfdb22bd5930f9d8f5063f98"
+        
+        client = TelegramClient(
+            session_path, int(api_id), api_hash,
+            device_model=account.get("device_model"),
+            system_version=account.get("system_version"),
+            app_version=account.get("app_version", "10.14.2"),
+            lang_code=account.get("lang_code", "en"),
+            system_lang_code=account.get("system_lang_code", "en-US"),
+            proxy=proxy,
+            timeout=CONNECTION_TIMEOUT,
+            connection_retries=2,
+            auto_reconnect=True
+        )
+        
+        # Connect
+        await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+        
+        if not await client.is_user_authorized():
+            return False
+        
+        # Setup livechat handler
+        await setup_livechat_handler(client, account_id)
+        
+        active_clients[account_id] = client
+        return True
+        
     except Exception as e:
-        print(f"  [ERROR] ...{phone}: {e}")
         return False
 
 
+# ========== STARTUP: CONNECT ALL ACCOUNTS INSTANTLY ==========
 async def connect_all_accounts_for_livechat():
     """
-    Connect ALL active accounts at startup for LiveChat receiving.
-    Connects ALL accounts simultaneously for maximum speed.
+    INSTANT startup - fetch everything first, then connect ALL at once.
+    No DB calls during connection phase.
     """
     print()
     print("=" * 60)
-    print("  PHASE 1: Connecting ALL Accounts (SIMULTANEOUS)")
+    print("  PHASE 1: INSTANT Startup (All Accounts At Once)")
     print("=" * 60)
     print()
     
-    accounts = await fetch_all_active_accounts()
+    # Step 1-3: Fetch ALL data and prepare accounts
+    accounts = await fetch_all_accounts_ready()
+    
     if not accounts:
-        print("  [WARN] No active accounts found to connect")
+        print("  [WARN] No ready accounts to connect")
         return 0
     
-    total = len(accounts)
-    print(f"  [INFO] Connecting {total} accounts ALL AT ONCE...")
+    # Step 4: Connect ALL accounts simultaneously (no DB calls)
     print()
+    print(f"  [STEP 4] Connecting {len(accounts)} accounts INSTANTLY...")
     
-    # Create tasks for ALL accounts
-    tasks = [connect_single_account(account) for account in accounts]
+    start_time = asyncio.get_event_loop().time()
     
-    # Run ALL connections simultaneously
+    # Run ALL connections at once
+    tasks = [instant_connect(account) for account in accounts]
     results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    elapsed = asyncio.get_event_loop().time() - start_time
     
     # Count results
     connected = sum(1 for r in results if r is True)
-    skipped = total - connected
+    failed = len(accounts) - connected
     
     print()
     print("=" * 60)
-    print(f"  LIVECHAT READY: {connected} connected | {skipped} skipped")
+    print(f"  LIVECHAT READY: {connected} connected | {failed} failed")
+    print(f"  TIME: {elapsed:.1f} seconds for {len(accounts)} accounts")
     print("=" * 60)
     print()
     
