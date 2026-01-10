@@ -3333,10 +3333,8 @@ async def fetch_all_active_accounts() -> list:
         return []
 
 
-# ========== STARTUP: CONNECT ALL ACCOUNTS FOR LIVECHAT (PARALLEL) ==========
-PARALLEL_CONNECTION_LIMIT = 10  # Connect 10 accounts at once
-
-async def connect_single_account(account: dict, index: int, total: int) -> bool:
+# ========== STARTUP: CONNECT ALL ACCOUNTS FOR LIVECHAT (ALL AT ONCE) ==========
+async def connect_single_account(account: dict) -> bool:
     """Connect a single account - used for parallel execution"""
     phone = account.get("phone_number", "???")[-4:]
     try:
@@ -3350,23 +3348,12 @@ async def connect_single_account(account: dict, index: int, total: int) -> bool:
 async def connect_all_accounts_for_livechat():
     """
     Connect ALL active accounts at startup for LiveChat receiving.
-    Uses PARALLEL connections for speed (10 accounts at a time).
-    
-    FLOW:
-    1. Fetch all active accounts with session data from DB
-    2. Connect accounts in parallel batches of 10
-    3. For each account, get_or_create_client will:
-       - Fetch proxy from DB if not assigned
-       - Fetch/generate fingerprint if missing
-       - Connect to Telegram with proper settings
-       - Setup livechat message handler
+    Connects ALL accounts simultaneously for maximum speed.
     """
     print()
     print("=" * 60)
-    print("  PHASE 1: Connecting ALL Accounts for LiveChat (PARALLEL)")
+    print("  PHASE 1: Connecting ALL Accounts (SIMULTANEOUS)")
     print("=" * 60)
-    print()
-    print(f"  Speed: {PARALLEL_CONNECTION_LIMIT} accounts connecting simultaneously")
     print()
     
     accounts = await fetch_all_active_accounts()
@@ -3375,39 +3362,22 @@ async def connect_all_accounts_for_livechat():
         return 0
     
     total = len(accounts)
-    print(f"  [INFO] Found {total} active accounts to connect")
+    print(f"  [INFO] Connecting {total} accounts ALL AT ONCE...")
     print()
     
-    connected = 0
-    skipped = 0
+    # Create tasks for ALL accounts
+    tasks = [connect_single_account(account) for account in accounts]
     
-    # Process in parallel batches
-    for batch_start in range(0, total, PARALLEL_CONNECTION_LIMIT):
-        batch_end = min(batch_start + PARALLEL_CONNECTION_LIMIT, total)
-        batch = accounts[batch_start:batch_end]
-        
-        print(f"  [BATCH] Connecting {batch_start + 1}-{batch_end} of {total}...")
-        
-        # Create tasks for parallel execution
-        tasks = [
-            connect_single_account(account, batch_start + i, total)
-            for i, account in enumerate(batch)
-        ]
-        
-        # Run all connections in parallel
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Count results
-        for result in results:
-            if result is True:
-                connected += 1
-            else:
-                skipped += 1
+    # Run ALL connections simultaneously
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    
+    # Count results
+    connected = sum(1 for r in results if r is True)
+    skipped = total - connected
     
     print()
     print("=" * 60)
     print(f"  LIVECHAT READY: {connected} connected | {skipped} skipped")
-    print(f"  Speed: Connected {connected} accounts in parallel batches")
     print("=" * 60)
     print()
     
