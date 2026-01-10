@@ -167,21 +167,19 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           .select('*, campaign_accounts(account_id)')
           .order('created_at', { ascending: false }),
           
-        // Fetch conversations (limit to recent ones for performance)
+        // Fetch conversations (no limit - show all)
         supabase
           .from('conversations')
           .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply')
           .eq('first_message_sent', true)
           .not('last_message_at', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(500),
+          .order('created_at', { ascending: false }),
           
-        // Fetch messages
+        // Fetch messages (no limit - show all)
         supabase
           .from('messages')
           .select('*, conversations(recipient_phone)')
-          .order('created_at', { ascending: false })
-          .limit(500),
+          .order('created_at', { ascending: false }),
       ]);
 
       // Process accounts
