@@ -40,25 +40,16 @@ serve(async (req) => {
         .then(() => {});
     }
 
-    // PARALLEL: Load settings AND accounts in parallel to reduce latency
-    const now = new Date().toISOString();
-    const [settingsResult, accountsResult] = await Promise.all([
-      supabase.from("app_settings").select("key, value"),
-      supabase
-        .from("telegram_accounts")
-        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-        .eq("status", "active")
-        .or(`restricted_until.is.null,restricted_until.lt.${now}`)
-    ]);
-
-    const settingsData = settingsResult.data;
-    const activeAccounts = accountsResult.data;
-    const accountsError = accountsResult.error;
+    // Load settings from database (lightweight)
+    const nowIso = new Date().toISOString();
+    const { data: settingsData } = await supabase
+      .from("app_settings")
+      .select("key, value");
 
     // Dynamic batch sizes from settings
     let warmupBatchSize = 100; // Default for warmup
     let campaignBatchSize = 100; // Default for campaign
-    
+
     // Campaign speed settings (server-controlled)
     let campaignPollingInterval = 3;
     let campaignMessagesPerAccountPerDay = 25;
@@ -82,18 +73,72 @@ serve(async (req) => {
       }
     }
 
-    // Note: activeAccounts and accountsError already loaded above in parallel
+    // EARLY EXIT: avoid heavy account fetch when there's clearly nothing to do
+    if (runner === "campaign") {
+      const { data: runningCampaigns } = await supabase
+        .from("campaigns")
+        .select("id")
+        .eq("status", "running");
+
+      if (!runningCampaigns || runningCampaigns.length === 0) {
+        return new Response(
+          JSON.stringify({
+            tasks: [],
+            delay_after: campaignPollingInterval,
+            reason: "No running campaigns",
+            stop_signal: true,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+    }
+
+    if (runner === "warmup_chat") {
+      const { data: dueWarmupMessages } = await supabase
+        .from("warmup_messages")
+        .select("id")
+        .eq("status", "pending")
+        .lte("scheduled_at", nowIso)
+        .limit(1);
+
+      if (!dueWarmupMessages || dueWarmupMessages.length === 0) {
+        return new Response(
+          JSON.stringify({
+            tasks: [],
+            delay_after: 5,
+            reason: "No pending warmup messages",
+            accounts_available: 0,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+    }
+
+    // Load active accounts only when needed
+    const { data: activeAccounts, error: accountsError } = await supabase
+      .from("telegram_accounts")
+      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+      .eq("status", "active")
+      .or(`restricted_until.is.null,restricted_until.lt.${nowIso}`);
 
     if (accountsError || !activeAccounts || activeAccounts.length === 0) {
       console.log("[get-batch-tasks] No active accounts available");
-      return new Response(JSON.stringify({
-        tasks: [],
-        delay_after: 30,
-        reason: "No active accounts"
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          tasks: [],
+          delay_after: 30,
+          reason: "No active accounts",
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
+
 
     // CRITICAL SAFETY CHECK: Only use accounts that have an ACTIVE proxy assigned
     const accountsWithActiveProxy = activeAccounts.filter((a: any) => {
@@ -362,7 +407,9 @@ serve(async (req) => {
         .from("campaign_recipients")
         .select("api_credential_id, status, sent_at, scheduled_at")
         .in("status", ["sent", "failed", "sending"])
-        .not("api_credential_id", "is", null);
+        .not("api_credential_id", "is", null)
+        .or(`sent_at.gte.${oneDayAgo},scheduled_at.gte.${oneDayAgo}`);
+
       
       // Count usage per API - use sent_at or scheduled_at for timing
       const apiUsageCounts = new Map<string, number>();
