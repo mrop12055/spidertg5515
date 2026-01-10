@@ -922,21 +922,21 @@ const Chat: React.FC = () => {
                             <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full ring-2 ring-background" />
                           )}
                         </div>
-                        <div className="flex-1 min-w-0 overflow-hidden">
-                          <div className="flex items-center justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
                             <span className={cn(
-                              "font-medium text-sm block truncate max-w-full",
+                              "font-medium text-sm truncate flex-1 min-w-0",
                               conv.unreadCount > 0 ? "text-foreground" : "text-foreground/80"
                             )}>
                               {displayName}
                             </span>
-                            <span className="text-[10px] text-muted-foreground tabular-nums flex-shrink-0 whitespace-nowrap">
+                            <span className="text-[10px] text-muted-foreground tabular-nums flex-shrink-0">
                               {formatMessageDate(conv.updatedAt)}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between gap-2 mt-0.5">
+                          <div className="flex items-center gap-2 mt-0.5">
                             <p className={cn(
-                              "text-xs truncate flex items-center gap-1",
+                              "text-xs flex items-center gap-1 flex-1 min-w-0 truncate",
                               conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
                             )}>
                               {isUserTyping ? (
