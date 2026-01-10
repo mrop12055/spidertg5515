@@ -146,6 +146,40 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       setIsLoading(true);
       
       // Run ALL queries in parallel for maximum speed
+      // NOTE: PostgREST enforces a default max of 1000 rows per request, so we page conversations.
+      const fetchConversationsPaged = async (): Promise<{ data: any[] | null; error: any | null }> => {
+        const PAGE_SIZE = 1000;
+        const MAX_PAGES = 1000; // safety cap (up to 1,000,000 rows)
+
+        const all: any[] = [];
+
+        try {
+          for (let page = 0; page < MAX_PAGES; page++) {
+            const from = page * PAGE_SIZE;
+            const to = from + PAGE_SIZE - 1;
+
+            const { data, error } = await supabase
+              .from('conversations')
+              .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply')
+              .eq('first_message_sent', true)
+              .not('last_message_at', 'is', null)
+              .order('created_at', { ascending: false })
+              .range(from, to);
+
+            if (error) throw error;
+            if (!data || data.length === 0) break;
+
+            all.push(...data);
+
+            if (data.length < PAGE_SIZE) break; // last page
+          }
+
+          return { data: all, error: null };
+        } catch (e) {
+          return { data: null, error: e };
+        }
+      };
+
       const [accountsResult, proxiesResult, campaignsResult, conversationsResult, messagesResult] = await Promise.all([
         // Fetch accounts - exclude large session_data column for performance
         // No limit - fetch all accounts for proper display
@@ -153,29 +187,23 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           .from('telegram_accounts')
           .select('id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id')
           .order('created_at', { ascending: false }),
-          
+
         // Fetch proxies - select only needed columns for performance
         supabase
           .from('proxies')
           .select('id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country')
           .order('created_at', { ascending: false })
           .limit(1000),
-          
+
         // Fetch campaigns
         supabase
           .from('campaigns')
           .select('*, campaign_accounts(account_id)')
           .order('created_at', { ascending: false }),
-          
-        // Fetch conversations (limit 20k)
-        supabase
-          .from('conversations')
-          .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply')
-          .eq('first_message_sent', true)
-          .not('last_message_at', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(20000),
-          
+
+        // Fetch conversations (paged; no effective 1000-row cap)
+        fetchConversationsPaged(),
+
         // Fetch messages (no limit - show all)
         supabase
           .from('messages')
@@ -493,15 +521,11 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             };
 
             setConversations(prev => {
-              const MAX_CONVERSATIONS = 300;
-
               if (prev.some(conv => conv.id === c.id)) {
-                const next = prev.map(conv => (conv.id === c.id ? newConv : conv));
-                return next.length > MAX_CONVERSATIONS ? next.slice(0, MAX_CONVERSATIONS) : next;
+                return prev.map(conv => (conv.id === c.id ? newConv : conv));
               }
 
-              const next = [newConv, ...prev];
-              return next.length > MAX_CONVERSATIONS ? next.slice(0, MAX_CONVERSATIONS) : next;
+              return [newConv, ...prev];
             });
           } else if (payload.eventType === 'UPDATE') {
             const c = payload.new as any;
