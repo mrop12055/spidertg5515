@@ -884,7 +884,7 @@ const Chat: React.FC = () => {
                     <div
                       key={conv.id}
                       className={cn(
-                        "flex items-center gap-3 px-4 py-2.5 transition-colors cursor-pointer group",
+                        "flex items-center gap-3 px-4 py-2.5 transition-colors cursor-pointer group overflow-hidden",
                         isSelected && !isSelectionMode && "bg-primary/10 border-l-2 border-l-primary",
                         isChecked && isSelectionMode && "bg-primary/10",
                         !isSelected && "hover:bg-muted/50"
@@ -907,7 +907,7 @@ const Chat: React.FC = () => {
                             setIsMessageSearchOpen(false);
                           }
                         }}
-                        className="flex-1 flex items-center gap-2.5 text-left min-w-0"
+                        className="flex-1 flex items-center gap-2.5 text-left min-w-0 overflow-hidden"
                       >
                         <div className="relative flex-shrink-0">
                           <Avatar className="h-10 w-10">
