@@ -763,7 +763,10 @@ serve(async (req) => {
                 }
               : null,
             mode: "campaign",
-            disconnect_after: true, // Disconnect session after sending to avoid conflict with livechat runner
+            // IMPORTANT: Telegram session connection lifecycle is controlled by the runner.
+            // For campaign mode, the runner should keep connections only during ONE batch,
+            // then disconnect ALL clients before requesting the next batch.
+            disconnect_after: false,
           });
 
           usedAccountIds.add(account.id);
@@ -830,6 +833,9 @@ serve(async (req) => {
       console.log(`[get-batch-tasks] Campaign returning ${tasks.length} tasks, remaining pending: ${remainingPending}, delay: ${delayAfter}s`);
       
       return new Response(JSON.stringify({
+        batch_id: crypto.randomUUID(),
+        disconnect_after_batch: true,
+        disconnect_scope: "batch",
         tasks,
         delay_after: delayAfter,
         more_pending: morePending,
