@@ -3055,13 +3055,14 @@ async def prepare_account(account: dict) -> tuple[dict | None, str | None]:
     """
     CRITICAL SAFETY: Never run session without ALL THREE:
     1. Session data (session file)
-    2. Proxy (MUST be already assigned - no new assignments)
-    3. Fingerprint (MUST be already saved - no generation)
+    2. Proxy (auto-assign if missing)
+    3. Fingerprint (auto-generate if missing)
     
     Steps:
     1. Check session_data exists → SKIP if missing
-    2. Check proxy is already assigned → SKIP if missing (NO fetching/assigning)
-    3. Check fingerprint exists → SKIP if missing (NO generation)
+    2. Check/assign proxy from DB if missing
+    3. Check/generate fingerprint if missing
+    4. Save new assignments to DB
     """
     account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
@@ -3071,17 +3072,29 @@ async def prepare_account(account: dict) -> tuple[dict | None, str | None]:
     if not session_data:
         return None, f"[{phone}] SKIPPED - No session data"
     
-    # ========== STEP 1: CHECK PROXY (MUST BE ALREADY ASSIGNED) ==========
+    # ========== STEP 1: CHECK/ASSIGN PROXY ==========
     proxy = account.get("proxy")
     if not proxy or not proxy.get("host"):
-        return None, f"[{phone}] SKIPPED - No proxy assigned (assign proxy first)"
+        print(f"  [{phone}] No proxy assigned, fetching from database...")
+        proxy = await fetch_available_proxy(account_id)
+        if not proxy:
+            return None, f"[{phone}] SKIPPED - No proxy available in database"
+        account["proxy"] = proxy
+        # Save proxy assignment to database
+        await save_proxy_assignment(account_id, proxy["id"])
+        print(f"  [{phone}] Assigned proxy: {proxy['host']}:{proxy['port']}")
     
-    # ========== STEP 2: CHECK FINGERPRINT (MUST ALREADY EXIST) ==========
+    # ========== STEP 2: CHECK/GENERATE FINGERPRINT ==========
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     
     if not device_model or not system_version:
-        return None, f"[{phone}] SKIPPED - No fingerprint saved (set fingerprint first)"
+        print(f"  [{phone}] No fingerprint, generating new one...")
+        fp = generate_fingerprint()
+        account.update(fp)
+        # Save fingerprint to database
+        await save_fingerprint_to_db(account_id, fp)
+        print(f"  [{phone}] Generated fingerprint: {fp['device_model']}")
     
     return account, None
 
@@ -3235,20 +3248,18 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
 # ========== FETCH ALL ACTIVE ACCOUNTS WITH EVERYTHING ==========
 async def fetch_all_accounts_ready() -> list:
     """
-    Fetch ALL accounts that are READY to connect:
+    Fetch ALL accounts and prepare them for connection:
     - Have session_data
-    - Have proxy ALREADY assigned
-    - Have fingerprint ALREADY saved
-    
-    NO new proxy assignments, NO fingerprint generation.
-    Only uses what's already in the database.
+    - Auto-assign proxy if missing
+    - Auto-generate fingerprint if missing
+    - Save new assignments to database
     """
     try:
         http = get_http_client()
         
-        print("  [STEP 1] Fetching all active accounts with session, proxy, and fingerprint...")
+        print("  [STEP 1] Fetching all active accounts with sessions...")
         
-        # Fetch ALL active accounts with sessions, fingerprint, and proxy_id
+        # Fetch ALL active accounts with sessions
         resp = await http.get(
             f"{SUPABASE_URL}/rest/v1/telegram_accounts",
             headers={
@@ -3259,9 +3270,7 @@ async def fetch_all_accounts_ready() -> list:
             params={
                 "select": "id,phone_number,session_data,device_model,system_version,app_version,lang_code,system_lang_code,api_id,api_hash,proxy_id",
                 "status": "eq.active",
-                "session_data": "not.is.null",
-                "proxy_id": "not.is.null",
-                "device_model": "not.is.null"
+                "session_data": "not.is.null"
             }
         )
         
@@ -3270,22 +3279,14 @@ async def fetch_all_accounts_ready() -> list:
             return []
         
         accounts = resp.json()
-        print(f"  [STEP 1] Found {len(accounts)} accounts with session + proxy + fingerprint")
+        print(f"  [STEP 1] Found {len(accounts)} active accounts with sessions")
         
         if not accounts:
-            print("  [WARN] No accounts found with all requirements (session + proxy + fingerprint)")
             return []
         
-        # ========== STEP 2: FETCH ONLY ASSIGNED PROXIES ==========
-        proxy_ids = [a["proxy_id"] for a in accounts if a.get("proxy_id")]
+        # ========== STEP 2: FETCH ALL ACTIVE PROXIES ==========
+        print("  [STEP 2] Fetching all active proxies...")
         
-        if not proxy_ids:
-            print("  [WARN] No proxy IDs to fetch")
-            return []
-        
-        print(f"  [STEP 2] Fetching {len(proxy_ids)} assigned proxies...")
-        
-        # Fetch proxies by IDs (batch query)
         proxy_resp = await http.get(
             f"{SUPABASE_URL}/rest/v1/proxies",
             headers={
@@ -3294,8 +3295,7 @@ async def fetch_all_accounts_ready() -> list:
                 "Content-Type": "application/json"
             },
             params={
-                "select": "id,host,port,username,password,proxy_type,status",
-                "id": f"in.({','.join(proxy_ids)})",
+                "select": "id,host,port,username,password,proxy_type,status,assigned_account_id",
                 "status": "eq.active"
             }
         )
@@ -3303,40 +3303,78 @@ async def fetch_all_accounts_ready() -> list:
         all_proxies = proxy_resp.json() if proxy_resp.status_code == 200 else []
         print(f"  [STEP 2] Found {len(all_proxies)} active proxies")
         
-        # Build proxy map by ID
+        # Build proxy maps
         proxies_by_id = {p["id"]: p for p in all_proxies}
+        unassigned_proxies = [p for p in all_proxies if not p.get("assigned_account_id")]
         
-        # ========== STEP 3: VALIDATE ACCOUNTS ==========
-        print("  [STEP 3] Validating accounts...")
+        # ========== STEP 3: ASSIGN PROXIES & GENERATE FINGERPRINTS ==========
+        print("  [STEP 3] Preparing accounts (assign proxy + generate fingerprint if needed)...")
         
         ready_accounts = []
         skipped_no_proxy = 0
-        skipped_no_fingerprint = 0
+        fingerprints_generated = 0
+        proxies_assigned = 0
+        
+        unassigned_idx = 0
+        
+        # Batch updates for DB
+        proxy_updates = []
+        fingerprint_updates = []
         
         for account in accounts:
+            account_id = account["id"]
             phone = account.get("phone_number", "???")[-4:]
             
-            # Check proxy exists and is active
-            proxy_id = account.get("proxy_id")
-            if not proxy_id or proxy_id not in proxies_by_id:
-                skipped_no_proxy += 1
-                continue
+            # Check/assign proxy
+            proxy = None
+            if account.get("proxy_id") and account["proxy_id"] in proxies_by_id:
+                proxy = proxies_by_id[account["proxy_id"]]
+            elif unassigned_idx < len(unassigned_proxies):
+                # Assign an unassigned proxy
+                proxy = unassigned_proxies[unassigned_idx]
+                unassigned_idx += 1
+                proxies_assigned += 1
+                # Queue for batch update
+                proxy_updates.append({
+                    "account_id": account_id,
+                    "proxy_id": proxy["id"]
+                })
             
-            proxy = proxies_by_id[proxy_id]
-            if not proxy.get("host") or not proxy.get("port"):
+            if not proxy or not proxy.get("host"):
                 skipped_no_proxy += 1
                 continue
             
             account["proxy"] = proxy
             
-            # Check fingerprint exists
+            # Check/generate fingerprint
             if not account.get("device_model") or not account.get("system_version"):
-                skipped_no_fingerprint += 1
-                continue
+                fp = generate_fingerprint()
+                account.update(fp)
+                fingerprints_generated += 1
+                # Queue for batch update
+                fingerprint_updates.append({
+                    "account_id": account_id,
+                    "fingerprint": fp
+                })
             
             ready_accounts.append(account)
         
-        print(f"  [STEP 3] Ready: {len(ready_accounts)} | No active proxy: {skipped_no_proxy} | No fingerprint: {skipped_no_fingerprint}")
+        print(f"  [STEP 3] Ready: {len(ready_accounts)} | No proxy: {skipped_no_proxy}")
+        print(f"  [STEP 3] Proxies assigned: {proxies_assigned} | Fingerprints generated: {fingerprints_generated}")
+        
+        # ========== STEP 4: SAVE NEW ASSIGNMENTS TO DATABASE ==========
+        if proxy_updates or fingerprint_updates:
+            print(f"  [STEP 4] Saving {len(proxy_updates)} proxy + {len(fingerprint_updates)} fingerprint updates...")
+            
+            # Save proxy assignments
+            for update in proxy_updates:
+                await save_proxy_assignment(update["account_id"], update["proxy_id"])
+            
+            # Save fingerprints
+            for update in fingerprint_updates:
+                await save_fingerprint_to_db(update["account_id"], update["fingerprint"])
+            
+            print("  [STEP 4] Saved all updates to database")
         
         return ready_accounts
         
@@ -3345,11 +3383,10 @@ async def fetch_all_accounts_ready() -> list:
         return []
 
 
-# ========== INSTANT CONNECT (NO DB CALLS DURING CONNECTION) ==========
-async def instant_connect(account: dict) -> bool:
+# ========== INSTANT CONNECT (WITH AUTO PROXY SWITCH ON FAILURE) ==========
+async def instant_connect(account: dict, retry_with_new_proxy: bool = True) -> bool:
     """
-    Connect account INSTANTLY - no DB calls, everything pre-loaded.
-    Only does: decode session → create client → connect → setup handler
+    Connect account - on connection failure, switch to new proxy and save to DB.
     """
     account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
@@ -3362,9 +3399,10 @@ async def instant_connect(account: dict) -> bool:
                 return True
             del active_clients[account_id]
         
-        # Get proxy settings (already loaded)
+        # Get proxy settings
         proxy = get_proxy_settings(account.get("proxy"))
         if not proxy:
+            print(f"  [{phone}] No valid proxy")
             return False
         
         # Decode session
@@ -3372,7 +3410,7 @@ async def instant_connect(account: dict) -> bool:
         if not session_path:
             return False
         
-        # Create client with fingerprint (already loaded)
+        # Create client with fingerprint
         api_id = account.get("api_id") or "31812270"
         api_hash = account.get("api_hash") or "4cce3baadfdb22bd5930f9d8f5063f98"
         
@@ -3385,7 +3423,7 @@ async def instant_connect(account: dict) -> bool:
             system_lang_code=account.get("system_lang_code", "en-US"),
             proxy=proxy,
             timeout=CONNECTION_TIMEOUT,
-            connection_retries=2,
+            connection_retries=1,
             auto_reconnect=True
         )
         
@@ -3393,6 +3431,7 @@ async def instant_connect(account: dict) -> bool:
         await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
         
         if not await client.is_user_authorized():
+            await update_account_status(account_id, "disconnected", "Session expired")
             return False
         
         # Setup livechat handler
@@ -3401,7 +3440,26 @@ async def instant_connect(account: dict) -> bool:
         active_clients[account_id] = client
         return True
         
-    except Exception as e:
+    except (asyncio.TimeoutError, Exception) as e:
+        err_str = str(e).lower()
+        is_proxy_error = any(x in err_str for x in ["timeout", "proxy", "connection", "semaphore", "refused", "reset"])
+        
+        # If proxy error and retry allowed, switch proxy and retry
+        if retry_with_new_proxy and is_proxy_error:
+            print(f"  [{phone}] Proxy failed, switching to new proxy...")
+            old_proxy_id = account.get("proxy", {}).get("id")
+            
+            # Get new proxy and save to database
+            new_proxy = await switch_to_new_proxy(account_id, old_proxy_id)
+            
+            if new_proxy:
+                print(f"  [{phone}] New proxy assigned: {new_proxy['host']}:{new_proxy['port']}")
+                account["proxy"] = new_proxy
+                # Retry with new proxy (no more retries after this)
+                return await instant_connect(account, retry_with_new_proxy=False)
+            else:
+                print(f"  [{phone}] No alternative proxy available")
+        
         return False
 
 
