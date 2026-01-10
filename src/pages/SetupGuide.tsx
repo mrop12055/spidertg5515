@@ -505,17 +505,22 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                     # Check if it's an image based on extension or content-type
                     content_type = resp.headers.get("content-type", "").lower()
                     ext = filename.split(".")[-1].lower() if "." in filename else ""
-                    is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+                    
+                    # IMPORTANT: Exclude webp from images - Telegram treats webp as stickers!
+                    # Also exclude gif as they can appear as stickers too
+                    is_photo = ext in ("jpg", "jpeg", "png") or (content_type.startswith("image/") and "webp" not in content_type and "gif" not in content_type)
+                    is_webp_or_gif = ext in ("webp", "gif") or "webp" in content_type or "gif" in content_type
                     
                     # Wrap bytes in BytesIO with a name so Telethon knows the file type
                     file_bytes = io.BytesIO(resp.content)
                     file_bytes.name = filename if "." in filename else f"photo.jpg"
                     
-                    print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
+                    print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_photo={is_photo}, is_webp_or_gif={is_webp_or_gif}")
                     
-                    # For images, use force_document=False to send as photo preview
+                    # For photos (jpg/png), use force_document=False to send as photo preview
+                    # For webp/gif, send as document to avoid sticker appearance
                     await asyncio.wait_for(
-                        client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
+                        client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_photo, parse_mode=parse_mode),
                         timeout=20  # Faster media send
                     )
                 else:
