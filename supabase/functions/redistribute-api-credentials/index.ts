@@ -154,30 +154,32 @@ serve(async (req) => {
       );
     }
     
-    // Update credential counts in parallel
-    for (const cred of apiCredentials) {
-      const newCount = assignmentCounts.get(cred.id) || 0;
-      updateFns.push(() =>
-        supabase
-          .from('telegram_api_credentials')
-          .update({ accounts_count: newCount })
-          .eq('id', cred.id)
-      );
-    }
-    
-    // Execute all updates in parallel batches of 20
+    // Execute account updates in parallel batches of 20
     const BATCH_SIZE = 20;
-    let successCount = 0;
     for (let i = 0; i < updateFns.length; i += BATCH_SIZE) {
       const batch = updateFns.slice(i, i + BATCH_SIZE);
-      const results = await Promise.all(batch.map(fn => fn()));
-      successCount += results.filter(r => !r.error).length;
+      await Promise.all(batch.map(fn => fn()));
     }
     
-    console.log(`[redistribute-api-credentials] Completed ${updateFns.length} batch updates`);
-    successCount = assignments.length; // All accounts processed via batch
+    console.log(`[redistribute-api-credentials] Completed ${updateFns.length} account batch updates`);
 
-    console.log(`[redistribute-api-credentials] Assigned ${successCount}/${assignments.length} accounts`);
+    // Now update credential counts based on ACTUAL assigned accounts (query DB for accuracy)
+    for (const cred of apiCredentials) {
+      const { count } = await supabase
+        .from('telegram_accounts')
+        .select('*', { count: 'exact', head: true })
+        .eq('api_credential_id', cred.id);
+      
+      await supabase
+        .from('telegram_api_credentials')
+        .update({ accounts_count: count || 0 })
+        .eq('id', cred.id);
+    }
+    
+    console.log(`[redistribute-api-credentials] Updated all credential counts from actual assignments`);
+    const successCount = assignments.length;
+
+    console.log(`[redistribute-api-credentials] Assigned ${successCount} accounts across ${apiCredentials.length} APIs`);
 
     // Fetch final distribution
     const { data: finalDist } = await supabase
