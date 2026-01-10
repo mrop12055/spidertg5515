@@ -109,7 +109,8 @@ const DatabaseHealth = () => {
         setHealth(healthData as SystemHealth);
       }
 
-      // Fetch pending and completed tasks
+      // Fetch pending and completed tasks with LIMITS to prevent lag
+      const LIMIT = 100;
       const [
         accountRes, blockRes, importRes, warmupRes, recipientsRes, messagesRes,
         completedAccountRes, completedBlockRes, completedImportRes, completedWarmupRes, 
@@ -120,62 +121,74 @@ const DatabaseHealth = () => {
           .from('account_check_tasks')
           .select('id, account_id, status, task_type, created_at, result')
           .eq('status', 'pending')
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(LIMIT),
         supabase
           .from('block_contact_tasks')
           .select('id, account_id, status, action, target_phone, created_at, result')
           .eq('status', 'pending')
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(LIMIT),
         supabase
           .from('contact_import_tasks')
           .select('id, account_id, status, created_at, result')
           .eq('status', 'pending')
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(LIMIT),
         supabase
           .from('warmup_schedule')
           .select('id, account_id, status, task_type, day_number, task_description, created_at')
           .eq('status', 'pending')
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(LIMIT),
         supabase
           .from('campaign_recipients')
           .select('id, phone_number, name, status, campaign_id, failed_reason')
-          .eq('status', 'pending'),
+          .eq('status', 'pending')
+          .limit(LIMIT),
         supabase
           .from('messages')
           .select('id, content, status, created_at, conversation_id, failed_reason')
           .in('status', ['pending', 'sending'])
-          .order('created_at', { ascending: false }),
-        // Completed tasks
+          .order('created_at', { ascending: false })
+          .limit(LIMIT),
+        // Completed tasks - limit to recent 50 for performance
         supabase
           .from('account_check_tasks')
           .select('id, account_id, status, task_type, created_at, result')
           .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(50),
         supabase
           .from('block_contact_tasks')
           .select('id, account_id, status, action, target_phone, created_at, result')
           .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(50),
         supabase
           .from('contact_import_tasks')
           .select('id, account_id, status, created_at, result')
           .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(50),
         supabase
           .from('warmup_schedule')
           .select('id, account_id, status, task_type, day_number, task_description, created_at')
           .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false }),
+          .order('created_at', { ascending: false })
+          .limit(50),
         supabase
           .from('campaign_recipients')
           .select('id, phone_number, name, status, campaign_id, failed_reason')
           .in('status', ['sent', 'failed'])
-          .order('sent_at', { ascending: false }),
+          .order('sent_at', { ascending: false })
+          .limit(50),
         supabase
           .from('messages')
           .select('id, content, status, created_at, conversation_id, failed_reason')
           .in('status', ['sent', 'delivered', 'read', 'failed'])
           .order('created_at', { ascending: false })
+          .limit(50)
       ]);
 
       // Set pending tasks
@@ -359,18 +372,26 @@ const DatabaseHealth = () => {
   useEffect(() => {
     fetchData();
 
-    // Set up real-time subscriptions
+    // Debounced refresh to prevent excessive re-fetches
+    let refreshTimer: NodeJS.Timeout | null = null;
+    const debouncedRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => fetchData(), 2000);
+    };
+
+    // Set up real-time subscriptions with debouncing
     const channel = supabase
       .channel('database-health-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'account_check_tasks' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'block_contact_tasks' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_import_tasks' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'warmup_schedule' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchData())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, () => fetchData())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'account_check_tasks' }, debouncedRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'block_contact_tasks' }, debouncedRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_import_tasks' }, debouncedRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warmup_schedule' }, debouncedRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, debouncedRefresh)
       .subscribe();
 
     return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
   }, []);

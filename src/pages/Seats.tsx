@@ -81,16 +81,16 @@ const Seats: React.FC = () => {
   useEffect(() => {
     fetchSeats();
     
-    // Debounce timer for stats refresh
+    // Longer debounce (5s) to reduce refresh frequency for stats
     let statsRefreshTimer: NodeJS.Timeout | null = null;
     const debouncedStatsRefresh = () => {
       if (statsRefreshTimer) clearTimeout(statsRefreshTimer);
       statsRefreshTimer = setTimeout(() => {
         fetchSeats();
-      }, 1000); // Debounce 1 second
+      }, 5000); // Debounce 5 seconds to reduce lag
     };
     
-    // Subscribe to real-time changes on seats table
+    // Subscribe only to seats table changes (not messages/conversations for performance)
     const seatsChannel = supabase
       .channel('seats-changes')
       .on(
@@ -106,43 +106,15 @@ const Seats: React.FC = () => {
       )
       .subscribe();
     
-    // Subscribe to messages for live stats updates (debounced)
-    const messagesChannel = supabase
-      .channel('messages-for-stats')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'messages'
-        },
-        () => {
-          debouncedStatsRefresh();
-        }
-      )
-      .subscribe();
-    
-    // Subscribe to conversations for new conversation counts
-    const convsChannel = supabase
-      .channel('convs-for-stats')
-      .on(
-        'postgres_changes',
-        {
-          event: 'INSERT',
-          schema: 'public',
-          table: 'conversations'
-        },
-        () => {
-          debouncedStatsRefresh();
-        }
-      )
-      .subscribe();
+    // Auto-refresh stats every 30 seconds instead of on every message
+    const autoRefreshInterval = setInterval(() => {
+      fetchSeats();
+    }, 30000);
 
     return () => {
       if (statsRefreshTimer) clearTimeout(statsRefreshTimer);
+      clearInterval(autoRefreshInterval);
       supabase.removeChannel(seatsChannel);
-      supabase.removeChannel(messagesChannel);
-      supabase.removeChannel(convsChannel);
     };
   }, [fetchSeats]);
 
