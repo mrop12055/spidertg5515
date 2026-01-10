@@ -903,8 +903,40 @@ async def report_results_parallel(results: list) -> tuple:
     return success_count, len(valid_results) - success_count, elapsed
 
 
+async def disconnect_batch_clients():
+    """Disconnect ALL active clients after batch - CRITICAL for livechat isolation."""
+    global active_clients
+    if not active_clients:
+        return 0
+    
+    count = len(active_clients)
+    print(f"  🔌 Disconnecting {count} clients after batch...")
+    
+    async def disconnect_one(account_id: str, client: TelegramClient) -> bool:
+        try:
+            if client.is_connected():
+                await asyncio.wait_for(client.disconnect(), timeout=5)
+            return True
+        except Exception as e:
+            print(f"    ⚠ Disconnect error [{account_id[:8]}]: {e}")
+            return False
+    
+    # Disconnect all in parallel with timeout
+    disconnect_tasks = [disconnect_one(acc_id, client) for acc_id, client in active_clients.items()]
+    await asyncio.gather(*disconnect_tasks, return_exceptions=True)
+    
+    # Clear the cache completely
+    active_clients.clear()
+    print(f"  ✓ Disconnected {count} clients")
+    return count
+
+
 async def main_loop():
-    """Main campaign loop - Admin-controlled speed via dashboard settings"""
+    """Main campaign loop - Admin-controlled speed via dashboard settings
+    
+    CRITICAL: Disconnects ALL clients after EACH batch to avoid conflicts with livechat.
+    Server sends disconnect_after_batch=true to signal batch isolation.
+    """
     global RUNNING
 
     print("=" * 60)
@@ -916,6 +948,7 @@ async def main_loop():
     print("     - staggerMin/staggerMax > 0 → Controlled delay")
     print("     - batchSize = 0 → Unlimited batch size")
     print("  🔄 Proxy auto-switch on timeout")
+    print("  🔌 BATCH ISOLATION: Disconnects after each batch")
     print("  ♾️  RUNS FOREVER - auto-restarts on errors")
     print("=" * 60)
     print("\n✓ Starting campaign runner...\n")
@@ -934,6 +967,10 @@ async def main_loop():
             stagger_min = batch_result.get("stagger_min", 0)
             stagger_max = batch_result.get("stagger_max", 0)
             more_pending = batch_result.get("more_pending", False)
+            
+            # Server tells us to disconnect after batch (default: true for campaigns)
+            disconnect_after_batch = batch_result.get("disconnect_after_batch", True)
+            batch_id = batch_result.get("batch_id", "unknown")
 
             if batch_result.get("stop_signal"):
                 reason = batch_result.get("reason", "Campaign paused")
@@ -942,6 +979,9 @@ async def main_loop():
                     print(f"  ⏸️  {reason} — waiting...")
                 elif consecutive_empty % 20 == 0:
                     print("  ⏸️  Still waiting...")
+                # Disconnect any lingering clients when stopped
+                if disconnect_after_batch:
+                    await disconnect_batch_clients()
                 await asyncio.sleep(delay_after if delay_after > 0 else DEFAULT_POLL_INTERVAL)
                 continue
 
@@ -962,31 +1002,38 @@ async def main_loop():
             else:
                 speed_mode = f"stagger {stagger_min:.1f}-{stagger_max:.1f}s"
             
-            print(f"\n  📦 Processing {len(tasks)} messages [{speed_mode}]...")
+            print(f"\n  📦 Batch {batch_id[:8]} - Processing {len(tasks)} messages [{speed_mode}]...")
             print(f"     [fetch: {fetch_time:.2f}s]")
 
-            connect_start = time.time()
-            await pre_connect_batch(tasks)
-            connect_time = time.time() - connect_start
-            print(f"     [connect: {connect_time:.2f}s]")
+            try:
+                # === BATCH START: Fresh connections for this batch ===
+                connect_start = time.time()
+                await pre_connect_batch(tasks)
+                connect_time = time.time() - connect_start
+                print(f"     [connect: {connect_time:.2f}s]")
 
-            # Execute ALL tasks in parallel with admin-controlled stagger
-            send_start = time.time()
-            results = await asyncio.gather(
-                *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
-                return_exceptions=True
-            )
-            send_time = time.time() - send_start
-            print(f"     [send: {send_time:.2f}s]")
+                # Execute ALL tasks in parallel with admin-controlled stagger
+                send_start = time.time()
+                results = await asyncio.gather(
+                    *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
+                    return_exceptions=True
+                )
+                send_time = time.time() - send_start
+                print(f"     [send: {send_time:.2f}s]")
 
-            # Report ALL results in parallel (bounded concurrency)
-            success_count, fail_count, report_time = await report_results_parallel(results)
+                # Report ALL results in parallel (bounded concurrency)
+                success_count, fail_count, report_time = await report_results_parallel(results)
 
-            total_time = time.time() - batch_start
-            msgs_per_min = (len(tasks) / total_time * 60) if total_time > 0 else 0
+                total_time = time.time() - batch_start
+                msgs_per_min = (len(tasks) / total_time * 60) if total_time > 0 else 0
 
-            print(f"  📊 Batch: {success_count}✓ {fail_count}✗ | {total_time:.1f}s total ({msgs_per_min:.0f}/min)")
-            print(f"     [report: {report_time:.2f}s]")
+                print(f"  📊 Batch: {success_count}✓ {fail_count}✗ | {total_time:.1f}s total ({msgs_per_min:.0f}/min)")
+                print(f"     [report: {report_time:.2f}s]")
+
+            finally:
+                # === BATCH END: ALWAYS disconnect all clients after batch ===
+                if disconnect_after_batch:
+                    await disconnect_batch_clients()
 
             # Use server-controlled delay (can be 0 for immediate repoll if more pending)
             if RUNNING and delay_after > 0:
@@ -997,6 +1044,8 @@ async def main_loop():
 
         except Exception as e:
             print(f"  ⚠ Loop error: {e}")
+            # Disconnect on error too to clean up
+            await disconnect_batch_clients()
             await asyncio.sleep(DEFAULT_POLL_INTERVAL)
 
     print("\n⏹ Campaign loop stopped.")
