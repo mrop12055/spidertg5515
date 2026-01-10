@@ -14,7 +14,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Checkbox } from '@/components/ui/checkbox';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { EmojiPicker } from '@/components/ui/emoji-picker';
-import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from '@/components/ui/resizable';
 import { 
   Send, 
   Search, 
@@ -700,9 +699,9 @@ const Chat: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      <ResizablePanelGroup direction="horizontal" className="h-[calc(100vh-48px)] -m-6 overflow-hidden border border-border bg-card shadow-lg">
+      <div className="h-[calc(100vh-48px)] -m-6 flex overflow-hidden border border-border bg-card shadow-lg">
         {/* Sidebar - Conversation List */}
-        <ResizablePanel defaultSize={25} minSize={20} maxSize={40} className="flex flex-col bg-card">
+        <div className="w-[340px] min-w-[320px] flex-shrink-0 border-r border-border flex flex-col bg-card">
           {/* Header */}
           <div className="p-4 border-b border-border">
             {isSelectionMode ? (
@@ -857,7 +856,7 @@ const Chat: React.FC = () => {
 
           {/* Conversation List - Optimized */}
           <ScrollArea className="flex-1">
-            <div className="divide-y divide-border/30 pr-3">
+            <div className="divide-y divide-border/30">
               {filteredConversations.length === 0 ? (
                 <div className="px-4 py-12 text-center">
                   <MessageSquare className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
@@ -924,20 +923,20 @@ const Chat: React.FC = () => {
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center justify-between gap-2">
                             <span className={cn(
-                              "font-medium text-sm truncate flex-1 min-w-0",
+                              "font-medium truncate text-sm",
                               conv.unreadCount > 0 ? "text-foreground" : "text-foreground/80"
                             )}>
                               {displayName}
                             </span>
-                            <span className="text-[10px] text-muted-foreground tabular-nums flex-shrink-0 whitespace-nowrap"> 
+                            <span className="text-[10px] text-muted-foreground tabular-nums flex-shrink-0">
                               {formatMessageDate(conv.updatedAt)}
                             </span>
                           </div>
-                          <div className="flex items-center gap-2 mt-0.5">
+                          <div className="flex items-center justify-between gap-2 mt-0.5">
                             <p className={cn(
-                              "text-xs flex items-center gap-1 flex-1 min-w-0 truncate",
+                              "text-xs truncate flex items-center gap-1",
                               conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
                             )}>
                               {isUserTyping ? (
@@ -999,12 +998,10 @@ const Chat: React.FC = () => {
               )}
             </div>
           </ScrollArea>
-        </ResizablePanel>
-
-        <ResizableHandle withHandle className="bg-border hover:bg-primary/20 transition-colors" />
+        </div>
 
         {/* Main Chat Area */}
-        <ResizablePanel defaultSize={75} minSize={50} className="flex flex-col bg-secondary/30 dark:bg-background/50">
+        <div className="flex-1 flex flex-col bg-secondary/30 dark:bg-background/50">
           {selectedConv ? (
             <>
               {/* Chat Header */}
@@ -1322,8 +1319,8 @@ const Chat: React.FC = () => {
               </div>
             </div>
           )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
+        </div>
+      </div>
     </DashboardLayout>
   );
 };
