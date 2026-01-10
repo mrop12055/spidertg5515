@@ -3223,41 +3223,63 @@ async def fetch_all_active_accounts() -> list:
 
 # ========== STARTUP: CONNECT ALL ACCOUNTS FOR LIVECHAT ==========
 async def connect_all_accounts_for_livechat():
-    """Connect ALL active accounts at startup for LiveChat receiving"""
+    """
+    Connect ALL active accounts at startup for LiveChat receiving.
+    
+    FLOW:
+    1. Fetch all active accounts with session data from DB
+    2. For each account, get_or_create_client will:
+       - Fetch proxy from DB if not assigned
+       - Fetch/generate fingerprint if missing
+       - Connect to Telegram with proper settings
+       - Setup livechat message handler
+    """
     print()
     print("=" * 60)
     print("  PHASE 1: Connecting ALL Accounts for LiveChat")
     print("=" * 60)
+    print()
+    print("  For each account, the runner will:")
+    print("    1. Check session file exists")
+    print("    2. Fetch & assign proxy from DB if needed")
+    print("    3. Fetch or generate fingerprint if needed")
+    print("    4. Connect to Telegram with proxy + fingerprint")
+    print("    5. Setup incoming message handler")
+    print()
     
     accounts = await fetch_all_active_accounts()
     if not accounts:
         print("  [WARN] No active accounts found to connect")
-        return
+        return 0
+    
+    print(f"  [INFO] Found {len(accounts)} active accounts to connect")
+    print()
     
     connected = 0
     skipped = 0
     
-    for account in accounts:
+    for i, account in enumerate(accounts, 1):
         phone = account.get("phone_number", "???")[-4:]
+        print(f"  [{i}/{len(accounts)}] Connecting ...{phone}")
         
-        # Prepare account (check session, proxy, fingerprint)
-        prepared, error = await prepare_account(account)
-        if error:
-            print(f"  {error}")
-            skipped += 1
-            continue
+        # get_or_create_client handles EVERYTHING:
+        # - Calls prepare_account which fetches proxy & fingerprint
+        # - Creates client with all settings
+        # - Sets up livechat handler
+        client = await get_or_create_client(account, setup_handler=setup_livechat_handler)
         
-        # Connect with livechat handler
-        client = await get_or_create_client(prepared, setup_handler=setup_livechat_handler)
         if client:
             connected += 1
         else:
             skipped += 1
     
     print()
-    print(f"  [LIVECHAT] Connected: {connected} | Skipped: {skipped}")
-    print(f"  [LIVECHAT] All accounts are now receiving incoming messages")
+    print("=" * 60)
+    print(f"  LIVECHAT READY: {connected} connected | {skipped} skipped")
+    print("=" * 60)
     print()
+    
+    return connected
 
 
 # ========== API FUNCTIONS ==========
