@@ -619,39 +619,24 @@ serve(async (req) => {
         });
       }
 
-      // ========== NO USABLE ACCOUNTS = PAUSE/COMPLETE (keep pending as pending) ==========
+      // ========== NO USABLE ACCOUNTS ==========
+      // IMPORTANT: Do NOT mark campaign as completed here.
+      // If accounts are temporarily unavailable (daily limit / restricted / proxy), the campaign should keep waiting.
       if (campaignUsableAccounts.length === 0) {
-        console.log(`[get-batch-tasks] No usable accounts - marking campaigns as completed (pending recipients preserved)`);
-        
-        // Process all campaigns in parallel
-        await Promise.all(runningCampaigns.map(async (campaign) => {
-          // Count pending recipients for this campaign
-          const { count: pendingCount } = await supabase
-            .from("campaign_recipients")
-            .select("id", { count: "exact", head: true })
-            .eq("campaign_id", campaign.id)
-            .in("status", ["pending", "queued"]);
+        console.log(`[get-batch-tasks] No usable accounts - waiting (not completing campaigns)`);
 
-          // Mark campaign as COMPLETED (not failed) - pending recipients stay as pending
-          await supabase
-            .from("campaigns")
-            .update({ 
-              status: "completed", 
-              updated_at: new Date().toISOString() 
-            })
-            .eq("id", campaign.id);
-
-          console.log(`[get-batch-tasks] Campaign ${campaign.id} completed - no usable accounts, ${pendingCount || 0} pending recipients preserved`);
-        }));
-
-        return new Response(JSON.stringify({
-          tasks: [],
-          delay_after: campaignPollingInterval,
-          reason: "All accounts restricted or at daily limit - campaigns completed, pending preserved",
-          stop_signal: true
-        }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return new Response(
+          JSON.stringify({
+            tasks: [],
+            delay_after: Math.max(campaignPollingInterval, 30),
+            reason: "No usable accounts (restricted/daily limit/proxy) - waiting",
+            stop_signal: false,
+            accounts_available: 0,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
       }
 
       // Use campaignBatchSize from settings, limited by available accounts
