@@ -744,82 +744,100 @@ const Chat: React.FC = () => {
               </>
             ) : (
               <>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-sm font-medium text-muted-foreground">Conversations</h2>
-                    {filteredConversations.filter(c => (c.unreadCount || 0) > 0).length > 0 && (
-                      <Badge className="h-5 min-w-5 flex items-center justify-center text-xs bg-primary rounded-full">
-                        {filteredConversations.filter(c => (c.unreadCount || 0) > 0).length} unread chats
-                      </Badge>
-                    )}
-                    <span className="text-xs font-medium text-destructive">
-                      ({conversations.length} total)
-                    </span>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <h2 className="text-base font-semibold text-foreground">Chats</h2>
+                    <div className="flex items-center gap-2">
+                      {filteredConversations.filter(c => (c.unreadCount || 0) > 0).length > 0 && (
+                        <Badge className="h-5 px-2 flex items-center justify-center text-[10px] font-medium bg-primary text-primary-foreground rounded-full">
+                          {filteredConversations.filter(c => (c.unreadCount || 0) > 0).length} new
+                        </Badge>
+                      )}
+                      <span className="text-xs text-muted-foreground">
+                        {conversations.length.toLocaleString()} contacts
+                      </span>
+                    </div>
                   </div>
                   <div className="flex items-center gap-1">
                     <Button 
                       variant="ghost" 
                       size="icon" 
-                      className="h-7 w-7" 
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground" 
                       onClick={() => setIsBlockListOpen(true)} 
-                      title="View blocked contacts"
+                      title="Blocked contacts"
                     >
                       <Ban className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setIsSelectionMode(true)} title="Select chats">
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground" 
+                      onClick={() => setIsSelectionMode(true)} 
+                      title="Select chats"
+                    >
                       <CheckSquare className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
                 
-                {/* Filter Row 1: Time Filters with counts */}
-                <div className="flex gap-1 mb-2 p-1 bg-secondary/30 rounded-lg">
+                {/* Time Period Filters */}
+                <div className="flex gap-1 mb-2 p-1 bg-muted/50 rounded-lg">
                   {(['today', '3d', '5d'] as TimeFilter[]).map((filter) => {
                     const isActive = timeFilter === filter;
-                    const label = filter === 'today' ? 'Today' : filter;
+                    const label = filter === 'today' ? 'Today' : filter === '3d' ? '3 Days' : '5 Days';
                     const count = filterCounts[filter];
                     return (
                       <button
                         key={filter}
                         onClick={() => setTimeFilter(filter)}
                         className={cn(
-                          "flex-1 px-3 py-2 text-xs font-medium rounded-md transition-all duration-200",
+                          "flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors",
                           isActive 
-                            ? "bg-background text-foreground shadow-sm" 
-                            : "text-muted-foreground hover:text-foreground"
+                            ? "bg-background text-foreground shadow-sm border border-border/50" 
+                            : "text-muted-foreground hover:text-foreground hover:bg-background/50"
                         )}
                       >
-                        {label} ({count})
+                        <span className="block">{label}</span>
+                        <span className={cn(
+                          "text-[10px] tabular-nums",
+                          isActive ? "text-primary" : "text-muted-foreground/70"
+                        )}>{count.toLocaleString()}</span>
                       </button>
                     );
                   })}
                 </div>
 
-                {/* Filter Row 2: All / Replies Toggle */}
-                <div className="flex items-center gap-2 mb-3 p-1 bg-secondary/30 rounded-lg">
+                {/* Reply Filter Toggle */}
+                <div className="flex gap-1 mb-3 p-1 bg-muted/50 rounded-lg">
                   <button
                     onClick={() => setShowRepliesOnly(false)}
                     className={cn(
-                      "flex-1 px-3 py-2 text-xs font-medium rounded-md transition-all duration-200",
+                      "flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors",
                       !showRepliesOnly 
-                        ? "bg-background text-foreground shadow-sm" 
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "bg-background text-foreground shadow-sm border border-border/50" 
+                        : "text-muted-foreground hover:text-foreground hover:bg-background/50"
                     )}
                   >
-                    All ({filteredConversations.length})
+                    <span className="block">All Chats</span>
+                    <span className="text-[10px] text-muted-foreground/70 tabular-nums">{filteredConversations.length.toLocaleString()}</span>
                   </button>
                   <button
                     onClick={() => setShowRepliesOnly(true)}
                     className={cn(
-                      "flex-1 px-3 py-2 text-xs font-medium rounded-md transition-all duration-200 flex items-center justify-center gap-1.5",
+                      "flex-1 px-2 py-1.5 text-xs font-medium rounded-md transition-colors flex flex-col items-center",
                       showRepliesOnly 
-                        ? "bg-green-500/20 text-green-600 dark:text-green-400 shadow-sm" 
-                        : "text-muted-foreground hover:text-foreground"
+                        ? "bg-green-500/15 text-green-600 dark:text-green-400 shadow-sm border border-green-500/30" 
+                        : "text-muted-foreground hover:text-foreground hover:bg-background/50"
                     )}
-                    title="Show only chats with replies"
                   >
-                    <Reply className="w-3.5 h-3.5" />
-                    Replied ({filterCounts.currentReplies})
+                    <span className="flex items-center gap-1">
+                      <MessageCircle className="w-3 h-3" />
+                      Replied
+                    </span>
+                    <span className={cn(
+                      "text-[10px] tabular-nums",
+                      showRepliesOnly ? "text-green-600/80 dark:text-green-400/80" : "text-muted-foreground/70"
+                    )}>{filterCounts.currentReplies.toLocaleString()}</span>
                   </button>
                 </div>
                 
@@ -836,46 +854,40 @@ const Chat: React.FC = () => {
             )}
           </div>
 
-          {/* Conversation List */}
+          {/* Conversation List - Optimized */}
           <ScrollArea className="flex-1">
-            <div className="pr-3">
+            <div className="divide-y divide-border/30">
               {filteredConversations.length === 0 ? (
                 <div className="px-4 py-12 text-center">
-                  <MessageSquare className="w-12 h-12 mx-auto mb-3 text-muted-foreground/50" />
-                  <p className="text-muted-foreground text-sm">No chats yet</p>
+                  <MessageSquare className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" />
+                  <p className="text-muted-foreground text-sm font-medium">No conversations</p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
-                    Start a campaign to begin conversations
+                    Run a campaign to start chatting
                   </p>
                 </div>
               ) : (
-              filteredConversations.map((conv) => {
-                  // Filter out failed messages from last message preview - use conversationId for accuracy
-                  const convMessages = messages.filter(m => m.conversationId === conv.id && m.status !== 'failed');
-                  const lastMsg = convMessages.sort((a, b) => 
-                    new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-                  )[0];
+                filteredConversations.slice(0, 200).map((conv) => {
+                  // Use memoized stats instead of filtering messages each render
+                  const stats = messageStats.get(conv.id);
                   const isSelected = selectedConversation === conv.id;
                   const isUserTyping = typingUsers[conv.recipientPhone];
                   const isChecked = selectedConversations.has(conv.id);
                   
-                  // Show only phone number as requested
                   const displayName = conv.recipientPhone || 'Unknown';
                   const avatarInitial = conv.recipientPhone?.startsWith('+') ? conv.recipientPhone.slice(1, 3) : '?';
                   
-                  // Get message preview - prioritize conversation's lastMessageContent if messages not loaded yet
-                  const isCampaignMessage = !!lastMsg?.campaignRecipientId;
-                  const messagePreview = lastMsg?.content?.trim() 
-                    || conv.lastMessageContent?.trim() 
-                    || (lastMsg || conv.lastMessageContent ? 'Message sent' : 'No messages');
+                  // Use conversation's cached last message for performance
+                  const messagePreview = conv.lastMessageContent?.trim() || 'Message sent';
+                  const isCampaignMessage = conv.firstMessageSent === true;
 
                   return (
                     <div
                       key={conv.id}
                       className={cn(
-                        "w-full flex items-center gap-3 px-4 py-3 transition-all duration-200 text-left group border-b border-border/30 last:border-b-0",
+                        "flex items-center gap-3 px-4 py-2.5 transition-colors cursor-pointer group",
                         isSelected && !isSelectionMode && "bg-primary/10 border-l-2 border-l-primary",
                         isChecked && isSelectionMode && "bg-primary/10",
-                        !isSelected && "hover:bg-accent/50"
+                        !isSelected && "hover:bg-muted/50"
                       )}
                     >
                       {isSelectionMode && (
@@ -895,75 +907,59 @@ const Chat: React.FC = () => {
                             setIsMessageSearchOpen(false);
                           }
                         }}
-                        className="flex-1 flex items-center gap-3 text-left"
+                        className="flex-1 flex items-center gap-2.5 text-left min-w-0"
                       >
                         <div className="relative flex-shrink-0">
-                          <Avatar className="h-11 w-11 ring-2 ring-background shadow-sm">
+                          <Avatar className="h-10 w-10">
                             {conv.recipientAvatar && (
                               <AvatarImage src={conv.recipientAvatar} alt={conv.recipientName || 'Contact'} />
                             )}
-                            <AvatarFallback className="bg-gradient-to-br from-primary/80 to-primary/40 text-primary-foreground font-semibold text-sm">
+                            <AvatarFallback className="bg-gradient-to-br from-primary/70 to-primary/40 text-primary-foreground font-medium text-xs">
                               {avatarInitial}
                             </AvatarFallback>
                           </Avatar>
                           {conv.isActive && (
-                            <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full ring-2 ring-card" />
+                            <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full ring-2 ring-background" />
                           )}
                         </div>
                         <div className="flex-1 min-w-0">
-                          <div className="flex items-center justify-between mb-1">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <span className={cn(
-                                "font-semibold truncate text-sm",
-                                conv.unreadCount > 0 ? "text-foreground" : "text-foreground/90"
-                              )}>
-                                {displayName}
-                              </span>
-                              {conv.blockedByRecipient && (
-                                <Badge variant="destructive" className="h-4 px-1.5 text-[10px] flex items-center gap-0.5 flex-shrink-0">
-                                  <Ban className="w-2.5 h-2.5" />
-                                  Blocked
-                                </Badge>
-                              )}
-                            </div>
+                          <div className="flex items-center justify-between gap-2">
                             <span className={cn(
-                              "text-[11px] flex-shrink-0 ml-2 whitespace-nowrap tabular-nums",
-                              conv.unreadCount > 0 ? "text-primary font-semibold" : "text-muted-foreground"
+                              "font-medium truncate text-sm",
+                              conv.unreadCount > 0 ? "text-foreground" : "text-foreground/80"
                             )}>
+                              {displayName}
+                            </span>
+                            <span className="text-[10px] text-muted-foreground tabular-nums flex-shrink-0">
                               {formatMessageDate(conv.updatedAt)}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center justify-between gap-2 mt-0.5">
                             <p className={cn(
-                              "text-[13px] truncate flex items-center gap-1.5",
-                              conv.unreadCount > 0 ? "text-foreground font-medium" : "text-muted-foreground"
+                              "text-xs truncate flex items-center gap-1",
+                              conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
                             )}>
                               {isUserTyping ? (
-                                <span className="text-primary italic flex items-center gap-1">
-                                  <span className="flex gap-0.5">
-                                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                                    <span className="w-1.5 h-1.5 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                                  </span>
-                                  typing
-                                </span>
+                                <span className="text-primary italic">typing...</span>
                               ) : (
                                 <>
-                                  {lastMsg?.direction === 'outgoing' && (
-                                    <span className="flex-shrink-0 opacity-70">{getMessageStatus(lastMsg.status)}</span>
-                                  )}
                                   {isCampaignMessage && (
-                                    <span className="text-[9px] px-1.5 py-0.5 bg-primary/15 text-primary font-medium rounded flex-shrink-0">Campaign</span>
+                                    <span className="text-[9px] px-1 py-0.5 bg-primary/10 text-primary rounded flex-shrink-0">Camp</span>
                                   )}
                                   <span className="truncate">{messagePreview}</span>
                                 </>
                               )}
                             </p>
-                            {conv.unreadCount > 0 && (
-                              <Badge className="h-5 min-w-5 flex items-center justify-center text-[10px] font-bold bg-primary rounded-full flex-shrink-0">
-                                {conv.unreadCount}
-                              </Badge>
-                            )}
+                            <div className="flex items-center gap-1 flex-shrink-0">
+                              {conv.hasReply && (
+                                <MessageCircle className="w-3 h-3 text-green-500" />
+                              )}
+                              {conv.unreadCount > 0 && (
+                                <Badge className="h-4 min-w-4 px-1 flex items-center justify-center text-[9px] font-bold bg-primary rounded-full">
+                                  {conv.unreadCount}
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </button>
@@ -994,6 +990,11 @@ const Chat: React.FC = () => {
                     </div>
                   );
                 })
+              )}
+              {filteredConversations.length > 200 && (
+                <div className="px-4 py-3 text-center text-xs text-muted-foreground bg-muted/30">
+                  Showing first 200 of {filteredConversations.length.toLocaleString()} conversations
+                </div>
               )}
             </div>
           </ScrollArea>
