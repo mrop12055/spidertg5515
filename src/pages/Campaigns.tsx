@@ -1049,107 +1049,282 @@ const Campaigns: React.FC = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Report Dialog */}
+      {/* Report Dialog - Professional with Tabs */}
       <Dialog open={isReportOpen} onOpenChange={setIsReportOpen}>
-        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Campaign Report: {selectedReportCampaign?.name}</DialogTitle>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+          <DialogHeader className="border-b pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-xl font-semibold flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-primary" />
+                  Campaign Report
+                </DialogTitle>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {selectedReportCampaign?.name}
+                </p>
+              </div>
+              {selectedReportCampaign && campaignReports.get(selectedReportCampaign.id) && (
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  onClick={() => handleExportReport(selectedReportCampaign)}
+                  className="gap-2"
+                >
+                  <Download className="w-4 h-4" />
+                  Export CSV
+                </Button>
+              )}
+            </div>
           </DialogHeader>
+          
           {selectedReportCampaign && (
-            <div className="space-y-4 pt-4">
+            <div className="flex-1 overflow-hidden">
               {(() => {
                 const report = campaignReports.get(selectedReportCampaign.id);
-                // Only show loading if actively loading AND report not ready
-                // Don't show loading forever if campaign has no recipients
+                
                 if (isLoadingReport) {
                   return (
-                    <div className="flex items-center justify-center py-8 gap-3">
-                      <Loader2 className="w-5 h-5 animate-spin text-primary" />
+                    <div className="flex items-center justify-center py-16 gap-3">
+                      <Loader2 className="w-6 h-6 animate-spin text-primary" />
                       <p className="text-muted-foreground">Loading report details...</p>
                     </div>
                   );
                 }
                 
-                // Handle case where campaign has no recipients at all
                 if (!report || (report.total === 0 && selectedReportCampaign.recipientCount === 0)) {
                   return (
-                    <div className="text-center py-8">
-                      <AlertCircle className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
-                      <p className="text-muted-foreground">No recipients in this campaign</p>
-                      <p className="text-xs text-muted-foreground mt-1">
+                    <div className="text-center py-16">
+                      <AlertCircle className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                      <p className="text-lg font-medium text-muted-foreground">No recipients in this campaign</p>
+                      <p className="text-sm text-muted-foreground mt-2">
                         Add recipients before starting the campaign
                       </p>
                     </div>
                   );
                 }
                 
+                const successRate = report.total > 0 ? Math.round((report.successful / report.total) * 100) : 0;
+                const completionRate = report.total > 0 ? Math.round(((report.successful + report.failed) / report.total) * 100) : 0;
+                
                 return (
-                  <>
-                      <div className="grid grid-cols-4 gap-3">
-                      <div className="text-center p-3 rounded-lg bg-muted">
-                        <p className="text-2xl font-bold">{report.total}</p>
-                        <p className="text-xs text-muted-foreground">Total</p>
-                      </div>
-                      <div className="text-center p-3 rounded-lg bg-green-500/10">
-                        <p className="text-2xl font-bold text-green-600">{report.successful}</p>
-                        <p className="text-xs text-muted-foreground">Sent</p>
-                      </div>
-                      <div className="text-center p-3 rounded-lg bg-destructive/10">
-                        <p className="text-2xl font-bold text-destructive">{report.failed}</p>
-                        <p className="text-xs text-muted-foreground">Failed</p>
-                      </div>
-                      <div className="text-center p-3 rounded-lg bg-yellow-500/10">
-                        <p className="text-2xl font-bold text-yellow-600">{report.pending}</p>
-                        <p className="text-xs text-muted-foreground">Pending</p>
-                      </div>
-                    </div>
+                  <Tabs defaultValue="overview" className="h-full flex flex-col">
+                    <TabsList className="grid w-full grid-cols-3 mx-0 mt-4">
+                      <TabsTrigger value="overview" className="gap-2">
+                        <TrendingUp className="w-4 h-4" />
+                        Overview
+                      </TabsTrigger>
+                      <TabsTrigger value="failed" className="gap-2">
+                        <XCircle className="w-4 h-4" />
+                        Failed ({report.failed})
+                      </TabsTrigger>
+                      <TabsTrigger value="accounts" className="gap-2">
+                        <Users className="w-4 h-4" />
+                        Accounts ({report.accountStats.length})
+                      </TabsTrigger>
+                    </TabsList>
                     
-                    {report.total > 0 && (
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span>Progress</span>
-                          <span>{Math.round(((report.successful + report.failed) / report.total) * 100)}%</span>
+                    <div className="flex-1 overflow-y-auto mt-4">
+                      {/* Overview Tab */}
+                      <TabsContent value="overview" className="m-0 space-y-6">
+                        {/* Summary Cards */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <Card className="bg-gradient-to-br from-muted/50 to-muted border-0">
+                            <CardContent className="p-4 text-center">
+                              <p className="text-3xl font-bold">{report.total.toLocaleString()}</p>
+                              <p className="text-sm text-muted-foreground mt-1">Total Recipients</p>
+                            </CardContent>
+                          </Card>
+                          <Card className="bg-gradient-to-br from-green-500/10 to-green-500/5 border-green-500/20">
+                            <CardContent className="p-4 text-center">
+                              <p className="text-3xl font-bold text-green-600">{report.successful.toLocaleString()}</p>
+                              <p className="text-sm text-muted-foreground mt-1">Sent Successfully</p>
+                            </CardContent>
+                          </Card>
+                          <Card className="bg-gradient-to-br from-destructive/10 to-destructive/5 border-destructive/20">
+                            <CardContent className="p-4 text-center">
+                              <p className="text-3xl font-bold text-destructive">{report.failed.toLocaleString()}</p>
+                              <p className="text-sm text-muted-foreground mt-1">Failed</p>
+                            </CardContent>
+                          </Card>
+                          <Card className="bg-gradient-to-br from-yellow-500/10 to-yellow-500/5 border-yellow-500/20">
+                            <CardContent className="p-4 text-center">
+                              <p className="text-3xl font-bold text-yellow-600">{report.pending.toLocaleString()}</p>
+                              <p className="text-sm text-muted-foreground mt-1">Pending</p>
+                            </CardContent>
+                          </Card>
                         </div>
-                        <Progress value={((report.successful + report.failed) / report.total) * 100} />
-                      </div>
-                    )}
-                    
-                    {/* Failed Recipients List */}
-                    {report.failedRecipients.length > 0 && (
-                      <div className="space-y-2">
-                        <h4 className="text-sm font-medium flex items-center gap-2">
-                          <XCircle className="w-4 h-4 text-destructive" />
-                          Failed Recipients ({report.failedRecipients.length})
-                        </h4>
-                        <div className="max-h-48 overflow-y-auto border rounded-lg divide-y">
-                          {report.failedRecipients.map((recipient, idx) => (
-                            <div key={idx} className="p-3 text-sm">
-                              <div className="flex justify-between items-start">
-                                <div>
-                                  <p className="font-medium">{recipient.name || recipient.phone_number}</p>
-                                  {recipient.name && (
-                                    <p className="text-xs text-muted-foreground">{recipient.phone_number}</p>
-                                  )}
-                                </div>
+                        
+                        {/* Progress Section */}
+                        <Card>
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-medium">Campaign Progress</CardTitle>
+                          </CardHeader>
+                          <CardContent className="space-y-4">
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Completion</span>
+                                <span className="font-medium">{completionRate}%</span>
                               </div>
-                              <p className="text-xs text-destructive mt-1 bg-destructive/10 px-2 py-1 rounded">
-                                {recipient.failed_reason}
-                              </p>
+                              <Progress value={completionRate} className="h-2" />
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    
-                    <Button 
-                      variant="outline" 
-                      className="w-full"
-                      onClick={() => handleExportReport(selectedReportCampaign)}
-                    >
-                      <Download className="w-4 h-4 mr-2" />
-                      Export CSV Report
-                    </Button>
-                  </>
+                            <div className="space-y-2">
+                              <div className="flex justify-between text-sm">
+                                <span className="text-muted-foreground">Success Rate</span>
+                                <span className={cn("font-medium", successRate >= 80 ? "text-green-600" : successRate >= 50 ? "text-yellow-600" : "text-destructive")}>
+                                  {successRate}%
+                                </span>
+                              </div>
+                              <Progress 
+                                value={successRate} 
+                                className={cn("h-2", successRate >= 80 ? "[&>div]:bg-green-500" : successRate >= 50 ? "[&>div]:bg-yellow-500" : "[&>div]:bg-destructive")} 
+                              />
+                            </div>
+                          </CardContent>
+                        </Card>
+                        
+                        {/* Campaign Details */}
+                        <Card>
+                          <CardHeader className="pb-2">
+                            <CardTitle className="text-sm font-medium">Campaign Details</CardTitle>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="grid grid-cols-2 gap-4 text-sm">
+                              <div>
+                                <p className="text-muted-foreground">Status</p>
+                                <Badge className={cn("mt-1", getStatusColor(selectedReportCampaign.status))}>
+                                  {selectedReportCampaign.status}
+                                </Badge>
+                              </div>
+                              <div>
+                                <p className="text-muted-foreground">Created</p>
+                                <p className="font-medium mt-1">{format(selectedReportCampaign.createdAt, 'MMM d, yyyy')}</p>
+                              </div>
+                              <div className="col-span-2">
+                                <p className="text-muted-foreground">Message Template</p>
+                                <p className="font-medium mt-1 p-2 bg-muted rounded-md text-xs">
+                                  {selectedReportCampaign.messageTemplate}
+                                </p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </TabsContent>
+                      
+                      {/* Failed Recipients Tab */}
+                      <TabsContent value="failed" className="m-0">
+                        {report.failedRecipients.length === 0 ? (
+                          <div className="text-center py-12">
+                            <CheckCircle className="w-12 h-12 mx-auto text-green-500 mb-4" />
+                            <p className="text-lg font-medium">No Failed Recipients</p>
+                            <p className="text-sm text-muted-foreground mt-2">
+                              All messages were sent successfully!
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between text-sm text-muted-foreground px-1">
+                              <span>Showing {report.failedRecipients.length} failed recipients</span>
+                            </div>
+                            <ScrollArea className="h-[400px]">
+                              <div className="space-y-2 pr-4">
+                                {report.failedRecipients.map((recipient, idx) => (
+                                  <Card key={idx} className="border-destructive/20">
+                                    <CardContent className="p-3">
+                                      <div className="flex justify-between items-start">
+                                        <div className="flex-1">
+                                          <p className="font-medium">{recipient.name || 'Unknown'}</p>
+                                          <p className="text-sm text-muted-foreground">{recipient.phone_number}</p>
+                                          {recipient.sender_phone && (
+                                            <p className="text-xs text-muted-foreground mt-1">
+                                              Sent by: {recipient.sender_name || recipient.sender_phone}
+                                            </p>
+                                          )}
+                                        </div>
+                                        <Badge variant="destructive" className="text-xs shrink-0">
+                                          Failed
+                                        </Badge>
+                                      </div>
+                                      <div className="mt-2 p-2 bg-destructive/10 rounded text-xs text-destructive">
+                                        {recipient.failed_reason || 'Unknown error'}
+                                      </div>
+                                    </CardContent>
+                                  </Card>
+                                ))}
+                              </div>
+                            </ScrollArea>
+                          </div>
+                        )}
+                      </TabsContent>
+                      
+                      {/* Account Stats Tab */}
+                      <TabsContent value="accounts" className="m-0">
+                        {report.accountStats.length === 0 ? (
+                          <div className="text-center py-12">
+                            <Users className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
+                            <p className="text-lg font-medium">No Account Data</p>
+                            <p className="text-sm text-muted-foreground mt-2">
+                              No accounts have processed recipients yet
+                            </p>
+                          </div>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between text-sm text-muted-foreground px-1">
+                              <span>Performance by Account</span>
+                              <span>{report.accountStats.length} accounts used</span>
+                            </div>
+                            <ScrollArea className="h-[400px]">
+                              <div className="space-y-2 pr-4">
+                                {report.accountStats
+                                  .sort((a, b) => b.uniqueRecipientsSent - a.uniqueRecipientsSent)
+                                  .map((stat, idx) => {
+                                    const total = stat.uniqueRecipientsSent + stat.uniqueRecipientsFailed + stat.uniqueRecipientsPending;
+                                    const accountSuccessRate = total > 0 ? Math.round((stat.uniqueRecipientsSent / total) * 100) : 0;
+                                    
+                                    return (
+                                      <Card key={stat.accountId} className="hover:bg-muted/50 transition-colors">
+                                        <CardContent className="p-3">
+                                          <div className="flex justify-between items-start mb-2">
+                                            <div>
+                                              <p className="font-medium">{stat.firstName || 'Unknown'}</p>
+                                              <p className="text-sm text-muted-foreground">{stat.phoneNumber}</p>
+                                            </div>
+                                            <Badge 
+                                              variant="outline" 
+                                              className={cn(
+                                                "text-xs",
+                                                accountSuccessRate >= 80 ? "border-green-500 text-green-600" :
+                                                accountSuccessRate >= 50 ? "border-yellow-500 text-yellow-600" :
+                                                "border-destructive text-destructive"
+                                              )}
+                                            >
+                                              {accountSuccessRate}% success
+                                            </Badge>
+                                          </div>
+                                          <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                                            <div className="p-2 bg-green-500/10 rounded">
+                                              <p className="font-bold text-green-600">{stat.uniqueRecipientsSent}</p>
+                                              <p className="text-muted-foreground">Sent</p>
+                                            </div>
+                                            <div className="p-2 bg-destructive/10 rounded">
+                                              <p className="font-bold text-destructive">{stat.uniqueRecipientsFailed}</p>
+                                              <p className="text-muted-foreground">Failed</p>
+                                            </div>
+                                            <div className="p-2 bg-yellow-500/10 rounded">
+                                              <p className="font-bold text-yellow-600">{stat.uniqueRecipientsPending}</p>
+                                              <p className="text-muted-foreground">Pending</p>
+                                            </div>
+                                          </div>
+                                        </CardContent>
+                                      </Card>
+                                    );
+                                  })}
+                              </div>
+                            </ScrollArea>
+                          </div>
+                        )}
+                      </TabsContent>
+                    </div>
+                  </Tabs>
                 );
               })()}
             </div>
