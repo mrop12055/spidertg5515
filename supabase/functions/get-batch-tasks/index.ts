@@ -763,6 +763,7 @@ serve(async (req) => {
                 }
               : null,
             mode: "campaign",
+            disconnect_after: true, // Disconnect session after sending to avoid conflict with livechat runner
           });
 
           usedAccountIds.add(account.id);
