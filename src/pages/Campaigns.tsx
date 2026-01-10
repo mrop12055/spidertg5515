@@ -818,38 +818,168 @@ const Campaigns: React.FC = () => {
       }
       return str;
     };
-    
-    // Create CSV with enhanced columns
-    const csvLines = ['Phone Number,Name,Status,Error Reason,Sent At,Sender Phone,Sender Name,Campaign Message'];
+
+    // Calculate stats
+    const successful = recipients?.filter((r: any) => r.status === 'sent').length || 0;
+    const failed = recipients?.filter((r: any) => r.status === 'failed').length || 0;
+    const pending = recipients?.filter((r: any) => r.status === 'pending').length || 0;
+    const total = recipients?.length || 0;
+    const successRate = total > 0 ? ((successful / total) * 100).toFixed(1) : '0';
+    const completionRate = total > 0 ? (((successful + failed) / total) * 100).toFixed(1) : '0';
+
+    // Calculate per-account stats
+    const accountStatsMap = new Map<string, { sent: number; failed: number; pending: number }>();
+    recipients?.forEach((r: any) => {
+      if (r.sent_by_account_id) {
+        const existing = accountStatsMap.get(r.sent_by_account_id) || { sent: 0, failed: 0, pending: 0 };
+        if (r.status === 'sent') existing.sent++;
+        else if (r.status === 'failed') existing.failed++;
+        else if (r.status === 'pending') existing.pending++;
+        accountStatsMap.set(r.sent_by_account_id, existing);
+      }
+    });
+
     const campaignMessage = campaign.messageTemplate || '';
+    const exportDate = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
+    const campaignCreatedAt = campaign.createdAt ? format(new Date(campaign.createdAt), 'yyyy-MM-dd HH:mm:ss') : 'N/A';
+
+    // Build professional CSV with multiple sections
+    const csvLines: string[] = [];
+    
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 1: REPORT HEADER
+    // ═══════════════════════════════════════════════════════════════
+    csvLines.push('═══════════════════════════════════════════════════════════════════════════════');
+    csvLines.push('CAMPAIGN REPORT');
+    csvLines.push('═══════════════════════════════════════════════════════════════════════════════');
+    csvLines.push('');
+    
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 2: CAMPAIGN OVERVIEW
+    // ═══════════════════════════════════════════════════════════════
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push('CAMPAIGN DETAILS');
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push(`Campaign Name,${escapeCSV(campaign.name)}`);
+    csvLines.push(`Status,${escapeCSV(campaign.status)}`);
+    csvLines.push(`Created At,${campaignCreatedAt}`);
+    csvLines.push(`Report Generated,${exportDate}`);
+    csvLines.push('');
+    
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 3: SUMMARY STATISTICS
+    // ═══════════════════════════════════════════════════════════════
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push('PERFORMANCE SUMMARY');
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push('Metric,Count,Percentage');
+    csvLines.push(`Total Recipients,${total},100%`);
+    csvLines.push(`Successful,${successful},${successRate}%`);
+    csvLines.push(`Failed,${failed},${total > 0 ? ((failed / total) * 100).toFixed(1) : '0'}%`);
+    csvLines.push(`Pending,${pending},${total > 0 ? ((pending / total) * 100).toFixed(1) : '0'}%`);
+    csvLines.push('');
+    csvLines.push('Key Metrics');
+    csvLines.push(`Success Rate,${successRate}%`);
+    csvLines.push(`Completion Rate,${completionRate}%`);
+    csvLines.push('');
+    
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 4: MESSAGE TEMPLATE
+    // ═══════════════════════════════════════════════════════════════
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push('MESSAGE TEMPLATE');
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push(escapeCSV(campaignMessage));
+    csvLines.push('');
+    
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 5: ACCOUNT PERFORMANCE
+    // ═══════════════════════════════════════════════════════════════
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push('ACCOUNT PERFORMANCE');
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push('Account Phone,Account Name,Sent,Failed,Pending,Total,Success Rate');
+    
+    accountStatsMap.forEach((stats, accountId) => {
+      const accountInfo = accountsMap.get(accountId);
+      const accountTotal = stats.sent + stats.failed + stats.pending;
+      const accountSuccessRate = accountTotal > 0 ? ((stats.sent / accountTotal) * 100).toFixed(1) : '0';
+      csvLines.push([
+        escapeCSV(accountInfo?.phone || 'Unknown'),
+        escapeCSV(accountInfo?.name || 'Unknown'),
+        stats.sent.toString(),
+        stats.failed.toString(),
+        stats.pending.toString(),
+        accountTotal.toString(),
+        `${accountSuccessRate}%`
+      ].join(','));
+    });
+    csvLines.push('');
+    
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 6: FAILED RECIPIENTS (if any)
+    // ═══════════════════════════════════════════════════════════════
+    const failedRecipients = recipients?.filter((r: any) => r.status === 'failed') || [];
+    if (failedRecipients.length > 0) {
+      csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+      csvLines.push('FAILED RECIPIENTS');
+      csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+      csvLines.push('Phone Number,Name,Error Reason,Sender Phone,Sender Name');
+      
+      failedRecipients.forEach((r: any) => {
+        const senderInfo = r.sent_by_account_id ? accountsMap.get(r.sent_by_account_id) : null;
+        const errorReason = failedReasons.get(r.id) || r.failed_reason || 'Unknown error';
+        csvLines.push([
+          escapeCSV(r.phone_number),
+          escapeCSV(r.name),
+          escapeCSV(errorReason),
+          escapeCSV(senderInfo?.phone),
+          escapeCSV(senderInfo?.name)
+        ].join(','));
+      });
+      csvLines.push('');
+    }
+    
+    // ═══════════════════════════════════════════════════════════════
+    // SECTION 7: ALL RECIPIENTS DETAIL
+    // ═══════════════════════════════════════════════════════════════
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push('ALL RECIPIENTS');
+    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
+    csvLines.push('Phone Number,Name,Status,Error Reason,Sent At,Sender Phone,Sender Name');
     
     recipients?.forEach((r: any) => {
       const senderInfo = r.sent_by_account_id ? accountsMap.get(r.sent_by_account_id) : null;
       const errorReason = r.status === 'failed' 
         ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error')
         : '';
+      const sentAt = r.sent_at ? format(new Date(r.sent_at), 'yyyy-MM-dd HH:mm:ss') : '';
       
       csvLines.push([
         escapeCSV(r.phone_number),
         escapeCSV(r.name),
         escapeCSV(r.status),
         escapeCSV(errorReason),
-        escapeCSV(r.sent_at),
+        escapeCSV(sentAt),
         escapeCSV(senderInfo?.phone),
-        escapeCSV(senderInfo?.name),
-        escapeCSV(campaignMessage)
+        escapeCSV(senderInfo?.name)
       ].join(','));
     });
+    
+    csvLines.push('');
+    csvLines.push('═══════════════════════════════════════════════════════════════════════════════');
+    csvLines.push('END OF REPORT');
+    csvLines.push('═══════════════════════════════════════════════════════════════════════════════');
     
     const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `campaign_${campaign.name}_report.csv`;
+    a.download = `Campaign_Report_${campaign.name.replace(/[^a-zA-Z0-9]/g, '_')}_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`;
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success('Report exported');
+    toast.success('Professional report exported');
   };
 
   const getStatusColor = (status: Campaign['status']) => {
