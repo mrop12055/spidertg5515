@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, forwardRef } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Button } from '@/components/ui/button';
 import { Smile } from 'lucide-react';
@@ -18,6 +18,12 @@ interface EmojiPickerProps {
   className?: string;
 }
 
+// Use forwardRef to prevent React ref warning
+const EmojiPickerButton = forwardRef<HTMLButtonElement, React.ComponentProps<typeof Button>>(
+  (props, ref) => <Button ref={ref} {...props} />
+);
+EmojiPickerButton.displayName = 'EmojiPickerButton';
+
 export const EmojiPicker: React.FC<EmojiPickerProps> = ({ onEmojiSelect, className }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeCategory, setActiveCategory] = useState('Smileys');
@@ -29,9 +35,9 @@ export const EmojiPicker: React.FC<EmojiPickerProps> = ({ onEmojiSelect, classNa
   return (
     <Popover open={isOpen} onOpenChange={setIsOpen}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className={cn("text-muted-foreground hover:text-foreground", className)}>
+        <EmojiPickerButton variant="ghost" size="icon" className={cn("text-muted-foreground hover:text-foreground", className)}>
           <Smile className="w-6 h-6" />
-        </Button>
+        </EmojiPickerButton>
       </PopoverTrigger>
       <PopoverContent className="w-80 p-0" align="start" side="top">
         <div className="flex flex-col">
