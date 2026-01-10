@@ -752,6 +752,9 @@ const Chat: React.FC = () => {
                         {filteredConversations.filter(c => (c.unreadCount || 0) > 0).length} unread chats
                       </Badge>
                     )}
+                    <span className="text-xs font-medium text-destructive">
+                      ({conversations.length} total)
+                    </span>
                   </div>
                   <div className="flex items-center gap-1">
                     <Button 
