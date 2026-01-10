@@ -581,9 +581,29 @@ serve(async (req) => {
       if (totalPending === 0) {
         console.log(`[get-batch-tasks] No pending recipients - checking queue and completion status`);
         
-        // Check all running campaigns in parallel
+        // FIRST: Check if ANY campaigns still have queued recipients - if so, DON'T auto-complete
+        // This is a global check to prevent race conditions where queue release hasn't happened yet
+        const { count: totalQueuedAcrossAllCampaigns } = await supabase
+          .from("campaign_recipients")
+          .select("id", { count: "exact", head: true })
+          .in("campaign_id", campaignIds)
+          .eq("status", "queued");
+        
+        if ((totalQueuedAcrossAllCampaigns || 0) > 0) {
+          console.log(`[get-batch-tasks] ${totalQueuedAcrossAllCampaigns} recipients still queued - NOT completing any campaigns, waiting for queue release`);
+          return new Response(JSON.stringify({
+            tasks: [],
+            delay_after: campaignPollingInterval,
+            reason: `${totalQueuedAcrossAllCampaigns} recipients still queued - waiting for next release cycle`,
+            stop_signal: false
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        
+        // No queued recipients globally - now check each campaign individually for completion
         await Promise.all(runningCampaigns.map(async (campaign) => {
-          // Check if there are still queued or pending/sending recipients (parallel)
+          // Double-check this specific campaign has no queued/pending/sending recipients
           const [{ count: stillQueued }, { count: stillPendingOrSending }] = await Promise.all([
             supabase
               .from("campaign_recipients")
@@ -597,23 +617,34 @@ serve(async (req) => {
               .in("status", ["pending", "sending"])
           ]);
 
-          // Only complete if BOTH queue and pending/sending are empty
+          // Only complete if BOTH queue and pending/sending are empty (strict check)
           if ((stillQueued || 0) === 0 && (stillPendingOrSending || 0) === 0) {
-            console.log(`[get-batch-tasks] Auto-completing campaign ${campaign.id} - no queued/pending/sending recipients`);
-            await supabase
-              .from("campaigns")
-              .update({ status: "completed", updated_at: new Date().toISOString() })
-              .eq("id", campaign.id);
-          } else if ((stillQueued || 0) > 0) {
-            console.log(`[get-batch-tasks] Campaign ${campaign.id} has ${stillQueued} queued - waiting for next release cycle`);
+            // EXTRA SAFETY: Verify there are actual sent/failed recipients (not an empty campaign)
+            const { count: processedCount } = await supabase
+              .from("campaign_recipients")
+              .select("id", { count: "exact", head: true })
+              .eq("campaign_id", campaign.id)
+              .in("status", ["sent", "failed"]);
+            
+            if ((processedCount || 0) > 0) {
+              console.log(`[get-batch-tasks] Auto-completing campaign ${campaign.id} - all ${processedCount} recipients processed`);
+              await supabase
+                .from("campaigns")
+                .update({ status: "completed", updated_at: new Date().toISOString() })
+                .eq("id", campaign.id);
+            } else {
+              console.log(`[get-batch-tasks] Campaign ${campaign.id} has no processed recipients - NOT completing (may be stuck)`);
+            }
+          } else {
+            console.log(`[get-batch-tasks] Campaign ${campaign.id} still has ${stillQueued || 0} queued, ${stillPendingOrSending || 0} pending/sending`);
           }
         }));
 
         return new Response(JSON.stringify({
           tasks: [],
           delay_after: campaignPollingInterval,
-          reason: "No pending recipients - waiting for queue release",
-          stop_signal: false // Don't stop if there are queued recipients
+          reason: "No pending recipients - campaigns checked for completion",
+          stop_signal: false
         }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
