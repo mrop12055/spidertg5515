@@ -2976,18 +2976,28 @@ def get_proxy_settings(proxy: dict) -> Optional[tuple]:
     return (ptype, host, int(port))
 
 
-# ========== CRITICAL: PREPARE ACCOUNT (PROXY + FINGERPRINT) ==========
+# ========== CRITICAL: PREPARE ACCOUNT (PROXY + FINGERPRINT + SESSION) ==========
 async def prepare_account(account: dict) -> tuple[dict | None, str | None]:
     """
-    CRITICAL SAFETY: Never run session without proxy and fingerprint.
+    CRITICAL SAFETY: Never run session without ALL THREE:
+    1. Session data (session file)
+    2. Proxy (connection security)
+    3. Fingerprint (device identity)
     
-    1. Fetch proxy from DB if not assigned → assign one
-    2. Fetch fingerprint from DB → generate new if missing
-    3. Save new fingerprint to DB
-    4. Only return account if BOTH proxy AND fingerprint exist
+    Steps:
+    1. Check session_data exists → SKIP if missing
+    2. Fetch proxy from DB if not assigned → assign one
+    3. Fetch fingerprint from DB → generate new if missing
+    4. Save new fingerprint to DB
+    5. FINAL VALIDATION: Only return account if ALL exist
     """
     account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
+    
+    # ========== STEP 0: CHECK SESSION DATA FIRST ==========
+    session_data = account.get("session_data")
+    if not session_data:
+        return None, f"[{phone}] SKIPPED - No session data (session file required)"
     
     # ========== STEP 1: CHECK/FETCH PROXY ==========
     proxy = account.get("proxy")
@@ -3020,6 +3030,25 @@ async def prepare_account(account: dict) -> tuple[dict | None, str | None]:
             await save_fingerprint_to_db(account_id, fp)
             print(f"  [{phone}] Generated new fingerprint: {fp['device_model']}")
     
+    # ========== FINAL VALIDATION: VERIFY ALL REQUIREMENTS MET ==========
+    final_checks = []
+    
+    # Check session
+    if not account.get("session_data"):
+        final_checks.append("session_data")
+    
+    # Check proxy
+    final_proxy = account.get("proxy")
+    if not final_proxy or not final_proxy.get("host"):
+        final_checks.append("proxy")
+    
+    # Check fingerprint
+    if not account.get("device_model") or not account.get("system_version"):
+        final_checks.append("fingerprint")
+    
+    if final_checks:
+        return None, f"[{phone}] SKIPPED - Missing: {', '.join(final_checks)}"
+    
     return account, None
 
 
@@ -3027,12 +3056,16 @@ async def prepare_account(account: dict) -> tuple[dict | None, str | None]:
 async def get_or_create_client(account: dict, setup_handler=None) -> Optional[TelegramClient]:
     """
     Get or create a Telegram client.
-    CRITICAL: Only creates client if proxy AND fingerprint exist.
+    CRITICAL: Only creates client if ALL THREE exist:
+    1. Session data (session file)
+    2. Proxy (connection security)
+    3. Fingerprint (device identity)
     """
     account_id = account.get("id")
     phone = account.get("phone_number", account_id[:8])
     
-    # ========== STEP 1: PREPARE ACCOUNT (PROXY + FINGERPRINT) ==========
+    # ========== STEP 1: PREPARE ACCOUNT (SESSION + PROXY + FINGERPRINT) ==========
+    # This validates ALL requirements before proceeding
     account, error = await prepare_account(account)
     if error:
         print(f"  {error}")
@@ -3048,11 +3081,8 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
             pass
         del active_clients[account_id]
     
-    # ========== STEP 3: CHECK SESSION DATA ==========
+    # Session data is already validated in prepare_account, get it
     session_data = account.get("session_data")
-    if not session_data:
-        print(f"  [SKIP] {phone} - No session data")
-        return None
     
     # ========== STEP 4: GET PROXY SETTINGS ==========
     proxy = get_proxy_settings(account.get("proxy"))
@@ -3651,14 +3681,20 @@ async def main_loop():
     print("  All-in-one: Campaign | LiveChat | Account | Warmup")
     print("=" * 60)
     print()
-    print("  SAFETY FEATURES:")
-    print("    ✓ Never runs session without proxy")
-    print("    ✓ Never runs session without fingerprint")
+    print("  SAFETY FEATURES (3 Requirements):")
+    print("    ✓ Never runs without SESSION FILE")
+    print("    ✓ Never runs without PROXY")
+    print("    ✓ Never runs without FINGERPRINT")
+    print()
+    print("  AUTO FEATURES:")
     print("    ✓ Auto-generates and saves fingerprint if missing")
+    print("    ✓ Auto-assigns proxy if not assigned")
+    print("    ✓ Auto-restart on any crash")
+    print()
+    print("  LIMITS:")
     print("    ✓ Contacts-only filter for live chat")
     print("    ✓ Batch limits: 10 photos, 100 names")
     print("    ✓ No stagger/delay in campaigns")
-    print("    ✓ Auto-restart on any crash")
     print()
     print("=" * 60)
     
