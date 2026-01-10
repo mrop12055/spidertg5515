@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 
 import { format } from 'date-fns';
+import JSZip from 'jszip';
 import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -819,167 +820,83 @@ const Campaigns: React.FC = () => {
       return str;
     };
 
-    // Calculate stats
-    const successful = recipients?.filter((r: any) => r.status === 'sent').length || 0;
-    const failed = recipients?.filter((r: any) => r.status === 'failed').length || 0;
-    const pending = recipients?.filter((r: any) => r.status === 'pending').length || 0;
-    const total = recipients?.length || 0;
-    const successRate = total > 0 ? ((successful / total) * 100).toFixed(1) : '0';
-    const completionRate = total > 0 ? (((successful + failed) / total) * 100).toFixed(1) : '0';
+    // Filter recipients by status
+    const allRecipients = recipients || [];
+    const successfulRecipients = allRecipients.filter((r: any) => r.status === 'sent');
+    const failedRecipientsList = allRecipients.filter((r: any) => r.status === 'failed');
+    const pendingRecipients = allRecipients.filter((r: any) => r.status === 'pending');
 
-    // Calculate per-account stats
-    const accountStatsMap = new Map<string, { sent: number; failed: number; pending: number }>();
-    recipients?.forEach((r: any) => {
-      if (r.sent_by_account_id) {
-        const existing = accountStatsMap.get(r.sent_by_account_id) || { sent: 0, failed: 0, pending: 0 };
-        if (r.status === 'sent') existing.sent++;
-        else if (r.status === 'failed') existing.failed++;
-        else if (r.status === 'pending') existing.pending++;
-        accountStatsMap.set(r.sent_by_account_id, existing);
-      }
-    });
-
-    const campaignMessage = campaign.messageTemplate || '';
-    const exportDate = format(new Date(), 'yyyy-MM-dd HH:mm:ss');
-    const campaignCreatedAt = campaign.createdAt ? format(new Date(campaign.createdAt), 'yyyy-MM-dd HH:mm:ss') : 'N/A';
-
-    // Build professional CSV with multiple sections
-    const csvLines: string[] = [];
-    
-    // ═══════════════════════════════════════════════════════════════
-    // SECTION 1: REPORT HEADER
-    // ═══════════════════════════════════════════════════════════════
-    csvLines.push('═══════════════════════════════════════════════════════════════════════════════');
-    csvLines.push('CAMPAIGN REPORT');
-    csvLines.push('═══════════════════════════════════════════════════════════════════════════════');
-    csvLines.push('');
-    
-    // ═══════════════════════════════════════════════════════════════
-    // SECTION 2: CAMPAIGN OVERVIEW
-    // ═══════════════════════════════════════════════════════════════
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push('CAMPAIGN DETAILS');
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push(`Campaign Name,${escapeCSV(campaign.name)}`);
-    csvLines.push(`Status,${escapeCSV(campaign.status)}`);
-    csvLines.push(`Created At,${campaignCreatedAt}`);
-    csvLines.push(`Report Generated,${exportDate}`);
-    csvLines.push('');
-    
-    // ═══════════════════════════════════════════════════════════════
-    // SECTION 3: SUMMARY STATISTICS
-    // ═══════════════════════════════════════════════════════════════
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push('PERFORMANCE SUMMARY');
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push('Metric,Count,Percentage');
-    csvLines.push(`Total Recipients,${total},100%`);
-    csvLines.push(`Successful,${successful},${successRate}%`);
-    csvLines.push(`Failed,${failed},${total > 0 ? ((failed / total) * 100).toFixed(1) : '0'}%`);
-    csvLines.push(`Pending,${pending},${total > 0 ? ((pending / total) * 100).toFixed(1) : '0'}%`);
-    csvLines.push('');
-    csvLines.push('Key Metrics');
-    csvLines.push(`Success Rate,${successRate}%`);
-    csvLines.push(`Completion Rate,${completionRate}%`);
-    csvLines.push('');
-    
-    // ═══════════════════════════════════════════════════════════════
-    // SECTION 4: MESSAGE TEMPLATE
-    // ═══════════════════════════════════════════════════════════════
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push('MESSAGE TEMPLATE');
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push(escapeCSV(campaignMessage));
-    csvLines.push('');
-    
-    // ═══════════════════════════════════════════════════════════════
-    // SECTION 5: ACCOUNT PERFORMANCE
-    // ═══════════════════════════════════════════════════════════════
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push('ACCOUNT PERFORMANCE');
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push('Account Phone,Account Name,Sent,Failed,Pending,Total,Success Rate');
-    
-    accountStatsMap.forEach((stats, accountId) => {
-      const accountInfo = accountsMap.get(accountId);
-      const accountTotal = stats.sent + stats.failed + stats.pending;
-      const accountSuccessRate = accountTotal > 0 ? ((stats.sent / accountTotal) * 100).toFixed(1) : '0';
-      csvLines.push([
-        escapeCSV(accountInfo?.phone || 'Unknown'),
-        escapeCSV(accountInfo?.name || 'Unknown'),
-        stats.sent.toString(),
-        stats.failed.toString(),
-        stats.pending.toString(),
-        accountTotal.toString(),
-        `${accountSuccessRate}%`
-      ].join(','));
-    });
-    csvLines.push('');
-    
-    // ═══════════════════════════════════════════════════════════════
-    // SECTION 6: FAILED RECIPIENTS (if any)
-    // ═══════════════════════════════════════════════════════════════
-    const failedRecipients = recipients?.filter((r: any) => r.status === 'failed') || [];
-    if (failedRecipients.length > 0) {
-      csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-      csvLines.push('FAILED RECIPIENTS');
-      csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-      csvLines.push('Phone Number,Name,Error Reason,Sender Phone,Sender Name');
-      
-      failedRecipients.forEach((r: any) => {
-        const senderInfo = r.sent_by_account_id ? accountsMap.get(r.sent_by_account_id) : null;
-        const errorReason = failedReasons.get(r.id) || r.failed_reason || 'Unknown error';
-        csvLines.push([
+    // Create simple CSV content for each sheet
+    const createAllCSV = () => {
+      const lines = ['Phone Number,Name,Status,Error Reason'];
+      allRecipients.forEach((r: any) => {
+        const errorReason = r.status === 'failed' 
+          ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error')
+          : '';
+        lines.push([
           escapeCSV(r.phone_number),
           escapeCSV(r.name),
-          escapeCSV(errorReason),
-          escapeCSV(senderInfo?.phone),
-          escapeCSV(senderInfo?.name)
+          escapeCSV(r.status === 'sent' ? 'Successful' : r.status === 'failed' ? 'Failed' : 'Pending'),
+          escapeCSV(errorReason)
         ].join(','));
       });
-      csvLines.push('');
-    }
+      return lines.join('\n');
+    };
+
+    const createSuccessfulCSV = () => {
+      const lines = ['Phone Number,Name'];
+      successfulRecipients.forEach((r: any) => {
+        lines.push([
+          escapeCSV(r.phone_number),
+          escapeCSV(r.name)
+        ].join(','));
+      });
+      return lines.join('\n');
+    };
+
+    const createFailedCSV = () => {
+      const lines = ['Phone Number,Name,Error Reason'];
+      failedRecipientsList.forEach((r: any) => {
+        const errorReason = failedReasons.get(r.id) || r.failed_reason || 'Unknown error';
+        lines.push([
+          escapeCSV(r.phone_number),
+          escapeCSV(r.name),
+          escapeCSV(errorReason)
+        ].join(','));
+      });
+      return lines.join('\n');
+    };
+
+    const createPendingCSV = () => {
+      const lines = ['Phone Number,Name'];
+      pendingRecipients.forEach((r: any) => {
+        lines.push([
+          escapeCSV(r.phone_number),
+          escapeCSV(r.name)
+        ].join(','));
+      });
+      return lines.join('\n');
+    };
+
+    // Create ZIP with all sheets
+    const zip = new JSZip();
+    const campaignNameClean = campaign.name.replace(/[^a-zA-Z0-9]/g, '_');
     
-    // ═══════════════════════════════════════════════════════════════
-    // SECTION 7: ALL RECIPIENTS DETAIL
-    // ═══════════════════════════════════════════════════════════════
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push('ALL RECIPIENTS');
-    csvLines.push('───────────────────────────────────────────────────────────────────────────────');
-    csvLines.push('Phone Number,Name,Status,Error Reason,Sent At,Sender Phone,Sender Name');
-    
-    recipients?.forEach((r: any) => {
-      const senderInfo = r.sent_by_account_id ? accountsMap.get(r.sent_by_account_id) : null;
-      const errorReason = r.status === 'failed' 
-        ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error')
-        : '';
-      const sentAt = r.sent_at ? format(new Date(r.sent_at), 'yyyy-MM-dd HH:mm:ss') : '';
-      
-      csvLines.push([
-        escapeCSV(r.phone_number),
-        escapeCSV(r.name),
-        escapeCSV(r.status),
-        escapeCSV(errorReason),
-        escapeCSV(sentAt),
-        escapeCSV(senderInfo?.phone),
-        escapeCSV(senderInfo?.name)
-      ].join(','));
-    });
-    
-    csvLines.push('');
-    csvLines.push('═══════════════════════════════════════════════════════════════════════════════');
-    csvLines.push('END OF REPORT');
-    csvLines.push('═══════════════════════════════════════════════════════════════════════════════');
-    
-    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
+    zip.file(`1_All_Recipients.csv`, createAllCSV());
+    zip.file(`2_Successful.csv`, createSuccessfulCSV());
+    zip.file(`3_Failed.csv`, createFailedCSV());
+    zip.file(`4_Pending.csv`, createPendingCSV());
+
+    // Generate and download ZIP
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(zipBlob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Campaign_Report_${campaign.name.replace(/[^a-zA-Z0-9]/g, '_')}_${format(new Date(), 'yyyyMMdd_HHmmss')}.csv`;
+    a.download = `Campaign_${campaignNameClean}_${format(new Date(), 'yyyyMMdd_HHmmss')}.zip`;
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success('Professional report exported');
+    toast.success(`Exported ${allRecipients.length} recipients (${successfulRecipients.length} success, ${failedRecipientsList.length} failed, ${pendingRecipients.length} pending)`);
   };
 
   const getStatusColor = (status: Campaign['status']) => {
