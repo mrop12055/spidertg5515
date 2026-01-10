@@ -15,7 +15,6 @@ const runnerNames: Record<string, string> = {
   livechat: 'LiveChat Runner',
   account: 'Account Runner',
   warmup: 'Warmup Runner',
-  unified: 'Unified Runner',
 };
 
 const OFFLINE_THRESHOLD_MS = 180000; // 3 minutes (batch processing can take a while)
