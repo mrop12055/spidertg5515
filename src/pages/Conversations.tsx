@@ -164,23 +164,21 @@ const Chat: React.FC = () => {
     return filtered;
   }, [messages, selectedConv?.id, messageSearchQuery]);
 
-  // Filter conversations by time - based on when conversation was CREATED (campaign start)
-  const getTimeFilterCutoff = () => {
+  // Get cutoff date for a specific filter
+  const getCutoffForFilter = (filter: TimeFilter) => {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
     
-    switch (timeFilter) {
+    switch (filter) {
       case 'today': {
         return startOfToday;
       }
       case '3d': {
-        // Start of 3 days ago (includes today, yesterday, and 2 days before)
         const threeDaysAgo = new Date(startOfToday);
         threeDaysAgo.setDate(threeDaysAgo.getDate() - 2);
         return threeDaysAgo;
       }
       case '5d': {
-        // Start of 5 days ago
         const fiveDaysAgo = new Date(startOfToday);
         fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 4);
         return fiveDaysAgo;
@@ -190,6 +188,9 @@ const Chat: React.FC = () => {
       }
     }
   };
+
+  // Filter conversations by time - based on when conversation was CREATED (campaign start)
+  const getTimeFilterCutoff = () => getCutoffForFilter(timeFilter);
 
   // Helper to get conversation creation time (when the campaign message was first sent)
   const getConversationCreatedTime = (conv: typeof conversations[0]) => {
@@ -255,6 +256,38 @@ const Chat: React.FC = () => {
     })
     // Sort by actual last message time, not updatedAt
     .sort((a, b) => getLastMessageTime(b) - getLastMessageTime(a));
+
+  // Pre-calculate counts for each time filter and replies (for display in filter buttons)
+  const filterCounts = useMemo(() => {
+    const baseFilter = (c: typeof conversations[0]) => {
+      const isNotSpamBot = c.recipientPhone !== '@SpamBot' && c.recipientName?.toLowerCase() !== 'spam info bot';
+      const showConv = shouldShowConversation(c);
+      const hasSuccess = hasSuccessfulMessages(c);
+      const isBlocked = blockedContacts.some(b => b.phone_number === c.recipientPhone);
+      return isNotSpamBot && showConv && hasSuccess && !isBlocked;
+    };
+
+    const countForFilter = (filter: TimeFilter, repliesOnly: boolean) => {
+      const cutoff = getCutoffForFilter(filter);
+      return conversations.filter(c => {
+        if (!baseFilter(c)) return false;
+        const convCreatedTime = getConversationCreatedTime(c);
+        if (convCreatedTime < cutoff.getTime()) return false;
+        if (repliesOnly && c.hasReply !== true) return false;
+        return true;
+      }).length;
+    };
+
+    return {
+      today: countForFilter('today', false),
+      '3d': countForFilter('3d', false),
+      '5d': countForFilter('5d', false),
+      todayReplies: countForFilter('today', true),
+      '3dReplies': countForFilter('3d', true),
+      '5dReplies': countForFilter('5d', true),
+      currentReplies: countForFilter(timeFilter, true),
+    };
+  }, [conversations, blockedContacts, messageStats, timeFilter]);
 
   const isTyping = selectedConv ? typingUsers[selectedConv.recipientPhone] : false;
 
@@ -736,50 +769,12 @@ const Chat: React.FC = () => {
                   </div>
                 </div>
                 
-                {/* Filter Row 1: All / Replies Toggle */}
-                <div className="flex items-center gap-2 mb-2 p-1 bg-secondary/30 rounded-lg">
-                  <button
-                    onClick={() => setShowRepliesOnly(false)}
-                    className={cn(
-                      "flex-1 px-3 py-2 text-xs font-medium rounded-md transition-all duration-200",
-                      !showRepliesOnly 
-                        ? "bg-background text-foreground shadow-sm" 
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    All ({filteredConversations.length + (showRepliesOnly ? conversations.filter(c => !c.hasReply && c.firstMessageSent).length : 0)})
-                  </button>
-                  <button
-                    onClick={() => setShowRepliesOnly(true)}
-                    className={cn(
-                      "p-2 rounded-md transition-all duration-200",
-                      showRepliesOnly 
-                        ? "bg-background text-foreground shadow-sm" 
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                    title="Show replies only"
-                  >
-                    <MessageCircle className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => setShowRepliesOnly(false)}
-                    className={cn(
-                      "p-2 rounded-md transition-all duration-200",
-                      !showRepliesOnly 
-                        ? "text-muted-foreground/50" 
-                        : "text-muted-foreground hover:text-foreground"
-                    )}
-                    title="Show all chats"
-                  >
-                    <MessageCircleOff className="w-4 h-4" />
-                  </button>
-                </div>
-
-                {/* Filter Row 2: Time Filters */}
-                <div className="flex gap-1 mb-3 p-1 bg-secondary/30 rounded-lg">
+                {/* Filter Row 1: Time Filters with counts */}
+                <div className="flex gap-1 mb-2 p-1 bg-secondary/30 rounded-lg">
                   {(['today', '3d', '5d'] as TimeFilter[]).map((filter) => {
                     const isActive = timeFilter === filter;
                     const label = filter === 'today' ? 'Today' : filter;
+                    const count = filterCounts[filter];
                     return (
                       <button
                         key={filter}
@@ -791,10 +786,38 @@ const Chat: React.FC = () => {
                             : "text-muted-foreground hover:text-foreground"
                         )}
                       >
-                        {label}
+                        {label} ({count})
                       </button>
                     );
                   })}
+                </div>
+
+                {/* Filter Row 2: All / Replies Toggle */}
+                <div className="flex items-center gap-2 mb-3 p-1 bg-secondary/30 rounded-lg">
+                  <button
+                    onClick={() => setShowRepliesOnly(false)}
+                    className={cn(
+                      "flex-1 px-3 py-2 text-xs font-medium rounded-md transition-all duration-200",
+                      !showRepliesOnly 
+                        ? "bg-background text-foreground shadow-sm" 
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    All ({filteredConversations.length})
+                  </button>
+                  <button
+                    onClick={() => setShowRepliesOnly(true)}
+                    className={cn(
+                      "flex-1 px-3 py-2 text-xs font-medium rounded-md transition-all duration-200 flex items-center justify-center gap-1.5",
+                      showRepliesOnly 
+                        ? "bg-green-500/20 text-green-600 dark:text-green-400 shadow-sm" 
+                        : "text-muted-foreground hover:text-foreground"
+                    )}
+                    title="Show only chats with replies"
+                  >
+                    <Reply className="w-3.5 h-3.5" />
+                    Replied ({filterCounts.currentReplies})
+                  </button>
                 </div>
                 
                 <div className="relative">
