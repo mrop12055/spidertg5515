@@ -27,23 +27,33 @@ serve(async (req) => {
 
     console.log(`[get-batch-tasks] Request for runner: ${runner}, batch_size: ${batch_size}`);
 
-    // Record runner heartbeat - use base runner name for UI display
+    // Record runner heartbeat (fire-and-forget, don't wait)
     if (runner) {
-      // Normalize runner name: warmup_chat -> warmup, campaign_batch -> campaign
       const baseRunnerName = runner.replace(/_batch$/, '').replace(/_chat$/, '');
-      await supabase
+      supabase
         .from("runner_heartbeats")
         .upsert({
           runner_name: baseRunnerName,
           last_seen: new Date().toISOString(),
           status: 'online'
-        }, { onConflict: 'runner_name' });
+        }, { onConflict: 'runner_name' })
+        .then(() => {});
     }
 
-    // Load settings from database
-    const { data: settingsData } = await supabase
-      .from("app_settings")
-      .select("key, value");
+    // PARALLEL: Load settings AND accounts in parallel to reduce latency
+    const now = new Date().toISOString();
+    const [settingsResult, accountsResult] = await Promise.all([
+      supabase.from("app_settings").select("key, value"),
+      supabase
+        .from("telegram_accounts")
+        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+        .eq("status", "active")
+        .or(`restricted_until.is.null,restricted_until.lt.${now}`)
+    ]);
+
+    const settingsData = settingsResult.data;
+    const activeAccounts = accountsResult.data;
+    const accountsError = accountsResult.error;
 
     // Dynamic batch sizes from settings
     let warmupBatchSize = 100; // Default for warmup
@@ -72,15 +82,7 @@ serve(async (req) => {
       }
     }
 
-    const now = new Date().toISOString();
-
-    // Get all active accounts not temporarily restricted, with their proxy info
-    // Fetch all accounts without limit to support 100+ pairs
-    const { data: activeAccounts, error: accountsError } = await supabase
-      .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-      .eq("status", "active")
-      .or(`restricted_until.is.null,restricted_until.lt.${now}`);
+    // Note: activeAccounts and accountsError already loaded above in parallel
 
     if (accountsError || !activeAccounts || activeAccounts.length === 0) {
       console.log("[get-batch-tasks] No active accounts available");
