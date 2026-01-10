@@ -3131,9 +3131,34 @@ async def get_or_create_client(account: dict, setup_handler=None) -> Optional[Te
 
 
 # ========== API FUNCTIONS ==========
+async def send_heartbeat():
+    """Send heartbeat to backend to show runner is online"""
+    try:
+        http = get_http_client()
+        await http.post(
+            f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+            },
+            json={
+                "runner_name": "unified",
+                "last_seen": datetime.utcnow().isoformat(),
+                "status": "online"
+            }
+        )
+    except Exception as e:
+        print(f"  [HEARTBEAT ERROR] {e}")
+
+
 async def get_batch_tasks(runner: str = "unified", batch_size: int = 50) -> dict:
     """Fetch batch of tasks from backend"""
     try:
+        # Send heartbeat with each batch request
+        asyncio.create_task(send_heartbeat())
+        
         http = get_http_client()
         resp = await http.post(
             f"{BACKEND_URL}/get-batch-tasks",
@@ -3150,7 +3175,7 @@ async def get_batch_tasks(runner: str = "unified", batch_size: int = 50) -> dict
 
 
 async def report_result(task_type: str, result: dict):
-    """Report task result to backend"""
+    """Report task result to backend - never crash on errors"""
     try:
         http = get_http_client()
         await http.post(
@@ -3620,6 +3645,7 @@ async def shutdown_all():
 
 # ========== MAIN LOOP ==========
 async def main_loop():
+    """Main loop with comprehensive error handling - NEVER CRASHES"""
     print("=" * 60)
     print("  TelegramCRM - Unified Single Runner")
     print("  All-in-one: Campaign | LiveChat | Account | Warmup")
@@ -3632,15 +3658,28 @@ async def main_loop():
     print("    ✓ Contacts-only filter for live chat")
     print("    ✓ Batch limits: 10 photos, 100 names")
     print("    ✓ No stagger/delay in campaigns")
+    print("    ✓ Auto-restart on any crash")
     print()
     print("=" * 60)
     
+    consecutive_errors = 0
+    last_heartbeat = 0
+    
     while RUNNING:
         try:
+            # Send heartbeat every 30 seconds
+            now = asyncio.get_event_loop().time()
+            if now - last_heartbeat > 30:
+                asyncio.create_task(send_heartbeat())
+                last_heartbeat = now
+            
             # Fetch tasks from unified endpoint
             batch = await get_batch_tasks(runner="unified", batch_size=50)
             tasks = batch.get("tasks", [])
             delay_after = batch.get("delay_after", 2)
+            
+            # Reset error counter on successful fetch
+            consecutive_errors = 0
             
             if not tasks:
                 await asyncio.sleep(delay_after)
@@ -3669,66 +3708,90 @@ async def main_loop():
                 else:
                     other_tasks.append(task)
             
-            # Process campaign tasks (parallel, no delay)
+            # Process campaign tasks (parallel, no delay) - with error handling
             if campaign_tasks:
-                await process_campaign_batch(campaign_tasks)
+                try:
+                    await process_campaign_batch(campaign_tasks)
+                except Exception as e:
+                    print(f"  [ERROR] Campaign batch: {e}")
             
-            # Process live chat sends
+            # Process live chat sends - with error handling
             for task in livechat_tasks:
-                await handle_livechat_send(task, task.get("account", {}))
+                try:
+                    await handle_livechat_send(task, task.get("account", {}))
+                except Exception as e:
+                    print(f"  [ERROR] LiveChat send: {e}")
             
-            # Process warmup tasks
+            # Process warmup tasks - with error handling
             for task in warmup_tasks:
-                await handle_warmup_task(task, task.get("account", {}))
+                try:
+                    await handle_warmup_task(task, task.get("account", {}))
+                except Exception as e:
+                    print(f"  [ERROR] Warmup task: {e}")
             
-            # Process photo changes (batch limit: 10)
+            # Process photo changes (batch limit: 10) - with error handling
             if photo_tasks:
-                await process_photo_changes(photo_tasks)
+                try:
+                    await process_photo_changes(photo_tasks)
+                except Exception as e:
+                    print(f"  [ERROR] Photo changes: {e}")
             
-            # Process name changes (batch limit: 100)
+            # Process name changes (batch limit: 100) - with error handling
             if name_tasks:
-                await process_name_changes(name_tasks)
+                try:
+                    await process_name_changes(name_tasks)
+                except Exception as e:
+                    print(f"  [ERROR] Name changes: {e}")
             
-            # Process other tasks
+            # Process other tasks - with error handling
             for task in other_tasks:
-                task_type = task.get("task", "")
-                account = task.get("account", {})
-                
-                if task_type == "sync_profile":
-                    await handle_sync_profile(task, account)
-                elif task_type == "logout_sessions":
-                    await handle_logout_sessions(task, account)
-                elif task_type == "verify_session":
-                    await handle_verify_session(task, account)
-                elif task_type == "spambot_check":
-                    # Handle spambot check
-                    client = await get_or_create_client(account)
-                    if client:
-                        try:
-                            spambot = await client.get_entity("@SpamBot")
-                            await client.send_message(spambot, "/start")
-                            await asyncio.sleep(2)
-                            async for msg in client.iter_messages(spambot, limit=1):
+                try:
+                    task_type = task.get("task", "")
+                    account = task.get("account", {})
+                    
+                    if task_type == "sync_profile":
+                        await handle_sync_profile(task, account)
+                    elif task_type == "logout_sessions":
+                        await handle_logout_sessions(task, account)
+                    elif task_type == "verify_session":
+                        await handle_verify_session(task, account)
+                    elif task_type == "spambot_check":
+                        # Handle spambot check
+                        client = await get_or_create_client(account)
+                        if client:
+                            try:
+                                spambot = await client.get_entity("@SpamBot")
+                                await client.send_message(spambot, "/start")
+                                await asyncio.sleep(2)
+                                async for msg in client.iter_messages(spambot, limit=1):
+                                    await report_result("spambot_check", {
+                                        "task_id": task.get("task_id"),
+                                        "account_id": account.get("id"),
+                                        "success": True,
+                                        "response": msg.text
+                                    })
+                            except Exception as e:
                                 await report_result("spambot_check", {
                                     "task_id": task.get("task_id"),
-                                    "account_id": account.get("id"),
-                                    "success": True,
-                                    "response": msg.text
+                                    "success": False,
+                                    "error": str(e)
                                 })
-                        except Exception as e:
-                            await report_result("spambot_check", {
-                                "task_id": task.get("task_id"),
-                                "success": False,
-                                "error": str(e)
-                            })
+                except Exception as e:
+                    print(f"  [ERROR] Other task {task.get('task', '?')}: {e}")
             
             # Small delay between batches
             if delay_after > 0:
                 await asyncio.sleep(delay_after)
                 
+        except asyncio.CancelledError:
+            print("  [STOP] Runner cancelled")
+            break
         except Exception as e:
-            print(f"  [ERROR] Main loop: {e}")
-            await asyncio.sleep(2)
+            consecutive_errors += 1
+            backoff = min(30, 2 ** consecutive_errors)
+            print(f"  [ERROR] Main loop (attempt {consecutive_errors}): {e}")
+            print(f"  [RETRY] Waiting {backoff}s before retry...")
+            await asyncio.sleep(backoff)
     
     await shutdown_all()
 
@@ -3739,17 +3802,27 @@ if __name__ == "__main__":
     print("  Install dependencies: pip install telethon httpx pysocks")
     print()
     
-    while True:
+    restart_count = 0
+    MAX_RESTARTS = 100  # Allow many restarts before giving up
+    
+    while restart_count < MAX_RESTARTS:
         try:
             asyncio.run(main_loop())
+            break  # Clean exit
         except KeyboardInterrupt:
             print("\\n  Goodbye!")
             break
         except Exception as e:
-            print(f"\\n  [CRASH] {e}")
-            print("  Restarting in 5 seconds...")
+            restart_count += 1
+            backoff = min(60, 5 * restart_count)
+            print(f"\\n  [CRASH #{restart_count}] {e}")
+            print(f"  Restarting in {backoff} seconds...")
             import time
-            time.sleep(5)
+            time.sleep(backoff)
+    
+    if restart_count >= MAX_RESTARTS:
+        print(f"\\n  [FATAL] Too many crashes ({MAX_RESTARTS}). Exiting.")
+        sys.exit(1)
 `;
 
   const unifiedRunBat = `@echo off

@@ -25,6 +25,11 @@ const runnerIcons: Record<string, { icon: React.ReactNode; color: string; functi
     color: 'text-orange-500',
     functions: ['Join channels', 'View content', 'Reactions', 'Pair chat'],
   },
+  unified: {
+    icon: <Activity className="h-4 w-4" />,
+    color: 'text-emerald-500',
+    functions: ['All-in-one', 'Campaign', 'Chat', 'Account', 'Warmup'],
+  },
 };
 
 export const RunnerStatusCard: React.FC = () => {
