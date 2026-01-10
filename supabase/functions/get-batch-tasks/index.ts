@@ -30,7 +30,11 @@ serve(async (req) => {
     // Record runner heartbeat - use base runner name for UI display
     if (runner) {
       // Normalize runner name: warmup_chat -> warmup, campaign_batch -> campaign
-      const baseRunnerName = runner.replace(/_batch$/, '').replace(/_chat$/, '');
+      // Keep 'unified' as-is since it's a distinct runner type
+      let baseRunnerName = runner;
+      if (runner !== 'unified') {
+        baseRunnerName = runner.replace(/_batch$/, '').replace(/_chat$/, '');
+      }
       await supabase
         .from("runner_heartbeats")
         .upsert({
