@@ -1138,12 +1138,14 @@ serve(async (req) => {
 
             tasks.push({
               task: "send",
-              recipient_id: recipient.id,
+              // Use campaign_recipient_id for batch reporting compatibility
+              campaign_recipient_id: recipient.id,
               recipient_phone: recipient.phone_number,
               recipient_name: recipient.name,
               message,
               campaign_id: recipient.campaign_id,
-              seat_id: campaign?.seat_id,
+              campaign_seat_id: campaign?.seat_id,
+              campaign_name: campaign?.name,
               account: formatAccountWithProxy(account),
             });
 
@@ -1247,6 +1249,66 @@ serve(async (req) => {
               .from("account_check_tasks")
               .update({ status: "in_progress", updated_at: new Date().toISOString() })
               .in("id", claimIds);
+          }
+        }
+      }
+
+      // 4. Get warmup tasks (lowest priority)
+      if (tasks.length < unifiedBatchSize) {
+        const { data: warmupMessages } = await supabase
+          .from("warmup_messages")
+          .select(`
+            *,
+            warmup_pairs(*),
+            sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, telegram_api_credentials(*), proxies!fk_proxy(*)),
+            receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number, telegram_id, username, first_name)
+          `)
+          .eq("status", "pending")
+          .lte("scheduled_at", new Date().toISOString())
+          .order("scheduled_at", { ascending: true })
+          .limit(unifiedBatchSize - tasks.length);
+
+        if (warmupMessages && warmupMessages.length > 0) {
+          for (const msg of warmupMessages as any[]) {
+            if (tasks.length >= unifiedBatchSize) break;
+
+            const senderAccount = msg.sender;
+            const receiverAccount = msg.receiver;
+            
+            if (!senderAccount || !receiverAccount) continue;
+            if (usedAccountIds.has(senderAccount.id)) continue;
+
+            // Check sender has active proxy
+            const proxy = senderAccount.proxies;
+            if (!proxy || proxy.status !== 'active') continue;
+
+            // Mark as sending
+            await supabase
+              .from("warmup_messages")
+              .update({ 
+                status: "sending",
+                claimed_at: new Date().toISOString(),
+                claimed_by: "unified_runner"
+              })
+              .eq("id", msg.id);
+
+            tasks.push({
+              task: msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat",
+              task_id: msg.id,
+              pair_id: msg.pair_id,
+              is_cycle_last: msg.is_cycle_last || false,
+              task_data: {
+                recipient_phone: receiverAccount.phone_number,
+                recipient_telegram_id: receiverAccount.telegram_id,
+                recipient_username: receiverAccount.username,
+                message: msg.message_content,
+                message_type: msg.message_type,
+                first_name: msg.message_type === "add_contact" ? msg.message_content : receiverAccount.first_name,
+              },
+              account: formatAccountWithProxy(senderAccount),
+            });
+
+            usedAccountIds.add(senderAccount.id);
           }
         }
       }
