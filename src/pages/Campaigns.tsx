@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 
 import { format } from 'date-fns';
-import JSZip from 'jszip';
+import * as XLSX from 'xlsx';
 import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -810,91 +810,62 @@ const Campaigns: React.FC = () => {
       accountsMap.set(a.id, { phone: a.phoneNumber, name: a.firstName || '' });
     });
 
-    // Escape CSV field (handle commas, quotes, newlines)
-    const escapeCSV = (field: string | null | undefined): string => {
-      if (!field) return '';
-      const str = String(field);
-      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
-
     // Filter recipients by status
     const allRecipients = recipients || [];
     const successfulRecipients = allRecipients.filter((r: any) => r.status === 'sent');
     const failedRecipientsList = allRecipients.filter((r: any) => r.status === 'failed');
     const pendingRecipients = allRecipients.filter((r: any) => r.status === 'pending');
 
-    // Create simple CSV content for each sheet
-    const createAllCSV = () => {
-      const lines = ['Phone Number,Name,Status,Error Reason'];
-      allRecipients.forEach((r: any) => {
-        const errorReason = r.status === 'failed' 
-          ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error')
-          : '';
-        lines.push([
-          escapeCSV(r.phone_number),
-          escapeCSV(r.name),
-          escapeCSV(r.status === 'sent' ? 'Successful' : r.status === 'failed' ? 'Failed' : 'Pending'),
-          escapeCSV(errorReason)
-        ].join(','));
-      });
-      return lines.join('\n');
-    };
+    // Prepare data for each sheet
+    const allData = allRecipients.map((r: any) => ({
+      'Phone Number': r.phone_number || '',
+      'Name': r.name || '',
+      'Status': r.status === 'sent' ? 'Successful' : r.status === 'failed' ? 'Failed' : 'Pending',
+      'Error Reason': r.status === 'failed' ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error') : ''
+    }));
 
-    const createSuccessfulCSV = () => {
-      const lines = ['Phone Number,Name'];
-      successfulRecipients.forEach((r: any) => {
-        lines.push([
-          escapeCSV(r.phone_number),
-          escapeCSV(r.name)
-        ].join(','));
-      });
-      return lines.join('\n');
-    };
+    const successfulData = successfulRecipients.map((r: any) => ({
+      'Phone Number': r.phone_number || '',
+      'Name': r.name || ''
+    }));
 
-    const createFailedCSV = () => {
-      const lines = ['Phone Number,Name,Error Reason'];
-      failedRecipientsList.forEach((r: any) => {
-        const errorReason = failedReasons.get(r.id) || r.failed_reason || 'Unknown error';
-        lines.push([
-          escapeCSV(r.phone_number),
-          escapeCSV(r.name),
-          escapeCSV(errorReason)
-        ].join(','));
-      });
-      return lines.join('\n');
-    };
+    const failedData = failedRecipientsList.map((r: any) => ({
+      'Phone Number': r.phone_number || '',
+      'Name': r.name || '',
+      'Error Reason': failedReasons.get(r.id) || r.failed_reason || 'Unknown error'
+    }));
 
-    const createPendingCSV = () => {
-      const lines = ['Phone Number,Name'];
-      pendingRecipients.forEach((r: any) => {
-        lines.push([
-          escapeCSV(r.phone_number),
-          escapeCSV(r.name)
-        ].join(','));
-      });
-      return lines.join('\n');
-    };
+    const pendingData = pendingRecipients.map((r: any) => ({
+      'Phone Number': r.phone_number || '',
+      'Name': r.name || ''
+    }));
 
-    // Create ZIP with all sheets
-    const zip = new JSZip();
-    const campaignNameClean = campaign.name.replace(/[^a-zA-Z0-9]/g, '_');
+    // Create workbook with multiple sheets
+    const workbook = XLSX.utils.book_new();
     
-    zip.file(`1_All_Recipients.csv`, createAllCSV());
-    zip.file(`2_Successful.csv`, createSuccessfulCSV());
-    zip.file(`3_Failed.csv`, createFailedCSV());
-    zip.file(`4_Pending.csv`, createPendingCSV());
+    const allSheet = XLSX.utils.json_to_sheet(allData);
+    const successSheet = XLSX.utils.json_to_sheet(successfulData);
+    const failedSheet = XLSX.utils.json_to_sheet(failedData);
+    const pendingSheet = XLSX.utils.json_to_sheet(pendingData);
 
-    // Generate and download ZIP
-    const zipBlob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(zipBlob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `Campaign_${campaignNameClean}_${format(new Date(), 'yyyyMMdd_HHmmss')}.zip`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Set column widths for better readability
+    const setColumnWidths = (sheet: XLSX.WorkSheet, widths: number[]) => {
+      sheet['!cols'] = widths.map(w => ({ wch: w }));
+    };
+    
+    setColumnWidths(allSheet, [18, 20, 12, 40]);
+    setColumnWidths(successSheet, [18, 20]);
+    setColumnWidths(failedSheet, [18, 20, 40]);
+    setColumnWidths(pendingSheet, [18, 20]);
+
+    XLSX.utils.book_append_sheet(workbook, allSheet, 'All');
+    XLSX.utils.book_append_sheet(workbook, successSheet, 'Successful');
+    XLSX.utils.book_append_sheet(workbook, failedSheet, 'Failed');
+    XLSX.utils.book_append_sheet(workbook, pendingSheet, 'Pending');
+
+    // Generate and download Excel file
+    const campaignNameClean = campaign.name.replace(/[^a-zA-Z0-9]/g, '_');
+    XLSX.writeFile(workbook, `Campaign_${campaignNameClean}_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
     
     toast.success(`Exported ${allRecipients.length} recipients (${successfulRecipients.length} success, ${failedRecipientsList.length} failed, ${pendingRecipients.length} pending)`);
   };
