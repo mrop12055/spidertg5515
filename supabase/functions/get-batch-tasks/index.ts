@@ -597,20 +597,20 @@ serve(async (req) => {
         return campaignMessagesPerAccountPerDay - sentToday - batchAssigned;
       };
 
-      // ========== STUCK SENDING RECOVERY (TIME-BASED) ==========
-      // Find "sending" recipients that have been stuck for over 2 minutes
+      // ========== STUCK SENDING RECOVERY (TIME-BASED - 45 SECONDS) ==========
+      // Find "sending" recipients that have been stuck for over 45 seconds
       // These are tasks that were assigned but never completed (runner crash, timeout, etc.)
       // ALSO recover recipients with NULL scheduled_at (orphaned from previous bugs)
-      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      const fortyFiveSecondsAgo = new Date(Date.now() - 45 * 1000).toISOString();
       
-      // Query for sending recipients with scheduled_at older than 2 minutes
+      // Query for sending recipients with scheduled_at older than 45 seconds
       const [{ data: stuckSendingRecipients }, { data: orphanedSendingRecipients }] = await Promise.all([
         supabase
           .from("campaign_recipients")
           .select("id, campaign_id, sent_by_account_id")
           .eq("status", "sending")
           .in("campaign_id", campaignIds)
-          .lt("scheduled_at", twoMinutesAgo)
+          .lt("scheduled_at", fortyFiveSecondsAgo)
           .limit(200),
         // ALSO find "sending" recipients with NULL scheduled_at - these are orphaned
         supabase
@@ -633,7 +633,7 @@ serve(async (req) => {
       const stuckIds = Array.from(stuckIdsSet);
 
       if (stuckIds.length > 0) {
-        console.log(`[get-batch-tasks] Recovering ${stuckIds.length} stuck sending recipients (${stuckSendingRecipients?.length || 0} timed out, ${orphanedSendingRecipients?.length || 0} orphaned)`);
+        console.log(`[get-batch-tasks] Recovering ${stuckIds.length} stuck sending recipients (${stuckSendingRecipients?.length || 0} timed out >45s, ${orphanedSendingRecipients?.length || 0} orphaned)`);
         
         // Batch update all stuck recipients at once - reset to pending for retry
         await supabase
@@ -646,6 +646,38 @@ serve(async (req) => {
             failed_reason: null
           })
           .in("id", stuckIds);
+      }
+      
+      // ========== PAUSED CAMPAIGN CLEANUP (SAFETY NET) ==========
+      // If any PAUSED campaigns have stuck "sending" recipients, reset them to queued
+      // This handles edge cases where pause didn't clean up properly
+      const { data: pausedCampaigns } = await supabase
+        .from("campaigns")
+        .select("id")
+        .eq("status", "paused");
+      
+      if (pausedCampaigns && pausedCampaigns.length > 0) {
+        const pausedCampaignIds = pausedCampaigns.map(c => c.id);
+        const { data: pausedStuckRecipients } = await supabase
+          .from("campaign_recipients")
+          .select("id")
+          .in("status", ["sending", "pending"])
+          .in("campaign_id", pausedCampaignIds)
+          .limit(500);
+        
+        if (pausedStuckRecipients && pausedStuckRecipients.length > 0) {
+          console.log(`[get-batch-tasks] SAFETY: Resetting ${pausedStuckRecipients.length} stuck recipients in PAUSED campaigns to queued`);
+          await supabase
+            .from("campaign_recipients")
+            .update({
+              status: "queued",
+              sent_by_account_id: null,
+              api_credential_id: null,
+              scheduled_at: null,
+              failed_reason: null
+            })
+            .in("id", pausedStuckRecipients.map(r => r.id));
+        }
       }
 
       // ========== RELEASE QUEUED RECIPIENTS TO PENDING (PARALLEL) ==========
@@ -1008,6 +1040,8 @@ serve(async (req) => {
       }
 
       // ========== BATCH UPDATE ALL RECIPIENTS AT ONCE ==========
+      // CRITICAL: Set scheduled_at to NOW when claiming, so stuck recovery works correctly
+      const claimTime = new Date().toISOString();
       if (recipientsToUpdate.length > 0) {
         // Group by account+api combo and update in batches
         const updatePromises = recipientsToUpdate.map(r =>
@@ -1016,13 +1050,14 @@ serve(async (req) => {
             .update({ 
               status: "sending", 
               sent_by_account_id: r.account_id, 
-              api_credential_id: r.api_credential_id 
+              api_credential_id: r.api_credential_id,
+              scheduled_at: claimTime  // CRITICAL: Set claim time for stuck recovery
             })
             .eq("id", r.id)
             .eq("status", "pending")
         );
         await Promise.all(updatePromises);
-        console.log(`[get-batch-tasks] Batch updated ${recipientsToUpdate.length} recipients to sending`);
+        console.log(`[get-batch-tasks] Batch updated ${recipientsToUpdate.length} recipients to sending (claimed at ${claimTime})`);
       }
 
       // Batch fail recipients with no eligible accounts

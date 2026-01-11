@@ -40,13 +40,51 @@ serve(async (req) => {
 
     console.log(`[report-batch-results] Processing ${results.length} results`);
 
-    const successResults = results.filter(r => r.success && r.campaign_recipient_id);
-    const failedResults = results.filter(r => !r.success && r.campaign_recipient_id);
+    // Separate already_sent results (from local cache - prevent double send)
+    const alreadySentResults = results.filter(r => r.already_sent && r.campaign_recipient_id);
+    const successResults = results.filter(r => r.success && !r.already_sent && r.campaign_recipient_id);
+    const failedResults = results.filter(r => !r.success && !r.already_sent && r.campaign_recipient_id);
     const now = new Date().toISOString();
 
-    const waitUntil = (globalThis as any).EdgeRuntime?.waitUntil;
+    // REMOVED waitUntil - we now process synchronously to ensure data is committed before responding
+    // This prevents data loss when runner times out waiting for response
 
     const processBatch = async () => {
+      // ========== HANDLE ALREADY_SENT (from local cache - prevent double send) ==========
+      if (alreadySentResults.length > 0) {
+        console.log(`[report-batch-results] Processing ${alreadySentResults.length} already_sent results (from local cache)`);
+        // Just mark as sent without creating duplicate message
+        const alreadySentIds = alreadySentResults.map(r => r.campaign_recipient_id);
+        await supabase
+          .from("campaign_recipients")
+          .update({ status: "sent", sent_at: now })
+          .in("id", alreadySentIds);
+        
+        // Update campaign sent counts
+        const campaignCounts = new Map<string, number>();
+        for (const r of alreadySentResults) {
+          if (r.campaign_id) {
+            campaignCounts.set(r.campaign_id, (campaignCounts.get(r.campaign_id) || 0) + 1);
+          }
+        }
+        if (campaignCounts.size > 0) {
+          const campaignIds = [...campaignCounts.keys()];
+          const { data: campaigns } = await supabase
+            .from("campaigns")
+            .select("id, sent_count")
+            .in("id", campaignIds);
+          
+          const updatePromises = (campaigns || []).map(campaign => {
+            const addCount = campaignCounts.get(campaign.id) || 0;
+            return supabase
+              .from("campaigns")
+              .update({ sent_count: (campaign.sent_count || 0) + addCount })
+              .eq("id", campaign.id);
+          });
+          await Promise.all(updatePromises);
+        }
+      }
+      
       // ========== PARALLEL PROCESS SUCCESSES ==========
       if (successResults.length > 0) {
         const withApiId = successResults.filter((r) => r.api_credential_id);
@@ -330,13 +368,14 @@ serve(async (req) => {
           }
         }
 
-        // Handle API retry (privacy errors) - track failed_api_ids, clear API for reassignment
+        // Handle API retry (privacy errors) - track failed_api_ids AND failed_account_ids
+        // UNIFIED: max 1 retry (2 total attempts) - consistent with report-task-result
         for (const r of retryWithDifferentApi) {
           failPromises.push(
             (async () => {
               const { data: current } = await supabase
                 .from("campaign_recipients")
-                .select("failed_api_ids, retry_count")
+                .select("failed_api_ids, failed_account_ids, retry_count")
                 .eq("id", r.campaign_recipient_id)
                 .single();
 
@@ -344,37 +383,45 @@ serve(async (req) => {
               if (r.api_credential_id && !failedApiIds.includes(r.api_credential_id)) {
                 failedApiIds.push(r.api_credential_id);
               }
+              
+              // ALSO track failed account (unified with report-task-result)
+              const failedAccountIds: string[] = current?.failed_account_ids || [];
+              if (r.account_id && !failedAccountIds.includes(r.account_id)) {
+                failedAccountIds.push(r.account_id);
+              }
 
               const retryCount = (current?.retry_count || 0) + 1;
-              const maxApiRetries = 3;
+              const maxRetries = 1;  // UNIFIED: 1 retry = 2 total attempts (matches report-task-result)
 
-              if (retryCount >= maxApiRetries) {
-                // Exhausted API retries - mark as failed
+              if (retryCount >= maxRetries) {
+                // Exhausted retries - mark as failed
                 await supabase
                   .from("campaign_recipients")
                   .update({
                     status: "failed",
-                    failed_reason: `Privacy restricted after ${retryCount} API attempts`,
+                    failed_reason: `Privacy restricted after ${retryCount + 1} attempts`,
                     sent_at: now,
                     failed_api_ids: failedApiIds,
+                    failed_account_ids: failedAccountIds,
                   })
                   .eq("id", r.campaign_recipient_id);
-                console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} FAILED after ${retryCount} API attempts`);
+                console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} FAILED after ${retryCount + 1} attempts (privacy)`);
               } else {
-                // Retry with different API
+                // Retry with different account AND API
                 await supabase
                   .from("campaign_recipients")
                   .update({
                     status: "pending",
-                    sent_by_account_id: null,
-                    api_credential_id: null,  // Clear so it gets a different API
-                    failed_api_ids: failedApiIds,  // Track failed APIs
+                    sent_by_account_id: null,  // Clear for fresh account
+                    api_credential_id: null,   // Clear for fresh API
+                    failed_api_ids: failedApiIds,
+                    failed_account_ids: failedAccountIds,
                     failed_reason: null,
                     retry_count: retryCount,
-                    scheduled_at: null,  // Reset scheduling
+                    scheduled_at: null,
                   })
                   .eq("id", r.campaign_recipient_id);
-                console.log(`[report-batch-results] Privacy error - retry with different API (attempt ${retryCount}/${maxApiRetries}, failed APIs: ${failedApiIds.join(',')})`);
+                console.log(`[report-batch-results] Privacy error - retry with different account+API (attempt ${retryCount + 1}/2, failed: ${failedAccountIds.length} accounts, ${failedApiIds.length} APIs)`);
               }
             })()
           );
@@ -447,29 +494,8 @@ serve(async (req) => {
       return elapsed;
     };
 
-    // Respond immediately (prevents Python 1s timeout). Processing continues in background when supported.
-    if (typeof waitUntil === "function") {
-      waitUntil(
-        processBatch().catch((e: any) => {
-          console.error("[report-batch-results] Background processing error:", e?.message || String(e));
-        })
-      );
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          accepted: true,
-          processed: results.length,
-          successes: successResults.length,
-          failures: failedResults.length,
-        }),
-        {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
-    }
-
-    // Fallback: process synchronously
+    // SYNCHRONOUS processing - wait for all DB operations to complete
+    // This ensures data is committed before responding, preventing data loss on timeouts
     const elapsed = await processBatch();
 
     return new Response(
@@ -478,6 +504,7 @@ serve(async (req) => {
         processed: results.length,
         successes: successResults.length,
         failures: failedResults.length,
+        already_sent: alreadySentResults.length,
         elapsed_ms: elapsed,
       }),
       {

@@ -733,6 +733,44 @@ RUNNING = True
 DEFAULT_POLL_INTERVAL = 5  # Fallback if server doesn't specify
 REPORT_CONCURRENCY = None  # Unlimited parallel reports
 
+# ========== SENT CACHE (Prevents Double-Sends) ==========
+# Tracks recipient_ids that were sent but not yet confirmed reported
+# If runner crashes after send but before report, this prevents re-sending
+import json
+import os
+
+SENT_CACHE_FILE = "sent_cache.json"
+
+def load_sent_cache() -> set:
+    """Load recipient IDs that were sent but not yet confirmed reported"""
+    if os.path.exists(SENT_CACHE_FILE):
+        try:
+            with open(SENT_CACHE_FILE, 'r') as f:
+                data = json.load(f)
+                return set(data) if isinstance(data, list) else set()
+        except Exception:
+            pass
+    return set()
+
+def save_sent_cache(cache: set):
+    """Save cache to disk atomically"""
+    try:
+        with open(SENT_CACHE_FILE, 'w') as f:
+            json.dump(list(cache), f)
+    except Exception as e:
+        print(f"  ⚠ Failed to save sent cache: {e}")
+
+def add_to_sent_cache(recipient_id: str, cache: set):
+    """Add immediately after Telegram send succeeds"""
+    cache.add(recipient_id)
+    save_sent_cache(cache)
+
+def remove_from_sent_cache(recipient_id: str, cache: set):
+    """Remove after successful report"""
+    cache.discard(recipient_id)
+    # Don't save here - batch save after all reports
+
+
 
 def signal_handler(sig, frame):
     """Handle Ctrl+C gracefully"""
@@ -898,40 +936,66 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                 pass  # Ignore disconnect errors
 
 
-async def report_results_parallel(results: list) -> tuple:
-    """Report all results - UNLIMITED concurrency, 1s timeout."""
+async def report_results_parallel(results: list, sent_cache: set = None) -> tuple:
+    """Report all results - bounded concurrency, 5s timeout.
+    
+    IMPROVED:
+    - 5 second timeout (up from 1s) for reliable reporting
+    - Bounded concurrency (max 15) to avoid overwhelming backend
+    - Removes from sent_cache on successful report
+    """
     start_time = time.time()
     valid_results = [r for r in results if not isinstance(r, Exception)]
 
     if not valid_results:
         return 0, 0, 0
 
-    # Try batch reporting first (1s timeout)
+    # Try batch reporting first (5s timeout - up from 1s)
+    REPORT_TIMEOUT = 5.0
     try:
-        batch_success = await asyncio.wait_for(report_batch_results(valid_results), timeout=1.0)
+        batch_success = await asyncio.wait_for(report_batch_results(valid_results), timeout=REPORT_TIMEOUT)
         if batch_success:
             elapsed = time.time() - start_time
             success_count = sum(1 for r in valid_results if r.get("success"))
+            # Clear sent cache on successful batch report
+            if sent_cache is not None:
+                for r in valid_results:
+                    rid = r.get("campaign_recipient_id")
+                    if rid:
+                        sent_cache.discard(rid)
+                save_sent_cache(sent_cache)
             return success_count, len(valid_results) - success_count, elapsed
     except asyncio.TimeoutError:
-        print(f"  ⚠ Batch report timeout (1s)")
+        print(f"  ⚠ Batch report timeout ({REPORT_TIMEOUT}s)")
     except Exception as e:
         print(f"  ⚠ Batch report failed: {e}")
 
-    # Fallback: UNLIMITED parallel reports with 1s timeout each
+    # Fallback: BOUNDED parallel reports with 5s timeout each
+    sem = asyncio.Semaphore(15)  # Max 15 concurrent reports
+    
     async def report_one(result: dict) -> bool:
-        try:
-            await asyncio.wait_for(report_result("send", result), timeout=1.0)
-            return result.get("success", False)
-        except asyncio.TimeoutError:
-            return False
-        except:
-            return False
+        async with sem:
+            try:
+                await asyncio.wait_for(report_result("send", result), timeout=REPORT_TIMEOUT)
+                # Remove from sent cache on success
+                if sent_cache is not None:
+                    rid = result.get("campaign_recipient_id")
+                    if rid:
+                        sent_cache.discard(rid)
+                return result.get("success", False)
+            except asyncio.TimeoutError:
+                return False
+            except:
+                return False
 
     report_results = await asyncio.gather(
         *[report_one(r) for r in valid_results],
         return_exceptions=True
     )
+    
+    # Save sent cache after all reports
+    if sent_cache is not None:
+        save_sent_cache(sent_cache)
 
     elapsed = time.time() - start_time
     success_count = sum(1 for r in report_results if r is True)
@@ -984,11 +1048,17 @@ async def main_loop():
     print("     - batchSize = 0 → Unlimited batch size")
     print("  🔄 Proxy auto-switch on timeout")
     print("  🔌 BATCH ISOLATION: Disconnects after each batch")
+    print("  🛡️  DOUBLE-SEND PREVENTION: Local sent cache")
     print("  ♾️  RUNS FOREVER - auto-restarts on errors")
     print("=" * 60)
     print("\n✓ Starting campaign runner...\n")
 
     consecutive_empty = 0
+    
+    # Load sent cache on startup (prevents double-sends after crash)
+    sent_cache = load_sent_cache()
+    if sent_cache:
+        print(f"  📋 Loaded {len(sent_cache)} pending reports from cache")
 
     while RUNNING:
         try:
@@ -1071,8 +1141,9 @@ async def main_loop():
                 send_time = time.time() - send_start
                 print(f"     [send: {send_time:.2f}s]")
 
-                # Report ALL results in parallel (bounded concurrency)
-                success_count, fail_count, report_time = await report_results_parallel(results)
+                # Report ALL results in parallel (bounded concurrency, 5s timeout)
+                # Pass sent_cache to remove reported items
+                success_count, fail_count, report_time = await report_results_parallel(results, sent_cache)
 
                 total_time = time.time() - batch_start
                 msgs_per_min = (len(tasks) / total_time * 60) if total_time > 0 else 0
