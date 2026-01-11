@@ -12,6 +12,7 @@ const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 interface RecipientData {
   phone_number: string;
   name?: string;
+  seat_id?: string;
 }
 
 // Normalize phone number - add + prefix if missing, strip formatting
@@ -144,6 +145,7 @@ serve(async (req) => {
         campaign_id,
         phone_number: r.phone_number,
         name: r.name || null,
+        seat_id: r.seat_id || null, // Per-recipient seat assignment for multi-seat campaigns
         status: 'queued', // Waiting in queue - will be released gradually
         scheduled_at: null, // Will be set when released to pending
       }));
