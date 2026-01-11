@@ -469,10 +469,40 @@ serve(async (req) => {
 
       console.log(`[get-batch-tasks] ${accountsWithAvailableApi.length} accounts assigned to least-used APIs`);
 
+      // ========== CAMPAIGN-SPECIFIC DAILY LIMIT PER ACCOUNT ==========
+      // Count how many campaign messages each account has sent TODAY (UTC)
+      const todayStart = new Date();
+      todayStart.setUTCHours(0, 0, 0, 0);
+      const todayStartIso = todayStart.toISOString();
+
+      const { data: todayCampaignSends } = await supabase
+        .from("campaign_recipients")
+        .select("sent_by_account_id")
+        .in("status", ["sent", "sending"])
+        .gte("sent_at", todayStartIso)
+        .not("sent_by_account_id", "is", null);
+
+      // Count sends per account
+      const accountCampaignSentToday = new Map<string, number>();
+      (todayCampaignSends || []).forEach((r: any) => {
+        if (r.sent_by_account_id) {
+          accountCampaignSentToday.set(
+            r.sent_by_account_id,
+            (accountCampaignSentToday.get(r.sent_by_account_id) || 0) + 1
+          );
+        }
+      });
+
+      console.log(`[get-batch-tasks] Campaign sends today per account: ${JSON.stringify(Object.fromEntries(accountCampaignSentToday))}, limit: ${campaignMessagesPerAccountPerDay}`);
+
       // Filter accounts for campaigns using campaign-specific per-account limit
       const campaignUsableAccounts = accountsWithAvailableApi.filter((a: any) => {
-        const sentToday = a.messages_sent_today ?? 0;
-        return sentToday < campaignMessagesPerAccountPerDay;
+        const sentTodayCampaign = accountCampaignSentToday.get(a.id) || 0;
+        if (sentTodayCampaign >= campaignMessagesPerAccountPerDay) {
+          console.log(`[get-batch-tasks] SKIP account ${a.phone_number} - already sent ${sentTodayCampaign}/${campaignMessagesPerAccountPerDay} campaign messages today`);
+          return false;
+        }
+        return true;
       });
 
       // Track API usage in this batch to avoid over-assigning
