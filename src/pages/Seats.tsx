@@ -98,10 +98,11 @@ const Seats: React.FC = () => {
         setPendingReplies(pendingMap);
       }
 
-      // Fetch unread replies count per seat (conversations with has_reply and unread_count > 0)
+      // Fetch unread replies count per seat (campaign conversations with has_reply and unread_count > 0)
       const { data: unreadData, error: unreadError } = await supabase
         .from('conversations')
         .select('seat_id, unread_count')
+        .eq('first_message_sent', true)
         .eq('has_reply', true)
         .gt('unread_count', 0)
         .not('seat_id', 'is', null);
