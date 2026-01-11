@@ -454,20 +454,42 @@ serve(async (req) => {
         });
       }
 
-      // ALWAYS assign the least-used API to each account (ignore account's default API)
+      // SMART API DISTRIBUTION: Assign least-used API DYNAMICALLY per account
+      // Track incremental usage so each account gets the API with lowest current+pending usage
+      const dynamicApiUsage = new Map<string, number>();
+      availableApis.forEach((api: any) => {
+        dynamicApiUsage.set(api.id, apiUsageCounts.get(api.id) || 0);
+      });
+      
       const accountsWithAvailableApi = usableAccounts.map((a: any) => {
-        // Find the API with least usage that's still under limit
-        const bestApi = availableApis[0]; // Already sorted by usage ascending
-        const bestApiUsage = apiUsageCounts.get(bestApi.id) || 0;
+        // Find the API with CURRENT lowest usage (including pending assignments from this loop)
+        let bestApi = null;
+        let lowestUsage = Infinity;
+        
+        for (const api of availableApis) {
+          const currentUsage = dynamicApiUsage.get(api.id) || 0;
+          if (currentUsage < lowestUsage && currentUsage < apiDailyLimit) {
+            lowestUsage = currentUsage;
+            bestApi = api;
+          }
+        }
+        
+        if (!bestApi) {
+          // All APIs at limit - use original account's API or first available
+          bestApi = availableApis[0];
+        }
+        
+        // Increment the dynamic usage counter for this API
+        dynamicApiUsage.set(bestApi.id, (dynamicApiUsage.get(bestApi.id) || 0) + 1);
         
         if (a.api_credential_id !== bestApi.id) {
-          console.log(`[get-batch-tasks] LOAD BALANCE: Account ${a.phone_number} -> ${bestApi.name} (${bestApiUsage}/${apiDailyLimit})`);
+          console.log(`[get-batch-tasks] SMART ROUTE: ${a.phone_number} -> ${bestApi.name} (${lowestUsage}/${apiDailyLimit})`);
         }
         
         return { ...a, api_credential_id: bestApi.id, _bestApi: bestApi };
       });
 
-      console.log(`[get-batch-tasks] ${accountsWithAvailableApi.length} accounts assigned to least-used APIs`);
+      console.log(`[get-batch-tasks] Dynamic API distribution: ${JSON.stringify(Object.fromEntries(dynamicApiUsage))}`);
 
       // ========== CAMPAIGN-SPECIFIC DAILY LIMIT PER ACCOUNT ==========
       // Count how many campaign messages each account has sent TODAY (UTC)
@@ -598,21 +620,37 @@ serve(async (req) => {
             .limit(toRelease);
 
           if (queuedToRelease && queuedToRelease.length > 0) {
-            const idsToRelease = queuedToRelease.map(r => r.id);
-            
-            // Release to pending with timestamp and assign least-used API
-            const leastUsedApi = availableApis[0];
-            
-            await supabase
-              .from("campaign_recipients")
-              .update({ 
-                status: "pending",
-                scheduled_at: new Date().toISOString(),
-                api_credential_id: leastUsedApi?.id || null
-              })
-              .in("id", idsToRelease);
+            // Smart API assignment for each queued recipient
+            // Distribute across APIs with lowest usage
+            for (const queued of queuedToRelease) {
+              // Find API with current lowest usage (including what we've assigned)
+              let bestApiId = availableApis[0]?.id || null;
+              let lowestUsage = Infinity;
+              
+              for (const api of availableApis) {
+                const currentUsage = dynamicApiUsage.get(api.id) || 0;
+                if (currentUsage < lowestUsage && currentUsage < apiDailyLimit) {
+                  lowestUsage = currentUsage;
+                  bestApiId = api.id;
+                }
+              }
+              
+              // Increment the dynamic usage counter
+              if (bestApiId) {
+                dynamicApiUsage.set(bestApiId, (dynamicApiUsage.get(bestApiId) || 0) + 1);
+              }
+              
+              await supabase
+                .from("campaign_recipients")
+                .update({ 
+                  status: "pending",
+                  scheduled_at: new Date().toISOString(),
+                  api_credential_id: bestApiId
+                })
+                .eq("id", queued.id);
+            }
 
-            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} from queued to pending (was ${currentInProgress}, now ${currentInProgress + queuedToRelease.length})`);
+            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} with smart API distribution`);
           }
         }
       }));
