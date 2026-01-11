@@ -847,9 +847,24 @@ const Campaigns: React.FC = () => {
     }
   };
 
-  const handleStatusToggle = (campaign: Campaign) => {
+  const handleStatusToggle = async (campaign: Campaign) => {
     if (campaign.status === 'running') {
-      updateCampaign(campaign.id, { status: 'paused' });
+      // Use atomic pause-campaign function to prevent stuck recipients
+      try {
+        const { error } = await supabase.functions.invoke('pause-campaign', {
+          body: { campaign_id: campaign.id }
+        });
+        if (error) {
+          console.error('Pause campaign error:', error);
+          toast.error('Failed to pause campaign');
+        } else {
+          toast.success('Campaign paused');
+          refreshData();
+        }
+      } catch (err) {
+        console.error('Pause campaign error:', err);
+        toast.error('Failed to pause campaign');
+      }
     } else if (campaign.status === 'paused' || campaign.status === 'draft') {
       handleStartCampaign(campaign.id);
     }
