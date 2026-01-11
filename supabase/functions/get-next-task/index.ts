@@ -317,24 +317,31 @@ serve(async (req) => {
 
     // ========== DAILY CAMPAIGN LIMIT PER ACCOUNT ==========
     // Count campaign messages sent TODAY per account (start of today UTC)
+    // Include both 'sent' and 'sending'. For 'sending', sent_at may be null, so we fallback to scheduled_at.
     const todayStart = new Date();
     todayStart.setUTCHours(0, 0, 0, 0);
     const todayStartIso = todayStart.toISOString();
     
-    // Get campaign messages sent today per account
     const { data: todayCampaignMessages } = await supabase
       .from("campaign_recipients")
-      .select("sent_by_account_id")
+      .select("sent_by_account_id, sent_at, scheduled_at")
       .in("status", ["sent", "sending"])
-      .gte("sent_at", todayStartIso);
+      .not("sent_by_account_id", "is", null)
+      .or(`sent_at.gte.${todayStartIso},scheduled_at.gte.${todayStartIso}`);
     
     // Count per account
     const accountCampaignCountToday = new Map<string, number>();
     for (const rec of (todayCampaignMessages || []) as any[]) {
-      if (rec.sent_by_account_id) {
+      const accountId = rec.sent_by_account_id;
+      if (!accountId) continue;
+
+      const timestamp = rec.sent_at || rec.scheduled_at;
+      if (!timestamp) continue;
+
+      if (new Date(timestamp) >= todayStart) {
         accountCampaignCountToday.set(
-          rec.sent_by_account_id, 
-          (accountCampaignCountToday.get(rec.sent_by_account_id) || 0) + 1
+          accountId,
+          (accountCampaignCountToday.get(accountId) || 0) + 1
         );
       }
     }
