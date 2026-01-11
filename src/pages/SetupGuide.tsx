@@ -1574,7 +1574,7 @@ async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
                     if not content:
                         content = "[Media]"
                     
-                    # Report the missed message
+                    # Report the missed message with telegram_message_id for deduplication
                     await report_result("incoming_message", {
                         "account_id": account_id,
                         "sender_id": sender_id,
@@ -1584,7 +1584,8 @@ async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
                         "sender_avatar": None,
                         "content": content,
                         "media_url": media_url,
-                        "media_type": media_type
+                        "media_type": media_type,
+                        "telegram_message_id": msg.id  # For deduplication on restart
                     })
                     fetched_count += 1
                     
@@ -1666,7 +1667,7 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                         media_type = "image"
                         # Note: Not uploading photo for fallback - just notify about the message
                     
-                    # Report the missed message
+                    # Report the missed message with telegram_message_id for deduplication
                     await report_result("incoming_message", {
                         "account_id": account_id,
                         "sender_id": sender.id,
@@ -1676,7 +1677,8 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                         "sender_avatar": None,
                         "content": content,
                         "media_url": media_url,
-                        "media_type": media_type
+                        "media_type": media_type,
+                        "telegram_message_id": msg.id  # For deduplication on restart
                     })
                     fetched_count += 1
                     
@@ -1846,7 +1848,8 @@ async def setup_message_handler(client, account_id: str):
                 "sender_avatar": avatar_base64,
                 "content": content,
                 "media_url": media_url,
-                "media_type": media_type
+                "media_type": media_type,
+                "telegram_message_id": event.message.id  # For deduplication on restart
             })
         except Exception as e:
             if not is_network_error(str(e)):
