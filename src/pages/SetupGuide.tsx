@@ -1133,13 +1133,15 @@ if __name__ == "__main__":
 LiveChat Runner - Handles incoming messages and live chat replies
 RUNS FOREVER with crash recovery, memory cleanup, and heartbeat logging
 
-BUILD: 2026-01-09-optimized-filtering
+BUILD: 2026-01-11-missed-message-recovery
 
 Features:
+- MISSED MESSAGE RECOVERY: Syncs messages received while offline on startup
 - EARLY FILTERING: Only processes messages from known campaign recipients
 - Uses fingerprint from DB if exists, generates new if not
 - On proxy failure, switches to a different random proxy (no retry same proxy)
 - Detects network/wifi disconnect and skips account updates
+- RpcCallFailError handling with retry queue
 """
 import asyncio
 import signal
@@ -1209,6 +1211,19 @@ NETWORK_ERROR_PATTERNS = [
     "connection closed",
 ]
 
+# Telegram server error patterns (different from network errors - these are Telegram's issues)
+TELEGRAM_SERVER_ERROR_PATTERNS = [
+    "internal issues",
+    "rpccallfail",
+    "rpc_call_fail",
+    "flood wait",
+    "server closed",
+    "service unavailable",
+]
+
+# Sync retry settings
+SYNC_RETRY_INTERVAL = 60  # Retry missed message sync every 60 seconds
+
 
 def is_network_error(error_str: str) -> bool:
     """Check if error is a LOCAL network/wifi issue (not account problem)"""
@@ -1216,6 +1231,14 @@ def is_network_error(error_str: str) -> bool:
         return False
     error_lower = error_str.lower()
     return any(p in error_lower for p in NETWORK_ERROR_PATTERNS)
+
+
+def is_telegram_server_error(error_str: str) -> bool:
+    """Check if error is a Telegram server issue (temporary, should retry)"""
+    if not error_str:
+        return False
+    error_lower = error_str.lower()
+    return any(p in error_lower for p in TELEGRAM_SERVER_ERROR_PATTERNS)
 
 
 def signal_handler(sig, frame):
@@ -1407,6 +1430,117 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     return None, "All proxies failed"
 
 
+async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
+    """
+    Force sync missed messages after connection.
+    Returns: (success: bool, needs_retry: bool)
+    - success=True: sync completed
+    - needs_retry=True: Telegram servers busy, should retry later
+    """
+    try:
+        print(f"  [{phone}] Syncing missed messages...")
+        await asyncio.wait_for(client.catch_up(), timeout=30)
+        print(f"  [{phone}] Message sync complete")
+        return True, False
+    except asyncio.TimeoutError:
+        print(f"  [{phone}] Sync timeout - will retry later")
+        return False, True
+    except Exception as e:
+        error_str = str(e).lower()
+        if is_telegram_server_error(error_str):
+            print(f"  [{phone}] Telegram servers busy, will retry sync later")
+            return False, True  # Retry later
+        if is_network_error(error_str):
+            print(f"  [{phone}] Network error during sync")
+            return False, True  # Retry later
+        print(f"  [{phone}] Sync error: {e}")
+        return False, False
+
+
+async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_dialogs: int = 30):
+    """
+    Fallback: Fetch recent unread messages from dialogs if catch_up fails.
+    This manually retrieves messages that were received while offline.
+    """
+    try:
+        print(f"  [{phone}] Fetching recent dialog messages as fallback...")
+        fetched_count = 0
+        
+        dialogs = await asyncio.wait_for(client.get_dialogs(limit=max_dialogs), timeout=30)
+        
+        for dialog in dialogs:
+            try:
+                # Only process private chats with unread messages
+                if not dialog.is_user or dialog.unread_count == 0:
+                    continue
+                
+                # Check if this is a contact (matches our early filter)
+                entity = dialog.entity
+                is_contact = getattr(entity, 'contact', False)
+                if not is_contact:
+                    continue
+                
+                # Fetch unread messages
+                messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 50))
+                
+                for msg in reversed(messages):  # Process oldest first
+                    if msg.out:  # Skip outgoing
+                        continue
+                    if not msg.text and not msg.photo:  # Skip non-text/photo
+                        continue
+                    
+                    sender = await msg.get_sender()
+                    if not sender or not hasattr(sender, 'id'):
+                        continue
+                    
+                    # Get sender info
+                    sender_username = getattr(sender, 'username', None)
+                    sender_phone = None
+                    if hasattr(sender, 'phone') and sender.phone:
+                        sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+                    sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
+                    
+                    content = msg.text or "[Media]"
+                    media_url = None
+                    media_type = None
+                    
+                    if msg.photo:
+                        content = "[Photo] " + (msg.text or "")
+                        media_type = "image"
+                        # Note: Not uploading photo for fallback - just notify about the message
+                    
+                    # Report the missed message
+                    await report_result("incoming_message", {
+                        "account_id": account_id,
+                        "sender_id": sender.id,
+                        "sender_name": sender_name,
+                        "sender_username": sender_username,
+                        "sender_phone": sender_phone,
+                        "sender_avatar": None,
+                        "content": content,
+                        "media_url": media_url,
+                        "media_type": media_type
+                    })
+                    fetched_count += 1
+                    
+            except Exception as e:
+                if not is_network_error(str(e)):
+                    print(f"    [WARN] Error fetching dialog: {e}")
+                continue
+        
+        print(f"  [{phone}] Fetched {fetched_count} missed messages from dialogs")
+        return True
+    except asyncio.TimeoutError:
+        print(f"  [{phone}] Dialog fetch timeout")
+        return False
+    except Exception as e:
+        if is_telegram_server_error(str(e)):
+            print(f"  [{phone}] Telegram servers busy during dialog fetch")
+        elif not is_network_error(str(e)):
+            print(f"  [{phone}] Dialog fetch error: {e}")
+        return False
+
+
 async def check_conversation_exists(account_id: str, sender_id: int, sender_username: str = None, sender_phone: str = None) -> bool:
     """Multi-strategy matching: telegram_id -> username -> phone"""
     import re
@@ -1586,6 +1720,11 @@ async def keep_clients_alive():
                     print(f"  [TIMEOUT] catch_up timeout for {acc_id[:8]}")
                 except Exception as e:
                     error_str = str(e).lower()
+                    # Check for Telegram server errors (RpcCallFailError) - don't disconnect, just skip
+                    if is_telegram_server_error(error_str):
+                        print(f"  [TELEGRAM] Server busy, skipping iteration: {str(e)[:40]}")
+                        await asyncio.sleep(5)
+                        continue
                     # Check for network errors
                     if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
                         consecutive_errors += 1
@@ -1611,7 +1750,11 @@ async def keep_clients_alive():
                 
         except Exception as e:
             error_str = str(e).lower()
-            if is_network_error(error_str) or "winerror 64" in error_str:
+            # Handle Telegram server errors gracefully
+            if is_telegram_server_error(error_str):
+                print(f"  [TELEGRAM] Server issue in keep_alive: {str(e)[:40]}")
+                await asyncio.sleep(10)
+            elif is_network_error(error_str) or "winerror 64" in error_str:
                 print(f"  [NETWORK] keep_clients_alive network error - waiting 5s...")
                 await asyncio.sleep(5)
             else:
@@ -1620,18 +1763,20 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (ULTRA FAST)")
-    print("  BUILD: 2026-01-08-v3-optimized")
-    print("  [Incoming + Replies]")
-    print("  ⚡ Optimized for speed - no delays")
-    print("  🔄 Instant proxy switch on failure")
-    print("  📨 50 update checks per second")
+    print("  LiveChat Runner (MISSED MESSAGE RECOVERY)")
+    print("  BUILD: 2026-01-11-sync-recovery")
+    print("  [Incoming + Replies + Offline Sync]")
+    print("  ⚡ Syncs missed messages on startup")
+    print("  🔄 Retry queue for Telegram server issues")
+    print("  📨 Fallback dialog fetch if sync fails")
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
     failed_proxy_accounts = {}  # Track accounts that failed due to proxy {account_id: retry_time}
+    pending_sync_accounts = {}  # Track accounts that need sync retry {account_id: (retry_time, phone)}
     last_cleanup = time.time()
     last_heartbeat = time.time()
+    last_sync_retry = time.time()
     iteration_count = 0
     
     # Start background task to keep clients catching updates
@@ -1689,18 +1834,23 @@ async def main_loop():
                     
                     async def connect_one(acc):
                         acc_id = acc.get("id")
+                        phone = acc.get("phone_number", "???")[-4:]
                         if not acc_id:
-                            return None, None, "No ID"
+                            return None, None, "No ID", phone, False
                         try:
                             client, error = await asyncio.wait_for(
                                 connect_account_with_fingerprint(acc, setup_handler=setup_message_handler),
                                 timeout=CONNECT_TIMEOUT_SECONDS
                             )
-                            return acc_id, client, error
+                            if client:
+                                # Sync missed messages after successful connection
+                                sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone)
+                                return acc_id, client, error, phone, needs_retry
+                            return acc_id, client, error, phone, False
                         except asyncio.TimeoutError:
-                            return acc_id, None, "TIMEOUT"
+                            return acc_id, None, "TIMEOUT", phone, False
                         except Exception as e:
-                            return acc_id, None, f"ERROR:{e}"
+                            return acc_id, None, f"ERROR:{e}", phone, False
                     
                     results = await asyncio.gather(
                         *[connect_one(acc) for acc in new_accounts],
@@ -1711,16 +1861,21 @@ async def main_loop():
                     success_count = 0
                     timeout_count = 0
                     error_count = 0
+                    sync_pending_count = 0
                     for result in results:
                         if isinstance(result, Exception):
                             error_count += 1
                             continue
-                        acc_id, client, error = result
+                        acc_id, client, error, phone, needs_sync_retry = result
                         if not acc_id:
                             continue
                         if client:
                             connected_ids.add(acc_id)
                             success_count += 1
+                            # Queue for sync retry if needed
+                            if needs_sync_retry:
+                                pending_sync_accounts[acc_id] = (time.time() + SYNC_RETRY_INTERVAL, phone)
+                                sync_pending_count += 1
                         elif error:
                             if error.startswith("NETWORK_ERROR:"):
                                 pass  # Will retry next iteration
@@ -1731,7 +1886,7 @@ async def main_loop():
                                 error_count += 1
                                 # NO cooldown - keep trying
                     
-                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count})")
+                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
 
                 # Get delay from server response (usually 0 for fast polling)
                 wait_seconds = task.get("seconds", 0.5)
@@ -1744,6 +1899,42 @@ async def main_loop():
                 else:
                     # Even with 0 delay, yield briefly for updates
                     await asyncio.sleep(0.05)
+            
+            # ========== RETRY PENDING SYNCS ==========
+            # Retry missed message sync for accounts that failed due to Telegram server issues
+            if time.time() - last_sync_retry > 10:  # Check every 10 seconds
+                now = time.time()
+                sync_due = [(acc_id, phone) for acc_id, (retry_time, phone) in pending_sync_accounts.items() 
+                            if now > retry_time and acc_id in active_clients]
+                
+                for acc_id, phone in sync_due:
+                    client = active_clients.get(acc_id)
+                    if client and client.is_connected():
+                        try:
+                            print(f"  [SYNC RETRY] Retrying sync for {phone}...")
+                            sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone)
+                            
+                            if sync_success:
+                                del pending_sync_accounts[acc_id]
+                                print(f"  [SYNC OK] Retry sync successful for {phone}")
+                            elif needs_retry:
+                                # Reschedule for later
+                                pending_sync_accounts[acc_id] = (now + SYNC_RETRY_INTERVAL, phone)
+                            else:
+                                # Sync failed but no retry needed - try fallback
+                                print(f"  [SYNC FALLBACK] Trying dialog fetch for {phone}...")
+                                await fetch_recent_dialog_messages(client, acc_id, phone)
+                                del pending_sync_accounts[acc_id]
+                                
+                        except Exception as e:
+                            if is_telegram_server_error(str(e)):
+                                pending_sync_accounts[acc_id] = (now + SYNC_RETRY_INTERVAL, phone)
+                                print(f"  [SYNC RETRY] Will retry {phone} in {SYNC_RETRY_INTERVAL}s (server busy)")
+                            else:
+                                print(f"  [SYNC ERROR] {phone}: {e}")
+                                del pending_sync_accounts[acc_id]
+                
+                last_sync_retry = time.time()
             
             elif task_type == "send":
                 msg = task.get("message", {})
