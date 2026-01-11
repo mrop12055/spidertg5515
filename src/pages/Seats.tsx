@@ -111,7 +111,8 @@ const Seats: React.FC = () => {
         const unreadMap: UnreadRepliesMap = {};
         unreadData.forEach((c) => {
           if (c.seat_id) {
-            unreadMap[c.seat_id] = (unreadMap[c.seat_id] || 0) + (c.unread_count || 0);
+            // Count unique conversations, not total messages
+            unreadMap[c.seat_id] = (unreadMap[c.seat_id] || 0) + 1;
           }
         });
         setUnreadReplies(unreadMap);
