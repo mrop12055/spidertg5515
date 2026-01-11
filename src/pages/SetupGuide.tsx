@@ -52,7 +52,7 @@ CONNECTION_RETRIES = 1       # Fail fast, switch proxy immediately
 RETRY_DELAY = 0              # No retry delay
 
 # HTTP Timeouts - split by purpose
-HTTP_TIMEOUT_DISPATCH = 15   # Task fetching (get-next-task, get-batch-tasks)
+HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks) - increased for heavy queries
 HTTP_TIMEOUT_REPORT = 10     # Reporting (report-task-result, report-batch-results)
 HTTP_TIMEOUT_PROXY = 5       # Proxy switch calls
 HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
@@ -385,48 +385,56 @@ async def get_next_task(runner: str = None) -> dict:
         return {"task": "wait", "seconds": backoff}
 
 
-async def get_batch_tasks(runner: str = None, batch_size: int = 50) -> dict:
-    """Fetch batch of tasks using shared HTTP client with proper timeout and error handling"""
+async def get_batch_tasks(runner: str = None, batch_size: int = 50, max_retries: int = 2) -> dict:
+    """Fetch batch of tasks with automatic retry on timeout"""
     global _consecutive_http_errors
-    try:
-        body = {"runner": runner, "batch_size": batch_size}
-        http = get_http_client()
-        resp = await asyncio.wait_for(
-            http.post(
-                f"{BACKEND_URL}/get-batch-tasks",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json=body,
-                timeout=HTTP_TIMEOUT_DISPATCH
-            ),
-            timeout=HTTP_TIMEOUT_DISPATCH + 1
-        )
-        
-        if resp.status_code != 200:
-            print(f"  [HTTP ERROR] get_batch_tasks: status={resp.status_code}, body={resp.text[:200]}")
-            _consecutive_http_errors += 1
-            backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
-            return {"tasks": [], "delay_after": backoff}
-        
+    
+    for attempt in range(max_retries + 1):
         try:
-            data = resp.json()
-            _consecutive_http_errors = 0  # Reset on success
-            return data
-        except Exception as json_err:
-            print(f"  [HTTP ERROR] get_batch_tasks: JSON decode failed: {json_err}, body={resp.text[:200]}")
+            body = {"runner": runner, "batch_size": batch_size}
+            http = get_http_client()
+            resp = await asyncio.wait_for(
+                http.post(
+                    f"{BACKEND_URL}/get-batch-tasks",
+                    headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                    json=body,
+                    timeout=HTTP_TIMEOUT_DISPATCH
+                ),
+                timeout=HTTP_TIMEOUT_DISPATCH + 2
+            )
+            
+            if resp.status_code != 200:
+                print(f"  [HTTP ERROR] get_batch_tasks: status={resp.status_code}, body={resp.text[:200]}")
+                _consecutive_http_errors += 1
+                backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+                return {"tasks": [], "delay_after": backoff}
+            
+            try:
+                data = resp.json()
+                _consecutive_http_errors = 0  # Reset on success
+                return data
+            except Exception as json_err:
+                print(f"  [HTTP ERROR] get_batch_tasks: JSON decode failed: {json_err}, body={resp.text[:200]}")
+                _consecutive_http_errors += 1
+                backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
+                return {"tasks": [], "delay_after": backoff}
+                
+        except (asyncio.TimeoutError, httpx.ReadTimeout) as e:
+            if attempt < max_retries:
+                print(f"  [HTTP RETRY] get_batch_tasks: Timeout (attempt {attempt + 1}/{max_retries + 1}), retrying...")
+                await asyncio.sleep(1)  # Brief pause before retry
+                continue
+            print(f"  [HTTP ERROR] get_batch_tasks: Timeout after {max_retries + 1} attempts")
+            _consecutive_http_errors += 1
+            backoff = min(MAX_HTTP_BACKOFF, 3 + _consecutive_http_errors * 2)
+            return {"tasks": [], "delay_after": backoff}
+        except Exception as e:
+            print(f"  [HTTP ERROR] get_batch_tasks: {type(e).__name__}: {repr(e)}")
             _consecutive_http_errors += 1
             backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
             return {"tasks": [], "delay_after": backoff}
-            
-    except asyncio.TimeoutError:
-        print(f"  [HTTP ERROR] get_batch_tasks: Timeout after {HTTP_TIMEOUT_DISPATCH}s")
-        _consecutive_http_errors += 1
-        backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
-        return {"tasks": [], "delay_after": backoff}
-    except Exception as e:
-        print(f"  [HTTP ERROR] get_batch_tasks: {type(e).__name__}: {repr(e)}")
-        _consecutive_http_errors += 1
-        backoff = min(MAX_HTTP_BACKOFF, 1 + _consecutive_http_errors * 2)
-        return {"tasks": [], "delay_after": backoff}
+    
+    return {"tasks": [], "delay_after": 5}
 
 
 async def report_result(task_type: str, result: dict):
