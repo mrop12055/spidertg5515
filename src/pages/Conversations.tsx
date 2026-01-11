@@ -1007,12 +1007,23 @@ const Chat: React.FC = () => {
                         </div>
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between gap-2">
-                            <span className={cn(
-                              "font-medium truncate text-sm",
-                              conv.unreadCount > 0 ? "text-foreground" : "text-foreground/80"
-                            )}>
-                              {displayName}
-                            </span>
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className={cn(
+                                "font-medium truncate text-sm",
+                                conv.unreadCount > 0 ? "text-foreground" : "text-foreground/80"
+                              )}>
+                                {displayName}
+                              </span>
+                              {(() => {
+                                const worker = accounts.find(a => a.id === conv.accountId);
+                                const workerName = worker?.firstName || worker?.username || worker?.phoneNumber;
+                                return workerName ? (
+                                  <span className="text-[9px] px-1.5 py-0.5 bg-secondary text-muted-foreground rounded-full truncate max-w-[80px] flex-shrink-0">
+                                    {workerName}
+                                  </span>
+                                ) : null;
+                              })()}
+                            </div>
                             <span className="text-[10px] text-muted-foreground tabular-nums flex-shrink-0">
                               {formatMessageDate(conv.updatedAt)}
                             </span>
