@@ -221,16 +221,32 @@ serve(async (req) => {
 
             if (account) {
               const newCount = (account.messages_sent_today || 0) + 1;
-              await supabase
-                .from("telegram_accounts")
-                .update({
-                  messages_sent_today: newCount,
-                  last_active: new Date().toISOString(),
-                })
-                .eq("id", account_id);
+              const dailyLimit = 5; // Default daily limit
+              
+              // Check if account has hit daily quota - auto-restrict for 12 hours
+              if (newCount >= dailyLimit) {
+                const restrictedUntil = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(); // 12 hours from now
+                await supabase
+                  .from("telegram_accounts")
+                  .update({
+                    messages_sent_today: newCount,
+                    last_active: new Date().toISOString(),
+                    restricted_until: restrictedUntil,
+                  })
+                  .eq("id", account_id);
 
-              console.log(`[report-task-result] Incremented message count for account ${account_id} (new contact). New count=${newCount}`);
+                console.log(`[report-task-result] Account ${account_id} hit daily quota (${newCount}/${dailyLimit}). Restricted until ${restrictedUntil}`);
+              } else {
+                await supabase
+                  .from("telegram_accounts")
+                  .update({
+                    messages_sent_today: newCount,
+                    last_active: new Date().toISOString(),
+                  })
+                  .eq("id", account_id);
 
+                console.log(`[report-task-result] Incremented message count for account ${account_id} (new contact). New count=${newCount}/${dailyLimit}`);
+              }
             }
           } else if (account_id) {
             // Just update last_active for replies, don't count
