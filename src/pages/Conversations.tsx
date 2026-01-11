@@ -83,6 +83,8 @@ const Chat: React.FC = () => {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isSendingMedia, setIsSendingMedia] = useState(false);
+  const [fetchedMessages, setFetchedMessages] = useState<typeof messages>([]);
+  const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -146,13 +148,92 @@ const Chat: React.FC = () => {
     return stats;
   }, [messages]);
 
-  // Messages for selected conversation (memoized)
-  const conversationMessages = useMemo(() => {
-    if (!selectedConv) return [] as typeof messages;
+  // Function to fetch messages for a conversation
+  const fetchMessagesForConversation = async (convId: string) => {
+    if (!convId) {
+      setFetchedMessages([]);
+      return;
+    }
+    
+    try {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*, conversations(recipient_phone)')
+        .eq('conversation_id', convId)
+        .order('created_at', { ascending: true });
+      
+      if (error) throw error;
+      
+      const mappedMessages = (data || []).map(m => {
+        // Map database status to Message type status
+        let status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' = 'pending';
+        if (m.status === 'sent' || m.status === 'sending') status = 'sent';
+        else if (m.status === 'delivered') status = 'delivered';
+        else if (m.status === 'read') status = 'read';
+        else if (m.status === 'failed' || m.status === 'cancelled') status = 'failed';
+        else if (m.status === 'pending') status = 'pending';
+        
+        return {
+          id: m.id,
+          conversationId: m.conversation_id,
+          accountId: m.account_id,
+          recipientPhone: m.conversations?.recipient_phone || '',
+          content: m.content,
+          direction: m.direction as 'incoming' | 'outgoing',
+          status,
+          timestamp: new Date(m.created_at),
+          telegramMessageId: m.telegram_message_id || undefined,
+          failedReason: m.failed_reason || undefined,
+          mediaUrl: m.media_url || undefined,
+          mediaType: m.media_type || undefined,
+          campaignRecipientId: m.campaign_recipient_id || undefined,
+        };
+      });
+      
+      setFetchedMessages(mappedMessages);
+    } catch (err) {
+      console.error('Error fetching messages:', err);
+    }
+  };
 
-    let filtered = messages
-      .filter(m => m.conversationId === selectedConv.id && m.status !== 'failed')
-      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  // Fetch messages directly from database when conversation is selected
+  useEffect(() => {
+    if (!selectedConversation) {
+      setFetchedMessages([]);
+      return;
+    }
+    
+    setIsLoadingMessages(true);
+    fetchMessagesForConversation(selectedConversation).finally(() => {
+      setIsLoadingMessages(false);
+    });
+    
+    // Subscribe to realtime updates for this conversation's messages
+    const channel = supabase
+      .channel(`conv-messages-${selectedConversation}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${selectedConversation}`
+        },
+        () => {
+          // Refetch messages on any change
+          fetchMessagesForConversation(selectedConversation);
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [selectedConversation]);
+
+  // Messages for selected conversation (memoized from fetched data)
+  const conversationMessages = useMemo(() => {
+    let filtered = fetchedMessages.filter(m => m.status !== 'failed');
     
     // Apply message search filter
     if (messageSearchQuery) {
@@ -162,7 +243,7 @@ const Chat: React.FC = () => {
     }
     
     return filtered;
-  }, [messages, selectedConv?.id, messageSearchQuery]);
+  }, [fetchedMessages, messageSearchQuery]);
 
   // Get cutoff date for a specific filter
   const getCutoffForFilter = (filter: TimeFilter) => {
@@ -1098,7 +1179,12 @@ const Chat: React.FC = () => {
               {/* Messages Area */}
               <ScrollArea className="flex-1 px-4 py-2">
                 <div className="max-w-3xl mx-auto space-y-1">
-                  {groupedMessages.length === 0 ? (
+                  {isLoadingMessages ? (
+                    <div className="text-center py-16">
+                      <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-4" />
+                      <p className="text-sm text-muted-foreground">Loading messages...</p>
+                    </div>
+                  ) : groupedMessages.length === 0 ? (
                     <div className="text-center py-16">
                       <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-4">
                         <MessageSquare className="w-10 h-10 text-primary" />
