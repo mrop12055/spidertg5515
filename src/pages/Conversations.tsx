@@ -988,8 +988,9 @@ const Chat: React.FC = () => {
                   const displayName = conv.recipientPhone || 'Unknown';
                   const avatarInitial = conv.recipientPhone?.startsWith('+') ? conv.recipientPhone.slice(1, 3) : '?';
                   
-                  // Use conversation's cached last message for performance
-                  const messagePreview = conv.lastMessageContent?.trim() || 'Message sent';
+                  // Use conversation's cached last message for performance - truncate to half (~30 chars)
+                  const fullMessage = conv.lastMessageContent?.trim() || 'Message sent';
+                  const messagePreview = fullMessage.length > 30 ? fullMessage.slice(0, 30) + '...' : fullMessage;
                   const isCampaignMessage = conv.firstMessageSent === true;
 
                   return (
