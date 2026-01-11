@@ -139,6 +139,7 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [selectedAccountTagFilter, setSelectedAccountTagFilter] = useState<string>('all');
+  const [maxMessagesSentFilter, setMaxMessagesSentFilter] = useState<number>(5); // Default: show accounts with <5 messages
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
     { id: '1', message: '', accountCount: 10 }
   ]);
@@ -146,30 +147,31 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
 
   const now = useMemo(() => new Date(), []);
 
-  // Filter eligible accounts (active, not restricted, not spambot limited, not at daily quota)
-  const eligibleAccounts = useMemo(() => {
+  // All active accounts (not restricted, not spambot limited)
+  const allActiveAccounts = useMemo(() => {
     return accounts.filter(a => {
       if (a.status !== 'active') return false;
       if (a.restrictedUntil && new Date(a.restrictedUntil) > now) return false;
       if (a.spambotStatus === 'limited' || a.spambotStatus === 'restricted') return false;
-      // Auto-exclude accounts that have sent 5+ messages today
-      const sentToday = accountUniqueRecipients.get(a.id) || 0;
-      const dailyLimit = a.dailyLimit || 5;
-      if (sentToday >= dailyLimit) return false;
       return true;
     });
-  }, [accounts, now, accountUniqueRecipients]);
+  }, [accounts, now]);
 
-  // Accounts at quota (for info display)
-  const accountsAtQuota = useMemo(() => {
-    return accounts.filter(a => {
-      if (a.status !== 'active') return false;
-      if (a.restrictedUntil && new Date(a.restrictedUntil) > now) return false;
+  // Filter eligible accounts based on maxMessagesSentFilter
+  const eligibleAccounts = useMemo(() => {
+    return allActiveAccounts.filter(a => {
       const sentToday = accountUniqueRecipients.get(a.id) || 0;
-      const dailyLimit = a.dailyLimit || 5;
-      return sentToday >= dailyLimit;
+      return sentToday < maxMessagesSentFilter;
     });
-  }, [accounts, now, accountUniqueRecipients]);
+  }, [allActiveAccounts, accountUniqueRecipients, maxMessagesSentFilter]);
+
+  // Accounts hidden by filter (for info display)
+  const accountsHiddenByFilter = useMemo(() => {
+    return allActiveAccounts.filter(a => {
+      const sentToday = accountUniqueRecipients.get(a.id) || 0;
+      return sentToday >= maxMessagesSentFilter;
+    });
+  }, [allActiveAccounts, accountUniqueRecipients, maxMessagesSentFilter]);
 
   // Restricted accounts
   const restrictedAccounts = useMemo(() => {
@@ -533,10 +535,27 @@ username123`}
                 </div>
               )}
 
-              {/* Info: Accounts at quota */}
-              {accountsAtQuota.length > 0 && (
+              {/* Max Messages Sent Filter */}
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Max Messages Sent Today</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[1, 2, 3, 4, 5, 10].map(num => (
+                    <Badge
+                      key={num}
+                      variant={maxMessagesSentFilter === num ? 'default' : 'outline'}
+                      className="cursor-pointer"
+                      onClick={() => setMaxMessagesSentFilter(num)}
+                    >
+                      &lt;{num} ({allActiveAccounts.filter(a => (accountUniqueRecipients.get(a.id) || 0) < num).length})
+                    </Badge>
+                  ))}
+                </div>
+              </div>
+
+              {/* Info: Accounts hidden by filter */}
+              {accountsHiddenByFilter.length > 0 && (
                 <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
-                  <span className="text-orange-500 font-medium">{accountsAtQuota.length}</span> account(s) hidden (already sent 5+ messages today)
+                  <span className="text-orange-500 font-medium">{accountsHiddenByFilter.length}</span> account(s) hidden (sent {maxMessagesSentFilter}+ messages today)
                 </div>
               )}
               
