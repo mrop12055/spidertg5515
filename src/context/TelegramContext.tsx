@@ -148,44 +148,57 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       // Run ALL queries in parallel for maximum speed
       // NOTE: PostgREST enforces a default max of 1000 rows per request, so we page large tables.
       
-      // Generic paged fetcher for any table - bypasses Supabase 1000 row default limit
-      const fetchPaged = async (
+      // OPTIMIZED: Parallel paged fetcher - fetches multiple pages simultaneously
+      const fetchPagedParallel = async (
         tableName: string,
         selectColumns: string,
         orderColumn: string = 'created_at',
-        filters?: (query: any) => any
+        filters?: (query: any) => any,
+        maxRows: number = 10000 // Safety limit
       ): Promise<{ data: any[] | null; error: any | null }> => {
         const PAGE_SIZE = 1000;
-        const MAX_PAGES = 100; // safety cap (up to 100,000 rows)
-
-        const all: any[] = [];
+        const MAX_PARALLEL_PAGES = Math.ceil(maxRows / PAGE_SIZE);
 
         try {
-          for (let page = 0; page < MAX_PAGES; page++) {
+          // First, get a count estimate by fetching first page
+          let firstQuery = (supabase.from as any)(tableName)
+            .select(selectColumns)
+            .order(orderColumn, { ascending: false })
+            .range(0, PAGE_SIZE - 1);
+          
+          if (filters) firstQuery = filters(firstQuery);
+          
+          const { data: firstPage, error: firstError } = await firstQuery;
+          
+          if (firstError) throw firstError;
+          if (!firstPage || firstPage.length === 0) return { data: [], error: null };
+          if (firstPage.length < PAGE_SIZE) return { data: firstPage, error: null };
+          
+          // Need more pages - fetch remaining in parallel
+          const pagePromises: Promise<any>[] = [];
+          for (let page = 1; page < MAX_PARALLEL_PAGES; page++) {
             const from = page * PAGE_SIZE;
             const to = from + PAGE_SIZE - 1;
-
-            // Use 'as any' to allow dynamic table names
+            
             let query = (supabase.from as any)(tableName)
               .select(selectColumns)
               .order(orderColumn, { ascending: false })
               .range(from, to);
-
-            // Apply optional filters
-            if (filters) {
-              query = filters(query);
-            }
-
-            const { data, error } = await query;
-
-            if (error) throw error;
-            if (!data || data.length === 0) break;
-
-            all.push(...data);
-
-            if (data.length < PAGE_SIZE) break; // last page
+            
+            if (filters) query = filters(query);
+            pagePromises.push(query);
           }
-
+          
+          const results = await Promise.all(pagePromises);
+          const all = [...firstPage];
+          
+          for (const result of results) {
+            if (result.data && result.data.length > 0) {
+              all.push(...result.data);
+            }
+            if (!result.data || result.data.length < PAGE_SIZE) break;
+          }
+          
           return { data: all, error: null };
         } catch (e) {
           return { data: null, error: e };
@@ -193,37 +206,46 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       };
 
       const [accountsResult, proxiesResult, campaignsResult, conversationsResult, messagesResult] = await Promise.all([
-        // Fetch accounts - PAGED to bypass 1000 row limit (supports 20K+ accounts)
-        fetchPaged(
+        // Fetch accounts - PARALLEL PAGED (supports 20K+ accounts, ~10 parallel requests)
+        fetchPagedParallel(
           'telegram_accounts',
-          'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id'
+          'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id',
+          'created_at',
+          undefined,
+          25000 // Max 25K accounts
         ),
 
-        // Fetch proxies - PAGED to bypass 1000 row limit (supports 10K+ proxies)
-        fetchPaged(
+        // Fetch proxies - PARALLEL PAGED (supports 10K+ proxies)
+        fetchPagedParallel(
           'proxies',
-          'id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country'
+          'id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country',
+          'created_at',
+          undefined,
+          15000 // Max 15K proxies
         ),
 
-        // Fetch campaigns
+        // Fetch campaigns (usually small, no paging needed)
         supabase
           .from('campaigns')
           .select('*, campaign_accounts(account_id)')
           .order('created_at', { ascending: false }),
 
-        // Fetch conversations - PAGED with filters
-        fetchPaged(
+        // Fetch conversations - PARALLEL PAGED with filters
+        fetchPagedParallel(
           'conversations',
           'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id',
           'created_at',
-          (q: any) => q.eq('first_message_sent', true).not('last_message_at', 'is', null)
+          (q: any) => q.eq('first_message_sent', true).not('last_message_at', 'is', null),
+          50000 // Max 50K conversations
         ),
 
-        // Fetch messages (no limit - show all)
+        // Fetch messages - LIMIT to last 5 days for performance (admin doesn't need all history)
         supabase
           .from('messages')
           .select('*, conversations(recipient_phone)')
-          .order('created_at', { ascending: false }),
+          .gte('created_at', new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString())
+          .order('created_at', { ascending: false })
+          .limit(5000),
       ]);
 
       // Process accounts
