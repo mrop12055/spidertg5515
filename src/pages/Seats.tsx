@@ -42,10 +42,15 @@ interface PendingRepliesMap {
   [seatId: string]: number;
 }
 
+interface UnreadRepliesMap {
+  [seatId: string]: number;
+}
+
 const Seats: React.FC = () => {
   const [seats, setSeats] = useState<Seat[]>([]);
   const [seatStats, setSeatStats] = useState<Map<string, SeatStats>>(new Map());
   const [pendingReplies, setPendingReplies] = useState<PendingRepliesMap>({});
+  const [unreadReplies, setUnreadReplies] = useState<UnreadRepliesMap>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newSeatName, setNewSeatName] = useState('');
@@ -76,7 +81,7 @@ const Seats: React.FC = () => {
         setSeatStats(statsMap);
       }
 
-      // Fetch pending replies count per seat
+      // Fetch pending recipients count per seat
       const { data: pendingData, error: pendingError } = await supabase
         .from('campaign_recipients')
         .select('seat_id')
@@ -91,6 +96,24 @@ const Seats: React.FC = () => {
           }
         });
         setPendingReplies(pendingMap);
+      }
+
+      // Fetch unread replies count per seat (conversations with has_reply and unread_count > 0)
+      const { data: unreadData, error: unreadError } = await supabase
+        .from('conversations')
+        .select('seat_id, unread_count')
+        .eq('has_reply', true)
+        .gt('unread_count', 0)
+        .not('seat_id', 'is', null);
+
+      if (!unreadError && unreadData) {
+        const unreadMap: UnreadRepliesMap = {};
+        unreadData.forEach((c) => {
+          if (c.seat_id) {
+            unreadMap[c.seat_id] = (unreadMap[c.seat_id] || 0) + (c.unread_count || 0);
+          }
+        });
+        setUnreadReplies(unreadMap);
       }
     } catch (error) {
       console.error('Error fetching seats:', error);
@@ -482,21 +505,21 @@ const handleDeleteSeat = async (seat: Seat) => {
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Replies</p>
                         </div>
                         <div className={`rounded-lg p-3 text-center ${
-                          (pendingReplies[seat.id] || 0) > 0 
-                            ? 'bg-orange-500/10 border border-orange-500/20' 
+                          (unreadReplies[seat.id] || 0) > 0 
+                            ? 'bg-red-500/10 border border-red-500/30' 
                             : 'bg-muted/50'
                         }`}>
                           <div className="flex items-center justify-center gap-1">
-                            {(pendingReplies[seat.id] || 0) > 0 && (
-                              <Clock className="w-3 h-3 text-orange-500" />
+                            {(unreadReplies[seat.id] || 0) > 0 && (
+                              <MessageSquare className="w-3 h-3 text-red-500" />
                             )}
                             <p className={`text-lg font-bold ${
-                              (pendingReplies[seat.id] || 0) > 0 ? 'text-orange-500' : ''
+                              (unreadReplies[seat.id] || 0) > 0 ? 'text-red-500' : ''
                             }`}>
-                              {pendingReplies[seat.id] || 0}
+                              {unreadReplies[seat.id] || 0}
                             </p>
                           </div>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Pending</p>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Unseen</p>
                         </div>
                       </div>
 
