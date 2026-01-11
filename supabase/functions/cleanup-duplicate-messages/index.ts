@@ -11,7 +11,9 @@ type IncomingMessageRow = {
   account_id: string;
   conversation_id: string;
   telegram_message_id: number | null;
-  content: string;
+  content: string | null;
+  media_url: string | null;
+  media_type: string | null;
   created_at: string;
 };
 
@@ -22,9 +24,14 @@ function normalizeContent(raw: string): string {
     .toLowerCase();
 }
 
-function isMediaMarker(content: string): boolean {
-  const c = content.trim().toLowerCase();
-  return c.startsWith("[photo]") || c.startsWith("[video]") || c.startsWith("[file]") || c === "[media]";
+function isMediaMarker(normalizedContent: string): boolean {
+  const c = normalizedContent.trim();
+  return (
+    c.startsWith("[photo]") ||
+    c.startsWith("[video]") ||
+    c.startsWith("[file]") ||
+    c === "[media]"
+  );
 }
 
 serve(async (req) => {
@@ -41,14 +48,15 @@ serve(async (req) => {
     const body = await req.json().catch(() => ({}));
 
     const dryRun = body.dry_run !== false; // default true
-    const lookbackDays = typeof body.lookback_days === "number" ? body.lookback_days : 30;
+    const lookbackDays = typeof body.lookback_days === "number" ? body.lookback_days : 90;
+
     const pageSizeRaw = typeof body.page_size === "number" ? body.page_size : 1000;
     const pageSize = Math.max(100, Math.min(1000, Math.floor(pageSizeRaw)));
 
-    // For legacy messages (telegram_message_id IS NULL), treat long messages & media markers as duplicates
-    // even if they were re-inserted hours later during multiple restarts.
     const shortWindowSeconds = typeof body.short_window_seconds === "number" ? body.short_window_seconds : 60;
-    const legacyWindowSeconds = typeof body.legacy_window_seconds === "number" ? body.legacy_window_seconds : 7 * 24 * 60 * 60; // 7 days
+    const legacyWindowSeconds = typeof body.legacy_window_seconds === "number"
+      ? body.legacy_window_seconds
+      : 7 * 24 * 60 * 60; // 7 days
 
     const shortWindowMs = shortWindowSeconds * 1000;
     const legacyWindowMs = legacyWindowSeconds * 1000;
@@ -59,15 +67,15 @@ serve(async (req) => {
         : null;
 
     console.log(
-      `[cleanup-duplicate-messages] start dry_run=${dryRun} lookback_days=${lookbackDays} page_size=${pageSize} short_window=${shortWindowSeconds}s legacy_window=${legacyWindowSeconds}s`);
+      `[cleanup-duplicate-messages] start dry_run=${dryRun} lookback_days=${lookbackDays} page_size=${pageSize} short_window=${shortWindowSeconds}s legacy_window=${legacyWindowSeconds}s`
+    );
 
     const duplicateIds: string[] = [];
     const sampleDuplicates: Array<{ id: string; created_at: string; content: string }> = [];
     const affectedConversationIds = new Set<string>();
 
-    // Since we iterate in ascending created_at order, the first time we see a key is the one we keep.
-    const seenTelegram = new Set<string>(); // tg_${account_id}_${telegram_message_id}
-    const seenContentBaseline = new Map<string, number>(); // contentKey -> baselineTimeMs
+    const seenTelegram = new Set<string>();
+    const seenContentBaseline = new Map<string, number>();
 
     let offset = 0;
     let totalChecked = 0;
@@ -75,7 +83,7 @@ serve(async (req) => {
     while (true) {
       let query = supabase
         .from("messages")
-        .select("id, account_id, conversation_id, telegram_message_id, content, created_at")
+        .select("id, account_id, conversation_id, telegram_message_id, content, media_url, media_type, created_at")
         .eq("direction", "incoming")
         .order("created_at", { ascending: true })
         .range(offset, offset + pageSize - 1);
@@ -93,7 +101,7 @@ serve(async (req) => {
       totalChecked += rows.length;
 
       for (const msg of rows) {
-        // Strategy 1: telegram_message_id based dedupe (reliable)
+        // Strategy 1: exact telegram message ID
         if (msg.telegram_message_id) {
           const key = `tg_${msg.account_id}_${msg.telegram_message_id}`;
           if (seenTelegram.has(key)) {
@@ -112,17 +120,26 @@ serve(async (req) => {
           continue;
         }
 
-        // Strategy 2: legacy dedupe by content+conversation (heuristic)
+        // Strategy 2: legacy heuristic
         const normalized = normalizeContent(msg.content || "");
         const contentKey = normalized.slice(0, 200);
-        const key = `content_${msg.account_id}_${msg.conversation_id}_${contentKey}`;
+        const hasMediaUrl = !!msg.media_url;
+        const mediaKey = hasMediaUrl ? `${msg.media_type || "media"}:${msg.media_url}` : "";
+
+        // Include media_url in key when present so different photos aren't treated as duplicates
+        const key = `content_${msg.account_id}_${msg.conversation_id}_${contentKey}${mediaKey ? `_${mediaKey}` : ""}`;
 
         const msgTime = new Date(msg.created_at).getTime();
         const baselineTime = seenContentBaseline.get(key);
 
+        const marker = isMediaMarker(contentKey);
         const isLong = contentKey.length >= 15;
-        const useLegacyWindow = isLong || isMediaMarker(contentKey);
-        const windowMs = useLegacyWindow ? legacyWindowMs : shortWindowMs;
+
+        // Safety rule:
+        // - If this looks like a media marker but we don't have media_url, use short window only.
+        // - For long text (multi-line), use a larger window.
+        // - If media_url exists, it's safe to use a larger window.
+        const windowMs = marker && !hasMediaUrl ? shortWindowMs : (hasMediaUrl || isLong) ? legacyWindowMs : shortWindowMs;
 
         if (baselineTime !== undefined) {
           const timeDiff = Math.abs(msgTime - baselineTime);
@@ -137,7 +154,7 @@ serve(async (req) => {
               });
             }
           } else {
-            // Reset baseline for far-apart repeated content (treat as legitimate new message)
+            // far apart => treat as a new message baseline
             seenContentBaseline.set(key, msgTime);
           }
         } else {
@@ -147,8 +164,6 @@ serve(async (req) => {
 
       if (rows.length < pageSize) break;
       offset += pageSize;
-
-      // Safety: avoid infinite loops
       if (offset > 1_000_000) {
         console.log("[cleanup-duplicate-messages] Safety stop: too many rows");
         break;
@@ -201,7 +216,7 @@ serve(async (req) => {
       }
     }
 
-    // Recompute unread_count for affected conversations (use COUNT to avoid row limits)
+    // Recompute unread_count for affected conversations (COUNT to avoid row limits)
     let conversationsUpdated = 0;
     for (const convId of affectedConversationIds) {
       const { count, error: countError } = await supabase
