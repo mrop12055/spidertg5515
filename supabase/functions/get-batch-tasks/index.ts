@@ -631,6 +631,13 @@ serve(async (req) => {
       // ========== RELEASE QUEUED RECIPIENTS TO PENDING (PARALLEL) ==========
       // This is the core queue mechanism - gradually release recipients based on batch settings
       // Process all campaigns in parallel to avoid sequential delays
+      // IMPORTANT: Limit release to available accounts, not just batch size setting
+      const effectiveReleaseLimit = campaignBatchSize === 0 
+        ? campaignUsableAccounts.length 
+        : Math.min(campaignBatchSize, campaignUsableAccounts.length);
+      
+      console.log(`[get-batch-tasks] Queue release limit: ${effectiveReleaseLimit} (batch setting: ${campaignBatchSize}, usable accounts: ${campaignUsableAccounts.length})`);
+      
       await Promise.all(runningCampaigns.map(async (campaign) => {
         // Count currently processing (pending + sending)
         const { count: inProgressCount } = await supabase
@@ -641,9 +648,9 @@ serve(async (req) => {
 
         const currentInProgress = inProgressCount || 0;
 
-        // Only release more if below batch threshold
-        if (currentInProgress < campaignBatchSize) {
-          const toRelease = campaignBatchSize - currentInProgress;
+        // Only release more if below threshold (limited by available accounts)
+        if (currentInProgress < effectiveReleaseLimit) {
+          const toRelease = effectiveReleaseLimit - currentInProgress;
           
           // Get queued recipients to release (oldest first)
           const { data: queuedToRelease } = await supabase
@@ -685,7 +692,7 @@ serve(async (req) => {
                 .eq("id", queued.id);
             }
 
-            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} with smart API distribution`);
+            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} (limit: ${effectiveReleaseLimit}, in-progress: ${currentInProgress})`);
           }
         }
       }));
