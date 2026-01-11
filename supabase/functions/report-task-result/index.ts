@@ -352,37 +352,47 @@ serve(async (req) => {
             console.log(`[report-task-result] Incremented failure count for account ${account_id}`);
           }
           
-          // API RETRY LOGIC: Privacy errors - retry with different API, keep same account
+          // PRIVACY ERROR RETRY LOGIC: Retry with DIFFERENT ACCOUNT using least-used API
+          // Only 1 retry allowed (2 total attempts) - if still fails, mark as failed
           if (isApiRetryable && campaign_recipient_id) {
-            console.log(`[report-task-result] Privacy error - will retry with different API: ${error}`);
+            console.log(`[report-task-result] Privacy error - will retry with DIFFERENT ACCOUNT using least-used API: ${error}`);
             
-            // Get current recipient data INCLUDING api_credential_id and failed_api_ids
+            // Get current recipient data INCLUDING account and API info
             const { data: currentRecipient } = await supabase
               .from("campaign_recipients")
-              .select("retry_count, campaign_id, api_credential_id, failed_api_ids")
+              .select("retry_count, campaign_id, api_credential_id, failed_api_ids, sent_by_account_id, failed_account_ids")
               .eq("id", campaign_recipient_id)
               .single();
             
-            // TRACK FAILED API: Add current API to failed_api_ids
+            // TRACK FAILED API AND ACCOUNT
             const failedApiIds: string[] = currentRecipient?.failed_api_ids || [];
+            const failedAccountIds: string[] = currentRecipient?.failed_account_ids || [];
+            
             const currentApiId = currentRecipient?.api_credential_id;
             if (currentApiId && !failedApiIds.includes(currentApiId)) {
               failedApiIds.push(currentApiId);
-              console.log(`[report-task-result] Privacy error - Added API ${currentApiId} to failed_api_ids (total: ${failedApiIds.length})`);
             }
             
-            const retryCount = (currentRecipient?.retry_count || 0) + 1;
-            const maxApiRetries = 3; // Try up to 3 different APIs
+            // Also track the account that failed
+            if (account_id && !failedAccountIds.includes(account_id)) {
+              failedAccountIds.push(account_id);
+            }
             
-            if (retryCount >= maxApiRetries) {
-              // Exhausted API retries - mark as failed
+            console.log(`[report-task-result] Privacy error - tracked failed API: ${currentApiId}, account: ${account_id}`);
+            
+            const retryCount = (currentRecipient?.retry_count || 0) + 1;
+            const maxRetries = 1; // Only 1 retry (2 total attempts) - use DIFFERENT ACCOUNT with least-used API
+            
+            if (retryCount > maxRetries) {
+              // Already retried once - mark as failed
               await supabase
                 .from("campaign_recipients")
                 .update({
                   status: "failed",
-                  failed_reason: `Privacy restricted after ${retryCount} API attempts`,
+                  failed_reason: `Failed after ${retryCount + 1} attempts: Privacy restricted`,
                   sent_at: new Date().toISOString(),
-                  failed_api_ids: failedApiIds,  // Save for debugging
+                  failed_api_ids: failedApiIds,
+                  failed_account_ids: failedAccountIds,
                 })
                 .eq("id", campaign_recipient_id);
               
@@ -390,22 +400,24 @@ serve(async (req) => {
                 await supabase.rpc("increment_campaign_failed_count", { cid: currentRecipient.campaign_id });
               }
               
-              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED after ${retryCount} API attempts (tried APIs: ${failedApiIds.join(', ')})`);
+              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED after 2 attempts (APIs: ${failedApiIds.join(', ')}, Accounts: ${failedAccountIds.join(', ')})`);
             } else {
-              // Retry with different API - track failed API so get-batch-tasks avoids it
+              // RETRY with DIFFERENT ACCOUNT (which will get assigned least-used API by get-batch-tasks)
+              // Clear both account AND API to force complete reassignment
               await supabase
                 .from("campaign_recipients")
                 .update({
                   status: "pending",
-                  sent_by_account_id: null,  // Clear account to allow reassignment
-                  api_credential_id: null,    // Clear API so it gets a different one
-                  failed_api_ids: failedApiIds,  // CRITICAL: Track failed APIs
+                  sent_by_account_id: null,  // CRITICAL: Clear account to force new assignment
+                  api_credential_id: null,    // Clear API - will get least-used API
+                  failed_api_ids: failedApiIds,
+                  failed_account_ids: failedAccountIds,  // Track failed accounts to avoid them
                   failed_reason: null,
                   retry_count: retryCount
                 })
                 .eq("id", campaign_recipient_id);
               
-              console.log(`[report-task-result] Privacy error - recipient reset for different API (attempt ${retryCount}/${maxApiRetries}, failed APIs: ${failedApiIds.length})`);
+              console.log(`[report-task-result] Privacy error - recipient reset for DIFFERENT ACCOUNT with least-used API (attempt ${retryCount + 1}/2)`);
             }
           } else if (isPermanentBan && account_id) {
             // PERMANENT BAN - mark account as banned, cannot be used anymore
@@ -418,323 +430,66 @@ serve(async (req) => {
                 ban_reason: error,
               })
               .eq("id", account_id);
-          } else if (isImmediateRestriction && account_id) {
-            // IMMEDIATE RESTRICTION (Too many requests) - NO RETRIES, fail recipient immediately
-            // Restrict account for 12h and mark recipient as failed
-            console.log(`[report-task-result] Account ${account_id} IMMEDIATELY RESTRICTED for 12h (Too many requests): ${error}`);
+          } else if (isTemporaryRestriction && account_id) {
+            // TEMPORARY RESTRICTION - mark account as restricted for 12 hours
+            console.log(`[report-task-result] Account ${account_id} TEMPORARILY RESTRICTED for 12h: ${error}`);
             
             await supabase
               .from("telegram_accounts")
               .update({
-                status: "restricted",
-                ban_reason: error,
                 restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+                ban_reason: error,
               })
               .eq("id", account_id);
-            
-            // FAIL the recipient immediately - NO RETRIES
-            if (campaign_recipient_id) {
-              const { data: recipientData } = await supabase
-                .from("campaign_recipients")
-                .select("campaign_id")
-                .eq("id", campaign_recipient_id)
-                .single();
-              
-              await supabase
-                .from("campaign_recipients")
-                .update({
-                  status: "failed",
-                  failed_reason: `Failed after 1 attempt: ${error}`,
-                  sent_at: new Date().toISOString(),
-                })
-                .eq("id", campaign_recipient_id);
-              
-              // Increment campaign failed count
-              if (recipientData?.campaign_id) {
-                await supabase.rpc("increment_campaign_failed_count", { cid: recipientData.campaign_id });
-              }
-              
-              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED immediately (no retries) - account restricted for 12h`);
-            }
           } else if (isRetryable && campaign_recipient_id && account_id) {
-            // RETRYABLE ERROR - rate limit only (too many requests)
-            // Apply 12h restriction to the account but retry with different account
-            console.log(`[report-task-result] Account ${account_id} hit rate limit - applying 12h restriction and retrying with different account`);
+            // RATE LIMIT - restrict account for 12h and retry with different account
+            console.log(`[report-task-result] Account ${account_id} rate limited - restricting and retrying: ${error}`);
             
             await supabase
               .from("telegram_accounts")
               .update({
-                status: "restricted",
-                ban_reason: error,
                 restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-                last_active: new Date().toISOString(),
+                ban_reason: error,
               })
               .eq("id", account_id);
             
-            // Get recipient's campaign_id for updating
-            const { data: recipientData } = await supabase
+            // Reset recipient to pending for retry with different account
+            await supabase
               .from("campaign_recipients")
-              .select("campaign_id")
-              .eq("id", campaign_recipient_id)
-              .single();
-            
-            if (recipientData) {
-              // Get current failed_account_ids AND failed_api_ids
-              const { data: currentRecipient } = await supabase
-                .from("campaign_recipients")
-                .select("failed_account_ids, failed_api_ids, retry_count, api_credential_id")
-                .eq("id", campaign_recipient_id)
-                .single();
-              
-              const failedAccountIds: string[] = currentRecipient?.failed_account_ids || [];
-              if (!failedAccountIds.includes(account_id)) {
-                failedAccountIds.push(account_id);
-              }
-              
-              // TRACK FAILED API: Add current API to failed_api_ids so it won't be reused
-              const failedApiIds: string[] = currentRecipient?.failed_api_ids || [];
-              const currentApiId = currentRecipient?.api_credential_id;
-              if (currentApiId && !failedApiIds.includes(currentApiId)) {
-                failedApiIds.push(currentApiId);
-                console.log(`[report-task-result] Added API ${currentApiId} to failed_api_ids (total: ${failedApiIds.length})`);
-              }
-              
-              // RATE LIMIT ERROR: Always retry with different account AND different API
-              // The recipient is NOT at fault - only the sender account hit rate limits
-              // CRITICAL: Track failed API so get-batch-tasks picks a DIFFERENT one
-              await supabase
-                .from("campaign_recipients")
-                .update({
-                  status: "pending",
-                  sent_by_account_id: null,  // Clear so different account picks it up
-                  api_credential_id: null,   // Clear so it gets reassigned to least-used API
-                  failed_account_ids: failedAccountIds,
-                  failed_api_ids: failedApiIds,  // Track failed APIs to avoid reusing them
-                  failed_reason: null,
-                  retry_count: (currentRecipient?.retry_count || 0) + 1
-                })
-                .eq("id", campaign_recipient_id);
-              
-              console.log(`[report-task-result] Rate limit (Too many requests) - account ${account_id} restricted 12h, recipient reset for different account/API (failed APIs: ${failedApiIds.length})`);
-            }
-          } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
-            // TEMPORARY - set to restricted status with 12h cooldown
-            // Account can still be used for replying to existing chats, but not new campaign messages
-            console.log(`[report-task-result] Account ${account_id} RESTRICTED for 12h: ${error}`);
-            
-            await supabase
-              .from("telegram_accounts")
               .update({
-                status: "restricted",
-                ban_reason: error,
-                restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+                status: "pending",
+                sent_by_account_id: null,
+                api_credential_id: null,
+                failed_reason: null,
               })
-              .eq("id", account_id);
-            
-            // Reset the current recipient to pending so it can be retried
-            // by another account or when this account becomes available again
-            if (campaign_recipient_id) {
-              await supabase
-                .from("campaign_recipients")
-                .update({
-                  status: "pending",
-                  sent_by_account_id: null,  // Clear so a different account can pick it up
-                  failed_reason: null,
-                })
-                .eq("id", campaign_recipient_id);
-              
-              console.log(`[report-task-result] Recipient ${campaign_recipient_id} reset to pending for retry (account restricted)`);
-            }
+              .eq("id", campaign_recipient_id);
           } else if (isSkipOnly && campaign_recipient_id) {
-            // Recipient-side issue (e.g. "user was deleted") - mark recipient as failed, keep account active
-            console.log(`[report-task-result] Recipient-side issue - marking as failed: ${error}`);
+            // SKIP-ONLY: Recipient issue (not account) - mark as failed immediately
+            console.log(`[report-task-result] Recipient issue (skip-only) - marking as failed: ${error}`);
             
-            // Get campaign_id for updating failed count
-            const { data: recipientData } = await supabase
+            const { data: recipient } = await supabase
               .from("campaign_recipients")
               .select("campaign_id")
               .eq("id", campaign_recipient_id)
               .single();
             
-            // Mark recipient as failed with the reason
             await supabase
               .from("campaign_recipients")
               .update({
                 status: "failed",
-                failed_reason: error || "Recipient account deleted/invalid",
+                failed_reason: error,
                 sent_at: new Date().toISOString(),
               })
               .eq("id", campaign_recipient_id);
             
-            // Increment campaign failed count
-            if (recipientData?.campaign_id) {
-              await supabase.rpc("increment_campaign_failed_count", { cid: recipientData.campaign_id });
-            }
-            
-            console.log(`[report-task-result] Recipient ${campaign_recipient_id} marked as failed - moving to next`);
-          } else if (isSkipOnly) {
-            // Skip-only error but no recipient ID - just log
-            console.log(`[report-task-result] Recipient-side issue (no recipient_id): ${error}`);
-          }
-          
-          // Reassign recipients if account was banned, immediately restricted, OR temporarily restricted (but NOT skip-only errors)
-          if ((isPermanentBan || isImmediateRestriction || (isTemporaryRestriction && !isSkipOnly)) && account_id) {
-            
-            // Get pending recipients from this account
-            const { data: pendingRecipients } = await supabase
-              .from("campaign_recipients")
-              .select("id, campaign_id")
-              .eq("sent_by_account_id", account_id)
-              .in("status", ["pending", "sending"]);
-            
-            if (pendingRecipients && pendingRecipients.length > 0) {
-              // Check if OTHER active accounts exist in the same campaigns
-              const campaignIds = [...new Set(pendingRecipients.map(r => r.campaign_id))];
-              
-              // Get all active accounts assigned to these campaigns
-              const { data: campaignAccounts } = await supabase
-                .from("campaign_accounts")
-                .select("account_id, campaign_id, telegram_accounts!inner(id, status)")
-                .in("campaign_id", campaignIds)
-                .neq("account_id", account_id);
-              
-              // Filter to only active accounts
-              const activeAccountsByCampaign: Record<string, string[]> = {};
-              for (const ca of (campaignAccounts || [])) {
-                const acc = ca.telegram_accounts as any;
-                if (acc && acc.status === 'active') {
-                  if (!activeAccountsByCampaign[ca.campaign_id]) {
-                    activeAccountsByCampaign[ca.campaign_id] = [];
-                  }
-                  activeAccountsByCampaign[ca.campaign_id].push(ca.account_id);
-                }
-              }
-              
-              // Reassign or fail recipients based on available accounts
-              const recipientsToReassign: { id: string; newAccountId: string }[] = [];
-              const recipientsToFail: { id: string; campaignId: string }[] = [];
-              const accountAssignmentCounters: Record<string, number> = {};
-              
-              for (const recipient of pendingRecipients) {
-                const availableAccounts = activeAccountsByCampaign[recipient.campaign_id] || [];
-                
-                if (availableAccounts.length > 0) {
-                  // Round-robin assignment to available accounts
-                  const accountIndex = (accountAssignmentCounters[recipient.campaign_id] || 0) % availableAccounts.length;
-                  const newAccountId = availableAccounts[accountIndex];
-                  accountAssignmentCounters[recipient.campaign_id] = (accountAssignmentCounters[recipient.campaign_id] || 0) + 1;
-                  
-                  recipientsToReassign.push({ id: recipient.id, newAccountId });
-                } else {
-                  // No other active accounts, mark as failed
-                  recipientsToFail.push({ id: recipient.id, campaignId: recipient.campaign_id });
-                }
-              }
-              
-              // Reassign recipients to other active accounts
-              for (const { id, newAccountId } of recipientsToReassign) {
-                await supabase
-                  .from("campaign_recipients")
-                  .update({ 
-                    sent_by_account_id: newAccountId,
-                    status: "pending"  // Reset to pending for new account to pick up
-                  })
-                  .eq("id", id);
-              }
-              
-              if (recipientsToReassign.length > 0) {
-                console.log(`[report-task-result] Reassigned ${recipientsToReassign.length} recipients to other active accounts`);
-              }
-              
-              // Mark remaining as failed (no other accounts available)
-              if (recipientsToFail.length > 0) {
-                const failedIds = recipientsToFail.map(r => r.id);
-                await supabase
-                  .from("campaign_recipients")
-                  .update({ status: "failed" })
-                  .in("id", failedIds);
-                
-                // Update failed counts for affected campaigns
-                const failedByCampaign: Record<string, number> = {};
-                for (const r of recipientsToFail) {
-                  failedByCampaign[r.campaignId] = (failedByCampaign[r.campaignId] || 0) + 1;
-                }
-                
-                for (const [cid, count] of Object.entries(failedByCampaign)) {
-                  const { data: campaign } = await supabase
-                    .from("campaigns")
-                    .select("failed_count")
-                    .eq("id", cid)
-                    .single();
-                  
-                  if (campaign) {
-                    await supabase
-                      .from("campaigns")
-                      .update({ failed_count: (campaign.failed_count || 0) + count })
-                      .eq("id", cid);
-                  }
-                }
-                
-                console.log(`[report-task-result] Marked ${recipientsToFail.length} recipients as failed (no other accounts available)`);
-              }
-            }
-            
-            // Check if ALL accounts for running campaigns are now restricted
-            // Get running campaigns and their assigned accounts
-            const { data: runningCampaigns } = await supabase
-              .from("campaigns")
-              .select("id, name")
-              .eq("status", "running");
-            
-            if (runningCampaigns && runningCampaigns.length > 0) {
-              for (const campaign of runningCampaigns) {
-                // Get accounts assigned to this campaign
-                const { data: campaignAccountLinks } = await supabase
-                  .from("campaign_accounts")
-                  .select("account_id, telegram_accounts!inner(id, status)")
-                  .eq("campaign_id", campaign.id);
-                
-                // Check if any assigned account is still active
-                const hasActiveAccount = (campaignAccountLinks || []).some((ca: any) => {
-                  const acc = ca.telegram_accounts;
-                  return acc && acc.status === 'active';
-                });
-                
-                // No accounts assigned at all OR no active accounts
-                const noAccountsAssigned = !campaignAccountLinks || campaignAccountLinks.length === 0;
-                
-                if (noAccountsAssigned || !hasActiveAccount) {
-                  // Check if there are still pending recipients
-                  const { count: pendingCount } = await supabase
-                    .from("campaign_recipients")
-                    .select("id", { count: "exact", head: true })
-                    .eq("campaign_id", campaign.id)
-                    .eq("status", "pending");
-                  
-                  if (pendingCount && pendingCount > 0) {
-                    // There are pending recipients but no active accounts - mark as failed
-                    const reason = noAccountsAssigned ? "no accounts assigned" : "all accounts restricted/banned";
-                    console.log(`[report-task-result] Campaign "${campaign.name}" has ${reason} - marking as failed (${pendingCount} pending)`);
-                    await supabase
-                      .from("campaigns")
-                      .update({ status: "failed" })
-                      .eq("id", campaign.id);
-                  } else {
-                    // No pending recipients - mark as completed
-                    console.log(`[report-task-result] Campaign "${campaign.name}" has no pending recipients - marking as completed`);
-                    await supabase
-                      .from("campaigns")
-                      .update({ status: "completed" })
-                      .eq("id", campaign.id);
-                  }
-                }
-              }
+            if (recipient?.campaign_id) {
+              await supabase.rpc("increment_campaign_failed_count", { cid: recipient.campaign_id });
             }
           }
 
           // AUTOMATIC ACCOUNT ROTATION: Try to reassign to next available account (with retry limit)
           // SKIP if the error was already handled by specific error handlers above (privacy, skip-only, etc.)
-          if (campaign_recipient_id && !isRetryable && !isSkipOnly) {
+          if (campaign_recipient_id && !isRetryable && !isSkipOnly && !isApiRetryable) {
             const MAX_RETRIES = 3; // Stop retrying after 3 failed attempts
             
             // Get recipient details including campaign and retry count
