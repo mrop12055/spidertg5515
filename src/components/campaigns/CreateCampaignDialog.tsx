@@ -139,7 +139,6 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [selectedAccountTagFilter, setSelectedAccountTagFilter] = useState<string>('all');
-  const [selectedUsageFilter, setSelectedUsageFilter] = useState<string>('all');
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
     { id: '1', message: '', accountCount: 10 }
   ]);
@@ -147,15 +146,30 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
 
   const now = useMemo(() => new Date(), []);
 
-  // Filter eligible accounts (active, not restricted, not spambot limited)
+  // Filter eligible accounts (active, not restricted, not spambot limited, not at daily quota)
   const eligibleAccounts = useMemo(() => {
     return accounts.filter(a => {
       if (a.status !== 'active') return false;
       if (a.restrictedUntil && new Date(a.restrictedUntil) > now) return false;
       if (a.spambotStatus === 'limited' || a.spambotStatus === 'restricted') return false;
+      // Auto-exclude accounts that have sent 5+ messages today
+      const sentToday = accountUniqueRecipients.get(a.id) || 0;
+      const dailyLimit = a.dailyLimit || 5;
+      if (sentToday >= dailyLimit) return false;
       return true;
     });
-  }, [accounts, now]);
+  }, [accounts, now, accountUniqueRecipients]);
+
+  // Accounts at quota (for info display)
+  const accountsAtQuota = useMemo(() => {
+    return accounts.filter(a => {
+      if (a.status !== 'active') return false;
+      if (a.restrictedUntil && new Date(a.restrictedUntil) > now) return false;
+      const sentToday = accountUniqueRecipients.get(a.id) || 0;
+      const dailyLimit = a.dailyLimit || 5;
+      return sentToday >= dailyLimit;
+    });
+  }, [accounts, now, accountUniqueRecipients]);
 
   // Restricted accounts
   const restrictedAccounts = useMemo(() => {
@@ -180,62 +194,11 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
     return Array.from(tags).sort();
   }, [eligibleAccounts]);
 
-  // Filter accounts by selected tag and usage
+  // Filter accounts by selected tag only (usage filter removed - accounts at quota are auto-excluded)
   const filteredAccounts = useMemo(() => {
-    let result = eligibleAccounts;
-    
-    // Apply tag filter
-    if (selectedAccountTagFilter !== 'all') {
-      result = result.filter(a => a.tags?.includes(selectedAccountTagFilter));
-    }
-    
-    // Apply usage filter
-    if (selectedUsageFilter !== 'all') {
-      result = result.filter(a => {
-        const sentToday = accountUniqueRecipients.get(a.id) || 0;
-        const limit = a.dailyLimit || 5;
-        
-        switch (selectedUsageFilter) {
-          case 'fresh': // 0 messages sent
-            return sentToday === 0;
-          case 'low': // 1-2 messages sent
-            return sentToday >= 1 && sentToday <= 2;
-          case 'medium': // 3-4 messages sent
-            return sentToday >= 3 && sentToday <= 4;
-          case 'available': // Not at quota
-            return sentToday < limit;
-          case 'at_quota': // At daily limit
-            return sentToday >= limit;
-          default:
-            return true;
-        }
-      });
-    }
-    
-    return result;
-  }, [eligibleAccounts, selectedAccountTagFilter, selectedUsageFilter, accountUniqueRecipients]);
-
-  // Usage filter counts
-  const usageFilterCounts = useMemo(() => {
-    const counts = { fresh: 0, low: 0, medium: 0, available: 0, at_quota: 0 };
-    const tagFiltered = selectedAccountTagFilter === 'all' 
-      ? eligibleAccounts 
-      : eligibleAccounts.filter(a => a.tags?.includes(selectedAccountTagFilter));
-    
-    tagFiltered.forEach(a => {
-      const sentToday = accountUniqueRecipients.get(a.id) || 0;
-      const limit = a.dailyLimit || 5;
-      
-      if (sentToday === 0) counts.fresh++;
-      else if (sentToday <= 2) counts.low++;
-      else if (sentToday <= 4) counts.medium++;
-      
-      if (sentToday < limit) counts.available++;
-      if (sentToday >= limit) counts.at_quota++;
-    });
-    
-    return counts;
-  }, [eligibleAccounts, selectedAccountTagFilter, accountUniqueRecipients]);
+    if (selectedAccountTagFilter === 'all') return eligibleAccounts;
+    return eligibleAccounts.filter(a => a.tags?.includes(selectedAccountTagFilter));
+  }, [eligibleAccounts, selectedAccountTagFilter]);
 
   // Recipient count
   const recipientCount = useMemo(() => {
@@ -570,54 +533,12 @@ username123`}
                 </div>
               )}
 
-              {/* Usage Filter - Messages Sent Today */}
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Filter by Messages Sent Today</Label>
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge
-                    variant={selectedUsageFilter === 'all' ? 'default' : 'outline'}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedUsageFilter('all')}
-                  >
-                    All
-                  </Badge>
-                  <Badge
-                    variant={selectedUsageFilter === 'fresh' ? 'default' : 'outline'}
-                    className="cursor-pointer bg-green-500/10 hover:bg-green-500/20 border-green-500/30 text-green-600"
-                    onClick={() => setSelectedUsageFilter('fresh')}
-                  >
-                    Fresh 0 ({usageFilterCounts.fresh})
-                  </Badge>
-                  <Badge
-                    variant={selectedUsageFilter === 'low' ? 'default' : 'outline'}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedUsageFilter('low')}
-                  >
-                    1-2 sent ({usageFilterCounts.low})
-                  </Badge>
-                  <Badge
-                    variant={selectedUsageFilter === 'medium' ? 'default' : 'outline'}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedUsageFilter('medium')}
-                  >
-                    3-4 sent ({usageFilterCounts.medium})
-                  </Badge>
-                  <Badge
-                    variant={selectedUsageFilter === 'available' ? 'default' : 'outline'}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedUsageFilter('available')}
-                  >
-                    Available ({usageFilterCounts.available})
-                  </Badge>
-                  <Badge
-                    variant={selectedUsageFilter === 'at_quota' ? 'default' : 'outline'}
-                    className="cursor-pointer bg-red-500/10 hover:bg-red-500/20 border-red-500/30 text-red-600"
-                    onClick={() => setSelectedUsageFilter('at_quota')}
-                  >
-                    At Quota ({usageFilterCounts.at_quota})
-                  </Badge>
+              {/* Info: Accounts at quota */}
+              {accountsAtQuota.length > 0 && (
+                <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
+                  <span className="text-orange-500 font-medium">{accountsAtQuota.length}</span> account(s) hidden (already sent 5+ messages today)
                 </div>
-              </div>
+              )}
               
               {eligibleAccounts.length === 0 ? (
                 <Card className="p-8 text-center">
