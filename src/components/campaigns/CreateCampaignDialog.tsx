@@ -139,7 +139,6 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [selectedAccountTagFilter, setSelectedAccountTagFilter] = useState<string>('all');
-  const [maxMessagesSentFilter, setMaxMessagesSentFilter] = useState<number>(5); // Default: show accounts with <5 messages
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
     { id: '1', message: '', accountCount: 10 }
   ]);
@@ -157,21 +156,8 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
     });
   }, [accounts, now]);
 
-  // Filter eligible accounts based on maxMessagesSentFilter
-  const eligibleAccounts = useMemo(() => {
-    return allActiveAccounts.filter(a => {
-      const sentToday = accountUniqueRecipients.get(a.id) || 0;
-      return sentToday < maxMessagesSentFilter;
-    });
-  }, [allActiveAccounts, accountUniqueRecipients, maxMessagesSentFilter]);
-
-  // Accounts hidden by filter (for info display)
-  const accountsHiddenByFilter = useMemo(() => {
-    return allActiveAccounts.filter(a => {
-      const sentToday = accountUniqueRecipients.get(a.id) || 0;
-      return sentToday >= maxMessagesSentFilter;
-    });
-  }, [allActiveAccounts, accountUniqueRecipients, maxMessagesSentFilter]);
+  // All active accounts are eligible (no max messages filter)
+  const eligibleAccounts = allActiveAccounts;
 
   // Restricted accounts
   const restrictedAccounts = useMemo(() => {
@@ -530,29 +516,6 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
                 </div>
               )}
 
-              {/* Max Messages Sent Filter */}
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Max Messages Sent Today</Label>
-                <div className="flex flex-wrap gap-1.5">
-                  {[1, 2, 3, 4, 5, 10].map(num => (
-                    <Badge
-                      key={num}
-                      variant={maxMessagesSentFilter === num ? 'default' : 'outline'}
-                      className="cursor-pointer"
-                      onClick={() => setMaxMessagesSentFilter(num)}
-                    >
-                      &lt;{num} ({allActiveAccounts.filter(a => (accountUniqueRecipients.get(a.id) || 0) < num).length})
-                    </Badge>
-                  ))}
-                </div>
-              </div>
-
-              {/* Info: Accounts hidden by filter */}
-              {accountsHiddenByFilter.length > 0 && (
-                <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg px-3 py-2">
-                  <span className="text-orange-500 font-medium">{accountsHiddenByFilter.length}</span> account(s) hidden (sent {maxMessagesSentFilter}+ messages today)
-                </div>
-              )}
               
               {eligibleAccounts.length === 0 ? (
                 <Card className="p-8 text-center">
