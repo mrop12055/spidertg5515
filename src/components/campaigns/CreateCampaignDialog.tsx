@@ -26,7 +26,6 @@ interface Seat {
 interface BulkMessageTemplate {
   id: string;
   message: string;
-  accountCount: number;
 }
 
 interface CreateCampaignDialogProps {
@@ -140,7 +139,7 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [selectedAccountTagFilter, setSelectedAccountTagFilter] = useState<string>('all');
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
-    { id: '1', message: '', accountCount: 10 }
+    { id: '1', message: '' }
   ]);
   const [isCreating, setIsCreating] = useState(false);
 
@@ -243,7 +242,7 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
     if (messageTemplates.length >= 10) return;
     setMessageTemplates(prev => [
       ...prev,
-      { id: String(Date.now()), message: '', accountCount: 10 }
+      { id: String(Date.now()), message: '' }
     ]);
   }, [messageTemplates.length]);
 
@@ -252,9 +251,9 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
     setMessageTemplates(prev => prev.filter(t => t.id !== id));
   }, [messageTemplates.length]);
 
-  const updateMessageTemplate = useCallback((id: string, field: 'message' | 'accountCount', value: string | number) => {
+  const updateMessageTemplate = useCallback((id: string, message: string) => {
     setMessageTemplates(prev => prev.map(t => 
-      t.id === id ? { ...t, [field]: value } : t
+      t.id === id ? { ...t, message } : t
     ));
   }, []);
 
@@ -279,7 +278,7 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
       setRecipientsText('');
       setSelectedAccountIds([]);
       setSelectedSeatIds([]);
-      setMessageTemplates([{ id: '1', message: '', accountCount: 10 }]);
+      setMessageTemplates([{ id: '1', message: '' }]);
       onOpenChange(false);
     } finally {
       setIsCreating(false);
@@ -434,28 +433,17 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
               
               <div className="space-y-3">
                 {messageTemplates.map((template, index) => (
-                  <Card key={template.id} className="p-4">
+                <Card key={template.id} className="p-4">
                     <div className="flex items-start gap-3">
                       <Badge variant="outline" className="mt-1 shrink-0">#{index + 1}</Badge>
-                      <div className="flex-1 space-y-3">
+                      <div className="flex-1">
                         <Textarea
                           placeholder={`Message template... Use {name} and {phone} for personalization`}
                           value={template.message}
-                          onChange={(e) => updateMessageTemplate(template.id, 'message', e.target.value)}
+                          onChange={(e) => updateMessageTemplate(template.id, e.target.value)}
                           rows={3}
                           className="resize-none"
                         />
-                        <div className="flex items-center gap-3">
-                          <Label className="text-xs text-muted-foreground">Accounts:</Label>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={template.accountCount}
-                            onChange={(e) => updateMessageTemplate(template.id, 'accountCount', parseInt(e.target.value) || 10)}
-                            className="w-20 h-8"
-                          />
-                        </div>
                       </div>
                       {messageTemplates.length > 1 && (
                         <Button
