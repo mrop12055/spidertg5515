@@ -119,11 +119,33 @@ serve(async (req) => {
     }
 
     // Load active accounts only when needed
-    const { data: activeAccounts, error: accountsError } = await supabase
-      .from("telegram_accounts")
-      .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-      .eq("status", "active")
-      .or(`restricted_until.is.null,restricted_until.lt.${nowIso}`);
+    // For LIVECHAT: Include restricted accounts (they can reply to existing chats)
+    // For CAMPAIGN: Exclude restricted accounts (no new outreach)
+    const isLivechatRunner = runner === "livechat";
+    
+    let activeAccounts: any[] = [];
+    let accountsError: any = null;
+    
+    if (isLivechatRunner) {
+      // LIVECHAT: Include all active accounts, even if restricted (they can reply to existing conversations)
+      const result = await supabase
+        .from("telegram_accounts")
+        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+        .eq("status", "active");
+      activeAccounts = result.data || [];
+      accountsError = result.error;
+      console.log(`[get-batch-tasks] Livechat: ${activeAccounts.length} active accounts (including restricted)`);
+    } else {
+      // CAMPAIGN/WARMUP: Exclude restricted accounts (no new outreach allowed)
+      const result = await supabase
+        .from("telegram_accounts")
+        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+        .eq("status", "active")
+        .or(`restricted_until.is.null,restricted_until.lt.${nowIso}`);
+      activeAccounts = result.data || [];
+      accountsError = result.error;
+      console.log(`[get-batch-tasks] Campaign/Warmup: ${activeAccounts.length} active unrestricted accounts`);
+    }
 
     if (accountsError || !activeAccounts || activeAccounts.length === 0) {
       console.log("[get-batch-tasks] No active accounts available");
