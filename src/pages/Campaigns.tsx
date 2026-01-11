@@ -170,71 +170,125 @@ const Campaigns: React.FC = () => {
   const fetchReports = useCallback(async () => {
     const currentCampaigns = campaignsRef.current;
     if (currentCampaigns.length === 0) return;
-    
+
     const newReports = new Map<string, CampaignReport>();
-    
-    // Fetch all campaign recipients in PARALLEL (not sequentially!)
+
+    // Use COUNT queries (head:true) to avoid the PostgREST 1000-row cap.
     const results = await Promise.all(
       currentCampaigns.map(async (campaign) => {
-        const { data: recipients, error } = await supabase
-          .from('campaign_recipients')
-          .select('id, status, sent_by_account_id')
-          .eq('campaign_id', campaign.id);
+        const [
+          totalRes,
+          sentRes,
+          failedRes,
+          pendingSendingRes,
+          queuedRes,
+        ] = await Promise.all([
+          supabase
+            .from('campaign_recipients')
+            .select('id', { count: 'exact', head: true })
+            .eq('campaign_id', campaign.id),
+          supabase
+            .from('campaign_recipients')
+            .select('id', { count: 'exact', head: true })
+            .eq('campaign_id', campaign.id)
+            .eq('status', 'sent'),
+          supabase
+            .from('campaign_recipients')
+            .select('id', { count: 'exact', head: true })
+            .eq('campaign_id', campaign.id)
+            .eq('status', 'failed'),
+          supabase
+            .from('campaign_recipients')
+            .select('id', { count: 'exact', head: true })
+            .eq('campaign_id', campaign.id)
+            .in('status', ['pending', 'sending']),
+          supabase
+            .from('campaign_recipients')
+            .select('id', { count: 'exact', head: true })
+            .eq('campaign_id', campaign.id)
+            .eq('status', 'queued'),
+        ]);
 
-        if (!recipients || error) return { campaignId: campaign.id, report: null, campaign };
+        if (totalRes.error || sentRes.error || failedRes.error || pendingSendingRes.error || queuedRes.error) {
+          console.error('[Campaigns] fetchReports count error', {
+            campaignId: campaign.id,
+            totalError: totalRes.error,
+            sentError: sentRes.error,
+            failedError: failedRes.error,
+            pendingSendingError: pendingSendingRes.error,
+            queuedError: queuedRes.error,
+          });
+          return { campaignId: campaign.id, report: null as CampaignReport | null, campaign };
+        }
 
-        const sentCount = recipients.filter((r) => r.status === 'sent').length;
-        const failedCount = recipients.filter((r) => r.status === 'failed').length;
-        const pendingCount = recipients.filter((r) => r.status === 'pending' || r.status === 'sending').length;
+        const total = totalRes.count || 0;
+        const sentCount = sentRes.count || 0;
+        const failedCount = failedRes.count || 0;
+        const pendingSendingCount = pendingSendingRes.count || 0;
+        const queuedCount = queuedRes.count || 0;
 
         // Basic report without detailed failure info (loaded on-demand)
         const report: CampaignReport = {
           successful: sentCount,
           failed: failedCount,
-          pending: pendingCount,
-          unused: pendingCount,
-          total: recipients.length,
+          pending: pendingSendingCount,
+          unused: pendingSendingCount,
+          total,
           failedRecipients: [],
-          accountStats: []
+          accountStats: [],
         };
 
-        return { campaignId: campaign.id, report, recipients, sentCount, failedCount, pendingCount, campaign };
+        return {
+          campaignId: campaign.id,
+          report,
+          total,
+          sentCount,
+          failedCount,
+          pendingSendingCount,
+          queuedCount,
+          campaign,
+        };
       })
     );
 
     // Process results and update state - NO refreshData() to prevent loops
     const updatePromises: Promise<any>[] = [];
-    
+
     for (const result of results) {
       if (!result.report) continue;
       newReports.set(result.campaignId, result.report);
-      
+
       const campaign = result.campaign;
-      if (campaign && result.recipients) {
-        const countsMatch = 
-          campaign.sentCount === result.sentCount && 
+      if (campaign) {
+        const countsMatch =
+          campaign.sentCount === result.sentCount &&
           campaign.failedCount === result.failedCount &&
-          campaign.recipientCount === result.recipients.length;
-        
-        // Only update if counts are significantly different (avoid micro-updates)
+          campaign.recipientCount === result.total;
+
+        // Only update if different
         if (!countsMatch) {
           updatePromises.push(
             (async () => {
               await supabase
                 .from('campaigns')
-                .update({ 
-                  sent_count: result.sentCount, 
+                .update({
+                  sent_count: result.sentCount,
                   failed_count: result.failedCount,
-                  recipient_count: result.recipients.length,
-                  updated_at: new Date().toISOString() 
+                  recipient_count: result.total,
+                  updated_at: new Date().toISOString(),
                 })
                 .eq('id', result.campaignId);
             })()
           );
         }
-        
-        // Auto-complete running OR paused campaigns with no pending recipients
-        if ((campaign.status === 'running' || campaign.status === 'paused') && result.pendingCount === 0 && result.recipients.length > 0) {
+
+        // Auto-complete running OR paused campaigns with no pending/queued recipients
+        const remainingNotDone = result.pendingSendingCount + result.queuedCount;
+        if (
+          (campaign.status === 'running' || campaign.status === 'paused') &&
+          remainingNotDone === 0 &&
+          result.total > 0
+        ) {
           updatePromises.push(
             (async () => {
               await supabase
@@ -246,14 +300,14 @@ const Campaigns: React.FC = () => {
         }
       }
     }
-    
+
     // Execute all updates in parallel (fire and forget - no need to wait)
     if (updatePromises.length > 0) {
       Promise.all(updatePromises).catch(console.error);
     }
-    
+
     // Merge new basic reports with existing detailed reports (don't overwrite detailed data)
-    setCampaignReports(prev => {
+    setCampaignReports((prev) => {
       const merged = new Map(prev);
       newReports.forEach((basicReport, campaignId) => {
         const existing = merged.get(campaignId);
@@ -282,14 +336,33 @@ const Campaigns: React.FC = () => {
     const currentAccounts = accountsRef.current;
     
     try {
-      const { data: recipients, error } = await supabase
-        .from('campaign_recipients')
-        .select('id, status, phone_number, name, sent_by_account_id, failed_reason')
-        .eq('campaign_id', campaignId);
+      // NOTE: PostgREST caps rows per request (~1000). We must page for accurate reports.
+      const PAGE_SIZE = 1000;
+      const MAX_PAGES = 200; // safety cap
+      const allRecipients: any[] = [];
 
-      if (!recipients || error) {
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+
+        const { data, error } = await supabase
+          .from('campaign_recipients')
+          .select('id, status, phone_number, name, sent_by_account_id, failed_reason')
+          .eq('campaign_id', campaignId)
+          .range(from, to);
+
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+
+        allRecipients.push(...data);
+        if (data.length < PAGE_SIZE) break; // last page
+      }
+
+      const recipients = allRecipients;
+
+      if (!recipients || recipients.length === 0) {
         setIsLoadingReport(false);
-        setLoadedReportIds(prev => new Set(prev).add(campaignId));
+        setLoadedReportIds((prev) => new Set(prev).add(campaignId));
         return;
       }
 
