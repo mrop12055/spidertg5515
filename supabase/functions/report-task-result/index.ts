@@ -678,9 +678,29 @@ serve(async (req) => {
           content,
           media_url,
           media_type,
+          telegram_message_id,
         } = result;
 
-        console.log(`[report-task-result] Processing incoming message from sender_id=${sender_id}, username=${sender_username}, phone=${sender_phone}, has_avatar=${!!sender_avatar}`);
+        console.log(`[report-task-result] Processing incoming message from sender_id=${sender_id}, username=${sender_username}, phone=${sender_phone}, telegram_msg_id=${telegram_message_id}, has_avatar=${!!sender_avatar}`);
+
+        // DEDUPLICATION: Check if this exact message was already saved (prevents duplicates on livechat restart)
+        if (telegram_message_id && account_id) {
+          const { data: existingMsg } = await supabase
+            .from("messages")
+            .select("id")
+            .eq("account_id", account_id)
+            .eq("telegram_message_id", telegram_message_id)
+            .eq("direction", "incoming")
+            .limit(1);
+
+          if (existingMsg && existingMsg.length > 0) {
+            console.log(`[report-task-result] SKIPPED: Duplicate message detected (telegram_message_id=${telegram_message_id} already exists)`);
+            return new Response(
+              JSON.stringify({ success: true, skipped: true, reason: "duplicate" }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
 
         // Find or create conversation with improved matching
         // Use phone number or telegram_id as unique identifier - NEVER use generic "Contact" name
@@ -846,7 +866,7 @@ serve(async (req) => {
         }
 
         if (convId) {
-          // Save message
+          // Save message with telegram_message_id for deduplication
           await supabase.from("messages").insert({
             account_id,
             conversation_id: convId,
@@ -856,6 +876,7 @@ serve(async (req) => {
             delivered_at: new Date().toISOString(),
             media_url: media_url || null,
             media_type: media_type || null,
+            telegram_message_id: telegram_message_id || null,
           });
 
           // Also update campaign reply count if this conversation was from a campaign
