@@ -168,7 +168,8 @@ async def switch_account_proxy(account_id: str, old_proxy_id: str = None) -> dic
 
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,
                                 auto_switch_proxy: bool = True, skip_avatar: bool = False,
-                                require_proxy: bool = True, no_cache: bool = False) -> Optional[TelegramClient]:
+                                require_proxy: bool = True, no_cache: bool = False,
+                                long_lived: bool = False) -> Optional[TelegramClient]:
     """
     Get or create a Telegram client for an account.
     
@@ -181,6 +182,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         require_proxy: If True (default), skip account if no proxy assigned
         no_cache: If True, skip client caching (REQUIRED for parallel asyncio.gather tasks
                   to avoid 'asyncio event loop must not change' errors from Telethon)
+        long_lived: If True, use settings optimized for long-lived connections (live chat)
     """
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
@@ -277,10 +279,12 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             system_lang_code=system_lang_code,
             proxy=proxy,
             timeout=CONNECTION_TIMEOUT,
-            connection_retries=0,
-            retry_delay=0,
-            auto_reconnect=True,
-            request_retries=1
+            # Long-lived connections (live chat): stable settings with retries
+            # Short-lived connections (campaign): fail fast settings
+            connection_retries=3 if long_lived else 0,
+            retry_delay=2 if long_lived else 0,
+            auto_reconnect=long_lived,  # Only auto-reconnect for live chat
+            request_retries=3 if long_lived else 1
         )
         
         print(f"  [CONNECT] {account['phone_number']}...")
@@ -1162,8 +1166,14 @@ SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else
 RUNNING = True
 CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
 HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
-CONNECT_TIMEOUT_SECONDS = 25  # Faster parallel connect timeout
+CONNECT_TIMEOUT_SECONDS = 30  # Increased timeout for stable connections
 RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
+
+# ========== NETWORK ERROR HANDLING ==========
+# Track consecutive network errors for exponential backoff
+_network_error_count = 0
+_last_network_error_time = 0
+MAX_NETWORK_BACKOFF = 60  # Maximum backoff time in seconds
 
 # ========== EARLY FILTERING: Contacts only ==========
 # Only process messages from users who are in the account's contact list
@@ -1346,20 +1356,28 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     excluded_proxies = []
     
     # Try up to 3 times: current proxy + 2 different random proxies
+    # Add delay between attempts to prevent rapid proxy switching
     MAX_PROXY_ATTEMPTS = 3
+    PROXY_SWITCH_DELAY = 3  # seconds between proxy switch attempts
     
     for attempt in range(MAX_PROXY_ATTEMPTS):
         try:
-            client = await get_or_create_client(account, setup_handler=setup_handler, task_proxy=account.get("proxy"))
+            # Use long_lived=True for stable live chat connections
+            client = await get_or_create_client(
+                account, 
+                setup_handler=setup_handler, 
+                task_proxy=account.get("proxy"),
+                long_lived=True  # Stable settings for live chat
+            )
             if client:
                 return client, None
         except Exception as e:
-            error_str = str(e)
+            error_str = str(e).lower()
             
-            # Check if this is a LOCAL network error (wifi disconnect)
-            if is_network_error(error_str):
-                print(f"  [{phone}] NETWORK ERROR (wifi/internet issue): {error_str[:50]}")
-                return None, f"NETWORK_ERROR:{error_str}"
+            # Check if this is a LOCAL network error (wifi disconnect, WinError 64)
+            if is_network_error(error_str) or "winerror 64" in error_str:
+                print(f"  [{phone}] NETWORK ERROR (connection dropped): {str(e)[:50]}")
+                return None, f"NETWORK_ERROR:{e}"
         
         # Connection failed - try different proxy if we have more attempts
         if attempt < MAX_PROXY_ATTEMPTS - 1:
@@ -1367,7 +1385,11 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
             if current_proxy_id:
                 excluded_proxies.append(current_proxy_id)
             
-            print(f"  [{phone}] Proxy failed, trying different proxy (attempt {attempt + 2}/{MAX_PROXY_ATTEMPTS})...")
+            # Rate limit proxy switches to prevent spam
+            print(f"  [{phone}] Proxy failed, waiting {PROXY_SWITCH_DELAY}s before trying different proxy...")
+            await asyncio.sleep(PROXY_SWITCH_DELAY)
+            
+            print(f"  [{phone}] Trying different proxy (attempt {attempt + 2}/{MAX_PROXY_ATTEMPTS})...")
             
             # Use edge function for consistent proxy switching (updates both tables)
             new_proxy = await switch_account_proxy_via_edge(account_id, current_proxy_id)
@@ -1754,11 +1776,22 @@ async def main_loop():
                     })
         
         except Exception as e:
-            # Check if this is a network error
-            if is_network_error(str(e)):
-                print(f"  [NETWORK] Wifi/internet issue: {str(e)[:50]}")
-                await asyncio.sleep(5)  # Wait longer for network recovery
+            global _network_error_count, _last_network_error_time
+            error_str = str(e).lower()
+            
+            # Check if this is a network error (including WinError 64)
+            if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
+                _network_error_count += 1
+                _last_network_error_time = time.time()
+                
+                # Exponential backoff: 2^n seconds, capped at MAX_NETWORK_BACKOFF
+                backoff = min(2 ** _network_error_count, MAX_NETWORK_BACKOFF)
+                print(f"  [NETWORK] Connection issue ({_network_error_count}x): {str(e)[:40]}")
+                print(f"  [BACKOFF] Waiting {backoff}s for network recovery...")
+                await asyncio.sleep(backoff)
             else:
+                # Reset error count on non-network errors
+                _network_error_count = 0
                 print(f"  [ERROR] {e}")
                 await asyncio.sleep(0.5)
     
@@ -1782,10 +1815,10 @@ if __name__ == "__main__":
             # Check if network error (including WinError 64)
             if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
                 print(f"\\n📶 Network error (connection dropped): {e}")
-                print("  Waiting 15 seconds for network recovery...")
+                print("  Clearing stale connections and waiting 20 seconds...")
                 # Reset HTTP client to clear stale connections
                 reset_http_client()
-                time.sleep(15)
+                time.sleep(20)
             else:
                 print(f"\\n⚠ LiveChat crashed: {e}")
                 print("  Restarting in 5 seconds...")
