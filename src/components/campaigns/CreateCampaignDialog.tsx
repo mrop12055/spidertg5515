@@ -139,6 +139,7 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [selectedSeatIds, setSelectedSeatIds] = useState<string[]>([]);
   const [selectedAccountTagFilter, setSelectedAccountTagFilter] = useState<string>('all');
+  const [selectedUsageFilter, setSelectedUsageFilter] = useState<string>('all');
   const [messageTemplates, setMessageTemplates] = useState<BulkMessageTemplate[]>([
     { id: '1', message: '', accountCount: 10 }
   ]);
@@ -179,11 +180,62 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
     return Array.from(tags).sort();
   }, [eligibleAccounts]);
 
-  // Filter accounts by selected tag
+  // Filter accounts by selected tag and usage
   const filteredAccounts = useMemo(() => {
-    if (selectedAccountTagFilter === 'all') return eligibleAccounts;
-    return eligibleAccounts.filter(a => a.tags?.includes(selectedAccountTagFilter));
-  }, [eligibleAccounts, selectedAccountTagFilter]);
+    let result = eligibleAccounts;
+    
+    // Apply tag filter
+    if (selectedAccountTagFilter !== 'all') {
+      result = result.filter(a => a.tags?.includes(selectedAccountTagFilter));
+    }
+    
+    // Apply usage filter
+    if (selectedUsageFilter !== 'all') {
+      result = result.filter(a => {
+        const sentToday = accountUniqueRecipients.get(a.id) || 0;
+        const limit = a.dailyLimit || 5;
+        
+        switch (selectedUsageFilter) {
+          case 'fresh': // 0 messages sent
+            return sentToday === 0;
+          case 'low': // 1-2 messages sent
+            return sentToday >= 1 && sentToday <= 2;
+          case 'medium': // 3-4 messages sent
+            return sentToday >= 3 && sentToday <= 4;
+          case 'available': // Not at quota
+            return sentToday < limit;
+          case 'at_quota': // At daily limit
+            return sentToday >= limit;
+          default:
+            return true;
+        }
+      });
+    }
+    
+    return result;
+  }, [eligibleAccounts, selectedAccountTagFilter, selectedUsageFilter, accountUniqueRecipients]);
+
+  // Usage filter counts
+  const usageFilterCounts = useMemo(() => {
+    const counts = { fresh: 0, low: 0, medium: 0, available: 0, at_quota: 0 };
+    const tagFiltered = selectedAccountTagFilter === 'all' 
+      ? eligibleAccounts 
+      : eligibleAccounts.filter(a => a.tags?.includes(selectedAccountTagFilter));
+    
+    tagFiltered.forEach(a => {
+      const sentToday = accountUniqueRecipients.get(a.id) || 0;
+      const limit = a.dailyLimit || 5;
+      
+      if (sentToday === 0) counts.fresh++;
+      else if (sentToday <= 2) counts.low++;
+      else if (sentToday <= 4) counts.medium++;
+      
+      if (sentToday < limit) counts.available++;
+      if (sentToday >= limit) counts.at_quota++;
+    });
+    
+    return counts;
+  }, [eligibleAccounts, selectedAccountTagFilter, accountUniqueRecipients]);
 
   // Recipient count
   const recipientCount = useMemo(() => {
@@ -491,29 +543,81 @@ username123`}
               
               {/* Tag Filter */}
               {accountTags.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  <Badge
-                    variant={selectedAccountTagFilter === 'all' ? 'default' : 'outline'}
-                    className="cursor-pointer"
-                    onClick={() => setSelectedAccountTagFilter('all')}
-                  >
-                    All ({eligibleAccounts.length})
-                  </Badge>
-                  {accountTags.map(tag => {
-                    const count = eligibleAccounts.filter(a => a.tags?.includes(tag)).length;
-                    return (
-                      <Badge
-                        key={tag}
-                        variant={selectedAccountTagFilter === tag ? 'default' : 'outline'}
-                        className="cursor-pointer"
-                        onClick={() => setSelectedAccountTagFilter(tag)}
-                      >
-                        {tag} ({count})
-                      </Badge>
-                    );
-                  })}
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Filter by Tag</Label>
+                  <div className="flex flex-wrap gap-1.5">
+                    <Badge
+                      variant={selectedAccountTagFilter === 'all' ? 'default' : 'outline'}
+                      className="cursor-pointer"
+                      onClick={() => setSelectedAccountTagFilter('all')}
+                    >
+                      All ({eligibleAccounts.length})
+                    </Badge>
+                    {accountTags.map(tag => {
+                      const count = eligibleAccounts.filter(a => a.tags?.includes(tag)).length;
+                      return (
+                        <Badge
+                          key={tag}
+                          variant={selectedAccountTagFilter === tag ? 'default' : 'outline'}
+                          className="cursor-pointer"
+                          onClick={() => setSelectedAccountTagFilter(tag)}
+                        >
+                          {tag} ({count})
+                        </Badge>
+                      );
+                    })}
+                  </div>
                 </div>
               )}
+
+              {/* Usage Filter - Messages Sent Today */}
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Filter by Messages Sent Today</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  <Badge
+                    variant={selectedUsageFilter === 'all' ? 'default' : 'outline'}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedUsageFilter('all')}
+                  >
+                    All
+                  </Badge>
+                  <Badge
+                    variant={selectedUsageFilter === 'fresh' ? 'default' : 'outline'}
+                    className="cursor-pointer bg-green-500/10 hover:bg-green-500/20 border-green-500/30 text-green-600"
+                    onClick={() => setSelectedUsageFilter('fresh')}
+                  >
+                    Fresh 0 ({usageFilterCounts.fresh})
+                  </Badge>
+                  <Badge
+                    variant={selectedUsageFilter === 'low' ? 'default' : 'outline'}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedUsageFilter('low')}
+                  >
+                    1-2 sent ({usageFilterCounts.low})
+                  </Badge>
+                  <Badge
+                    variant={selectedUsageFilter === 'medium' ? 'default' : 'outline'}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedUsageFilter('medium')}
+                  >
+                    3-4 sent ({usageFilterCounts.medium})
+                  </Badge>
+                  <Badge
+                    variant={selectedUsageFilter === 'available' ? 'default' : 'outline'}
+                    className="cursor-pointer"
+                    onClick={() => setSelectedUsageFilter('available')}
+                  >
+                    Available ({usageFilterCounts.available})
+                  </Badge>
+                  <Badge
+                    variant={selectedUsageFilter === 'at_quota' ? 'default' : 'outline'}
+                    className="cursor-pointer bg-red-500/10 hover:bg-red-500/20 border-red-500/30 text-red-600"
+                    onClick={() => setSelectedUsageFilter('at_quota')}
+                  >
+                    At Quota ({usageFilterCounts.at_quota})
+                  </Badge>
+                </div>
+              </div>
               
               {eligibleAccounts.length === 0 ? (
                 <Card className="p-8 text-center">
