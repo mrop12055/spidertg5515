@@ -779,8 +779,10 @@ serve(async (req) => {
 
           const campaign = recipient.campaigns;
           const failedAccountIds: string[] = recipient.failed_account_ids || [];
+          const failedApiIds: string[] = recipient.failed_api_ids || [];  // Track failed APIs
           
           // Find eligible account - MUST check remaining quota (daily limit - sent today - batch assigned)
+          // ALSO must check that account's API is NOT in failedApiIds
           let account = null;
           
           if (recipient.sent_by_account_id) {
@@ -790,6 +792,8 @@ serve(async (req) => {
                   if (a.id !== recipient.sent_by_account_id) return false;
                   // CRITICAL: Check remaining quota instead of just usedAccountIds
                   if (getRemainingAccountQuota(a.id) <= 0) return false;
+                  // CRITICAL: Skip if this account's API already failed for this recipient
+                  if (a.api_credential_id && failedApiIds.includes(a.api_credential_id)) return false;
                   if (a.api_credential_id) {
                     const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
                     const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
@@ -801,10 +805,26 @@ serve(async (req) => {
           }
 
           if (!account) {
-            account = campaignUsableAccounts.find((a: any) => {
+            // SMART API SELECTION: Find account with API not in failedApiIds
+            // Sort by least-used API first to balance load
+            const sortedAccounts = [...campaignUsableAccounts].sort((a: any, b: any) => {
+              const usageA = (apiUsageCounts.get(a.api_credential_id) || 0) + (batchApiUsage.get(a.api_credential_id) || 0);
+              const usageB = (apiUsageCounts.get(b.api_credential_id) || 0) + (batchApiUsage.get(b.api_credential_id) || 0);
+              return usageA - usageB;
+            });
+            
+            account = sortedAccounts.find((a: any) => {
               // CRITICAL: Check remaining quota instead of just usedAccountIds
               if (getRemainingAccountQuota(a.id) <= 0) return false;
               if (failedAccountIds.includes(a.id)) return false;
+              // CRITICAL: Skip accounts whose API already failed for this recipient
+              if (a.api_credential_id && failedApiIds.includes(a.api_credential_id)) {
+                // Log when we skip due to failed API
+                if (failedApiIds.length > 0) {
+                  console.log(`[get-batch-tasks] SKIP account ${a.phone_number} - API ${a.api_credential_id} in failedApiIds`);
+                }
+                return false;
+              }
               if (a.api_credential_id) {
                 const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
                 const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
@@ -815,12 +835,15 @@ serve(async (req) => {
           }
 
           if (!account) {
-            // Check if any accounts have remaining quota (excluding failed ones)
+            // Check if any accounts have remaining quota (excluding failed ones AND failed APIs)
             const eligibleAccounts = campaignUsableAccounts.filter((a: any) => 
-              !failedAccountIds.includes(a.id) && getRemainingAccountQuota(a.id) > 0
+              !failedAccountIds.includes(a.id) && 
+              getRemainingAccountQuota(a.id) > 0 &&
+              (!a.api_credential_id || !failedApiIds.includes(a.api_credential_id))
             );
             
-            if (eligibleAccounts.length === 0 && failedAccountIds.length > 0) {
+            if (eligibleAccounts.length === 0 && (failedAccountIds.length > 0 || failedApiIds.length > 0)) {
+              console.log(`[get-batch-tasks] Recipient ${recipient.id} FAILED - no eligible accounts (failed accounts: ${failedAccountIds.length}, failed APIs: ${failedApiIds.length})`);
               recipientsToFail.push({ 
                 id: recipient.id, 
                 campaign_id: recipient.campaign_id, 
@@ -828,6 +851,11 @@ serve(async (req) => {
               });
             }
             continue;
+          }
+
+          // Log when assigning after API retry
+          if (failedApiIds.length > 0) {
+            console.log(`[get-batch-tasks] Recipient ${recipient.id} assigned to account ${account.phone_number} with API ${account.api_credential_id} (avoiding ${failedApiIds.length} failed APIs)`);
           }
 
           // Collect for batch update

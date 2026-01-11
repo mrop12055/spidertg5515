@@ -340,12 +340,20 @@ serve(async (req) => {
           if (isApiRetryable && campaign_recipient_id) {
             console.log(`[report-task-result] Privacy error - will retry with different API: ${error}`);
             
-            // Get current recipient data
+            // Get current recipient data INCLUDING api_credential_id and failed_api_ids
             const { data: currentRecipient } = await supabase
               .from("campaign_recipients")
-              .select("retry_count, campaign_id")
+              .select("retry_count, campaign_id, api_credential_id, failed_api_ids")
               .eq("id", campaign_recipient_id)
               .single();
+            
+            // TRACK FAILED API: Add current API to failed_api_ids
+            const failedApiIds: string[] = currentRecipient?.failed_api_ids || [];
+            const currentApiId = currentRecipient?.api_credential_id;
+            if (currentApiId && !failedApiIds.includes(currentApiId)) {
+              failedApiIds.push(currentApiId);
+              console.log(`[report-task-result] Privacy error - Added API ${currentApiId} to failed_api_ids (total: ${failedApiIds.length})`);
+            }
             
             const retryCount = (currentRecipient?.retry_count || 0) + 1;
             const maxApiRetries = 3; // Try up to 3 different APIs
@@ -358,6 +366,7 @@ serve(async (req) => {
                   status: "failed",
                   failed_reason: `Privacy restricted after ${retryCount} API attempts`,
                   sent_at: new Date().toISOString(),
+                  failed_api_ids: failedApiIds,  // Save for debugging
                 })
                 .eq("id", campaign_recipient_id);
               
@@ -365,21 +374,22 @@ serve(async (req) => {
                 await supabase.rpc("increment_campaign_failed_count", { cid: currentRecipient.campaign_id });
               }
               
-              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED after ${retryCount} API attempts`);
+              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED after ${retryCount} API attempts (tried APIs: ${failedApiIds.join(', ')})`);
             } else {
-              // Retry with different API - keep same account available, just clear API
+              // Retry with different API - track failed API so get-batch-tasks avoids it
               await supabase
                 .from("campaign_recipients")
                 .update({
                   status: "pending",
                   sent_by_account_id: null,  // Clear account to allow reassignment
                   api_credential_id: null,    // Clear API so it gets a different one
+                  failed_api_ids: failedApiIds,  // CRITICAL: Track failed APIs
                   failed_reason: null,
                   retry_count: retryCount
                 })
                 .eq("id", campaign_recipient_id);
               
-              console.log(`[report-task-result] Privacy error - recipient reset for different API (attempt ${retryCount}/${maxApiRetries})`);
+              console.log(`[report-task-result] Privacy error - recipient reset for different API (attempt ${retryCount}/${maxApiRetries}, failed APIs: ${failedApiIds.length})`);
             }
           } else if (isPermanentBan && account_id) {
             // PERMANENT BAN - mark account as banned, cannot be used anymore
@@ -453,10 +463,10 @@ serve(async (req) => {
               .single();
             
             if (recipientData) {
-              // Get current failed_account_ids
+              // Get current failed_account_ids AND failed_api_ids
               const { data: currentRecipient } = await supabase
                 .from("campaign_recipients")
-                .select("failed_account_ids, retry_count")
+                .select("failed_account_ids, failed_api_ids, retry_count, api_credential_id")
                 .eq("id", campaign_recipient_id)
                 .single();
               
@@ -465,9 +475,17 @@ serve(async (req) => {
                 failedAccountIds.push(account_id);
               }
               
-              // RATE LIMIT ERROR: Always retry with different account (no limit)
+              // TRACK FAILED API: Add current API to failed_api_ids so it won't be reused
+              const failedApiIds: string[] = currentRecipient?.failed_api_ids || [];
+              const currentApiId = currentRecipient?.api_credential_id;
+              if (currentApiId && !failedApiIds.includes(currentApiId)) {
+                failedApiIds.push(currentApiId);
+                console.log(`[report-task-result] Added API ${currentApiId} to failed_api_ids (total: ${failedApiIds.length})`);
+              }
+              
+              // RATE LIMIT ERROR: Always retry with different account AND different API
               // The recipient is NOT at fault - only the sender account hit rate limits
-              // CRITICAL: Also clear api_credential_id so it gets reassigned to a less-used API
+              // CRITICAL: Track failed API so get-batch-tasks picks a DIFFERENT one
               await supabase
                 .from("campaign_recipients")
                 .update({
@@ -475,12 +493,13 @@ serve(async (req) => {
                   sent_by_account_id: null,  // Clear so different account picks it up
                   api_credential_id: null,   // Clear so it gets reassigned to least-used API
                   failed_account_ids: failedAccountIds,
+                  failed_api_ids: failedApiIds,  // Track failed APIs to avoid reusing them
                   failed_reason: null,
                   retry_count: (currentRecipient?.retry_count || 0) + 1
                 })
                 .eq("id", campaign_recipient_id);
               
-              console.log(`[report-task-result] Rate limit (Too many requests) - account ${account_id} restricted 12h, recipient reset for different account/API (attempt ${failedAccountIds.length})`);
+              console.log(`[report-task-result] Rate limit (Too many requests) - account ${account_id} restricted 12h, recipient reset for different account/API (failed APIs: ${failedApiIds.length})`);
             }
           } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
             // TEMPORARY - set to restricted status with 12h cooldown
