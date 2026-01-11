@@ -294,6 +294,10 @@ const SeatChat: React.FC = () => {
   const allCount = timeFilteredConversations.filter(c => !c.is_hidden).length;
   const pinnedCount = timeFilteredConversations.filter(c => c.is_pinned).length;
   const hiddenCount = conversations.filter(c => c.is_hidden && c.first_message_sent).length;
+  
+  // Count replies and unread replies
+  const repliesCount = timeFilteredConversations.filter(c => c.has_reply && !c.is_hidden).length;
+  const unreadRepliesCount = timeFilteredConversations.filter(c => c.has_reply && c.unread_count > 0 && !c.is_hidden).length;
 
   // Filter messages by search
   const filteredMessages = messageSearchQuery
@@ -1140,7 +1144,13 @@ const SeatChat: React.FC = () => {
                   )}
                 >
                   <MessageSquare className="w-4 h-4" />
-                  {showRepliedOnly ? 'Replied Only' : 'Show Replied Only'}
+                  <span>{showRepliedOnly ? 'Replied Only' : 'Show Replied Only'}</span>
+                  <span className="text-xs opacity-70">({repliesCount})</span>
+                  {unreadRepliesCount > 0 && (
+                    <Badge variant="destructive" className="ml-1 h-5 min-w-5 px-1.5 text-[10px] font-bold">
+                      {unreadRepliesCount}
+                    </Badge>
+                  )}
                 </button>
 
                 {/* Search */}
