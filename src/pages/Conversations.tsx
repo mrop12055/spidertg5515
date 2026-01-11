@@ -189,11 +189,13 @@ const Chat: React.FC = () => {
     }
   };
 
-  // Filter conversations by time - based on when conversation was CREATED (campaign start)
+  // Filter conversations by time - based on last message activity (not creation time)
   const getTimeFilterCutoff = () => getCutoffForFilter(timeFilter);
 
-  // Helper to get conversation creation time (when the campaign message was first sent)
-  const getConversationCreatedTime = (conv: typeof conversations[0]) => {
+  // Helper to get conversation last message time for filtering
+  const getConversationActivityTime = (conv: typeof conversations[0]) => {
+    // Use lastMessageAt for activity-based filtering
+    if (conv.lastMessageAt) return new Date(conv.lastMessageAt).getTime();
     return new Date(conv.createdAt).getTime();
   };
 
@@ -232,8 +234,8 @@ const Chat: React.FC = () => {
   const filteredConversations = conversations
     .filter(c => {
       const cutoff = getTimeFilterCutoff();
-      const convCreatedTime = getConversationCreatedTime(c);
-      const matchesTime = convCreatedTime >= cutoff.getTime();
+      const convActivityTime = getConversationActivityTime(c);
+      const matchesTime = convActivityTime >= cutoff.getTime();
       const searchLower = searchQuery.toLowerCase();
       const matchesSearch = !searchQuery || 
         c.recipientName?.toLowerCase().includes(searchLower) ||
@@ -271,8 +273,8 @@ const Chat: React.FC = () => {
       const cutoff = getCutoffForFilter(filter);
       return conversations.filter(c => {
         if (!baseFilter(c)) return false;
-        const convCreatedTime = getConversationCreatedTime(c);
-        if (convCreatedTime < cutoff.getTime()) return false;
+        const convActivityTime = getConversationActivityTime(c);
+        if (convActivityTime < cutoff.getTime()) return false;
         if (repliesOnly && c.hasReply !== true) return false;
         return true;
       }).length;
