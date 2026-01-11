@@ -304,40 +304,39 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl max-h-[85vh] p-0 gap-0 overflow-hidden">
-        <DialogHeader className="px-6 pt-6 pb-4 border-b bg-gradient-to-r from-primary/5 to-transparent">
+      <DialogContent className="max-w-3xl h-[85vh] max-h-[700px] p-0 gap-0 flex flex-col overflow-hidden">
+        <DialogHeader className="px-6 pt-5 pb-3 border-b bg-gradient-to-r from-primary/5 to-transparent shrink-0">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-primary/15 flex items-center justify-center">
-              <Send className="w-5 h-5 text-primary" />
+            <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center">
+              <Send className="w-4 h-4 text-primary" />
             </div>
             <div>
-              <DialogTitle className="text-xl">Create Campaign</DialogTitle>
-              <DialogDescription className="text-sm">
-                Set up recipients, messages, and accounts for bulk messaging
+              <DialogTitle className="text-lg">Create Campaign</DialogTitle>
+              <DialogDescription className="text-xs">
+                Set up recipients, messages, and accounts
               </DialogDescription>
             </div>
           </div>
         </DialogHeader>
         
-        <Tabs defaultValue="recipients" className="flex-1 flex flex-col overflow-hidden">
-          <TabsList className="grid w-full grid-cols-3 mx-6 mt-4 max-w-[calc(100%-3rem)]">
-            <TabsTrigger value="recipients" className="gap-2">
-              <Users className="w-4 h-4" />
+        <Tabs defaultValue="recipients" className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <TabsList className="grid w-full grid-cols-3 mx-6 mt-3 max-w-[calc(100%-3rem)] shrink-0">
+            <TabsTrigger value="recipients" className="gap-2 text-xs">
+              <Users className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Recipients</span>
             </TabsTrigger>
-            <TabsTrigger value="messages" className="gap-2">
-              <MessageSquare className="w-4 h-4" />
+            <TabsTrigger value="messages" className="gap-2 text-xs">
+              <MessageSquare className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Messages</span>
             </TabsTrigger>
-            <TabsTrigger value="accounts" className="gap-2">
-              <UserCheck className="w-4 h-4" />
+            <TabsTrigger value="accounts" className="gap-2 text-xs">
+              <UserCheck className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Accounts</span>
             </TabsTrigger>
           </TabsList>
 
-          <ScrollArea className="flex-1 px-6">
-            {/* STEP 1: Recipients */}
-            <TabsContent value="recipients" className="space-y-4 mt-4 pb-4">
+          <ScrollArea className="flex-1 min-h-0 px-6">
+            <TabsContent value="recipients" className="space-y-3 mt-3 pb-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label className="text-sm font-medium">Campaign Name</Label>
@@ -379,28 +378,27 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
                 </div>
               </div>
 
-              <Card className="p-4 bg-muted/50">
-                <p className="text-xs font-semibold text-muted-foreground mb-2">Format (one per line):</p>
-                <pre className="text-xs font-mono text-foreground bg-background/50 p-2 rounded">
+              <Card className="p-3 bg-muted/50">
+                <p className="text-xs font-semibold text-muted-foreground mb-1.5">Format (one per line):</p>
+                <pre className="text-xs font-mono text-foreground bg-background/50 p-2 rounded leading-relaxed">
 {`+14155551234,John Doe
-@telegram_user,Jane Smith
-username123`}
+@telegram_user,Jane Smith`}
                 </pre>
               </Card>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label className="text-sm font-medium">Recipients</Label>
-                  <Button variant="outline" size="sm" onClick={onOpenDataSelect} className="h-8">
-                    <Database className="w-4 h-4 mr-2" />
+                  <Button variant="outline" size="sm" onClick={onOpenDataSelect} className="h-7 text-xs">
+                    <Database className="w-3.5 h-3.5 mr-1.5" />
                     From Data
                   </Button>
                 </div>
                 <Textarea
-                  placeholder={`+14155551234,John Doe\n@telegram_user\nusername123`}
+                  placeholder={`+14155551234,John Doe\n@telegram_user`}
                   value={recipientsText}
                   onChange={(e) => setRecipientsText(e.target.value)}
-                  rows={6}
+                  rows={4}
                   className="font-mono text-sm resize-none"
                 />
                 <div className="flex items-center justify-between text-xs">
@@ -413,9 +411,8 @@ username123`}
                 </div>
               </div>
 
-              {/* Distribution Preview */}
               {distributionPreview && (
-                <Card className="p-4 bg-primary/5 border-primary/20">
+                <Card className="p-3 bg-primary/5 border-primary/20">
                   <div className="flex items-center gap-2 mb-3">
                     <Users className="w-4 h-4 text-primary" />
                     <span className="text-sm font-medium text-primary">Distribution Preview</span>
@@ -440,12 +437,11 @@ username123`}
               )}
             </TabsContent>
             
-            {/* STEP 2: Messages */}
-            <TabsContent value="messages" className="space-y-4 mt-4 pb-4">
+            <TabsContent value="messages" className="space-y-3 mt-3 pb-4">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">Message Templates</Label>
-                <Button variant="outline" size="sm" onClick={addMessageTemplate} disabled={messageTemplates.length >= 10} className="h-8">
-                  <Plus className="w-4 h-4 mr-1" />
+                <Button variant="outline" size="sm" onClick={addMessageTemplate} disabled={messageTemplates.length >= 10} className="h-7 text-xs">
+                  <Plus className="w-3.5 h-3.5 mr-1" />
                   Add
                 </Button>
               </div>
@@ -495,8 +491,7 @@ username123`}
               </p>
             </TabsContent>
             
-            {/* STEP 3: Accounts */}
-            <TabsContent value="accounts" className="space-y-4 mt-4 pb-4">
+            <TabsContent value="accounts" className="space-y-3 mt-3 pb-4">
               <div className="flex items-center justify-between">
                 <Label className="text-sm font-medium">
                   Select Accounts 
@@ -627,13 +622,13 @@ username123`}
           </ScrollArea>
         </Tabs>
 
-        <div className="flex items-center justify-between gap-3 px-6 py-4 border-t bg-muted/30">
+        <div className="flex items-center justify-between gap-3 px-6 py-3 border-t bg-muted/30 shrink-0">
           <div className="text-xs text-muted-foreground">
             {recipientCount} recipients • {selectedAccountIds.length} accounts • {selectedSeatIds.length || 'No'} seat{selectedSeatIds.length !== 1 ? 's' : ''}
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-            <Button onClick={handleCreate} disabled={!isValid || isCreating}>
+            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button size="sm" onClick={handleCreate} disabled={!isValid || isCreating}>
               {isCreating ? 'Creating...' : 'Create Campaign'}
             </Button>
           </div>
