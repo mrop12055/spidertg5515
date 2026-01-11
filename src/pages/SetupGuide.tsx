@@ -1501,15 +1501,21 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     return None, "All proxies failed"
 
 
-async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
+async def sync_missed_messages(client, account_id: str, phone: str, last_synced_msg_ids: dict = None) -> tuple:
     """
     Sync missed messages after connection using TWO strategies:
     1. catch_up() - syncs updates since last connection (may fail if session is stale)
     2. fetch_dialogs() - explicitly fetches unread messages from all dialogs (always works)
     
+    Uses last_synced_msg_ids to skip messages that were already processed in previous runs.
+    
     Returns: (success: bool, needs_retry: bool)
     """
+    if last_synced_msg_ids is None:
+        last_synced_msg_ids = {}
+    
     fetched_count = 0
+    skipped_count = 0
     
     # Strategy 1: Try catch_up for recent updates (quick sync)
     try:
@@ -1548,14 +1554,28 @@ async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
                 sender_phone = f"+{sender_phone_raw}" if sender_phone_raw and not sender_phone_raw.startswith('+') else sender_phone_raw
                 sender_name = f"{getattr(sender, 'first_name', '') or ''} {getattr(sender, 'last_name', '') or ''}".strip() or str(sender_id)
                 
+                # Get the last synced message ID for this sender
+                sender_key = f"{account_id}_{sender_id}"
+                last_synced_id = last_synced_msg_ids.get(sender_key, 0)
+                
                 # Fetch unread messages from this dialog
                 messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 100))
                 
+                max_msg_id = last_synced_id
                 for msg in reversed(messages):  # Process oldest first
                     if msg.out:  # Skip outgoing
                         continue
                     if not msg.text and not msg.photo and not msg.video and not msg.document:
                         continue
+                    
+                    # SKIP if we've already processed this message ID
+                    if msg.id <= last_synced_id:
+                        skipped_count += 1
+                        continue
+                    
+                    # Track the highest message ID we've seen
+                    if msg.id > max_msg_id:
+                        max_msg_id = msg.id
                     
                     content = msg.text or ""
                     media_url = None
@@ -1588,6 +1608,10 @@ async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
                         "telegram_message_id": msg.id  # For deduplication on restart
                     })
                     fetched_count += 1
+                
+                # Update the last synced ID for this sender
+                if max_msg_id > last_synced_id:
+                    last_synced_msg_ids[sender_key] = max_msg_id
                     
             except Exception as e:
                 if not is_network_error(str(e)) and not is_telegram_server_error(str(e)):
@@ -1595,7 +1619,9 @@ async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
                 continue
         
         if fetched_count > 0:
-            print(f"  [{phone}] ✓ Recovered {fetched_count} missed messages")
+            print(f"  [{phone}] ✓ Recovered {fetched_count} missed messages (skipped {skipped_count} already synced)")
+        elif skipped_count > 0:
+            print(f"  [{phone}] ✓ Skipped {skipped_count} already synced messages")
         else:
             print(f"  [{phone}] ✓ No unread messages from contacts")
         return True, False
@@ -1615,14 +1641,19 @@ async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
         return False, False
 
 
-async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_dialogs: int = 30):
+async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_dialogs: int = 30, last_synced_msg_ids: dict = None):
     """
     Fallback: Fetch recent unread messages from dialogs if catch_up fails.
     This manually retrieves messages that were received while offline.
+    Uses last_synced_msg_ids to skip already-processed messages.
     """
+    if last_synced_msg_ids is None:
+        last_synced_msg_ids = {}
+    
     try:
         print(f"  [{phone}] Fetching recent dialog messages as fallback...")
         fetched_count = 0
+        skipped_count = 0
         
         dialogs = await asyncio.wait_for(client.get_dialogs(limit=max_dialogs), timeout=30)
         
@@ -1638,14 +1669,28 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                 if not is_contact:
                     continue
                 
+                sender_id = entity.id
+                sender_key = f"{account_id}_{sender_id}"
+                last_synced_id = last_synced_msg_ids.get(sender_key, 0)
+                
                 # Fetch unread messages
                 messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 50))
                 
+                max_msg_id = last_synced_id
                 for msg in reversed(messages):  # Process oldest first
                     if msg.out:  # Skip outgoing
                         continue
                     if not msg.text and not msg.photo:  # Skip non-text/photo
                         continue
+                    
+                    # SKIP if we've already processed this message ID
+                    if msg.id <= last_synced_id:
+                        skipped_count += 1
+                        continue
+                    
+                    # Track the highest message ID
+                    if msg.id > max_msg_id:
+                        max_msg_id = msg.id
                     
                     sender = await msg.get_sender()
                     if not sender or not hasattr(sender, 'id'):
@@ -1681,13 +1726,22 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                         "telegram_message_id": msg.id  # For deduplication on restart
                     })
                     fetched_count += 1
+                
+                # Update last synced ID
+                if max_msg_id > last_synced_id:
+                    last_synced_msg_ids[sender_key] = max_msg_id
                     
             except Exception as e:
                 if not is_network_error(str(e)):
                     print(f"    [WARN] Error fetching dialog: {e}")
                 continue
         
-        print(f"  [{phone}] Fetched {fetched_count} missed messages from dialogs")
+        if fetched_count > 0:
+            print(f"  [{phone}] Fetched {fetched_count} missed messages (skipped {skipped_count} already synced)")
+        elif skipped_count > 0:
+            print(f"  [{phone}] Skipped {skipped_count} already synced messages")
+        else:
+            print(f"  [{phone}] No new messages from dialogs")
         return True
     except asyncio.TimeoutError:
         print(f"  [{phone}] Dialog fetch timeout")
@@ -1923,17 +1977,19 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (MISSED MESSAGE RECOVERY)")
-    print("  BUILD: 2026-01-11-sync-recovery")
+    print("  LiveChat Runner (DEDUP FIX)")
+    print("  BUILD: 2026-01-11-dedup-v2")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⚡ Syncs missed messages on startup")
-    print("  🔄 Retry queue for Telegram server issues")
-    print("  📨 Fallback dialog fetch if sync fails")
+    print("  ⚡ Tracks last synced message IDs")
+    print("  🔄 Skips already-processed messages")
+    print("  📨 No more duplicate messages on restart")
+    print("=" * 50)
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
     failed_proxy_accounts = {}  # Track accounts that failed due to proxy {account_id: retry_time}
     pending_sync_accounts = {}  # Track accounts that need sync retry {account_id: (retry_time, phone)}
+    last_synced_msg_ids = {}  # Track last synced message IDs per sender to prevent duplicates {account_id_sender_id: msg_id}
     last_cleanup = time.time()
     last_heartbeat = time.time()
     last_sync_retry = time.time()
@@ -2004,7 +2060,7 @@ async def main_loop():
                             )
                             if client:
                                 # Sync missed messages after successful connection
-                                sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone)
+                                sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
                                 return acc_id, client, error, phone, needs_retry
                             return acc_id, client, error, phone, False
                         except asyncio.TimeoutError:
@@ -2072,7 +2128,7 @@ async def main_loop():
                     if client and client.is_connected():
                         try:
                             print(f"  [SYNC RETRY] Retrying sync for {phone}...")
-                            sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone)
+                            sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
                             
                             if sync_success:
                                 del pending_sync_accounts[acc_id]
@@ -2083,7 +2139,7 @@ async def main_loop():
                             else:
                                 # Sync failed but no retry needed - try fallback
                                 print(f"  [SYNC FALLBACK] Trying dialog fetch for {phone}...")
-                                await fetch_recent_dialog_messages(client, acc_id, phone)
+                                await fetch_recent_dialog_messages(client, acc_id, phone, 30, last_synced_msg_ids)
                                 del pending_sync_accounts[acc_id]
                                 
                         except Exception as e:
