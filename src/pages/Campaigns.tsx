@@ -517,30 +517,29 @@ const Campaigns: React.FC = () => {
   }, [campaignsLength, debouncedFetchReports, fetchReports]);
 
   // Fetch unique recipients per account for today (for campaign account selection display)
+  // Uses campaign_recipients table for accurate campaign send counts (not chat replies)
   const fetchAccountUniqueRecipients = useCallback(async () => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Get all outgoing messages sent today with their conversations (for recipient info)
-    const { data: todayMessages } = await supabase
-      .from('messages')
-      .select('account_id, conversation_id, conversations!inner(recipient_phone)')
-      .eq('direction', 'outgoing')
-      .in('status', ['sent', 'failed', 'pending'])
-      .gte('created_at', today.toISOString());
+    // Get all campaign recipients sent today - this is the accurate source for campaign messaging
+    const { data: todaySends } = await supabase
+      .from('campaign_recipients')
+      .select('sent_by_account_id, phone_number')
+      .eq('status', 'sent')
+      .gte('sent_at', today.toISOString());
     
-    if (!todayMessages) return;
+    if (!todaySends) return;
     
     // Count unique recipients per account
     const accountRecipients = new Map<string, Set<string>>();
-    todayMessages.forEach((msg: any) => {
-      const phone = msg.conversations?.recipient_phone;
-      if (!msg.account_id || !phone) return;
+    todaySends.forEach((send: any) => {
+      if (!send.sent_by_account_id || !send.phone_number) return;
       
-      if (!accountRecipients.has(msg.account_id)) {
-        accountRecipients.set(msg.account_id, new Set());
+      if (!accountRecipients.has(send.sent_by_account_id)) {
+        accountRecipients.set(send.sent_by_account_id, new Set());
       }
-      accountRecipients.get(msg.account_id)!.add(phone);
+      accountRecipients.get(send.sent_by_account_id)!.add(send.phone_number);
     });
     
     // Convert to count map
@@ -549,6 +548,7 @@ const Campaigns: React.FC = () => {
       countMap.set(accountId, phones.size);
     });
     
+    console.log('[Campaigns] Account unique recipients today:', Object.fromEntries(countMap));
     setAccountUniqueRecipients(countMap);
   }, []);
 
