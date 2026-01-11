@@ -168,7 +168,7 @@ async def switch_account_proxy(account_id: str, old_proxy_id: str = None) -> dic
 
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,
                                 auto_switch_proxy: bool = True, skip_avatar: bool = False,
-                                require_proxy: bool = True) -> Optional[TelegramClient]:
+                                require_proxy: bool = True, no_cache: bool = False) -> Optional[TelegramClient]:
     """
     Get or create a Telegram client for an account.
     
@@ -179,12 +179,14 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         auto_switch_proxy: If True, switch proxy on connection failure
         skip_avatar: If True, skip profile sync
         require_proxy: If True (default), skip account if no proxy assigned
+        no_cache: If True, skip client caching (REQUIRED for parallel asyncio.gather tasks
+                  to avoid 'asyncio event loop must not change' errors from Telethon)
     """
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
     
-    # ========== STEP 1: CHECK EXISTING CLIENT ==========
-    if account_id in active_clients:
+    # ========== STEP 1: CHECK EXISTING CLIENT (skip if no_cache) ==========
+    if not no_cache and account_id in active_clients:
         client = active_clients[account_id]
         try:
             if client.is_connected():
@@ -307,7 +309,9 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             await setup_handler(client, account_id)
             setattr(client, "_handler", True)
         
-        active_clients[account_id] = client
+        # Only cache if caching is enabled (not for parallel campaign tasks)
+        if not no_cache:
+            active_clients[account_id] = client
         asyncio.create_task(report_result("account_connected", {"account_id": account_id, "skip_profile_update": True}))
         
         print(f"  [OK] Connected: {account['phone_number']}")
@@ -683,12 +687,13 @@ Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
 """
 
-BUILD_VERSION = "2026-01-09-admin-speed"
+BUILD_VERSION = "2026-01-11-no-cache-fix"
 
 import asyncio
 import signal
 import time
 import random
+import traceback
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
@@ -713,42 +718,10 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def pre_connect_batch(tasks: list) -> int:
-    """Pre-connect all accounts in parallel BEFORE processing tasks.
-
-    This speeds up batch processing by connecting all clients upfront
-    instead of sequentially during task processing.
-
-    Returns: number of successfully pre-connected accounts
-    """
-    unique_accounts = {}
-    for t in tasks:
-        acc = t.get("account", {})
-        acc_id = acc.get("id")
-        if acc_id and acc_id not in unique_accounts:
-            unique_accounts[acc_id] = (acc, t.get("proxy"))
-
-    if not unique_accounts:
-        return 0
-
-    print(f"  ⚡ Pre-connecting {len(unique_accounts)} accounts in parallel...")
-
-    async def connect_one(account: dict, proxy: dict) -> bool:
-        try:
-            client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True)
-            return client is not None
-        except Exception as e:
-            print(f"    ⚠ Pre-connect failed for {account.get('phone_number', '???')[-4:]}: {e}")
-            return False
-
-    results = await asyncio.gather(
-        *[connect_one(acc, px) for acc, px in unique_accounts.values()],
-        return_exceptions=True
-    )
-
-    success_count = sum(1 for r in results if r is True)
-    print(f"  ✓ Pre-connection complete: {success_count}/{len(unique_accounts)} connected")
-    return success_count
+# NOTE: pre_connect_batch was REMOVED - it caused "asyncio event loop must not change" errors
+# because Telethon clients bind to the event loop where they were connected, and parallel
+# asyncio.gather tasks may run in different loop contexts. Instead, each task now creates
+# its own fresh client with no_cache=True.
 
 
 async def process_single_task(task: dict, stagger_min: float, stagger_max: float) -> dict:
@@ -783,9 +756,11 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             "account_id": account_id,
         }
 
+    client = None
     try:
-        # Get or create client with task-level proxy (auto-switch enabled)
-        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True)
+        # Get or create client with no_cache=True to avoid "asyncio event loop must not change" error
+        # Each parallel task needs its own isolated client connection
+        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
 
         if not client:
             result = {
@@ -860,7 +835,7 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
 
     except Exception as e:
         error_str = str(e)
-        print(f"    ✗ [{account_phone}] Error: {error_str[:50]}")
+        print(f"    ✗ [{account_phone}] Error: {error_str[:80]}")
         return {
             "success": False,
             "error": error_str,
@@ -868,6 +843,15 @@ async def process_single_task(task: dict, stagger_min: float, stagger_max: float
             "message_id": msg.get("id"),
             "account_id": account_id,
         }
+    finally:
+        # CRITICAL: Disconnect client after task to free session for other tasks
+        # Since we use no_cache=True, each task has its own client that must be cleaned up
+        if client:
+            try:
+                if client.is_connected():
+                    await asyncio.wait_for(client.disconnect(), timeout=3)
+            except Exception:
+                pass  # Ignore disconnect errors
 
 
 async def report_results_parallel(results: list) -> tuple:
@@ -1013,12 +997,9 @@ async def main_loop():
             print(f"     [fetch: {fetch_time:.2f}s]")
 
             try:
-                # === BATCH START: Fresh connections for this batch ===
-                connect_start = time.time()
-                await pre_connect_batch(tasks)
-                connect_time = time.time() - connect_start
-                print(f"     [connect: {connect_time:.2f}s]")
-
+                # NOTE: No pre_connect_batch - each task creates its own isolated client
+                # to avoid "asyncio event loop must not change" Telethon error
+                
                 # Execute ALL tasks in parallel with admin-controlled stagger
                 send_start = time.time()
                 results = await asyncio.gather(
