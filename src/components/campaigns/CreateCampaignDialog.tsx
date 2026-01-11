@@ -60,30 +60,36 @@ const AccountItem = memo(({
   onToggle: () => void;
   uniqueRecipientsToday: number;
   daysSinceCreation: number;
-}) => (
-  <div 
-    className={cn(
-      "flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all",
-      isSelected 
-        ? "bg-primary/10 border border-primary/30" 
-        : "hover:bg-accent border border-transparent"
-    )}
-    onClick={onToggle}
-  >
-    <Checkbox checked={isSelected} onCheckedChange={onToggle} />
-    <div className="flex-1 min-w-0">
-      <p className="text-sm font-medium truncate">
-        {account.firstName || account.phoneNumber}
-      </p>
-      <p className="text-xs text-muted-foreground truncate">
-        {account.phoneNumber} • {uniqueRecipientsToday}/{account.dailyLimit} today • {daysSinceCreation}d
-        {account.tags && account.tags.length > 0 && (
-          <span className="text-primary/70"> • {account.tags.join(', ')}</span>
-        )}
-      </p>
+}) => {
+  const handleCheckboxChange = (checked: boolean | "indeterminate") => {
+    onToggle();
+  };
+  
+  return (
+    <div 
+      className={cn(
+        "flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all",
+        isSelected 
+          ? "bg-primary/10 border border-primary/30" 
+          : "hover:bg-accent border border-transparent"
+      )}
+      onClick={onToggle}
+    >
+      <Checkbox checked={isSelected} onCheckedChange={handleCheckboxChange} />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">
+          {account.firstName || account.phoneNumber}
+        </p>
+        <p className="text-xs text-muted-foreground truncate">
+          {account.phoneNumber} • {uniqueRecipientsToday}/{account.dailyLimit} today • {daysSinceCreation}d
+          {account.tags && account.tags.length > 0 && (
+            <span className="text-primary/70"> • {account.tags.join(', ')}</span>
+          )}
+        </p>
+      </div>
     </div>
-  </div>
-));
+  );
+});
 AccountItem.displayName = 'AccountItem';
 
 // Memoized seat item
@@ -95,20 +101,26 @@ const SeatItem = memo(({
   seat: Seat; 
   isSelected: boolean; 
   onToggle: () => void;
-}) => (
-  <div 
-    className={cn(
-      "flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all",
-      isSelected 
-        ? "bg-primary/10 border border-primary/30" 
-        : "hover:bg-accent border border-transparent"
-    )}
-    onClick={onToggle}
-  >
-    <Checkbox checked={isSelected} onCheckedChange={onToggle} />
-    <span className="text-sm font-medium">{seat.name}</span>
-  </div>
-));
+}) => {
+  const handleCheckboxChange = (checked: boolean | "indeterminate") => {
+    onToggle();
+  };
+  
+  return (
+    <div 
+      className={cn(
+        "flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all",
+        isSelected 
+          ? "bg-primary/10 border border-primary/30" 
+          : "hover:bg-accent border border-transparent"
+      )}
+      onClick={onToggle}
+    >
+      <Checkbox checked={isSelected} onCheckedChange={handleCheckboxChange} />
+      <span className="text-sm font-medium">{seat.name}</span>
+    </div>
+  );
+});
 SeatItem.displayName = 'SeatItem';
 
 export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
