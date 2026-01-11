@@ -13,7 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Copy, Trash2, Users, MessageSquare, Send, Eye, 
-  ExternalLink, RefreshCw, CheckCircle, RotateCcw, Sparkles, Link2, AlertTriangle
+  ExternalLink, RefreshCw, CheckCircle, RotateCcw, Sparkles, Link2, AlertTriangle, Clock
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -38,9 +38,14 @@ interface SeatStats {
   responses_received: number;
 }
 
+interface PendingRepliesMap {
+  [seatId: string]: number;
+}
+
 const Seats: React.FC = () => {
   const [seats, setSeats] = useState<Seat[]>([]);
   const [seatStats, setSeatStats] = useState<Map<string, SeatStats>>(new Map());
+  const [pendingReplies, setPendingReplies] = useState<PendingRepliesMap>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newSeatName, setNewSeatName] = useState('');
@@ -69,6 +74,23 @@ const Seats: React.FC = () => {
           statsMap.set(s.seat_id, s);
         });
         setSeatStats(statsMap);
+      }
+
+      // Fetch pending replies count per seat
+      const { data: pendingData, error: pendingError } = await supabase
+        .from('campaign_recipients')
+        .select('seat_id')
+        .eq('status', 'pending')
+        .not('seat_id', 'is', null);
+
+      if (!pendingError && pendingData) {
+        const pendingMap: PendingRepliesMap = {};
+        pendingData.forEach((r) => {
+          if (r.seat_id) {
+            pendingMap[r.seat_id] = (pendingMap[r.seat_id] || 0) + 1;
+          }
+        });
+        setPendingReplies(pendingMap);
       }
     } catch (error) {
       console.error('Error fetching seats:', error);
@@ -446,7 +468,7 @@ const handleDeleteSeat = async (seat: Seat) => {
                       </div>
 
                       {/* Stats Grid */}
-                      <div className="grid grid-cols-3 gap-2 mb-4">
+                      <div className="grid grid-cols-4 gap-2 mb-4">
                         <div className="bg-muted/50 rounded-lg p-3 text-center">
                           <p className="text-lg font-bold">{stats?.total_conversations || 0}</p>
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Chats</p>
@@ -458,6 +480,23 @@ const handleDeleteSeat = async (seat: Seat) => {
                         <div className="bg-muted/50 rounded-lg p-3 text-center">
                           <p className="text-lg font-bold">{stats?.responses_received || 0}</p>
                           <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Replies</p>
+                        </div>
+                        <div className={`rounded-lg p-3 text-center ${
+                          (pendingReplies[seat.id] || 0) > 0 
+                            ? 'bg-orange-500/10 border border-orange-500/20' 
+                            : 'bg-muted/50'
+                        }`}>
+                          <div className="flex items-center justify-center gap-1">
+                            {(pendingReplies[seat.id] || 0) > 0 && (
+                              <Clock className="w-3 h-3 text-orange-500" />
+                            )}
+                            <p className={`text-lg font-bold ${
+                              (pendingReplies[seat.id] || 0) > 0 ? 'text-orange-500' : ''
+                            }`}>
+                              {pendingReplies[seat.id] || 0}
+                            </p>
+                          </div>
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Pending</p>
                         </div>
                       </div>
 
