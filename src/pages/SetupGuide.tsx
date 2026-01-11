@@ -1432,27 +1432,113 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
 
 async def sync_missed_messages(client, account_id: str, phone: str) -> tuple:
     """
-    Force sync missed messages after connection.
+    Sync missed messages after connection using TWO strategies:
+    1. catch_up() - syncs updates since last connection (may fail if session is stale)
+    2. fetch_dialogs() - explicitly fetches unread messages from all dialogs (always works)
+    
     Returns: (success: bool, needs_retry: bool)
-    - success=True: sync completed
-    - needs_retry=True: Telegram servers busy, should retry later
     """
+    fetched_count = 0
+    
+    # Strategy 1: Try catch_up for recent updates (quick sync)
     try:
-        print(f"  [{phone}] Syncing missed messages...")
-        await asyncio.wait_for(client.catch_up(), timeout=30)
-        print(f"  [{phone}] Message sync complete")
-        return True, False
+        print(f"  [{phone}] Quick sync via catch_up()...")
+        await asyncio.wait_for(client.catch_up(), timeout=15)
     except asyncio.TimeoutError:
-        print(f"  [{phone}] Sync timeout - will retry later")
+        print(f"  [{phone}] catch_up timeout - will fetch dialogs instead")
+    except Exception as e:
+        error_str = str(e).lower()
+        if is_telegram_server_error(error_str):
+            print(f"  [{phone}] Telegram servers busy during catch_up")
+        else:
+            print(f"  [{phone}] catch_up error: {str(e)[:40]}")
+    
+    # Strategy 2: ALWAYS fetch unread messages from dialogs (this is the reliable method)
+    try:
+        print(f"  [{phone}] Fetching unread messages from dialogs...")
+        dialogs = await asyncio.wait_for(client.get_dialogs(limit=50), timeout=30)
+        
+        for dialog in dialogs:
+            try:
+                # Only process private chats with unread messages
+                if not dialog.is_user or dialog.unread_count == 0:
+                    continue
+                
+                # Check if this is a contact (matches our early filter)
+                entity = dialog.entity
+                is_contact = getattr(entity, 'contact', False)
+                if not is_contact:
+                    continue
+                
+                sender = entity
+                sender_id = sender.id
+                sender_username = getattr(sender, 'username', None)
+                sender_phone_raw = getattr(sender, 'phone', None)
+                sender_phone = f"+{sender_phone_raw}" if sender_phone_raw and not sender_phone_raw.startswith('+') else sender_phone_raw
+                sender_name = f"{getattr(sender, 'first_name', '') or ''} {getattr(sender, 'last_name', '') or ''}".strip() or str(sender_id)
+                
+                # Fetch unread messages from this dialog
+                messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 100))
+                
+                for msg in reversed(messages):  # Process oldest first
+                    if msg.out:  # Skip outgoing
+                        continue
+                    if not msg.text and not msg.photo and not msg.video and not msg.document:
+                        continue
+                    
+                    content = msg.text or ""
+                    media_url = None
+                    media_type = None
+                    
+                    if msg.photo:
+                        content = "[Photo] " + (msg.text or "")
+                        media_type = "image"
+                    elif msg.video:
+                        content = "[Video] " + (msg.text or "")
+                        media_type = "video"
+                    elif msg.document:
+                        content = "[File] " + (msg.text or "")
+                        media_type = "document"
+                    
+                    if not content:
+                        content = "[Media]"
+                    
+                    # Report the missed message
+                    await report_result("incoming_message", {
+                        "account_id": account_id,
+                        "sender_id": sender_id,
+                        "sender_name": sender_name,
+                        "sender_username": sender_username,
+                        "sender_phone": sender_phone,
+                        "sender_avatar": None,
+                        "content": content,
+                        "media_url": media_url,
+                        "media_type": media_type
+                    })
+                    fetched_count += 1
+                    
+            except Exception as e:
+                if not is_network_error(str(e)) and not is_telegram_server_error(str(e)):
+                    print(f"    [WARN] Error processing dialog: {str(e)[:40]}")
+                continue
+        
+        if fetched_count > 0:
+            print(f"  [{phone}] ✓ Recovered {fetched_count} missed messages")
+        else:
+            print(f"  [{phone}] ✓ No unread messages from contacts")
+        return True, False
+        
+    except asyncio.TimeoutError:
+        print(f"  [{phone}] Dialog fetch timeout - will retry later")
         return False, True
     except Exception as e:
         error_str = str(e).lower()
         if is_telegram_server_error(error_str):
-            print(f"  [{phone}] Telegram servers busy, will retry sync later")
-            return False, True  # Retry later
+            print(f"  [{phone}] Telegram servers busy - will retry sync later")
+            return False, True
         if is_network_error(error_str):
-            print(f"  [{phone}] Network error during sync")
-            return False, True  # Retry later
+            print(f"  [{phone}] Network error during sync - will retry")
+            return False, True
         print(f"  [{phone}] Sync error: {e}")
         return False, False
 
