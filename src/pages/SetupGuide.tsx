@@ -747,128 +747,145 @@ signal.signal(signal.SIGTERM, signal_handler)
 # its own fresh client with no_cache=True.
 
 
-async def process_single_task(task: dict, stagger_min: float, stagger_max: float) -> dict:
-    """Process a single campaign send task with admin-controlled stagger.
-
-    stagger_min/stagger_max = 0: Ultra-fast mode (no delay)
+async def process_account_tasks(account_id: str, tasks: list, stagger_min: float, stagger_max: float) -> list:
+    """Process ALL tasks for a single account using ONE connection.
+    
+    This prevents SQLite session locks when same account has multiple messages.
+    Tasks for this account run sequentially (same connection).
+    Different accounts run in parallel.
+    
+    stagger_min/stagger_max = 0: Ultra-fast mode (no delay between messages)
     stagger_min/stagger_max > 0: Controlled speed from admin dashboard
-
-    IMPORTANT: This function is fully isolated - any exception here
-    only affects this task, never crashes the whole runner.
     """
-    msg = task.get("message", {})
-    recipient = task.get("recipient")
-    recipient_name = task.get("recipient_name")
-    account = task.get("account", {})
-    proxy = task.get("proxy")
-    content = msg.get("content", "")
-
-    # Get campaign metadata from task (passed from get-batch-tasks)
-    campaign_seat_id = task.get("campaign_seat_id")
-    campaign_id = task.get("campaign_id")
-    campaign_name = task.get("campaign_name")
-
-    account_id = account.get("id")
+    results = []
+    if not tasks:
+        return results
+    
+    # Use first task's account/proxy info (all tasks for same account)
+    account = tasks[0].get("account", {})
+    proxy = tasks[0].get("proxy")
     account_phone = account.get("phone_number", "????")[-4:]
-
-    if not account_id or not recipient:
-        return {
-            "success": False,
-            "error": "Missing account or recipient",
-            "campaign_recipient_id": msg.get("campaign_recipient_id"),
-            "account_id": account_id,
-        }
-
+    
     client = None
     try:
-        # Get or create client with no_cache=True to avoid "asyncio event loop must not change" error
-        # Each parallel task needs its own isolated client connection
+        # Open session ONCE for all tasks for this account
         client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
-
+        
         if not client:
-            result = {
+            # Return error for all tasks if connection failed
+            print(f"    ✗ [{account_phone}] No client (for {len(tasks)} tasks)")
+            for task in tasks:
+                msg = task.get("message", {})
+                results.append({
+                    "success": False,
+                    "error": "Could not connect client",
+                    "campaign_recipient_id": msg.get("campaign_recipient_id"),
+                    "message_id": msg.get("id"),
+                    "account_id": account_id,
+                })
+            return results
+        
+        print(f"  📨 [{account_phone}] Sending {len(tasks)} messages...")
+        
+        # Send ALL messages for this account using the same connection
+        for idx, task in enumerate(tasks):
+            msg = task.get("message", {})
+            recipient = task.get("recipient")
+            recipient_name = task.get("recipient_name")
+            content = msg.get("content", "")
+            
+            # Get campaign metadata
+            campaign_seat_id = task.get("campaign_seat_id")
+            campaign_id = task.get("campaign_id")
+            campaign_name = task.get("campaign_name")
+            
+            # ADMIN-CONTROLLED STAGGER: if stagger_max > 0, add delay (skip for first message)
+            if stagger_max > 0 and idx > 0:
+                stagger_delay = random.uniform(stagger_min, stagger_max)
+                if stagger_delay > 0:
+                    await asyncio.sleep(stagger_delay)
+            
+            try:
+                send_res = await send_message(client, recipient, content, msg.get("media_url"))
+                
+                # Parse result
+                if isinstance(send_res, tuple) and len(send_res) == 3:
+                    success, error, meta = send_res
+                elif isinstance(send_res, tuple) and len(send_res) == 2:
+                    success, error = send_res
+                    meta = None
+                else:
+                    success, error, meta = False, f"Unexpected return: {type(send_res)}", None
+                
+                # Check if this is a sender-side issue (should retry with different account)
+                is_sender_error = error and any(x in error.lower() for x in [
+                    "privacyrestricted", "privacy restricted", "userprivacyrestricted",
+                    "too many requests", "sendmessagerequest"
+                ])
+                
+                # Get API credential ID
+                api_creds = account.get("telegram_api_credentials")
+                api_credential_id = api_creds.get("id") if api_creds else account.get("api_credential_id")
+                
+                result = {
+                    "success": success,
+                    "error": error,
+                    "campaign_recipient_id": msg.get("campaign_recipient_id"),
+                    "message_id": msg.get("id"),
+                    "account_id": account_id,
+                    "api_credential_id": api_credential_id,
+                    "content": content,
+                    "recipient_phone": recipient,
+                    "recipient_name": recipient_name,
+                    "campaign_seat_id": campaign_seat_id,
+                    "campaign_id": campaign_id,
+                    "campaign_name": campaign_name,
+                }
+                
+                if is_sender_error:
+                    result["skip_account"] = True
+                    result["retry_with_different_account"] = True
+                    print(f"    ⚠ [{account_phone}] → {recipient}: Sender error (will retry)")
+                elif success:
+                    print(f"    ✓ [{account_phone}] → {recipient}")
+                else:
+                    print(f"    ✗ [{account_phone}] → {recipient}: {error}")
+                
+                if meta:
+                    result.update(meta)
+                
+                results.append(result)
+                
+            except Exception as e:
+                error_str = str(e)
+                print(f"    ✗ [{account_phone}] → {recipient}: {error_str[:60]}")
+                results.append({
+                    "success": False,
+                    "error": error_str,
+                    "campaign_recipient_id": msg.get("campaign_recipient_id"),
+                    "message_id": msg.get("id"),
+                    "account_id": account_id,
+                })
+        
+        return results
+        
+    except Exception as e:
+        # Connection failed - return error for all tasks
+        error_str = str(e)
+        print(f"    ✗ [{account_phone}] Connection error: {error_str[:60]}")
+        for task in tasks:
+            msg = task.get("message", {})
+            results.append({
                 "success": False,
-                "error": "Could not connect client",
+                "error": error_str,
                 "campaign_recipient_id": msg.get("campaign_recipient_id"),
                 "message_id": msg.get("id"),
                 "account_id": account_id,
-            }
-            print(f"    ✗ [{account_phone}] No client")
-            return result
-
-        # ADMIN-CONTROLLED STAGGER: if stagger_max > 0, add delay
-        if stagger_max > 0:
-            stagger_delay = random.uniform(stagger_min, stagger_max)
-            if stagger_delay > 0:
-                await asyncio.sleep(stagger_delay)
-
-        print(f"  📨 [{account_phone}] → {recipient}")
-
-        send_res = await send_message(
-            client, recipient, content,
-            msg.get("media_url")
-        )
-        if isinstance(send_res, tuple) and len(send_res) == 3:
-            success, error, meta = send_res
-        elif isinstance(send_res, tuple) and len(send_res) == 2:
-            success, error = send_res
-            meta = None
-        else:
-            success, error, meta = False, f"Unexpected send_message return: {type(send_res)}", None
-
-        # Check if this is a sender-side issue (should retry with different account)
-        is_sender_error = error and any(x in error.lower() for x in [
-            "privacyrestricted", "privacy restricted", "userprivacyrestricted",
-            "too many requests", "sendmessagerequest"
-        ])
-
-        # Get API credential ID
-        api_creds = account.get("telegram_api_credentials")
-        api_credential_id = api_creds.get("id") if api_creds else account.get("api_credential_id")
-
-        result = {
-            "success": success,
-            "error": error,
-            "campaign_recipient_id": msg.get("campaign_recipient_id"),
-            "message_id": msg.get("id"),
-            "account_id": account_id,
-            "api_credential_id": api_credential_id,
-            "content": content,
-            "recipient_phone": recipient,
-            "recipient_name": recipient_name,
-            # Include campaign metadata for faster backend processing
-            "campaign_seat_id": campaign_seat_id,
-            "campaign_id": campaign_id,
-            "campaign_name": campaign_name,
-        }
-
-        if is_sender_error:
-            result["skip_account"] = True
-            result["retry_with_different_account"] = True
-            print(f"    ⚠ [{account_phone}] Sender error (will retry with different account)")
-        elif success:
-            print(f"    ✓ [{account_phone}] Sent")
-        else:
-            print(f"    ✗ [{account_phone}] {error}")
-
-        if meta:
-            result.update(meta)
-
-        return result
-
-    except Exception as e:
-        error_str = str(e)
-        print(f"    ✗ [{account_phone}] Error: {error_str[:80]}")
-        return {
-            "success": False,
-            "error": error_str,
-            "campaign_recipient_id": msg.get("campaign_recipient_id"),
-            "message_id": msg.get("id"),
-            "account_id": account_id,
-        }
+            })
+        return results
+        
     finally:
-        # CRITICAL: Disconnect client after task to free session for other tasks
-        # Since we use no_cache=True, each task has its own client that must be cleaned up
+        # CRITICAL: Disconnect after ALL messages for this account are done
         if client:
             try:
                 if client.is_connected():
@@ -1020,15 +1037,33 @@ async def main_loop():
             print(f"     [fetch: {fetch_time:.2f}s]")
 
             try:
-                # NOTE: No pre_connect_batch - each task creates its own isolated client
-                # to avoid "asyncio event loop must not change" Telethon error
+                # GROUP tasks by account_id to prevent SQLite session locks
+                # Each account opens ONE connection and sends ALL its messages
+                from collections import defaultdict
+                account_groups = defaultdict(list)
+                for task in tasks:
+                    acc_id = task.get("account", {}).get("id")
+                    if acc_id:
+                        account_groups[acc_id].append(task)
                 
-                # Execute ALL tasks in parallel with admin-controlled stagger
+                print(f"     [{len(tasks)} tasks across {len(account_groups)} accounts]")
+                
+                # Process each account group in parallel (sequential within each account)
                 send_start = time.time()
-                results = await asyncio.gather(
-                    *[process_single_task(task, stagger_min, stagger_max) for task in tasks],
+                group_results = await asyncio.gather(
+                    *[process_account_tasks(acc_id, acc_tasks, stagger_min, stagger_max) 
+                      for acc_id, acc_tasks in account_groups.items()],
                     return_exceptions=True
                 )
+                
+                # Flatten results from all groups
+                results = []
+                for group_result in group_results:
+                    if isinstance(group_result, list):
+                        results.extend(group_result)
+                    elif isinstance(group_result, Exception):
+                        print(f"  ⚠ Group error: {group_result}")
+                
                 send_time = time.time() - send_start
                 print(f"     [send: {send_time:.2f}s]")
 
