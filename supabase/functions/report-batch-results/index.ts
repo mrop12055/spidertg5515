@@ -299,11 +299,14 @@ serve(async (req) => {
 
       // ========== PARALLEL PROCESS FAILURES ==========
       if (failedResults.length > 0) {
-        const retryable = failedResults.filter((r) => r.retry_with_different_account);
-        const permanent = failedResults.filter((r) => !r.retry_with_different_account);
+        // Classify errors: API issues (privacy) vs Account issues vs Permanent failures
+        const retryWithDifferentApi = failedResults.filter((r) => r.retry_with_different_api);
+        const retryWithDifferentAccount = failedResults.filter((r) => r.retry_with_different_account && !r.retry_with_different_api);
+        const permanent = failedResults.filter((r) => !r.retry_with_different_account && !r.retry_with_different_api);
 
         const failPromises: Promise<any>[] = [];
 
+        // Handle permanent failures
         if (permanent.length > 0) {
           const permanentIds = permanent.map((r) => r.campaign_recipient_id);
           failPromises.push(
@@ -327,7 +330,58 @@ serve(async (req) => {
           }
         }
 
-        for (const r of retryable) {
+        // Handle API retry (privacy errors) - track failed_api_ids, clear API for reassignment
+        for (const r of retryWithDifferentApi) {
+          failPromises.push(
+            (async () => {
+              const { data: current } = await supabase
+                .from("campaign_recipients")
+                .select("failed_api_ids, retry_count")
+                .eq("id", r.campaign_recipient_id)
+                .single();
+
+              const failedApiIds: string[] = current?.failed_api_ids || [];
+              if (r.api_credential_id && !failedApiIds.includes(r.api_credential_id)) {
+                failedApiIds.push(r.api_credential_id);
+              }
+
+              const retryCount = (current?.retry_count || 0) + 1;
+              const maxApiRetries = 3;
+
+              if (retryCount >= maxApiRetries) {
+                // Exhausted API retries - mark as failed
+                await supabase
+                  .from("campaign_recipients")
+                  .update({
+                    status: "failed",
+                    failed_reason: `Privacy restricted after ${retryCount} API attempts`,
+                    sent_at: now,
+                    failed_api_ids: failedApiIds,
+                  })
+                  .eq("id", r.campaign_recipient_id);
+                console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} FAILED after ${retryCount} API attempts`);
+              } else {
+                // Retry with different API
+                await supabase
+                  .from("campaign_recipients")
+                  .update({
+                    status: "pending",
+                    sent_by_account_id: null,
+                    api_credential_id: null,  // Clear so it gets a different API
+                    failed_api_ids: failedApiIds,  // Track failed APIs
+                    failed_reason: null,
+                    retry_count: retryCount,
+                    scheduled_at: null,  // Reset scheduling
+                  })
+                  .eq("id", r.campaign_recipient_id);
+                console.log(`[report-batch-results] Privacy error - retry with different API (attempt ${retryCount}/${maxApiRetries}, failed APIs: ${failedApiIds.join(',')})`);
+              }
+            })()
+          );
+        }
+
+        // Handle account retry (rate limits, other account issues)
+        for (const r of retryWithDifferentAccount) {
           failPromises.push(
             (async () => {
               const { data: current } = await supabase
@@ -348,13 +402,16 @@ serve(async (req) => {
                   failed_reason: r.error,
                   failed_account_ids: failedIds,
                   sent_by_account_id: null,
+                  scheduled_at: null,  // Reset scheduling
                 })
                 .eq("id", r.campaign_recipient_id);
             })()
           );
         }
 
+        // Count permanent failures per campaign
         const failCounts = new Map<string, number>();
+        // Include API-exhausted failures in fail counts
         for (const r of permanent) {
           if (r.campaign_id) {
             failCounts.set(r.campaign_id, (failCounts.get(r.campaign_id) || 0) + 1);
@@ -382,7 +439,7 @@ serve(async (req) => {
         }
 
         await Promise.all(failPromises);
-        console.log(`[report-batch-results] Failed: ${failedResults.length} (${permanent.length} permanent)`);
+        console.log(`[report-batch-results] Failed: ${failedResults.length} (${permanent.length} permanent, ${retryWithDifferentApi.length} API-retry, ${retryWithDifferentAccount.length} account-retry)`);
       }
 
       const elapsed = Date.now() - startTime;
