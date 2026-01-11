@@ -808,52 +808,6 @@ serve(async (req) => {
           }
         }
 
-        // Fallback dedupe when telegram_message_id is missing (older runners)
-        // - Long text duplicates can happen hours later on runner restarts.
-        // - For media markers without media_url we keep a short window to avoid deleting real multiple photos.
-        if (!telegram_message_id && convId) {
-          const contentTrimmed = String(content || "").trim();
-          const lower = contentTrimmed.toLowerCase();
-          const isMediaMarker =
-            lower.startsWith("[photo]") ||
-            lower.startsWith("[video]") ||
-            lower.startsWith("[file]") ||
-            lower === "[media]";
-          const isLong = contentTrimmed.length >= 15;
-
-          const windowMs =
-            !media_url && isMediaMarker
-              ? 60 * 1000
-              : (isLong || (isMediaMarker && !!media_url))
-                ? 7 * 24 * 60 * 60 * 1000
-                : 60 * 1000;
-
-          const cutoffIso = new Date(Date.now() - windowMs).toISOString();
-
-          let dupQuery = supabase
-            .from("messages")
-            .select("id")
-            .eq("conversation_id", convId)
-            .eq("direction", "incoming")
-            .eq("content", contentTrimmed)
-            .gte("created_at", cutoffIso)
-            .limit(1);
-
-          if (media_url) {
-            dupQuery = dupQuery.eq("media_url", media_url);
-          }
-
-          const { data: dupMsg } = await dupQuery;
-
-          if (dupMsg && dupMsg.length > 0) {
-            console.log(`[report-task-result] SKIPPED: Legacy duplicate detected (no telegram_message_id, window=${windowMs}ms)`);
-            return new Response(
-              JSON.stringify({ success: true, skipped: true, reason: "legacy_duplicate" }),
-              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
-          }
-        }
-
         // Update existing conversation with sender info (link telegram_id)
         if (convId && existingConvData) {
           const updateData: Record<string, unknown> = {
