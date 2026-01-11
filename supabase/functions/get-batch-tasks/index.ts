@@ -507,6 +507,7 @@ serve(async (req) => {
       console.log(`[get-batch-tasks] Campaign sends today per account: ${JSON.stringify(Object.fromEntries(accountCampaignSentToday))}, limit: ${campaignMessagesPerAccountPerDay}`);
 
       // Filter accounts for campaigns using campaign-specific per-account limit
+      // Also calculate remaining quota for each account
       const campaignUsableAccounts = accountsWithAvailableApi.filter((a: any) => {
         const sentTodayCampaign = accountCampaignSentToday.get(a.id) || 0;
         if (sentTodayCampaign >= campaignMessagesPerAccountPerDay) {
@@ -518,6 +519,17 @@ serve(async (req) => {
 
       // Track API usage in this batch to avoid over-assigning
       const batchApiUsage = new Map<string, number>();
+      
+      // CRITICAL: Track per-account usage WITHIN THIS BATCH to enforce daily limits
+      // This prevents assigning 2 tasks to an account that only has 1 slot remaining
+      const batchAccountUsage = new Map<string, number>();
+      
+      // Helper function to get remaining quota for an account
+      const getRemainingAccountQuota = (accountId: string): number => {
+        const sentToday = accountCampaignSentToday.get(accountId) || 0;
+        const batchAssigned = batchAccountUsage.get(accountId) || 0;
+        return campaignMessagesPerAccountPerDay - sentToday - batchAssigned;
+      };
 
       // ========== STUCK SENDING RECOVERY (BATCH OPTIMIZED) ==========
       // Find "sending" recipients that have been stuck for over 2 minutes
@@ -730,7 +742,7 @@ serve(async (req) => {
           const campaign = recipient.campaigns;
           const failedAccountIds: string[] = recipient.failed_account_ids || [];
           
-          // Find eligible account
+          // Find eligible account - MUST check remaining quota (daily limit - sent today - batch assigned)
           let account = null;
           
           if (recipient.sent_by_account_id) {
@@ -738,7 +750,8 @@ serve(async (req) => {
             account = isNotFailed 
               ? campaignUsableAccounts.find((a: any) => {
                   if (a.id !== recipient.sent_by_account_id) return false;
-                  if (usedAccountIds.has(a.id)) return false;
+                  // CRITICAL: Check remaining quota instead of just usedAccountIds
+                  if (getRemainingAccountQuota(a.id) <= 0) return false;
                   if (a.api_credential_id) {
                     const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
                     const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
@@ -751,7 +764,8 @@ serve(async (req) => {
 
           if (!account) {
             account = campaignUsableAccounts.find((a: any) => {
-              if (usedAccountIds.has(a.id)) return false;
+              // CRITICAL: Check remaining quota instead of just usedAccountIds
+              if (getRemainingAccountQuota(a.id) <= 0) return false;
               if (failedAccountIds.includes(a.id)) return false;
               if (a.api_credential_id) {
                 const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
@@ -763,8 +777,9 @@ serve(async (req) => {
           }
 
           if (!account) {
+            // Check if any accounts have remaining quota (excluding failed ones)
             const eligibleAccounts = campaignUsableAccounts.filter((a: any) => 
-              !failedAccountIds.includes(a.id)
+              !failedAccountIds.includes(a.id) && getRemainingAccountQuota(a.id) > 0
             );
             
             if (eligibleAccounts.length === 0 && failedAccountIds.length > 0) {
@@ -783,6 +798,12 @@ serve(async (req) => {
             account_id: account.id,
             api_credential_id: account.api_credential_id
           });
+
+          // CRITICAL: Track account usage in this batch to enforce daily limits
+          batchAccountUsage.set(
+            account.id,
+            (batchAccountUsage.get(account.id) || 0) + 1
+          );
 
           // Track API usage in this batch
           if (account.api_credential_id) {
@@ -845,7 +866,7 @@ serve(async (req) => {
             disconnect_after: false,
           });
 
-          usedAccountIds.add(account.id);
+          // Note: Using batchAccountUsage for quota tracking, usedAccountIds still used for warmup/livechat
         }
       }
 
