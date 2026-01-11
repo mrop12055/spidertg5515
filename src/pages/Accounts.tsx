@@ -361,47 +361,73 @@ const Accounts: React.FC = () => {
     };
   }, [isAccountTaskRunning, accountTasksProgress]);
    
-  // Fetch unique conversations per account (unique people contacted)
+  // Fetch unique conversations per account (unique people contacted) - PARALLEL for speed
   useEffect(() => {
     const fetchUniqueConversations = async () => {
-      // Fetch conversation counts grouped by account_id - don't wait for accounts
       const counts = new Map<string, { total: number; withReplies: number }>();
-      let offset = 0;
-      const pageSize = 1000;
-      let hasMore = true;
+      const PAGE_SIZE = 1000;
+      const MAX_PAGES = 50; // Up to 50K conversations
       
-      while (hasMore) {
-        const { data, error } = await supabase
+      try {
+        // First page to check if we need more
+        const { data: firstPage, error: firstError } = await supabase
           .from('conversations')
           .select('account_id, has_reply')
           .eq('first_message_sent', true)
-          .range(offset, offset + pageSize - 1);
+          .range(0, PAGE_SIZE - 1);
         
-        if (error || !data) {
-          console.error('Error fetching conversations:', error);
-          hasMore = false;
-          break;
+        if (firstError || !firstPage) {
+          console.error('Error fetching conversations:', firstError);
+          return;
         }
         
-        data.forEach((conv: any) => {
+        // Process first page
+        firstPage.forEach((conv: any) => {
           const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
           existing.total += 1;
           if (conv.has_reply) existing.withReplies += 1;
           counts.set(conv.account_id, existing);
         });
         
-        hasMore = data.length === pageSize;
-        offset += pageSize;
+        // If first page is full, fetch remaining pages IN PARALLEL
+        if (firstPage.length === PAGE_SIZE) {
+          const pagePromises = [];
+          for (let page = 1; page < MAX_PAGES; page++) {
+            const from = page * PAGE_SIZE;
+            const to = from + PAGE_SIZE - 1;
+            pagePromises.push(
+              supabase
+                .from('conversations')
+                .select('account_id, has_reply')
+                .eq('first_message_sent', true)
+                .range(from, to)
+            );
+          }
+          
+          const results = await Promise.all(pagePromises);
+          
+          for (const result of results) {
+            if (result.data && result.data.length > 0) {
+              result.data.forEach((conv: any) => {
+                const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
+                existing.total += 1;
+                if (conv.has_reply) existing.withReplies += 1;
+                counts.set(conv.account_id, existing);
+              });
+            }
+            // Stop if we hit a page with less than PAGE_SIZE
+            if (!result.data || result.data.length < PAGE_SIZE) break;
+          }
+        }
+        
+        console.log(`Fetched unique conversations for ${counts.size} accounts`);
+        setUniqueConversations(counts);
+      } catch (err) {
+        console.error('Error in fetchUniqueConversations:', err);
       }
-      
-      console.log(`Fetched unique conversations for ${counts.size} accounts`);
-      setUniqueConversations(counts);
     };
     
-    // Fetch immediately on mount
     fetchUniqueConversations();
-    
-    // Also refetch when accounts change (in case of refresh)
     const interval = setInterval(fetchUniqueConversations, 60000);
     return () => clearInterval(interval);
   }, []);
