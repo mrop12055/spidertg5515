@@ -137,14 +137,29 @@ serve(async (req) => {
       console.log(`[get-batch-tasks] Livechat: ${activeAccounts.length} active accounts (including restricted)`);
     } else {
       // CAMPAIGN/WARMUP: Exclude restricted accounts (no new outreach allowed)
+      // First get all active accounts, then filter out those with future restricted_until in code
+      // This avoids Supabase .or() timestamp comparison issues
       const result = await supabase
         .from("telegram_accounts")
         .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-        .eq("status", "active")
-        .or(`restricted_until.is.null,restricted_until.lt.${nowIso}`);
-      activeAccounts = result.data || [];
+        .eq("status", "active");
+      
+      const allActiveAccounts = result.data || [];
+      
+      // Filter out accounts that are still restricted (restricted_until in the future)
+      activeAccounts = allActiveAccounts.filter((a: any) => {
+        if (!a.restricted_until) return true; // No restriction
+        const restrictedUntil = new Date(a.restricted_until);
+        const now = new Date();
+        if (restrictedUntil > now) {
+          console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - RESTRICTED until ${a.restricted_until}`);
+          return false;
+        }
+        return true; // Restriction has expired
+      });
+      
       accountsError = result.error;
-      console.log(`[get-batch-tasks] Campaign/Warmup: ${activeAccounts.length} active unrestricted accounts`);
+      console.log(`[get-batch-tasks] Campaign/Warmup: ${activeAccounts.length} active unrestricted accounts (filtered from ${allActiveAccounts.length} total active)`);
     }
 
     if (accountsError || !activeAccounts || activeAccounts.length === 0) {
