@@ -416,18 +416,20 @@ serve(async (req) => {
               
               // RATE LIMIT ERROR: Always retry with different account (no limit)
               // The recipient is NOT at fault - only the sender account hit rate limits
+              // CRITICAL: Also clear api_credential_id so it gets reassigned to a less-used API
               await supabase
                 .from("campaign_recipients")
                 .update({
                   status: "pending",
                   sent_by_account_id: null,  // Clear so different account picks it up
+                  api_credential_id: null,   // Clear so it gets reassigned to least-used API
                   failed_account_ids: failedAccountIds,
                   failed_reason: null,
                   retry_count: (currentRecipient?.retry_count || 0) + 1
                 })
                 .eq("id", campaign_recipient_id);
               
-              console.log(`[report-task-result] Rate limit - recipient reset to pending, will retry with different account (attempt ${failedAccountIds.length})`);
+              console.log(`[report-task-result] Rate limit (Too many requests) - account ${account_id} restricted 12h, recipient reset for different account/API (attempt ${failedAccountIds.length})`);
             }
           } else if (isTemporaryRestriction && !isSkipOnly && !isRetryable && account_id) {
             // TEMPORARY - set to restricted status with 12h cooldown
