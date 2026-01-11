@@ -128,7 +128,7 @@ const SeatChat: React.FC = () => {
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
-  const [showRepliedOnly, setShowRepliedOnly] = useState(false);
+  const [showRepliedOnly, setShowRepliedOnly] = useState(true);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
