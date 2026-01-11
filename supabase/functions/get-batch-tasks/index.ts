@@ -476,12 +476,14 @@ serve(async (req) => {
       todayStart.setUTCHours(0, 0, 0, 0);
       const todayStartIso = todayStart.toISOString();
 
-      // Query with OR for sent_at/scheduled_at since sent_at may be null for 'sending' status
+      // IMPORTANT: Filter by today on the DB side to avoid the 1000-row default limit skewing counts.
+      // Use sent_at when available, otherwise scheduled_at (sending rows may not have sent_at yet).
       const { data: todayCampaignSends } = await supabase
         .from("campaign_recipients")
         .select("sent_by_account_id, status, sent_at, scheduled_at")
         .in("status", ["sent", "sending"])
-        .not("sent_by_account_id", "is", null);
+        .not("sent_by_account_id", "is", null)
+        .or(`sent_at.gte.${todayStartIso},scheduled_at.gte.${todayStartIso}`);
 
       // Count sends per account - only count those from today
       const accountCampaignSentToday = new Map<string, number>();
