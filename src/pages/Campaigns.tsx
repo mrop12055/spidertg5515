@@ -165,61 +165,25 @@ const Campaigns: React.FC = () => {
   const accountsRef = React.useRef(accounts);
   accountsRef.current = accounts;
 
-  // FAST: Fetch only basic counts for all campaigns in parallel
-  // IMPORTANT: This should NOT call refreshData() to avoid infinite loops
-  const fetchReports = useCallback(async () => {
+  // FAST: Fetch only basic counts for RUNNING campaigns (lightweight refresh every second)
+  // This avoids refreshing completed/paused/draft campaigns unnecessarily
+  const fetchRunningCampaignStats = useCallback(async () => {
     const currentCampaigns = campaignsRef.current;
-    if (currentCampaigns.length === 0) return;
+    const runningCampaigns = currentCampaigns.filter(c => c.status === 'running');
+    
+    if (runningCampaigns.length === 0) return;
 
-    const newReports = new Map<string, CampaignReport>();
-
-    // Use COUNT queries (head:true) to avoid the PostgREST 1000-row cap.
     const results = await Promise.all(
-      currentCampaigns.map(async (campaign) => {
-        const [
-          totalRes,
-          sentRes,
-          failedRes,
-          pendingSendingRes,
-          queuedRes,
-        ] = await Promise.all([
-          supabase
-            .from('campaign_recipients')
-            .select('id', { count: 'exact', head: true })
-            .eq('campaign_id', campaign.id),
-          supabase
-            .from('campaign_recipients')
-            .select('id', { count: 'exact', head: true })
-            .eq('campaign_id', campaign.id)
-            .eq('status', 'sent'),
-          supabase
-            .from('campaign_recipients')
-            .select('id', { count: 'exact', head: true })
-            .eq('campaign_id', campaign.id)
-            .eq('status', 'failed'),
-          supabase
-            .from('campaign_recipients')
-            .select('id', { count: 'exact', head: true })
-            .eq('campaign_id', campaign.id)
-            .in('status', ['pending', 'sending']),
-          supabase
-            .from('campaign_recipients')
-            .select('id', { count: 'exact', head: true })
-            .eq('campaign_id', campaign.id)
-            .eq('status', 'queued'),
+      runningCampaigns.map(async (campaign) => {
+        const [totalRes, sentRes, failedRes, pendingSendingRes, queuedRes] = await Promise.all([
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).eq('status', 'sent'),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).eq('status', 'failed'),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).in('status', ['pending', 'sending']),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).eq('status', 'queued'),
         ]);
 
-        if (totalRes.error || sentRes.error || failedRes.error || pendingSendingRes.error || queuedRes.error) {
-          console.error('[Campaigns] fetchReports count error', {
-            campaignId: campaign.id,
-            totalError: totalRes.error,
-            sentError: sentRes.error,
-            failedError: failedRes.error,
-            pendingSendingError: pendingSendingRes.error,
-            queuedError: queuedRes.error,
-          });
-          return { campaignId: campaign.id, report: null as CampaignReport | null, campaign };
-        }
+        if (totalRes.error || sentRes.error || failedRes.error) return null;
 
         const total = totalRes.count || 0;
         const sentCount = sentRes.count || 0;
@@ -227,108 +191,80 @@ const Campaigns: React.FC = () => {
         const pendingSendingCount = pendingSendingRes.count || 0;
         const queuedCount = queuedRes.count || 0;
 
-        // Basic report without detailed failure info (loaded on-demand)
-        const report: CampaignReport = {
-          successful: sentCount,
-          failed: failedCount,
-          pending: pendingSendingCount,
-          unused: pendingSendingCount,
-          total,
-          failedRecipients: [],
-          accountStats: [],
-        };
+        return { campaignId: campaign.id, total, sentCount, failedCount, pendingSendingCount, queuedCount, campaign };
+      })
+    );
+
+    // Update only the running campaign reports in state
+    setCampaignReports((prev) => {
+      const updated = new Map(prev);
+      for (const result of results) {
+        if (!result) continue;
+        const existing = updated.get(result.campaignId);
+        updated.set(result.campaignId, {
+          successful: result.sentCount,
+          failed: result.failedCount,
+          pending: result.pendingSendingCount,
+          unused: result.pendingSendingCount,
+          total: result.total,
+          failedRecipients: existing?.failedRecipients || [],
+          accountStats: existing?.accountStats || [],
+        });
+
+        // Auto-complete if no pending/queued left
+        const remainingNotDone = result.pendingSendingCount + result.queuedCount;
+        if (remainingNotDone === 0 && result.total > 0) {
+          supabase.from('campaigns').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', result.campaignId);
+        }
+      }
+      return updated;
+    });
+  }, []);
+
+  // FULL: Fetch counts for ALL campaigns (used on mount and after campaign changes)
+  const fetchAllCampaignReports = useCallback(async () => {
+    const currentCampaigns = campaignsRef.current;
+    if (currentCampaigns.length === 0) return;
+
+    const results = await Promise.all(
+      currentCampaigns.map(async (campaign) => {
+        const [totalRes, sentRes, failedRes, pendingSendingRes] = await Promise.all([
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).eq('status', 'sent'),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).eq('status', 'failed'),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).in('status', ['pending', 'sending']),
+        ]);
+
+        if (totalRes.error) return null;
 
         return {
           campaignId: campaign.id,
-          report,
-          total,
-          sentCount,
-          failedCount,
-          pendingSendingCount,
-          queuedCount,
-          campaign,
+          total: totalRes.count || 0,
+          sentCount: sentRes.count || 0,
+          failedCount: failedRes.count || 0,
+          pendingSendingCount: pendingSendingRes.count || 0,
         };
       })
     );
 
-    // Process results and update state - NO refreshData() to prevent loops
-    const updatePromises: Promise<any>[] = [];
-
-    for (const result of results) {
-      if (!result.report) continue;
-      newReports.set(result.campaignId, result.report);
-
-      const campaign = result.campaign;
-      if (campaign) {
-        const countsMatch =
-          campaign.sentCount === result.sentCount &&
-          campaign.failedCount === result.failedCount &&
-          campaign.recipientCount === result.total;
-
-        // Only update if different
-        if (!countsMatch) {
-          updatePromises.push(
-            (async () => {
-              await supabase
-                .from('campaigns')
-                .update({
-                  sent_count: result.sentCount,
-                  failed_count: result.failedCount,
-                  recipient_count: result.total,
-                  updated_at: new Date().toISOString(),
-                })
-                .eq('id', result.campaignId);
-            })()
-          );
-        }
-
-        // Auto-complete running OR paused campaigns with no pending/queued recipients
-        const remainingNotDone = result.pendingSendingCount + result.queuedCount;
-        if (
-          (campaign.status === 'running' || campaign.status === 'paused') &&
-          remainingNotDone === 0 &&
-          result.total > 0
-        ) {
-          updatePromises.push(
-            (async () => {
-              await supabase
-                .from('campaigns')
-                .update({ status: 'completed', updated_at: new Date().toISOString() })
-                .eq('id', result.campaignId);
-            })()
-          );
-        }
-      }
-    }
-
-    // Execute all updates in parallel (fire and forget - no need to wait)
-    if (updatePromises.length > 0) {
-      Promise.all(updatePromises).catch(console.error);
-    }
-
-    // Merge new basic reports with existing detailed reports (don't overwrite detailed data)
     setCampaignReports((prev) => {
-      const merged = new Map(prev);
-      newReports.forEach((basicReport, campaignId) => {
-        const existing = merged.get(campaignId);
-        if (existing && existing.failedRecipients.length > 0) {
-          // Preserve detailed data, only update counts
-          merged.set(campaignId, {
-            ...existing,
-            successful: basicReport.successful,
-            failed: basicReport.failed,
-            pending: basicReport.pending,
-            unused: basicReport.unused,
-            total: basicReport.total,
-          });
-        } else {
-          merged.set(campaignId, basicReport);
-        }
-      });
-      return merged;
+      const updated = new Map(prev);
+      for (const result of results) {
+        if (!result) continue;
+        const existing = updated.get(result.campaignId);
+        updated.set(result.campaignId, {
+          successful: result.sentCount,
+          failed: result.failedCount,
+          pending: result.pendingSendingCount,
+          unused: result.pendingSendingCount,
+          total: result.total,
+          failedRecipients: existing?.failedRecipients || [],
+          accountStats: existing?.accountStats || [],
+        });
+      }
+      return updated;
     });
-    // REMOVED: refreshData() call that was causing infinite loops
-  }, []); // Empty deps - uses refs for current data
+  }, []);
 
   // DETAILED: Fetch full report for a single campaign (on-demand when dialog opens)
   const fetchSingleCampaignReport = useCallback(async (campaignId: string) => {
@@ -451,70 +387,46 @@ const Campaigns: React.FC = () => {
     }
   }, []);
 
-  // Fetch reports on mount and when campaigns change
+  // Fetch all reports on mount and when campaigns length changes
   const campaignsLength = campaigns.length;
   useEffect(() => {
-    if (campaignsLength > 0) fetchReports();
-  }, [campaignsLength, fetchReports]);
+    if (campaignsLength > 0) fetchAllCampaignReports();
+  }, [campaignsLength, fetchAllCampaignReports]);
 
-  // Debounced fetch to prevent too many updates - longer debounce for stability
-  const debounceTimerRef = useRef<number | null>(null);
-  const isFetchingRef = useRef(false);
-  
-  const debouncedFetchReports = useCallback(() => {
-    if (debounceTimerRef.current) {
-      window.clearTimeout(debounceTimerRef.current);
-    }
-    debounceTimerRef.current = window.setTimeout(async () => {
-      // Prevent concurrent fetches
-      if (isFetchingRef.current) return;
-      isFetchingRef.current = true;
-      try {
-        await fetchReports();
-      } finally {
-        isFetchingRef.current = false;
-      }
-    }, 2000); // Increased to 2 seconds to batch multiple rapid updates
-  }, [fetchReports]);
+  // Fast polling for RUNNING campaigns only - every 1 second
+  useEffect(() => {
+    const runningCount = campaigns.filter(c => c.status === 'running').length;
+    if (runningCount === 0) return;
 
-  // Real-time subscriptions - use stable channel names and longer debounce
+    // Immediate fetch for running campaigns
+    fetchRunningCampaignStats();
+
+    // Poll every 1 second for running campaigns only
+    const interval = window.setInterval(fetchRunningCampaignStats, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [campaigns, fetchRunningCampaignStats]);
+
+  // Listen for campaign status changes only (not recipient changes - too noisy)
   useEffect(() => {
     if (campaignsLength === 0) return;
-    
-    // Single channel for both tables to reduce overhead
+
     const channel = supabase
-      .channel('campaigns-page-updates')
+      .channel('campaigns-status-updates')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'campaign_recipients'
-        },
-        debouncedFetchReports
-      )
-      .on(
-        'postgres_changes',
-        {
-          event: 'UPDATE',
-          schema: 'public',
-          table: 'campaigns'
-        },
-        debouncedFetchReports
+        { event: 'UPDATE', schema: 'public', table: 'campaigns' },
+        () => {
+          // Only refresh the full list when campaign status changes
+          fetchAllCampaignReports();
+        }
       )
       .subscribe();
 
-    // Reduced polling to 60 seconds since realtime handles most updates
-    const interval = window.setInterval(fetchReports, 60000);
-
     return () => {
-      if (debounceTimerRef.current) {
-        window.clearTimeout(debounceTimerRef.current);
-      }
       supabase.removeChannel(channel);
-      window.clearInterval(interval);
     };
-  }, [campaignsLength, debouncedFetchReports, fetchReports]);
+  }, [campaignsLength, fetchAllCampaignReports]);
 
   // Fetch unique recipients per account for today (for campaign account selection display)
   // Uses campaign_recipients table for accurate campaign send counts (not chat replies)
@@ -815,8 +727,8 @@ const Campaigns: React.FC = () => {
     setIsStarting(campaignId);
     
     await startCampaign(campaignId);
-    // Refresh counts quickly after queueing
-    await fetchReports();
+    // Refresh all counts after starting (the fast polling will take over for running campaigns)
+    await fetchAllCampaignReports();
     setIsStarting(null);
   };
 
