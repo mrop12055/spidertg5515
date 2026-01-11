@@ -146,10 +146,17 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       setIsLoading(true);
       
       // Run ALL queries in parallel for maximum speed
-      // NOTE: PostgREST enforces a default max of 1000 rows per request, so we page conversations.
-      const fetchConversationsPaged = async (): Promise<{ data: any[] | null; error: any | null }> => {
+      // NOTE: PostgREST enforces a default max of 1000 rows per request, so we page large tables.
+      
+      // Generic paged fetcher for any table - bypasses Supabase 1000 row default limit
+      const fetchPaged = async (
+        tableName: string,
+        selectColumns: string,
+        orderColumn: string = 'created_at',
+        filters?: (query: any) => any
+      ): Promise<{ data: any[] | null; error: any | null }> => {
         const PAGE_SIZE = 1000;
-        const MAX_PAGES = 1000; // safety cap (up to 1,000,000 rows)
+        const MAX_PAGES = 100; // safety cap (up to 100,000 rows)
 
         const all: any[] = [];
 
@@ -158,13 +165,18 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             const from = page * PAGE_SIZE;
             const to = from + PAGE_SIZE - 1;
 
-            const { data, error } = await supabase
-              .from('conversations')
-              .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply')
-              .eq('first_message_sent', true)
-              .not('last_message_at', 'is', null)
-              .order('created_at', { ascending: false })
+            // Use 'as any' to allow dynamic table names
+            let query = (supabase.from as any)(tableName)
+              .select(selectColumns)
+              .order(orderColumn, { ascending: false })
               .range(from, to);
+
+            // Apply optional filters
+            if (filters) {
+              query = filters(query);
+            }
+
+            const { data, error } = await query;
 
             if (error) throw error;
             if (!data || data.length === 0) break;
@@ -181,19 +193,17 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       };
 
       const [accountsResult, proxiesResult, campaignsResult, conversationsResult, messagesResult] = await Promise.all([
-        // Fetch accounts - exclude large session_data column for performance
-        // No limit - fetch all accounts for proper display
-        supabase
-          .from('telegram_accounts')
-          .select('id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id')
-          .order('created_at', { ascending: false }),
+        // Fetch accounts - PAGED to bypass 1000 row limit (supports 20K+ accounts)
+        fetchPaged(
+          'telegram_accounts',
+          'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id'
+        ),
 
-        // Fetch proxies - select only needed columns for performance
-        supabase
-          .from('proxies')
-          .select('id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country')
-          .order('created_at', { ascending: false })
-          .limit(1000),
+        // Fetch proxies - PAGED to bypass 1000 row limit (supports 10K+ proxies)
+        fetchPaged(
+          'proxies',
+          'id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country'
+        ),
 
         // Fetch campaigns
         supabase
@@ -201,8 +211,13 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           .select('*, campaign_accounts(account_id)')
           .order('created_at', { ascending: false }),
 
-        // Fetch conversations (paged; no effective 1000-row cap)
-        fetchConversationsPaged(),
+        // Fetch conversations - PAGED with filters
+        fetchPaged(
+          'conversations',
+          'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id',
+          'created_at',
+          (q: any) => q.eq('first_message_sent', true).not('last_message_at', 'is', null)
+        ),
 
         // Fetch messages (no limit - show all)
         supabase
