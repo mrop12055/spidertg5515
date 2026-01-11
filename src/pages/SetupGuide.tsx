@@ -845,7 +845,7 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                 if is_sender_error:
                     result["skip_account"] = True
                     result["retry_with_different_account"] = True
-                    print(f"    ⚠ [{account_phone}] → {recipient}: Sender error (will retry)")
+                    print(f"    ⚠ [{account_phone}] → {recipient}: {error} (will retry with diff account)")
                 elif success:
                     print(f"    ✓ [{account_phone}] → {recipient}")
                 else:
