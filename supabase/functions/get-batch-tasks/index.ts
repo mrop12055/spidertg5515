@@ -600,20 +600,40 @@ serve(async (req) => {
       // ========== STUCK SENDING RECOVERY (TIME-BASED) ==========
       // Find "sending" recipients that have been stuck for over 2 minutes
       // These are tasks that were assigned but never completed (runner crash, timeout, etc.)
+      // ALSO recover recipients with NULL scheduled_at (orphaned from previous bugs)
       const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
       
       // Query for sending recipients with scheduled_at older than 2 minutes
-      const { data: stuckSendingRecipients } = await supabase
-        .from("campaign_recipients")
-        .select("id, campaign_id, sent_by_account_id")
-        .eq("status", "sending")
-        .in("campaign_id", campaignIds)
-        .lt("scheduled_at", twoMinutesAgo)
-        .limit(200);
+      const [{ data: stuckSendingRecipients }, { data: orphanedSendingRecipients }] = await Promise.all([
+        supabase
+          .from("campaign_recipients")
+          .select("id, campaign_id, sent_by_account_id")
+          .eq("status", "sending")
+          .in("campaign_id", campaignIds)
+          .lt("scheduled_at", twoMinutesAgo)
+          .limit(200),
+        // ALSO find "sending" recipients with NULL scheduled_at - these are orphaned
+        supabase
+          .from("campaign_recipients")
+          .select("id, campaign_id, sent_by_account_id")
+          .eq("status", "sending")
+          .in("campaign_id", campaignIds)
+          .is("scheduled_at", null)
+          .limit(200)
+      ]);
 
-      if (stuckSendingRecipients && stuckSendingRecipients.length > 0) {
-        const stuckIds = stuckSendingRecipients.map(r => r.id);
-        console.log(`[get-batch-tasks] Recovering ${stuckIds.length} stuck sending recipients (scheduled > 2 min ago)`);
+      // Combine both stuck and orphaned recipients
+      const allStuckRecipients = [
+        ...(stuckSendingRecipients || []),
+        ...(orphanedSendingRecipients || [])
+      ];
+      
+      // Deduplicate by id (in case any overlap)
+      const stuckIdsSet = new Set(allStuckRecipients.map(r => r.id));
+      const stuckIds = Array.from(stuckIdsSet);
+
+      if (stuckIds.length > 0) {
+        console.log(`[get-batch-tasks] Recovering ${stuckIds.length} stuck sending recipients (${stuckSendingRecipients?.length || 0} timed out, ${orphanedSendingRecipients?.length || 0} orphaned)`);
         
         // Batch update all stuck recipients at once - reset to pending for retry
         await supabase
