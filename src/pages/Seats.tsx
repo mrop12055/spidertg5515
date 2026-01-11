@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -11,7 +11,6 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Skeleton } from '@/components/ui/skeleton';
 import { 
   Plus, Copy, Trash2, Users, MessageSquare, Send, Eye, 
   ExternalLink, RefreshCw, CheckCircle, RotateCcw, Sparkles, Link2, AlertTriangle, Clock
@@ -19,6 +18,7 @@ import {
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { format } from 'date-fns';
+import { motion } from 'framer-motion';
 
 interface Seat {
   id: string;
@@ -266,14 +266,6 @@ const handleDeleteSeat = async (seat: Seat) => {
     window.open(getSeatLink(seat), '_blank');
   };
 
-  // Memoized stats calculations to prevent re-renders
-  const totalStats = useMemo(() => ({
-    totalSeats: seats.length,
-    activeSeats: seats.filter(s => s.is_active).length,
-    totalConversations: Array.from(seatStats.values()).reduce((sum, s) => sum + s.total_conversations, 0),
-    messagesSentToday: Array.from(seatStats.values()).reduce((sum, s) => sum + s.messages_sent_today, 0),
-  }), [seats, seatStats]);
-
   return (
     <DashboardLayout>
       <PageHeader 
@@ -292,7 +284,7 @@ const handleDeleteSeat = async (seat: Seat) => {
                   <Users className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{totalStats.totalSeats}</p>
+                  <p className="text-2xl font-bold">{seats.length}</p>
                   <p className="text-sm text-muted-foreground">Total Seats</p>
                 </div>
               </div>
@@ -306,7 +298,7 @@ const handleDeleteSeat = async (seat: Seat) => {
                   <CheckCircle className="w-5 h-5 text-green-500" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{totalStats.activeSeats}</p>
+                  <p className="text-2xl font-bold">{seats.filter(s => s.is_active).length}</p>
                   <p className="text-sm text-muted-foreground">Active Seats</p>
                 </div>
               </div>
@@ -320,7 +312,9 @@ const handleDeleteSeat = async (seat: Seat) => {
                   <MessageSquare className="w-5 h-5 text-blue-500" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{totalStats.totalConversations}</p>
+                  <p className="text-2xl font-bold">
+                    {Array.from(seatStats.values()).reduce((sum, s) => sum + s.total_conversations, 0)}
+                  </p>
                   <p className="text-sm text-muted-foreground">Total Conversations</p>
                 </div>
               </div>
@@ -334,7 +328,9 @@ const handleDeleteSeat = async (seat: Seat) => {
                   <Send className="w-5 h-5 text-orange-500" />
                 </div>
                 <div>
-                  <p className="text-2xl font-bold">{totalStats.messagesSentToday}</p>
+                  <p className="text-2xl font-bold">
+                    {Array.from(seatStats.values()).reduce((sum, s) => sum + s.messages_sent_today, 0)}
+                  </p>
                   <p className="text-sm text-muted-foreground">Sent Today</p>
                 </div>
               </div>
@@ -478,13 +474,14 @@ const handleDeleteSeat = async (seat: Seat) => {
                             </p>
                           </div>
                         </div>
-                        <button
+                        <motion.button
                           onClick={() => handleToggleActive(seat)}
-                          className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-200 active:scale-95 ${
+                          className={`relative flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium transition-all duration-300 ${
                             seat.is_active 
                               ? 'bg-green-500/15 text-green-600 hover:bg-green-500/25' 
                               : 'bg-muted text-muted-foreground hover:bg-muted/80'
                           }`}
+                          whileTap={{ scale: 0.95 }}
                         >
                           <div
                             className={`w-2 h-2 rounded-full ${
@@ -492,7 +489,7 @@ const handleDeleteSeat = async (seat: Seat) => {
                             }`}
                           />
                           <span>{seat.is_active ? 'Active' : 'Inactive'}</span>
-                        </button>
+                        </motion.button>
                       </div>
 
                       {/* Stats Grid */}

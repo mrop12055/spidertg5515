@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -9,9 +10,9 @@ import { EmojiPicker } from '@/components/ui/emoji-picker';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
-  Send, MessageSquare, CheckCheck, Check, Clock, Users, Settings,
-  AlertCircle, Search, EyeOff, MoreVertical,
-  X, Loader2, Phone, Paperclip, BarChart3,
+  Send, MessageSquare, Users, Eye, CheckCheck, Check, 
+  RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
+  Image, X, Loader2, Phone, Smile, Paperclip, BarChart3, Settings,
   Pin, PinOff, EyeIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -19,8 +20,6 @@ import { supabase } from '@/integrations/supabase/client';
 import { format, isToday, isYesterday, subDays, differenceInMinutes } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
-import ConversationList from '@/components/chat/ConversationList';
-import MessageList from '@/components/chat/MessageList';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -148,13 +147,8 @@ const SeatChat: React.FC = () => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Toggle pin conversation in database - memoized
-  const togglePinConversation = useCallback(async (convId: string, currentlyPinned: boolean) => {
-    // Optimistic update
-    setConversations(prev => prev.map(conv => 
-      conv.id === convId ? { ...conv, is_pinned: !currentlyPinned } : conv
-    ));
-    
+  // Toggle pin conversation in database
+  const togglePinConversation = async (convId: string, currentlyPinned: boolean) => {
     try {
       const { error } = await supabase
         .from('conversations')
@@ -164,27 +158,15 @@ const SeatChat: React.FC = () => {
       if (error) throw error;
       
       toast.success(currentlyPinned ? 'Conversation unpinned' : 'Conversation pinned');
+      fetchConversations();
     } catch (err) {
-      // Revert on error
-      setConversations(prev => prev.map(conv => 
-        conv.id === convId ? { ...conv, is_pinned: currentlyPinned } : conv
-      ));
       console.error('Error toggling pin:', err);
       toast.error('Failed to update conversation');
     }
-  }, []);
+  };
 
-  // Toggle hide conversation in database - memoized with optimistic update
-  const toggleHideConversation = useCallback(async (convId: string, currentlyHidden: boolean) => {
-    // Optimistic update
-    setConversations(prev => prev.map(conv => 
-      conv.id === convId ? { ...conv, is_hidden: !currentlyHidden } : conv
-    ));
-    
-    if (!currentlyHidden && selectedConversation?.id === convId) {
-      setSelectedConversation(null);
-    }
-    
+  // Toggle hide conversation in database
+  const toggleHideConversation = async (convId: string, currentlyHidden: boolean) => {
     try {
       const { error } = await supabase
         .from('conversations')
@@ -193,16 +175,17 @@ const SeatChat: React.FC = () => {
       
       if (error) throw error;
       
+      if (!currentlyHidden && selectedConversation?.id === convId) {
+        setSelectedConversation(null);
+      }
+      
       toast.success(currentlyHidden ? 'Conversation unhidden' : 'Conversation hidden');
+      fetchConversations();
     } catch (err) {
-      // Revert on error
-      setConversations(prev => prev.map(conv => 
-        conv.id === convId ? { ...conv, is_hidden: currentlyHidden } : conv
-      ));
       console.error('Error toggling hide:', err);
       toast.error('Failed to update conversation');
     }
-  }, [selectedConversation?.id]);
+  };
 
   // Time filter cutoff - memoized
   const timeFilterCutoff = React.useMemo(() => {
@@ -508,11 +491,11 @@ const SeatChat: React.FC = () => {
   const fetchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastFetchRef = useRef<number>(0);
 
-  // Debounced refetch helper - prevents rapid re-renders and flickering
-  const debouncedRefetch = useCallback((fetchFn: () => void, delay = 1500) => {
+  // Debounced refetch helper - prevents rapid re-renders
+  const debouncedRefetch = useCallback((fetchFn: () => void, delay = 500) => {
     const now = Date.now();
-    // Skip if we just fetched within the last 500ms (increased from 300ms)
-    if (now - lastFetchRef.current < 500) return;
+    // Skip if we just fetched within the last 300ms
+    if (now - lastFetchRef.current < 300) return;
     
     if (fetchTimeoutRef.current) {
       clearTimeout(fetchTimeoutRef.current);
@@ -600,13 +583,13 @@ const SeatChat: React.FC = () => {
     };
   }, [seat, selectedConversation, fetchMessages, fetchConversations, fetchStats, debouncedRefetch]);
 
-  // Refresh every 60 seconds (reduced from 30s for less aggressive polling)
+  // Refresh every 30 seconds (less aggressive than 10s)
   useEffect(() => {
     if (!seat) return;
     const interval = setInterval(() => {
       fetchConversations();
       fetchStats();
-    }, 60000);
+    }, 30000);
     return () => clearInterval(interval);
   }, [seat, fetchConversations, fetchStats]);
 
@@ -1182,21 +1165,166 @@ const SeatChat: React.FC = () => {
                 </div>
               </div>
 
-              {/* Conversation List - Memoized Component */}
+              {/* Conversation List */}
               <div className="flex-1 overflow-y-auto px-1.5">
-                <ConversationList
-                  conversations={filteredConversations}
-                  selectedConversationId={selectedConversation?.id || null}
-                  chatTab={chatTab}
-                  searchQuery={searchQuery}
-                  onSelectConversation={setSelectedConversation}
-                  onTogglePin={togglePinConversation}
-                  onToggleHide={toggleHideConversation}
-                  formatTime={formatConversationTime}
-                  getAvatarColor={getAvatarColor}
-                  getAvatarInitial={getAvatarInitial}
-                  getDisplayName={getDisplayName}
-                />
+                {filteredConversations.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-full py-12">
+                    <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-muted/80 to-muted/40 flex items-center justify-center mb-3 border border-border/50">
+                      {chatTab === 'hidden' ? (
+                        <EyeOff className="w-5 h-5 text-muted-foreground/50" />
+                      ) : chatTab === 'pinned' ? (
+                        <Pin className="w-5 h-5 text-muted-foreground/50" />
+                      ) : (
+                        <MessageSquare className="w-5 h-5 text-muted-foreground/50" />
+                      )}
+                    </div>
+                    <p className="text-foreground font-semibold text-xs">
+                      {chatTab === 'hidden' ? 'No hidden chats' : 
+                       chatTab === 'pinned' ? 'No pinned chats' : 
+                       'No conversations'}
+                    </p>
+                    <p className="text-[10px] text-muted-foreground/80 mt-1 text-center max-w-[160px]">
+                      {searchQuery ? 'No results match your search' : 
+                       chatTab === 'hidden' ? 'Hidden conversations appear here' :
+                       chatTab === 'pinned' ? 'Pin important conversations' :
+                       'New conversations will appear here'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-0.5 py-1.5">
+                    {filteredConversations.map((conv) => (
+                      <div
+                        key={conv.id}
+                        className={cn(
+                          "flex items-center gap-3.5 px-3 py-4 cursor-pointer transition-all duration-200 group rounded-xl",
+                          selectedConversation?.id === conv.id
+                            ? "bg-primary/10 border border-primary/30 shadow-sm shadow-primary/10"
+                            : "hover:bg-muted/60 border border-transparent"
+                        )}
+                        onClick={() => setSelectedConversation(conv)}
+                      >
+                        {/* Avatar */}
+                        <div className="relative flex-shrink-0">
+                          <Avatar className="w-14 h-14 ring-2 ring-background/80 shadow-md">
+                            <AvatarImage src={conv.recipient_avatar || ''} />
+                            <AvatarFallback className={cn(
+                              "bg-gradient-to-br text-white text-base font-bold",
+                              getAvatarColor(conv.recipient_phone)
+                            )}>
+                              {getAvatarInitial(conv)}
+                            </AvatarFallback>
+                          </Avatar>
+                          {conv.is_pinned && (
+                            <span className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-amber-500 border-2 border-card flex items-center justify-center">
+                              <Pin className="w-2.5 h-2.5 text-white" />
+                            </span>
+                          )}
+                          {conv.unread_count > 0 && (
+                            <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-card animate-pulse" />
+                          )}
+                        </div>
+                        
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <p className="font-semibold text-base text-foreground truncate">
+                                {getDisplayName(conv)}
+                              </p>
+                              {conv.first_message_sent && (
+                                <span className="flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
+                                  Campaign
+                                </span>
+                              )}
+                            </div>
+                            <span className={cn(
+                              "text-sm flex-shrink-0 font-medium tabular-nums",
+                              conv.unread_count > 0 ? "text-primary font-semibold" : "text-muted-foreground/70"
+                            )}>
+                              {formatConversationTime(conv.last_message_at)}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2 mt-1.5">
+                            <p className={cn(
+                              "text-sm truncate",
+                              conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
+                            )}>
+                              {conv.last_message_content ? (
+                                <>
+                                  {conv.last_message_direction === 'outgoing' && (
+                                    <span className="text-muted-foreground/50">You: </span>
+                                  )}
+                                  {conv.last_message_content.slice(0, 45)}{conv.last_message_content.length > 45 ? '...' : ''}
+                                </>
+                              ) : (
+                                <span className="italic text-muted-foreground/50">No messages</span>
+                              )}
+                            </p>
+                            {conv.unread_count > 0 && (
+                              <span className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-[9px] font-bold min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1.5 flex-shrink-0 shadow-sm">
+                                {conv.unread_count}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Actions Menu */}
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <MoreVertical className="w-3 h-3" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground w-36">
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                togglePinConversation(conv.id, !!conv.is_pinned);
+                              }}
+                              className="text-muted-foreground hover:bg-muted focus:bg-muted text-xs"
+                            >
+                              {conv.is_pinned ? (
+                                <>
+                                  <PinOff className="w-3 h-3 mr-2" />
+                                  Unpin
+                                </>
+                              ) : (
+                                <>
+                                  <Pin className="w-3 h-3 mr-2" />
+                                  Pin
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                toggleHideConversation(conv.id, !!conv.is_hidden);
+                              }}
+                              className="text-muted-foreground hover:bg-muted focus:bg-muted text-xs"
+                            >
+                              {conv.is_hidden ? (
+                                <>
+                                  <EyeIcon className="w-3 h-3 mr-2" />
+                                  Unhide
+                                </>
+                              ) : (
+                                <>
+                                  <EyeOff className="w-3 h-3 mr-2" />
+                                  Hide
+                                </>
+                              )}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
