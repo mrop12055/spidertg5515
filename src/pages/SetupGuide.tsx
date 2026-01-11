@@ -604,6 +604,12 @@ async def disconnect_client(account_id: str, phone: str = None):
             active_clients.pop(account_id, None)
 
 
+def reset_http_client():
+    """Reset HTTP client - call after event loop restart to avoid 'Event loop is closed' error"""
+    global _http_client
+    _http_client = None
+
+
 async def shutdown_all():
     print("\\n[SHUTDOWN] Disconnecting...")
     for account_id, client in list(active_clients.items()):
@@ -686,7 +692,8 @@ import random
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
-    send_message, shutdown_all, disconnect_batch, report_batch_results
+    send_message, shutdown_all, disconnect_batch, report_batch_results,
+    active_clients, reset_http_client
 )
 
 # ========== GLOBAL STATE ==========
@@ -1069,6 +1076,8 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"\n⚠ Runner crashed: {e}")
             print("  Restarting in 5 seconds...")
+            # Reset HTTP client to avoid "Event loop is closed" error on restart
+            reset_http_client()
             import time
             time.sleep(5)
 
