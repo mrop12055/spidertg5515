@@ -376,7 +376,7 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
                   placeholder={`+14155551234,John Doe\n@telegram_user`}
                   value={recipientsText}
                   onChange={(e) => setRecipientsText(e.target.value)}
-                  rows={4}
+                  rows={10}
                   className="font-mono text-sm resize-none"
                 />
                 <div className="flex items-center justify-between text-xs">
