@@ -199,6 +199,7 @@ export type Database = {
           api_credential_id: string | null
           campaign_id: string
           failed_account_ids: string[] | null
+          failed_api_ids: string[] | null
           failed_reason: string | null
           id: string
           name: string | null
@@ -214,6 +215,7 @@ export type Database = {
           api_credential_id?: string | null
           campaign_id: string
           failed_account_ids?: string[] | null
+          failed_api_ids?: string[] | null
           failed_reason?: string | null
           id?: string
           name?: string | null
@@ -229,6 +231,7 @@ export type Database = {
           api_credential_id?: string | null
           campaign_id?: string
           failed_account_ids?: string[] | null
+          failed_api_ids?: string[] | null
           failed_reason?: string | null
           id?: string
           name?: string | null
