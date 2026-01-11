@@ -808,6 +808,37 @@ serve(async (req) => {
           }
         }
 
+        // Fallback DEDUPLICATION for legacy runners that don't send telegram_message_id
+        // This prevents re-inserting the same unread messages on every livechat restart.
+        // Heuristic: same content + same media in the same conversation within the last 24h.
+        // (Not perfect for extremely repetitive messages like "Ok", but avoids the restart spam.)
+        if (!telegram_message_id && convId && account_id) {
+          const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+
+          let q = supabase
+            .from("messages")
+            .select("id")
+            .eq("conversation_id", convId)
+            .eq("direction", "incoming")
+            .eq("content", content)
+            .gte("created_at", since)
+            .limit(1);
+
+          q = media_url ? q.eq("media_url", media_url) : q.is("media_url", null);
+          q = media_type ? q.eq("media_type", media_type) : q.is("media_type", null);
+
+          const { data: existingLegacy } = await q;
+          if (existingLegacy && existingLegacy.length > 0) {
+            console.log(
+              `[report-task-result] SKIPPED: Legacy duplicate detected (same content/media in last 24h, convId=${convId})`
+            );
+            return new Response(
+              JSON.stringify({ success: true, skipped: true, reason: "legacy_duplicate" }),
+              { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+        }
+
         // Update existing conversation with sender info (link telegram_id)
         if (convId && existingConvData) {
           const updateData: Record<string, unknown> = {
