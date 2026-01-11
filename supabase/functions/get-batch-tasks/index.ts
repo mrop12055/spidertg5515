@@ -903,11 +903,16 @@ serve(async (req) => {
             console.log(`[get-batch-tasks] Recipient ${recipient.id} assigned to account ${account.phone_number} with API ${account.api_credential_id} (avoiding ${failedApiIds.length} failed APIs)`);
           }
 
+          // Use the dynamically assigned API (_bestApi) for smart distribution
+          // This overrides the account's original api_credential_id for campaign tasks
+          const dynamicApiId = account._bestApi?.id || account.api_credential_id;
+          const dynamicApiCred = account._bestApi || account.telegram_api_credentials;
+
           // Collect for batch update
           recipientsToUpdate.push({
             id: recipient.id,
             account_id: account.id,
-            api_credential_id: account.api_credential_id
+            api_credential_id: dynamicApiId
           });
 
           // CRITICAL: Track account usage in this batch to enforce daily limits
@@ -916,11 +921,11 @@ serve(async (req) => {
             (batchAccountUsage.get(account.id) || 0) + 1
           );
 
-          // Track API usage in this batch
-          if (account.api_credential_id) {
+          // Track API usage in this batch - use the DYNAMIC API
+          if (dynamicApiId) {
             batchApiUsage.set(
-              account.api_credential_id,
-              (batchApiUsage.get(account.api_credential_id) || 0) + 1
+              dynamicApiId,
+              (batchApiUsage.get(dynamicApiId) || 0) + 1
             );
           }
 
@@ -929,7 +934,8 @@ serve(async (req) => {
             .replace(/{name}/g, recipient.name || 'there')
             .replace(/{phone}/g, recipient.phone_number);
 
-          const apiCred = account.telegram_api_credentials;
+          // Use the dynamically assigned API for the task (smart distribution)
+          const apiCred = dynamicApiCred || account.telegram_api_credentials;
           // For multi-seat campaigns: prioritize recipient-level seat_id over campaign-level
           const recipientCampaign = recipient.campaigns;
           const recipientSeatId = recipient.seat_id || recipientCampaign?.seat_id || null;
@@ -958,7 +964,7 @@ serve(async (req) => {
               api_id: apiCred?.api_id || account.api_id,
               api_hash: apiCred?.api_hash || account.api_hash,
               proxy_id: account.proxy_id,
-              api_credential_id: account.api_credential_id,
+              api_credential_id: dynamicApiId,  // Use dynamically assigned API
             },
             proxy: account.proxies
               ? {
