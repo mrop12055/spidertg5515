@@ -363,13 +363,6 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
                 </div>
               </div>
 
-              <Card className="p-3 bg-muted/50">
-                <p className="text-xs font-semibold text-muted-foreground mb-1.5">Format (one per line):</p>
-                <pre className="text-xs font-mono text-foreground bg-background/50 p-2 rounded leading-relaxed">
-{`+14155551234,John Doe
-@telegram_user,Jane Smith`}
-                </pre>
-              </Card>
 
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
