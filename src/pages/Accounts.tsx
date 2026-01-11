@@ -364,10 +364,7 @@ const Accounts: React.FC = () => {
   // Fetch unique conversations per account (unique people contacted)
   useEffect(() => {
     const fetchUniqueConversations = async () => {
-      const accountIds = accounts.map(a => a.id);
-      if (accountIds.length === 0) return;
-      
-      // Fetch conversation counts grouped by account_id
+      // Fetch conversation counts grouped by account_id - don't wait for accounts
       const counts = new Map<string, { total: number; withReplies: number }>();
       let offset = 0;
       const pageSize = 1000;
@@ -381,6 +378,7 @@ const Accounts: React.FC = () => {
           .range(offset, offset + pageSize - 1);
         
         if (error || !data) {
+          console.error('Error fetching conversations:', error);
           hasMore = false;
           break;
         }
@@ -396,13 +394,17 @@ const Accounts: React.FC = () => {
         offset += pageSize;
       }
       
+      console.log(`Fetched unique conversations for ${counts.size} accounts`);
       setUniqueConversations(counts);
     };
     
+    // Fetch immediately on mount
     fetchUniqueConversations();
+    
+    // Also refetch when accounts change (in case of refresh)
     const interval = setInterval(fetchUniqueConversations, 60000);
     return () => clearInterval(interval);
-  }, [accounts]);
+  }, []);
 
   // Extract unique tags from all accounts
   useEffect(() => {
