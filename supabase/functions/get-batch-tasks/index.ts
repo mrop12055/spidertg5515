@@ -805,12 +805,19 @@ serve(async (req) => {
           }
 
           if (!account) {
-            // SMART API SELECTION: Find account with API not in failedApiIds
-            // Sort by least-used API first to balance load
+            // ROUND-ROBIN DISTRIBUTION: Prioritize accounts with LEAST batch usage first
+            // This ensures even distribution across accounts (1 message each before reusing)
             const sortedAccounts = [...campaignUsableAccounts].sort((a: any, b: any) => {
-              const usageA = (apiUsageCounts.get(a.api_credential_id) || 0) + (batchApiUsage.get(a.api_credential_id) || 0);
-              const usageB = (apiUsageCounts.get(b.api_credential_id) || 0) + (batchApiUsage.get(b.api_credential_id) || 0);
-              return usageA - usageB;
+              // PRIMARY: Sort by batch usage (least used in this batch first)
+              const batchUsageA = batchAccountUsage.get(a.id) || 0;
+              const batchUsageB = batchAccountUsage.get(b.id) || 0;
+              if (batchUsageA !== batchUsageB) {
+                return batchUsageA - batchUsageB;
+              }
+              // SECONDARY: Sort by API usage for load balancing
+              const apiUsageA = (apiUsageCounts.get(a.api_credential_id) || 0) + (batchApiUsage.get(a.api_credential_id) || 0);
+              const apiUsageB = (apiUsageCounts.get(b.api_credential_id) || 0) + (batchApiUsage.get(b.api_credential_id) || 0);
+              return apiUsageA - apiUsageB;
             });
             
             account = sortedAccounts.find((a: any) => {
@@ -819,10 +826,6 @@ serve(async (req) => {
               if (failedAccountIds.includes(a.id)) return false;
               // CRITICAL: Skip accounts whose API already failed for this recipient
               if (a.api_credential_id && failedApiIds.includes(a.api_credential_id)) {
-                // Log when we skip due to failed API
-                if (failedApiIds.length > 0) {
-                  console.log(`[get-batch-tasks] SKIP account ${a.phone_number} - API ${a.api_credential_id} in failedApiIds`);
-                }
                 return false;
               }
               if (a.api_credential_id) {
