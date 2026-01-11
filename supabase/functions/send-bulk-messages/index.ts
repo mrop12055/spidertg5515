@@ -212,15 +212,33 @@ serve(async (req) => {
       // Get active accounts assigned to this campaign
       const accountIds = campaign.campaign_accounts?.map((ca: any) => ca.account_id) || [];
       
-      const { data: accounts, error: accountError } = await supabase
-        .from('telegram_accounts')
-        .select('id, status')
-        .in('id', accountIds)
-        .eq('status', 'active');
+      if (!accountIds.length) {
+        return new Response(
+          JSON.stringify({ error: 'No accounts assigned to campaign' }),
+          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
-      if (accountError) throw accountError;
+      // Batch account queries to avoid URL length limits (max ~50 UUIDs per query)
+      const BATCH_SIZE = 50;
+      const accountBatches: string[][] = [];
+      for (let i = 0; i < accountIds.length; i += BATCH_SIZE) {
+        accountBatches.push(accountIds.slice(i, i + BATCH_SIZE));
+      }
 
-      if (!accounts?.length) {
+      let activeAccountCount = 0;
+      for (const batch of accountBatches) {
+        const { count, error: batchError } = await supabase
+          .from('telegram_accounts')
+          .select('id', { count: 'exact', head: true })
+          .in('id', batch)
+          .eq('status', 'active');
+        
+        if (batchError) throw batchError;
+        activeAccountCount += count || 0;
+      }
+
+      if (activeAccountCount === 0) {
         return new Response(
           JSON.stringify({ error: 'No active accounts assigned to campaign' }),
           { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -244,7 +262,7 @@ serve(async (req) => {
       const totalPending = pendingCount || 0;
       const totalRecipients = totalQueued + totalPending;
       
-      console.log(`[send-bulk-messages] Starting campaign ${campaign_id}: ${totalQueued} queued, ${totalPending} pending, ${accounts.length} active accounts (QUEUE mode)`);
+      console.log(`[send-bulk-messages] Starting campaign ${campaign_id}: ${totalQueued} queued, ${totalPending} pending, ${activeAccountCount} active accounts (QUEUE mode)`);
 
       // Update campaign status to running - NO recipient updates here!
       await supabase
@@ -258,7 +276,7 @@ serve(async (req) => {
           queued: totalQueued,
           pending: totalPending,
           total: totalRecipients,
-          accounts: accounts.length,
+          accounts: activeAccountCount,
           message: `Campaign started with ${totalQueued} queued recipients. Batches will be released gradually based on settings.`
         }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
