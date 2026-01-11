@@ -553,44 +553,35 @@ serve(async (req) => {
         return campaignMessagesPerAccountPerDay - sentToday - batchAssigned;
       };
 
-      // ========== STUCK SENDING RECOVERY (BATCH OPTIMIZED) ==========
+      // ========== STUCK SENDING RECOVERY (TIME-BASED) ==========
       // Find "sending" recipients that have been stuck for over 2 minutes
-      // Use a single batch update instead of individual queries to avoid timeouts
+      // These are tasks that were assigned but never completed (runner crash, timeout, etc.)
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+      
+      // Query for sending recipients with scheduled_at older than 2 minutes
       const { data: stuckSendingRecipients } = await supabase
         .from("campaign_recipients")
         .select("id, campaign_id, sent_by_account_id")
         .eq("status", "sending")
         .in("campaign_id", campaignIds)
-        .limit(100);
+        .lt("scheduled_at", twoMinutesAgo)
+        .limit(200);
 
       if (stuckSendingRecipients && stuckSendingRecipients.length > 0) {
-        // Get all recipient IDs
         const stuckIds = stuckSendingRecipients.map(r => r.id);
+        console.log(`[get-batch-tasks] Recovering ${stuckIds.length} stuck sending recipients (scheduled > 2 min ago)`);
         
-        // Single query to find which recipients have messages
-        const { data: recipientsWithMessages } = await supabase
-          .from("messages")
-          .select("campaign_recipient_id")
-          .in("campaign_recipient_id", stuckIds);
-        
-        const idsWithMessages = new Set((recipientsWithMessages || []).map(m => m.campaign_recipient_id));
-        
-        // Filter to only truly stuck recipients (no message created)
-        const trulyStuckIds = stuckIds.filter(id => !idsWithMessages.has(id));
-        
-        if (trulyStuckIds.length > 0) {
-          console.log(`[get-batch-tasks] Batch recovering ${trulyStuckIds.length} stuck recipients`);
-          
-          // Batch update all stuck recipients at once
-          await supabase
-            .from("campaign_recipients")
-            .update({
-              status: "pending",
-              sent_by_account_id: null,
-              failed_reason: null
-            })
-            .in("id", trulyStuckIds);
-        }
+        // Batch update all stuck recipients at once - reset to pending for retry
+        await supabase
+          .from("campaign_recipients")
+          .update({
+            status: "pending",
+            sent_by_account_id: null,
+            api_credential_id: null,
+            scheduled_at: null,
+            failed_reason: null
+          })
+          .in("id", stuckIds);
       }
 
       // ========== RELEASE QUEUED RECIPIENTS TO PENDING (PARALLEL) ==========
