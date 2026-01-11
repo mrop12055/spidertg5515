@@ -634,61 +634,49 @@ const Campaigns: React.FC = () => {
       return shuffled;
     };
 
-    if (data.selectedSeatIds.length > 1) {
-      const shuffledRecipients = shuffleArray(parsedRecipients);
-      const seatCount = data.selectedSeatIds.length;
-      
-      // Distribute recipients evenly using round-robin for perfect balance
-      const recipientChunks: typeof parsedRecipients[] = Array.from({ length: seatCount }, () => []);
-      shuffledRecipients.forEach((recipient, index) => {
-        recipientChunks[index % seatCount].push(recipient);
-      });
-      
-      await Promise.all(data.selectedSeatIds.map(async (seatId, index) => {
-        const chunk = recipientChunks[index] || [];
-        if (chunk.length === 0) return null;
+    // Always create ONE campaign, assign seats to recipients via round-robin
+    const createdCampaign = await createCampaign({
+      name: data.name,
+      messageTemplate: mainMessage,
+      recipientCount: parsedRecipients.length,
+      accountIds: data.accountIds
+    });
+    
+    if (createdCampaign) {
+      // If multiple seats selected, shuffle and assign seat_id to each recipient
+      if (data.selectedSeatIds.length > 1) {
+        const shuffledRecipients = shuffleArray(parsedRecipients);
+        const seatCount = data.selectedSeatIds.length;
         
-        const seatName = seats.find(s => s.id === seatId)?.name || `Seat ${index + 1}`;
-        const createdCampaign = await createCampaign({
-          name: `${data.name} - ${seatName}`,
-          messageTemplate: mainMessage,
-          recipientCount: chunk.length,
-          accountIds: data.accountIds
-        });
+        // Assign seat_id to each recipient using round-robin
+        const recipientsWithSeats = shuffledRecipients.map((recipient, index) => ({
+          ...recipient,
+          seat_id: data.selectedSeatIds[index % seatCount]
+        }));
         
-        if (createdCampaign) {
-          await uploadRecipients(createdCampaign.id, chunk);
-          await supabase.from('campaigns').update({ 
-            batch_size: data.batchSize,
-            seat_id: seatId 
-          }).eq('id', createdCampaign.id);
-        }
-        return createdCampaign;
-      }));
-      
-      toast.success(`Created ${data.selectedSeatIds.length} campaigns with ${parsedRecipients.length} recipients distributed equally!`);
-    } else {
-      const createdCampaign = await createCampaign({
-        name: data.name,
-        messageTemplate: mainMessage,
-        recipientCount: parsedRecipients.length,
-        accountIds: data.accountIds
-      });
-      
-      if (createdCampaign) {
+        await uploadRecipients(createdCampaign.id, recipientsWithSeats);
+        
+        // Update campaign with batch size (no single seat_id since multiple seats)
+        await supabase.from('campaigns').update({ 
+          batch_size: data.batchSize 
+        }).eq('id', createdCampaign.id);
+        
+        toast.success(`Campaign created with ${parsedRecipients.length} recipients distributed across ${data.selectedSeatIds.length} seats!`);
+      } else {
+        // Single seat or no seat
         await uploadRecipients(createdCampaign.id, parsedRecipients);
         const updateData: any = { batch_size: data.batchSize };
         if (data.selectedSeatIds.length === 1) {
           updateData.seat_id = data.selectedSeatIds[0];
         }
         await supabase.from('campaigns').update(updateData).eq('id', createdCampaign.id);
+        
+        toast.success('Campaign created! Start it to begin sending.');
       }
-      
-      toast.success('Campaign created! Start it to begin sending.');
     }
     
     refreshData();
-  }, [seats, createCampaign, uploadRecipients, refreshData]);
+  }, [createCampaign, uploadRecipients, refreshData]);
 
   // Normalize recipient - handles phone numbers OR usernames
   const normalizeRecipient = (input: string): { identifier: string; isUsername: boolean } => {

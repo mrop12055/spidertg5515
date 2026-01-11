@@ -205,6 +205,7 @@ export type Database = {
           phone_number: string
           retry_count: number | null
           scheduled_at: string | null
+          seat_id: string | null
           sent_at: string | null
           sent_by_account_id: string | null
           status: string | null
@@ -219,6 +220,7 @@ export type Database = {
           phone_number: string
           retry_count?: number | null
           scheduled_at?: string | null
+          seat_id?: string | null
           sent_at?: string | null
           sent_by_account_id?: string | null
           status?: string | null
@@ -233,6 +235,7 @@ export type Database = {
           phone_number?: string
           retry_count?: number | null
           scheduled_at?: string | null
+          seat_id?: string | null
           sent_at?: string | null
           sent_by_account_id?: string | null
           status?: string | null
@@ -250,6 +253,20 @@ export type Database = {
             columns: ["campaign_id"]
             isOneToOne: false
             referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "campaign_recipients_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seat_stats"
+            referencedColumns: ["seat_id"]
+          },
+          {
+            foreignKeyName: "campaign_recipients_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seats"
             referencedColumns: ["id"]
           },
           {

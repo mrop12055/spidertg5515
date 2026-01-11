@@ -31,12 +31,12 @@ serve(async (req) => {
           // For campaign messages: Create conversation and message ONLY on successful send
           if (campaign_recipient_id && account_id) {
             // FALLBACK: If content/recipient_phone/name are missing, fetch from campaign_recipients
-            // Also fetch seat_id from campaign for proper seat assignment
-            let campaignSeatId: string | null = null;
+            // Also fetch seat_id - prioritize recipient-level seat_id over campaign-level
+            let recipientSeatId: string | null = null;
             
             const { data: recipientData } = await supabase
               .from("campaign_recipients")
-              .select("phone_number, name, campaign_id, campaigns(id, name, message_template, seat_id)")
+              .select("phone_number, name, seat_id, campaign_id, campaigns(id, name, message_template, seat_id)")
               .eq("id", campaign_recipient_id)
               .single();
             
@@ -46,7 +46,8 @@ serve(async (req) => {
             if (recipientData) {
               recipient_phone = recipient_phone || recipientData.phone_number;
               recipient_name = recipient_name || recipientData.name;
-              campaignSeatId = (recipientData.campaigns as any)?.seat_id || null;
+              // Prioritize recipient-level seat_id (for multi-seat campaigns), fallback to campaign-level
+              recipientSeatId = recipientData.seat_id || (recipientData.campaigns as any)?.seat_id || null;
               campaignId = (recipientData.campaigns as any)?.id || null;
               campaignName = (recipientData.campaigns as any)?.name || null;
               if (!content) {
@@ -55,7 +56,7 @@ serve(async (req) => {
                   .replace(/{name}/g, recipientData.name || 'there')
                   .replace(/{phone}/g, recipientData.phone_number);
               }
-              console.log(`[report-task-result] Fetched recipient data: phone=${recipient_phone}, seat_id=${campaignSeatId}, campaign=${campaignName}`);
+              console.log(`[report-task-result] Fetched recipient data: phone=${recipient_phone}, seat_id=${recipientSeatId}, campaign=${campaignName}`);
             }
             
             // Get or create conversation
@@ -85,7 +86,7 @@ serve(async (req) => {
                   is_active: true,
                   first_message_sent: true,
                   last_message_at: new Date().toISOString(),
-                  seat_id: campaignSeatId,  // Route to correct seat workspace
+                  seat_id: recipientSeatId,  // Route to correct seat workspace (recipient-level > campaign-level)
                   campaign_id: campaignId,  // Link to campaign for reference
                   campaign_name: campaignName,  // Store name for history display after deletion
                 })
