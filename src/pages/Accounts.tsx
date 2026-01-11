@@ -164,8 +164,8 @@ const Accounts: React.FC = () => {
   const [spamBotProgress, setSpamBotProgress] = useState<{ total: number; completed: number; results: Map<string, { status: string; result?: string }> }>({ total: 0, completed: 0, results: new Map() });
   
   
-  // Total lifetime messages per account (actual message count, not conversations)
-  const [totalMessages, setTotalMessages] = useState<Map<string, number>>(new Map());
+  // Unique conversations per account (how many unique people they've messaged)
+  const [uniqueConversations, setUniqueConversations] = useState<Map<string, { total: number; withReplies: number }>>(new Map());
 
   // Processing tasks state
   const [processingTasks, setProcessingTasks] = useState<Map<string, string>>(new Map());
@@ -361,25 +361,23 @@ const Accounts: React.FC = () => {
     };
   }, [isAccountTaskRunning, accountTasksProgress]);
    
-  // Fetch total lifetime messages per account (actual sent messages count)
+  // Fetch unique conversations per account (unique people contacted)
   useEffect(() => {
-    const fetchTotalMessages = async () => {
-      // Fetch all account_ids first
+    const fetchUniqueConversations = async () => {
       const accountIds = accounts.map(a => a.id);
       if (accountIds.length === 0) return;
       
-      // Fetch outgoing message counts for each account using pagination
-      const counts = new Map<string, number>();
+      // Fetch conversation counts grouped by account_id
+      const counts = new Map<string, { total: number; withReplies: number }>();
       let offset = 0;
       const pageSize = 1000;
       let hasMore = true;
       
       while (hasMore) {
         const { data, error } = await supabase
-          .from('messages')
-          .select('account_id')
-          .eq('direction', 'outgoing')
-          .eq('status', 'sent')
+          .from('conversations')
+          .select('account_id, has_reply')
+          .eq('first_message_sent', true)
           .range(offset, offset + pageSize - 1);
         
         if (error || !data) {
@@ -387,19 +385,22 @@ const Accounts: React.FC = () => {
           break;
         }
         
-        data.forEach((msg: any) => {
-          counts.set(msg.account_id, (counts.get(msg.account_id) || 0) + 1);
+        data.forEach((conv: any) => {
+          const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
+          existing.total += 1;
+          if (conv.has_reply) existing.withReplies += 1;
+          counts.set(conv.account_id, existing);
         });
         
         hasMore = data.length === pageSize;
         offset += pageSize;
       }
       
-      setTotalMessages(counts);
+      setUniqueConversations(counts);
     };
     
-    fetchTotalMessages();
-    const interval = setInterval(fetchTotalMessages, 60000);
+    fetchUniqueConversations();
+    const interval = setInterval(fetchUniqueConversations, 60000);
     return () => clearInterval(interval);
   }, [accounts]);
 
@@ -1702,7 +1703,7 @@ const Accounts: React.FC = () => {
     const proxyCountry = getProxyCountry(account.proxyId);
     const proxyFlag = countryToFlag(proxyCountry);
     const msgSentToday = account.messagesSentToday || 0; // Use actual DB field
-    const totalMsgs = totalMessages.get(account.id) || 0;
+    const convStats = uniqueConversations.get(account.id) || { total: 0, withReplies: 0 };
     const accountGroup = groups.find(g => g.accountIds.includes(account.id));
     
     // Accounts without username AND no first/last name might be blocked/restricted
@@ -1941,19 +1942,21 @@ const Accounts: React.FC = () => {
           </div>
           
           {/* Total lifetime messages */}
+          {/* Unique conversations (people contacted) */}
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <div className={cn(
                   "flex items-center gap-1 px-2 py-1 rounded text-xs",
-                  totalMsgs > 0 ? "bg-blue-500/10 text-blue-600" : "bg-muted/50 text-muted-foreground"
+                  convStats.total > 0 ? "bg-blue-500/10 text-blue-600" : "bg-muted/50 text-muted-foreground"
                 )}>
                   <Users className="w-3 h-3" />
-                  <span className="font-medium">{totalMsgs}</span>
+                  <span className="font-medium">{convStats.total}</span>
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Total messages sent (lifetime): {totalMsgs}</p>
+                <p className="font-medium">Unique Conversations: {convStats.total}</p>
+                <p className="text-xs text-muted-foreground">{convStats.withReplies} replied ({convStats.total > 0 ? Math.round((convStats.withReplies / convStats.total) * 100) : 0}% reply rate)</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
