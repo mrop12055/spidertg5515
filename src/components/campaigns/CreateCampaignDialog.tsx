@@ -258,11 +258,16 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
   const handleCreate = useCallback(async () => {
     setIsCreating(true);
     try {
+      // If no accounts selected, use all eligible accounts
+      const accountsToUse = selectedAccountIds.length > 0 
+        ? selectedAccountIds 
+        : eligibleAccounts.map(a => a.id);
+      
       await onCreateCampaign({
         name,
         recipientsText,
         batchSize,
-        accountIds: selectedAccountIds,
+        accountIds: accountsToUse,
         messageTemplates,
         selectedSeatIds
       });
@@ -276,7 +281,7 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
     } finally {
       setIsCreating(false);
     }
-  }, [name, recipientsText, batchSize, selectedAccountIds, messageTemplates, selectedSeatIds, onCreateCampaign, onOpenChange]);
+  }, [name, recipientsText, batchSize, selectedAccountIds, eligibleAccounts, messageTemplates, selectedSeatIds, onCreateCampaign, onOpenChange]);
 
   const isValid = name.trim() && recipientsText.trim() && messageTemplates.some(t => t.message.trim());
 
