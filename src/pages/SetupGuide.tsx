@@ -1192,6 +1192,11 @@ NETWORK_ERROR_PATTERNS = [
     "errno 113",    # No route to host
     "oserror",
     "gaierror",
+    "winerror 64",  # Network name no longer available (Windows)
+    "winerror 121", # Semaphore timeout (Windows)
+    "network name",
+    "server closed the connection",
+    "connection closed",
 ]
 
 
@@ -1536,18 +1541,59 @@ async def setup_message_handler(client, account_id: str):
 
 
 async def keep_clients_alive():
-    """Background task that keeps all clients receiving updates - ULTRA FAST"""
+    """Background task that keeps all clients receiving updates - with network error handling"""
+    consecutive_errors = 0
+    MAX_CONSECUTIVE_ERRORS = 10
+    
     while RUNNING:
-        # Ultra-fast loop for instant message reception
-        await asyncio.sleep(0.02)  # 50 checks per second
-        # Process updates for all connected clients
-        for acc_id, client in list(active_clients.items()):
-            try:
-                if client.is_connected():
-                    # This processes pending updates without blocking
-                    await client.catch_up()
-            except Exception:
-                pass
+        try:
+            # Balanced loop - fast but not aggressive
+            await asyncio.sleep(0.1)  # 10 checks per second (less aggressive)
+            
+            # Process updates for all connected clients
+            disconnected_ids = []
+            for acc_id, client in list(active_clients.items()):
+                try:
+                    if client.is_connected():
+                        # This processes pending updates without blocking
+                        await asyncio.wait_for(client.catch_up(), timeout=5)
+                    else:
+                        # Client disconnected - mark for removal
+                        disconnected_ids.append(acc_id)
+                except asyncio.TimeoutError:
+                    print(f"  [TIMEOUT] catch_up timeout for {acc_id[:8]}")
+                except Exception as e:
+                    error_str = str(e).lower()
+                    # Check for network errors
+                    if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
+                        consecutive_errors += 1
+                        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
+                            print(f"  [NETWORK] Multiple network errors - waiting 10s for recovery...")
+                            await asyncio.sleep(10)
+                            consecutive_errors = 0
+                    else:
+                        disconnected_ids.append(acc_id)
+            
+            # Clean up disconnected clients
+            for acc_id in disconnected_ids:
+                if acc_id in active_clients:
+                    try:
+                        del active_clients[acc_id]
+                        print(f"  [CLEANUP] Removed disconnected client {acc_id[:8]}")
+                    except:
+                        pass
+            
+            # Reset error counter on successful iteration
+            if not disconnected_ids:
+                consecutive_errors = max(0, consecutive_errors - 1)
+                
+        except Exception as e:
+            error_str = str(e).lower()
+            if is_network_error(error_str) or "winerror 64" in error_str:
+                print(f"  [NETWORK] keep_clients_alive network error - waiting 5s...")
+                await asyncio.sleep(5)
+            else:
+                await asyncio.sleep(0.5)
 
 
 async def main_loop():
@@ -1722,6 +1768,9 @@ async def main_loop():
 if __name__ == "__main__":
     print("\\nInstall: pip install telethon httpx\\n")
     
+    # Import for HTTP client reset
+    from client_manager import reset_http_client
+    
     while True:  # FOREVER LOOP WITH CRASH RECOVERY
         try:
             asyncio.run(main_loop())
@@ -1729,14 +1778,18 @@ if __name__ == "__main__":
             print("\\n⏹ Stopping...")
             break
         except Exception as e:
-            # Check if network error
-            if is_network_error(str(e)):
-                print(f"\\n📶 Network error (wifi issue?): {e}")
-                print("  Waiting 10 seconds for network recovery...")
-                time.sleep(10)
+            error_str = str(e).lower()
+            # Check if network error (including WinError 64)
+            if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
+                print(f"\\n📶 Network error (connection dropped): {e}")
+                print("  Waiting 15 seconds for network recovery...")
+                # Reset HTTP client to clear stale connections
+                reset_http_client()
+                time.sleep(15)
             else:
                 print(f"\\n⚠ LiveChat crashed: {e}")
                 print("  Restarting in 5 seconds...")
+                reset_http_client()
                 time.sleep(5)
     
     print("Goodbye!")
