@@ -95,6 +95,8 @@ export interface Conversation {
   firstMessageSent?: boolean;
   /** True when the recipient has replied to our message. */
   hasReply?: boolean;
+  /** The seat/worker ID associated with this conversation */
+  seatId?: string;
 }
 
 export interface Campaign {
