@@ -636,16 +636,13 @@ const Campaigns: React.FC = () => {
 
     if (data.selectedSeatIds.length > 1) {
       const shuffledRecipients = shuffleArray(parsedRecipients);
-      const recipientsPerSeat = Math.ceil(shuffledRecipients.length / data.selectedSeatIds.length);
-      const recipientChunks: typeof parsedRecipients[] = [];
+      const seatCount = data.selectedSeatIds.length;
       
-      for (let i = 0; i < data.selectedSeatIds.length; i++) {
-        const start = i * recipientsPerSeat;
-        const end = Math.min(start + recipientsPerSeat, shuffledRecipients.length);
-        if (start < shuffledRecipients.length) {
-          recipientChunks.push(shuffledRecipients.slice(start, end));
-        }
-      }
+      // Distribute recipients evenly using round-robin for perfect balance
+      const recipientChunks: typeof parsedRecipients[] = Array.from({ length: seatCount }, () => []);
+      shuffledRecipients.forEach((recipient, index) => {
+        recipientChunks[index % seatCount].push(recipient);
+      });
       
       await Promise.all(data.selectedSeatIds.map(async (seatId, index) => {
         const chunk = recipientChunks[index] || [];
