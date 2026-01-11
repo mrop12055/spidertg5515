@@ -812,9 +812,10 @@ serve(async (req) => {
         }
         
         // Step 1: Check for ALREADY ASSIGNED pending recipients (one at a time for sequential processing)
+        // Include seat_id for multi-seat campaign support
         const { data: assignedRecipients } = await supabase
           .from("campaign_recipients")
-          .select("*, campaigns!inner(id, status, message_template)")
+          .select("*, campaigns!inner(id, status, message_template, seat_id, name)")
           .eq("status", "pending")
           .in("campaign_id", runningIds)
           .not("sent_by_account_id", "is", null)
@@ -934,10 +935,11 @@ serve(async (req) => {
         }
         
         // Step 2: If no assigned recipient, pick an UNASSIGNED one and assign NOW (lazy assignment)
+        // Include seat_id for multi-seat campaign support
         if (!recipient) {
           const { data: unassignedRecipients } = await supabase
             .from("campaign_recipients")
-            .select("*, campaigns!inner(id, status, message_template)")
+            .select("*, campaigns!inner(id, status, message_template, seat_id, name)")
             .eq("status", "pending")
             .in("campaign_id", runningIds)
             .is("sent_by_account_id", null)
@@ -1092,6 +1094,10 @@ serve(async (req) => {
           
           console.log(`[get-next-task] Campaign message assigned, next check in ${delaySeconds}s`);
           
+          // For multi-seat campaigns: prioritize recipient-level seat_id over campaign-level
+          const recipientSeatId = recipient.seat_id || campaign?.seat_id || null;
+          const campaignName = campaign?.name || null;
+          
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -1100,6 +1106,9 @@ serve(async (req) => {
             },
             recipient: recipient.phone_number,
             recipient_name: recipient.name,
+            campaign_id: recipient.campaign_id,
+            campaign_seat_id: recipientSeatId,  // Recipient seat_id > campaign seat_id
+            campaign_name: campaignName,
             account: {
               id: account.id,
               phone_number: account.phone_number,

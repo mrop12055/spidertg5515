@@ -567,9 +567,10 @@ serve(async (req) => {
       // ========== GET PENDING RECIPIENTS ==========
       // Get pending recipients with their failed_account_ids
       // Use campaignBatchSize for limit (before actualBatchSize is calculated)
+      // Include seat_id for multi-seat campaign support
       const { data: pendingRecipients } = await supabase
         .from("campaign_recipients")
-        .select("*, campaigns!inner(id, status, message_template, batch_size)")
+        .select("*, campaigns!inner(id, status, message_template, batch_size, seat_id, name)")
         .eq("status", "pending")
         .eq("campaigns.status", "running")
         .limit(campaignBatchSize === 0 ? 200 : campaignBatchSize * 2); // Fetch only what we need
@@ -756,7 +757,10 @@ serve(async (req) => {
             .replace(/{phone}/g, recipient.phone_number);
 
           const apiCred = account.telegram_api_credentials;
-          const campaignMeta = campaignLookup.get(recipient.campaign_id) || { seat_id: null, name: null };
+          // For multi-seat campaigns: prioritize recipient-level seat_id over campaign-level
+          const recipientCampaign = recipient.campaigns;
+          const recipientSeatId = recipient.seat_id || recipientCampaign?.seat_id || null;
+          const campaignName = recipientCampaign?.name || null;
 
           tasks.push({
             task: "send",
@@ -767,8 +771,8 @@ serve(async (req) => {
             recipient: recipient.phone_number,
             recipient_name: recipient.name,
             campaign_id: recipient.campaign_id,
-            campaign_seat_id: campaignMeta.seat_id,
-            campaign_name: campaignMeta.name,
+            campaign_seat_id: recipientSeatId,  // Recipient seat_id > campaign seat_id
+            campaign_name: campaignName,
             account: {
               id: account.id,
               phone_number: account.phone_number,
