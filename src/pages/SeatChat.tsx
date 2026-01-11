@@ -494,8 +494,8 @@ const SeatChat: React.FC = () => {
   // Debounced refetch helper - prevents rapid re-renders
   const debouncedRefetch = useCallback((fetchFn: () => void, delay = 500) => {
     const now = Date.now();
-    // Skip if we just fetched within the last 300ms
-    if (now - lastFetchRef.current < 300) return;
+    // Skip if we just fetched within the last 500ms
+    if (now - lastFetchRef.current < 500) return;
     
     if (fetchTimeoutRef.current) {
       clearTimeout(fetchTimeoutRef.current);
@@ -1191,7 +1191,7 @@ const SeatChat: React.FC = () => {
                     </p>
                   </div>
                 ) : (
-                  <div className="space-y-0.5 py-1.5">
+                  <div className="space-y-0.5 py-1.5" key="conversation-list">
                     {filteredConversations.map((conv) => (
                       <div
                         key={conv.id}
@@ -1220,7 +1220,7 @@ const SeatChat: React.FC = () => {
                             </span>
                           )}
                           {conv.unread_count > 0 && (
-                            <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-card animate-pulse" />
+                            <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-card" />
                           )}
                         </div>
                         
@@ -1333,7 +1333,7 @@ const SeatChat: React.FC = () => {
               {/* Chat Container */}
               <div className="flex-1 flex flex-col overflow-hidden p-4 lg:p-6">
                 {selectedConversation ? (
-                  <div className="flex-1 flex flex-col bg-gradient-to-b from-card to-card/95 rounded-2xl shadow-2xl border border-border/30 overflow-hidden animate-scale-in">
+                  <div className="flex-1 flex flex-col bg-gradient-to-b from-card to-card/95 rounded-2xl shadow-2xl border border-border/30 overflow-hidden">
                     {/* Chat Header */}
                     <div className="bg-card/80 backdrop-blur-sm border-b border-border/30 px-5 py-4 flex items-center justify-between flex-shrink-0">
                       <div className="flex items-center gap-4">
