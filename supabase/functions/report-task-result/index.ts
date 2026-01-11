@@ -683,7 +683,7 @@ serve(async (req) => {
 
         console.log(`[report-task-result] Processing incoming message from sender_id=${sender_id}, username=${sender_username}, phone=${sender_phone}, telegram_msg_id=${telegram_message_id}, has_avatar=${!!sender_avatar}`);
 
-        // DEDUPLICATION: Check if this exact message was already saved (prevents duplicates on livechat restart)
+        // DEDUPLICATION Strategy 1: Check by telegram_message_id (most reliable)
         if (telegram_message_id && account_id) {
           const { data: existingMsg } = await supabase
             .from("messages")
@@ -699,6 +699,40 @@ serve(async (req) => {
               JSON.stringify({ success: true, skipped: true, reason: "duplicate" }),
               { headers: { ...corsHeaders, "Content-Type": "application/json" } }
             );
+          }
+        }
+
+        // DEDUPLICATION Strategy 2: Content-based fallback (catches messages without telegram_message_id or legacy duplicates)
+        // Check if same content from same sender within last 24 hours exists
+        if (account_id && sender_id && content) {
+          const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+          
+          // First find conversations with this sender
+          const { data: senderConvs } = await supabase
+            .from("conversations")
+            .select("id")
+            .eq("account_id", account_id)
+            .eq("recipient_telegram_id", sender_id);
+          
+          if (senderConvs && senderConvs.length > 0) {
+            const convIds = senderConvs.map(c => c.id);
+            
+            const { data: existingContentMsg } = await supabase
+              .from("messages")
+              .select("id, created_at")
+              .in("conversation_id", convIds)
+              .eq("content", content)
+              .eq("direction", "incoming")
+              .gte("created_at", twentyFourHoursAgo)
+              .limit(1);
+
+            if (existingContentMsg && existingContentMsg.length > 0) {
+              console.log(`[report-task-result] SKIPPED: Content-based duplicate detected (same content "${content.substring(0, 30)}..." from sender ${sender_id} within 24h)`);
+              return new Response(
+                JSON.stringify({ success: true, skipped: true, reason: "content_duplicate" }),
+                { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+              );
+            }
           }
         }
 
