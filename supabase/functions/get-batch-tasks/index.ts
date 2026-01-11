@@ -187,22 +187,29 @@ serve(async (req) => {
     }
 
     // Filter to accounts under daily limit (uses campaign speed setting)
-    const usableAccounts = accountsWithActiveProxy.filter((a: any) => {
-      // Use campaign-specific limit from admin settings, fallback to account's own limit, then default
-      const limit = campaignMessagesPerAccountPerDay || a.daily_limit || DAILY_MESSAGE_LIMIT;
-      const sentToday = a.messages_sent_today ?? 0;
-      return sentToday < limit;
-    });
+    // IMPORTANT: Livechat replies must NOT be blocked by daily limits/restrictions.
+    // Daily limits are intended to throttle NEW outreach (campaign/warmup), not ongoing conversations.
+    const usableAccounts = runner === "livechat"
+      ? accountsWithActiveProxy
+      : accountsWithActiveProxy.filter((a: any) => {
+          // Use campaign-specific limit from admin settings, fallback to account's own limit, then default
+          const limit = campaignMessagesPerAccountPerDay || a.daily_limit || DAILY_MESSAGE_LIMIT;
+          const sentToday = a.messages_sent_today ?? 0;
+          return sentToday < limit;
+        });
 
-    if (usableAccounts.length === 0) {
+    if (runner !== "livechat" && usableAccounts.length === 0) {
       console.log("[get-batch-tasks] All accounts at daily limit");
-      return new Response(JSON.stringify({
-        tasks: [],
-        delay_after: 60,
-        reason: "All accounts at daily limit"
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          tasks: [],
+          delay_after: 60,
+          reason: "All accounts at daily limit",
+        }),
+        {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
     
     console.log(`[get-batch-tasks] ${usableAccounts.length} accounts with active proxies ready`);
