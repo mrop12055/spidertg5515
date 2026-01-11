@@ -291,7 +291,6 @@ serve(async (req) => {
           
           // Errors that should just SKIP the recipient (don't affect account status)
           // These are recipient-related issues, NOT account problems
-          // Privacy errors are PERMANENT - the recipient has blocked unknown users, no point retrying
           // IMPORTANT: Check these FIRST before other error types!
           const skipRecipientErrors = [
             'user not found',        // Recipient doesn't have Telegram
@@ -299,38 +298,90 @@ serve(async (req) => {
             'peer_id_invalid',       // Invalid recipient ID
             'user was deleted',      // RECIPIENT deleted their account (not sender!)
             'specified user',        // "The specified user was deleted"
-            'privacy',               // Recipient has privacy settings - PERMANENT failure
-            'privacy restricted',    // Recipient blocked unknown users - PERMANENT failure
             'user deleted',          // Recipient deleted their account
+          ];
+          
+          // Errors that should RETRY with a DIFFERENT API (not account)
+          // Privacy errors may be API-related - try with different API credentials
+          const retryWithDifferentApiErrors = [
+            'privacy',               // Privacy settings - try different API
+            'privacy restricted',    // Privacy restrictions - try different API
           ];
           
           // Errors that should RETRY with a different account
           // These are SENDER-SIDE rate limits - the recipient is fine, just try with another account
-          // NOTE: Privacy errors are NO LONGER retryable - they are permanent recipient-side failures
           const retryWithDifferentAccountErrors = [
             'too many requests', // Rate limit on THIS account - try another (applies 12h restriction to account)
           ];
           
           const errorLower = (error || '').toLowerCase();
           
-          // CRITICAL: Check skip-only errors FIRST - these are recipient problems, NOT account problems
-          const isSkipOnly = skipRecipientErrors.some(r => errorLower.includes(r));
+          // Check for API retry errors FIRST
+          const isApiRetryable = retryWithDifferentApiErrors.some(r => errorLower.includes(r));
           
-          // Only check account-related errors if it's NOT a recipient error
-          const isPermanentBan = !isSkipOnly && permanentBanErrors.some(r => errorLower.includes(r));
-          const isTemporaryRestriction = !isSkipOnly && temporaryRestrictionErrors.some(r => errorLower.includes(r));
-          const isImmediateRestriction = !isSkipOnly && immediateRestrictionErrors.some(r => errorLower.includes(r));
+          // CRITICAL: Check skip-only errors - these are recipient problems that can't be retried
+          const isSkipOnly = !isApiRetryable && skipRecipientErrors.some(r => errorLower.includes(r));
+          
+          // Only check account-related errors if it's NOT a recipient error or API-retryable
+          const isPermanentBan = !isSkipOnly && !isApiRetryable && permanentBanErrors.some(r => errorLower.includes(r));
+          const isTemporaryRestriction = !isSkipOnly && !isApiRetryable && temporaryRestrictionErrors.some(r => errorLower.includes(r));
+          const isImmediateRestriction = !isSkipOnly && !isApiRetryable && immediateRestrictionErrors.some(r => errorLower.includes(r));
           // Also check for explicit skip_account flag from Python runner
-          const isRetryable = !isSkipOnly && (retryWithDifferentAccountErrors.some(r => errorLower.includes(r)) || (skip_account && retry_with_different_account));
+          const isRetryable = !isSkipOnly && !isApiRetryable && (retryWithDifferentAccountErrors.some(r => errorLower.includes(r)) || (skip_account && retry_with_different_account));
           
-          // Track account failure for health monitoring (only for account-related errors, not recipient issues)
-          // Skip-only errors are recipient problems, not account problems
-          if (account_id && !isSkipOnly) {
+          // Track account failure for health monitoring (only for account-related errors, not recipient/API issues)
+          // Skip-only errors are recipient problems, API-retryable are API problems - neither affects account stats
+          if (account_id && !isSkipOnly && !isApiRetryable) {
             await supabase.rpc('increment_account_failure', { acc_id: account_id });
             console.log(`[report-task-result] Incremented failure count for account ${account_id}`);
-            
           }
-          if (isPermanentBan && account_id) {
+          
+          // API RETRY LOGIC: Privacy errors - retry with different API, keep same account
+          if (isApiRetryable && campaign_recipient_id) {
+            console.log(`[report-task-result] Privacy error - will retry with different API: ${error}`);
+            
+            // Get current recipient data
+            const { data: currentRecipient } = await supabase
+              .from("campaign_recipients")
+              .select("retry_count, campaign_id")
+              .eq("id", campaign_recipient_id)
+              .single();
+            
+            const retryCount = (currentRecipient?.retry_count || 0) + 1;
+            const maxApiRetries = 3; // Try up to 3 different APIs
+            
+            if (retryCount >= maxApiRetries) {
+              // Exhausted API retries - mark as failed
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "failed",
+                  failed_reason: `Privacy restricted after ${retryCount} API attempts`,
+                  sent_at: new Date().toISOString(),
+                })
+                .eq("id", campaign_recipient_id);
+              
+              if (currentRecipient?.campaign_id) {
+                await supabase.rpc("increment_campaign_failed_count", { cid: currentRecipient.campaign_id });
+              }
+              
+              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED after ${retryCount} API attempts`);
+            } else {
+              // Retry with different API - keep same account available, just clear API
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  sent_by_account_id: null,  // Clear account to allow reassignment
+                  api_credential_id: null,    // Clear API so it gets a different one
+                  failed_reason: null,
+                  retry_count: retryCount
+                })
+                .eq("id", campaign_recipient_id);
+              
+              console.log(`[report-task-result] Privacy error - recipient reset for different API (attempt ${retryCount}/${maxApiRetries})`);
+            }
+          } else if (isPermanentBan && account_id) {
             // PERMANENT BAN - mark account as banned, cannot be used anymore
             console.log(`[report-task-result] Account ${account_id} PERMANENTLY BANNED: ${error}`);
             
