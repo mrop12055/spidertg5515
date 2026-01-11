@@ -185,8 +185,23 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
     
-    # ========== STEP 1: CHECK EXISTING CLIENT (skip if no_cache) ==========
-    if not no_cache and account_id in active_clients:
+    # ========== STEP 1: CHECK / CLEAR EXISTING CLIENT ==========
+    # If no_cache=True, we MUST NOT reuse any cached Telethon client.
+    # (Telethon binds a client to the asyncio event loop where it connected.)
+    if no_cache and account_id in active_clients:
+        try:
+            old_client = active_clients.pop(account_id)
+            try:
+                if old_client.is_connected():
+                    print(f"  [NO_CACHE] Disconnecting cached client for {phone}")
+                    await asyncio.wait_for(old_client.disconnect(), timeout=3)
+            except Exception:
+                pass
+        except Exception:
+            active_clients.pop(account_id, None)
+
+    # Normal behavior (other runners): reuse an already-connected client
+    if (not no_cache) and account_id in active_clients:
         client = active_clients[account_id]
         try:
             if client.is_connected():
@@ -196,9 +211,9 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                     await setup_handler(client, account_id)
                     setattr(client, "_handler", True)
                 return client
-        except:
+        except Exception:
             del active_clients[account_id]
-    
+
     # ========== STEP 2: CHECK SESSION DATA ==========
     session_data = account.get("session_data")
     if not session_data:
