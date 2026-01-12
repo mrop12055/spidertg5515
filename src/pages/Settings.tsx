@@ -5,29 +5,18 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
-import { Separator } from '@/components/ui/separator';
-import { Slider } from '@/components/ui/slider';
 import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
-import { useToast } from '@/hooks/use-toast';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
-import { useAppSettings } from '@/hooks/useAppSettings';
 import { cn } from '@/lib/utils';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
-  Bell, 
-  Calendar,
   Loader2,
   Smartphone,
   Monitor,
   Key,
   Plus,
   X,
-  Trash2,
-  Save,
-  Settings as SettingsIcon,
   Upload,
   RefreshCw
 } from 'lucide-react';
@@ -52,23 +41,6 @@ interface ApiCredential {
 const API_DAILY_LIMIT = 80; // Max messages per API per 24 hours
 
 const Settings: React.FC = () => {
-  const { toast: showToast } = useToast();
-  const [isCleaningUp, setIsCleaningUp] = useState(false);
-  
-  // Use database settings hook
-  const { 
-    settings: dbSettings, 
-    isLoading: isLoadingSettings, 
-    isSaving, 
-    saveAllSettings, 
-    updateSettings: updateDbSettings 
-  } = useAppSettings();
-  
-  // Local UI settings
-  const [localSettings, setLocalSettings] = useState({
-    notifyOnReply: true,
-    notifyOnBan: true,
-  });
 
   // API credentials
   const [apiCredentials, setApiCredentials] = useState<ApiCredential[]>([]);
@@ -399,97 +371,27 @@ const Settings: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Load local settings from localStorage
-  useEffect(() => {
-    const savedLocal = localStorage.getItem('local_ui_settings');
-    if (savedLocal) {
-      try {
-        setLocalSettings(prev => ({ ...prev, ...JSON.parse(savedLocal) }));
-      } catch (e) {
-        console.error('Failed to load local settings');
-      }
-    }
-  }, []);
-
-  // Helper to update cleanup settings
-  const updateCleanupSettings = (updates: Partial<typeof dbSettings.cleanup>) => {
-    updateDbSettings('cleanup', updates);
-  };
-
-  // Update local UI settings
-  const updateLocalSettings = (updates: Partial<typeof localSettings>) => {
-    const newSettings = { ...localSettings, ...updates };
-    setLocalSettings(newSettings);
-    localStorage.setItem('local_ui_settings', JSON.stringify(newSettings));
-  };
-
-  // Manual cleanup trigger
-  const handleManualCleanup = async () => {
-    setIsCleaningUp(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('cleanup-old-chats');
-      
-      if (error) throw error;
-      
-      toast.success(`Cleanup complete: ${data.deleted?.conversations || 0} chats deleted`);
-    } catch (error) {
-      console.error('Cleanup failed:', error);
-      toast.error('Cleanup failed');
-    } finally {
-      setIsCleaningUp(false);
-    }
-  };
-
-  const handleSave = async () => {
-    const saved = await saveAllSettings(dbSettings);
-    if (saved) {
-      localStorage.setItem('local_ui_settings', JSON.stringify(localSettings));
-      showToast({
-        title: "Settings saved",
-        description: "Your settings have been saved to database.",
-      });
-    }
-  };
 
   return (
     <DashboardLayout>
       <PageHeader
-        title="Settings"
-        description="Configure your system preferences"
-        icon={SettingsIcon}
+        title="API Credentials"
+        description="Manage Telegram API credentials for account distribution"
+        icon={Key}
       />
 
       <div className="max-w-4xl">
-        {/* Loading indicator for database settings */}
-        {isLoadingSettings && (
+        {isLoadingCredentials && (
           <Card className="border-primary/30 mb-6">
             <CardContent className="flex items-center justify-center py-8">
               <div className="flex items-center gap-3">
                 <Loader2 className="w-5 h-5 animate-spin text-primary" />
-                <span className="text-muted-foreground">Loading settings...</span>
+                <span className="text-muted-foreground">Loading credentials...</span>
               </div>
             </CardContent>
           </Card>
         )}
 
-        <Tabs defaultValue="api" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 h-11">
-            <TabsTrigger value="api" className="gap-2">
-              <Key className="w-4 h-4" />
-              API Credentials
-            </TabsTrigger>
-            <TabsTrigger value="cleanup" className="gap-2">
-              <Calendar className="w-4 h-4" />
-              Cleanup
-            </TabsTrigger>
-            <TabsTrigger value="notifications" className="gap-2">
-              <Bell className="w-4 h-4" />
-              Notifications
-            </TabsTrigger>
-          </TabsList>
-
-          {/* API Credentials Tab */}
-          <TabsContent value="api" className="space-y-4 mt-0">
 
         <Card>
           <CardHeader className="pb-4">
@@ -800,126 +702,7 @@ const Settings: React.FC = () => {
             )}
           </CardContent>
         </Card>
-      </TabsContent>
 
-
-      {/* Cleanup Tab */}
-      <TabsContent value="cleanup" className="mt-0">
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Auto Cleanup</CardTitle>
-            <CardDescription>
-              Automatically delete old conversations to reduce storage and ban risk
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label className="text-base">Delete chats older than</Label>
-                <Badge variant="secondary" className="text-sm font-medium">
-                  {dbSettings.cleanup.retentionDays} days
-                </Badge>
-              </div>
-              <Slider
-                value={[dbSettings.cleanup.retentionDays]}
-                onValueChange={([value]) => updateCleanupSettings({ retentionDays: value })}
-                min={3}
-                max={30}
-                step={1}
-                className="py-2"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>3 days</span>
-                <span>30 days</span>
-              </div>
-            </div>
-            
-            <Separator />
-            
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Manual Cleanup</p>
-                <p className="text-sm text-muted-foreground">Run cleanup immediately</p>
-              </div>
-              <Button 
-                variant="outline" 
-                onClick={handleManualCleanup}
-                disabled={isCleaningUp}
-                className="gap-2"
-              >
-                {isCleaningUp ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Cleaning...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-4 h-4" />
-                    Run Now
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </TabsContent>
-
-      {/* Notifications Tab */}
-      <TabsContent value="notifications" className="mt-0">
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Notification Preferences</CardTitle>
-            <CardDescription>
-              Configure how you want to be notified about events
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between py-2">
-              <div className="space-y-0.5">
-                <Label className="text-base">Reply Notifications</Label>
-                <p className="text-sm text-muted-foreground">
-                  Get notified when someone replies to your messages
-                </p>
-              </div>
-              <Switch
-                checked={localSettings.notifyOnReply}
-                onCheckedChange={(checked) => updateLocalSettings({ notifyOnReply: checked })}
-              />
-            </div>
-            <Separator />
-            <div className="flex items-center justify-between py-2">
-              <div className="space-y-0.5">
-                <Label className="text-base">Ban Alerts</Label>
-                <p className="text-sm text-muted-foreground">
-                  Get notified when an account gets banned or restricted
-                </p>
-              </div>
-              <Switch
-                checked={localSettings.notifyOnBan}
-                onCheckedChange={(checked) => updateLocalSettings({ notifyOnBan: checked })}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      </TabsContent>
-    </Tabs>
-
-        {/* Save Button */}
-        <div className="flex justify-end pt-4">
-          <Button onClick={handleSave} disabled={isSaving} size="lg" className="gap-2">
-            {isSaving ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="w-4 h-4" />
-                Save Changes
-              </>
-            )}
-          </Button>
-        </div>
       </div>
     </DashboardLayout>
   );
