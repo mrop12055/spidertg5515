@@ -1357,6 +1357,51 @@ serve(async (req) => {
         break;
       }
 
+      case "change_username": {
+        const { task_id, account_id, success, error, username, action } = result;
+
+        if (success) {
+          // Update account username in database
+          await supabase
+            .from("telegram_accounts")
+            .update({
+              username: action === "remove" ? null : username,
+              last_active: new Date().toISOString(),
+            })
+            .eq("id", account_id);
+        }
+
+        // Update task
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: success ? "completed" : "failed",
+            result: success ? (action === "remove" ? "Username removed" : `Username set to @${username}`) : error,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Username ${action} ${success ? "completed" : "failed"} for ${account_id}`);
+        break;
+      }
+
+      case "remove_bio": {
+        const { task_id, account_id, success, error } = result;
+
+        // Update task
+        await supabase
+          .from("account_check_tasks")
+          .update({
+            status: success ? "completed" : "failed",
+            result: success ? "Bio removed" : error,
+            completed_at: new Date().toISOString(),
+          })
+          .eq("id", task_id);
+
+        console.log(`[report-task-result] Remove bio ${success ? "completed" : "failed"} for ${account_id}`);
+        break;
+      }
+
       case "verify_session": {
         const { task_id, account_id, status, error, user_data } = result;
 
