@@ -36,6 +36,7 @@ interface SeatStats {
   messages_sent_today: number;
   messages_read: number;
   responses_received: number;
+  responses_today: number;
 }
 
 interface PendingRepliesMap {
@@ -278,7 +279,7 @@ const handleDeleteSeat = async (seat: Seat) => {
 
       <div className="space-y-6">
         {/* Overview Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5">
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
@@ -334,6 +335,22 @@ const handleDeleteSeat = async (seat: Seat) => {
                     {Array.from(seatStats.values()).reduce((sum, s) => sum + s.messages_sent_today, 0)}
                   </p>
                   <p className="text-sm text-muted-foreground">Sent Today</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className="bg-gradient-to-br from-violet-500/10 to-violet-500/5">
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-violet-500/20">
+                  <MessageSquare className="w-5 h-5 text-violet-500" />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">
+                    {Array.from(seatStats.values()).reduce((sum, s) => sum + (s.responses_today || 0), 0)}
+                  </p>
+                  <p className="text-sm text-muted-foreground">Replies Today</p>
                 </div>
               </div>
             </CardContent>
@@ -495,20 +512,24 @@ const handleDeleteSeat = async (seat: Seat) => {
                       </div>
 
                       {/* Stats Grid */}
-                      <div className="grid grid-cols-4 gap-2 mb-4">
-                        <div className="bg-muted/50 rounded-lg p-3 text-center">
-                          <p className="text-lg font-bold">{stats?.total_conversations || 0}</p>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Chats</p>
+                      <div className="grid grid-cols-5 gap-2 mb-4">
+                        <div className="bg-muted/50 rounded-lg p-2 text-center">
+                          <p className="text-base font-bold">{stats?.total_conversations || 0}</p>
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Chats</p>
                         </div>
-                        <div className="bg-muted/50 rounded-lg p-3 text-center">
-                          <p className="text-lg font-bold">{stats?.messages_sent_today || 0}</p>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Sent</p>
+                        <div className="bg-muted/50 rounded-lg p-2 text-center">
+                          <p className="text-base font-bold">{stats?.messages_sent_today || 0}</p>
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Sent</p>
                         </div>
-                        <div className="bg-muted/50 rounded-lg p-3 text-center">
-                          <p className="text-lg font-bold">{stats?.responses_received || 0}</p>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Replies</p>
+                        <div className="bg-muted/50 rounded-lg p-2 text-center">
+                          <p className="text-base font-bold">{stats?.responses_today || 0}</p>
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Today</p>
                         </div>
-                        <div className={`rounded-lg p-3 text-center ${
+                        <div className="bg-muted/50 rounded-lg p-2 text-center">
+                          <p className="text-base font-bold">{stats?.responses_received || 0}</p>
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Replies</p>
+                        </div>
+                        <div className={`rounded-lg p-2 text-center ${
                           (unreadReplies[seat.id] || 0) > 0 
                             ? 'bg-red-500/10 border border-red-500/30' 
                             : 'bg-muted/50'
@@ -517,13 +538,13 @@ const handleDeleteSeat = async (seat: Seat) => {
                             {(unreadReplies[seat.id] || 0) > 0 && (
                               <MessageSquare className="w-3 h-3 text-red-500" />
                             )}
-                            <p className={`text-lg font-bold ${
+                            <p className={`text-base font-bold ${
                               (unreadReplies[seat.id] || 0) > 0 ? 'text-red-500' : ''
                             }`}>
                               {unreadReplies[seat.id] || 0}
                             </p>
                           </div>
-                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Unseen</p>
+                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Unseen</p>
                         </div>
                       </div>
 
