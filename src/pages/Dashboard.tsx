@@ -48,50 +48,54 @@ const Dashboard: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      // Fetch account stats directly from database
-      const { data: accountStats } = await supabase
-        .from('telegram_accounts')
-        .select('status');
-      
-      const totalAccounts = accountStats?.length || 0;
-      const activeAccounts = accountStats?.filter(a => a.status === 'active').length || 0;
-
-      // Fetch proxy stats
-      const { data: proxyStats } = await supabase
-        .from('proxies')
-        .select('status');
-      
-      const activeProxies = proxyStats?.filter(p => p.status === 'active').length || 0;
-
-      // Fetch message stats - today
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const { count: messagesToday } = await supabase
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('direction', 'outgoing')
-        .gte('created_at', today.toISOString());
-
-      // Fetch lifetime message stats
-      const { count: messagesLifetime } = await supabase
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('direction', 'outgoing');
-
-      // Fetch lifetime replies
-      const { count: repliesLifetime } = await supabase
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('direction', 'incoming');
+      // Use count queries for accuracy (avoids 1000 row limit issue)
+      const [
+        totalAccountsRes,
+        activeAccountsRes,
+        activeProxiesRes,
+        messagesTodayRes,
+        messagesLifetimeRes,
+        repliesLifetimeRes
+      ] = await Promise.all([
+        // Total accounts
+        supabase
+          .from('telegram_accounts')
+          .select('id', { count: 'exact', head: true }),
+        // Active accounts
+        supabase
+          .from('telegram_accounts')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'active'),
+        // Active proxies
+        supabase
+          .from('proxies')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'active'),
+        // Messages today
+        supabase
+          .from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('direction', 'outgoing')
+          .gte('created_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
+        // Lifetime messages
+        supabase
+          .from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('direction', 'outgoing'),
+        // Lifetime replies
+        supabase
+          .from('messages')
+          .select('id', { count: 'exact', head: true })
+          .eq('direction', 'incoming'),
+      ]);
 
       setStats({
-        totalAccounts,
-        activeAccounts,
-        activeProxies,
-        messagesToday: messagesToday || 0,
-        messagesLifetime: messagesLifetime || 0,
-        repliesLifetime: repliesLifetime || 0,
+        totalAccounts: totalAccountsRes.count || 0,
+        activeAccounts: activeAccountsRes.count || 0,
+        activeProxies: activeProxiesRes.count || 0,
+        messagesToday: messagesTodayRes.count || 0,
+        messagesLifetime: messagesLifetimeRes.count || 0,
+        repliesLifetime: repliesLifetimeRes.count || 0,
       });
     } catch (error) {
       console.error('Error fetching stats:', error);

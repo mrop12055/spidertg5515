@@ -166,7 +166,7 @@ const Proxies: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [refreshData]);
+  }, [refreshProxies]);
 
   // Load settings from localStorage
   useEffect(() => {
