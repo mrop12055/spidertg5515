@@ -1451,16 +1451,37 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     """
     Connect account with smart fingerprint and proxy handling.
     
-    1. Check if account has fingerprint in DB, use it
-    2. If no fingerprint, generate new and save to DB
-    3. If proxy fails, IMMEDIATELY try 2 different random proxies (NO cooldown)
-    4. Detect network errors and skip account status updates
-    5. NEVER mark account as disconnected due to proxy issues
+    1. FIRST check if we already have a connected client (REUSE existing connections)
+    2. Check if account has fingerprint in DB, use it
+    3. If no fingerprint, generate new and save to DB
+    4. If proxy fails, IMMEDIATELY try 2 different random proxies (NO cooldown)
+    5. Detect network errors and skip account status updates
+    6. NEVER mark account as disconnected due to proxy issues
     
     Returns: (client, error_str or None)
     """
     account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
+    
+    # ========== STEP 0: CHECK FOR EXISTING CONNECTION (CRITICAL FIX) ==========
+    # ALWAYS reuse existing connected client to prevent duplicate connections
+    if account_id in active_clients:
+        client = active_clients[account_id]
+        try:
+            if client.is_connected():
+                # Setup handler if not already set
+                if setup_handler and not getattr(client, "_handler", False):
+                    await setup_handler(client, account_id)
+                    setattr(client, "_handler", True)
+                print(f"  [{phone}] REUSING cached connection (already connected)")
+                return client, None
+            else:
+                # Client disconnected - clean up and reconnect
+                print(f"  [{phone}] Cached client disconnected, will reconnect...")
+                del active_clients[account_id]
+        except Exception as e:
+            print(f"  [{phone}] Cached client check failed: {e}, will reconnect...")
+            active_clients.pop(account_id, None)
     
     # Check fingerprint from database
     device_model = account.get("device_model")
@@ -2273,13 +2294,32 @@ async def main_loop():
                     tasks_by_account[acc_id].sort(key=lambda t: t.get("message", {}).get("sequence", 0))
                 
                 async def send_account_messages(acc_id, account_tasks):
-                    """Send all messages for one account IN ORDER"""
+                    """Send all messages for one account IN ORDER - REUSE existing connections"""
                     results = []
                     account = account_tasks[0].get("account", {})
                     phone = account.get("phone_number", "???")[-4:]
                     
-                    # Connect account once, reuse for all messages
-                    client, conn_error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler)
+                    # ========== REUSE EXISTING CONNECTION ==========
+                    # First check if we already have a connected client for this account
+                    client = active_clients.get(acc_id)
+                    if client:
+                        try:
+                            if client.is_connected():
+                                print(f"  [{phone}] REUSING existing connection")
+                            else:
+                                # Client exists but not connected - remove and reconnect
+                                del active_clients[acc_id]
+                                client = None
+                        except Exception:
+                            del active_clients[acc_id]
+                            client = None
+                    
+                    # Only create new connection if no cached client exists
+                    if not client:
+                        print(f"  [{phone}] Creating NEW connection...")
+                        client, conn_error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler)
+                    else:
+                        conn_error = None
                     
                     if not client:
                         # Connection failed - mark all messages as failed
