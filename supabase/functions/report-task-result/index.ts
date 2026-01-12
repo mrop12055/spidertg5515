@@ -27,17 +27,17 @@ async function checkAndMarkFrozenAccount(supabase: any, accountId: string, error
   if (isFrozen) {
     console.log(`[report-task-result] 🥶 FROZEN ACCOUNT DETECTED for ${accountId}: "${errorMessage}"`);
     
-    // Update account to frozen status
+    // Update account to frozen/inactive status - no restriction, just mark inactive
     await supabase
       .from("telegram_accounts")
       .update({
         status: "frozen",
         ban_reason: errorMessage,
-        restricted_until: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
+        restricted_until: null,
       })
       .eq("id", accountId);
     
-    console.log(`[report-task-result] Account ${accountId} marked as FROZEN`);
+    console.log(`[report-task-result] Account ${accountId} marked as FROZEN (inactive)`);
     return true;
   }
   
