@@ -6,6 +6,59 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Helper function to check and auto-complete campaigns when all recipients are processed
+async function checkAndAutoCompleteCampaign(supabase: any, campaignId: string) {
+  try {
+    // Check if campaign is still running
+    const { data: campaign } = await supabase
+      .from("campaigns")
+      .select("status, name")
+      .eq("id", campaignId)
+      .single();
+    
+    if (!campaign || campaign.status !== "running") {
+      return; // Campaign is not running, skip auto-complete check
+    }
+    
+    // Count recipients by status
+    const { data: statusCounts, error: countError } = await supabase
+      .from("campaign_recipients")
+      .select("status")
+      .eq("campaign_id", campaignId);
+    
+    if (countError || !statusCounts) {
+      console.log(`[auto-complete] Error checking recipients for campaign ${campaignId}:`, countError);
+      return;
+    }
+    
+    const pendingCount = statusCounts.filter((r: any) => r.status === "pending").length;
+    const sendingCount = statusCounts.filter((r: any) => r.status === "sending").length;
+    const queuedCount = statusCounts.filter((r: any) => r.status === "queued").length;
+    
+    // If no pending, sending, or queued recipients left, auto-complete the campaign
+    if (pendingCount === 0 && sendingCount === 0 && queuedCount === 0) {
+      const { error: updateError } = await supabase
+        .from("campaigns")
+        .update({
+          status: "completed",
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", campaignId)
+        .eq("status", "running"); // Only update if still running
+      
+      if (!updateError) {
+        console.log(`[auto-complete] ✅ Campaign "${campaign.name}" (${campaignId}) auto-completed - all recipients processed`);
+      } else {
+        console.log(`[auto-complete] Error auto-completing campaign ${campaignId}:`, updateError);
+      }
+    } else {
+      console.log(`[auto-complete] Campaign ${campaignId} has ${pendingCount} pending, ${sendingCount} sending, ${queuedCount} queued - not ready to complete`);
+    }
+  } catch (err) {
+    console.error(`[auto-complete] Exception checking campaign ${campaignId}:`, err);
+  }
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -178,6 +231,9 @@ serve(async (req) => {
                   console.log(`[report-task-result] Marked contact ${recipient.phone_number} as used`);
                 }
               }
+              
+              // Check if campaign should auto-complete (all recipients processed)
+              await checkAndAutoCompleteCampaign(supabase, recipient.campaign_id);
             }
           } else if (message_id) {
             // Non-campaign message: just update existing message status
@@ -502,6 +558,9 @@ serve(async (req) => {
             
             if (recipient?.campaign_id) {
               await supabase.rpc("increment_campaign_failed_count", { cid: recipient.campaign_id });
+              
+              // Check if campaign should auto-complete after marking this recipient failed
+              await checkAndAutoCompleteCampaign(supabase, recipient.campaign_id);
             }
           }
 
@@ -545,6 +604,9 @@ serve(async (req) => {
                     .update({ failed_count: (campaign.failed_count || 0) + 1 })
                     .eq("id", recipient.campaign_id);
                 }
+                
+                // Check if campaign should auto-complete after marking this recipient failed
+                await checkAndAutoCompleteCampaign(supabase, recipient.campaign_id);
                 
                 console.log(`[report-task-result] MAX RETRIES (${MAX_RETRIES}) reached - marked recipient as permanently failed: ${error}`);
               } else {
@@ -604,6 +666,9 @@ serve(async (req) => {
                       .update({ failed_count: (campaign.failed_count || 0) + 1 })
                       .eq("id", recipient.campaign_id);
                   }
+                  
+                  // Check if campaign should auto-complete after marking this recipient failed
+                  await checkAndAutoCompleteCampaign(supabase, recipient.campaign_id);
                   
                   console.log(`[report-task-result] No other accounts available - marked recipient as failed: ${error}`);
                 }
