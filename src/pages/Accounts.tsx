@@ -189,6 +189,12 @@ const Accounts: React.FC = () => {
             return;
           }
           
+          // Skip realtime updates during task operations to avoid double refreshes
+          // The task subscription handles its own refreshes
+          if (isAccountTaskRunning) {
+            return;
+          }
+          
           console.log('Account change detected:', payload.eventType);
           
           // Debounce refresh calls to prevent rapid fire
@@ -213,7 +219,7 @@ const Accounts: React.FC = () => {
       }
       supabase.removeChannel(channel);
     };
-  }, [refreshData]);
+  }, [refreshAccounts, isAccountTaskRunning]);
 
   
   // Realtime subscription for SpamBot check tasks
@@ -261,6 +267,10 @@ const Accounts: React.FC = () => {
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
   const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
   
+  // Debounce ref for task-triggered refreshes
+  const taskRefreshRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingRefreshCount = useRef(0);
+  
   useEffect(() => {
     if (!isAccountTaskRunning) return;
     
@@ -282,22 +292,36 @@ const Accounts: React.FC = () => {
               timestamp: new Date(),
             };
             
-            // For sync_profile, refresh immediately on each completion to update UI
-            if (task.task_type === 'sync_profile' && task.status === 'completed') {
-              refreshAccounts();
-            }
-            
             setAccountTasksProgress(prev => {
               const newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
               const newFailed = task.status === 'failed' ? prev.failed + 1 : prev.failed;
               const newLogs = [logEntry, ...prev.logs].slice(0, 100);
               const nowIso = new Date().toISOString();
+              const allDone = newCompleted + newFailed >= prev.total;
               
               // Check if all done
-              if (newCompleted + newFailed >= prev.total) {
+              if (allDone) {
                 setIsAccountTaskRunning(false);
                 toast.success(`${prev.taskType} complete: ${newCompleted} success, ${newFailed} failed`);
-                refreshAccounts();
+                // Single refresh at the end - debounced
+                if (taskRefreshRef.current) {
+                  clearTimeout(taskRefreshRef.current);
+                }
+                taskRefreshRef.current = setTimeout(() => {
+                  refreshAccounts();
+                  pendingRefreshCount.current = 0;
+                }, 300);
+              } else if (task.task_type === 'sync_profile' && task.status === 'completed') {
+                // For sync_profile, debounce refreshes to avoid rapid-fire updates
+                pendingRefreshCount.current++;
+                if (taskRefreshRef.current) {
+                  clearTimeout(taskRefreshRef.current);
+                }
+                // Wait for batch of updates before refreshing
+                taskRefreshRef.current = setTimeout(() => {
+                  refreshAccounts();
+                  pendingRefreshCount.current = 0;
+                }, 800); // Longer debounce for mid-task updates
               }
               
               return {
@@ -318,8 +342,11 @@ const Accounts: React.FC = () => {
 
     return () => {
       supabase.removeChannel(channel);
+      if (taskRefreshRef.current) {
+        clearTimeout(taskRefreshRef.current);
+      }
     };
-  }, [isAccountTaskRunning, accounts, refreshData]);
+  }, [isAccountTaskRunning, accounts, refreshAccounts]);
 
   // Watchdog: if the UI says "processing" but no tasks exist (or nothing is being picked up), stop and show a clear reason.
   useEffect(() => {
