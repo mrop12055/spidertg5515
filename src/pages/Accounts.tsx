@@ -132,8 +132,18 @@ const Accounts: React.FC = () => {
   const [privacySettings, setPrivacySettings] = useState({
     hidePhone: false,
     hideLastSeen: false,
+    hideProfilePhoto: false,
     disableCalls: false,
   });
+  
+  // Username dialog
+  const [isUsernameDialogOpen, setIsUsernameDialogOpen] = useState(false);
+  const [usernameInput, setUsernameInput] = useState('');
+  const [usernameAction, setUsernameAction] = useState<'set' | 'remove'>('set');
+  
+  // Bio dialog
+  const [isBioDialogOpen, setIsBioDialogOpen] = useState(false);
+  const [bioAction, setBioAction] = useState<'remove'>('remove');
   
   // Password dialog
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
@@ -265,7 +275,7 @@ const Accounts: React.FC = () => {
   }, [isSpamBotChecking, refreshAccounts]);
   
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
-  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
+  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile', 'change_username', 'remove_bio', 'spambot_check'];
   
   // Debounce ref for task-triggered refreshes
   const taskRefreshRef = useRef<NodeJS.Timeout | null>(null);
@@ -838,6 +848,12 @@ const Accounts: React.FC = () => {
           return 'logout_sessions';
         case 'Sync Profile':
           return 'sync_profile';
+        case 'Change Username':
+          return 'change_username';
+        case 'Remove Bio':
+          return 'remove_bio';
+        case 'SpamBot Check':
+          return 'spambot_check';
         default:
           return undefined;
       }
@@ -1167,6 +1183,83 @@ const Accounts: React.FC = () => {
     } catch (error) {
       console.error('Error queuing sync profile:', error);
       toast.error('Failed to queue sync profile');
+    }
+  };
+
+  // Change username - creates tasks for Python to process
+  const handleChangeUsername = async () => {
+    if (selectedIds.size === 0) return;
+    
+    try {
+      const accountIds = Array.from(selectedIds);
+      
+      // Delete any existing pending change_username tasks for these accounts
+      await supabase
+        .from('account_check_tasks')
+        .delete()
+        .in('account_id', accountIds)
+        .eq('task_type', 'change_username')
+        .in('status', ['pending', 'in_progress']);
+      
+      const tasks = accountIds.map(accountId => ({
+        account_id: accountId,
+        task_type: 'change_username',
+        status: 'pending',
+        result: JSON.stringify({ 
+          action: usernameAction,
+          username: usernameAction === 'set' ? usernameInput.trim() : null
+        }),
+      }));
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasks);
+      
+      if (error) throw error;
+      
+      startAccountTaskTracking('Change Username', selectedIds.size);
+      toast.info(`Queued username ${usernameAction === 'set' ? 'change' : 'removal'} for ${selectedIds.size} account(s)`);
+      setIsUsernameDialogOpen(false);
+      setUsernameInput('');
+    } catch (error) {
+      console.error('Error queuing username change:', error);
+      toast.error('Failed to queue username change');
+    }
+  };
+
+  // Remove bio - creates tasks for Python to process
+  const handleRemoveBio = async () => {
+    if (selectedIds.size === 0) return;
+    
+    try {
+      const accountIds = Array.from(selectedIds);
+      
+      // Delete any existing pending remove_bio tasks for these accounts
+      await supabase
+        .from('account_check_tasks')
+        .delete()
+        .in('account_id', accountIds)
+        .eq('task_type', 'remove_bio')
+        .in('status', ['pending', 'in_progress']);
+      
+      const tasks = accountIds.map(accountId => ({
+        account_id: accountId,
+        task_type: 'remove_bio',
+        status: 'pending',
+      }));
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasks);
+      
+      if (error) throw error;
+      
+      startAccountTaskTracking('Remove Bio', selectedIds.size);
+      toast.info(`Queued bio removal for ${selectedIds.size} account(s)`);
+      setIsBioDialogOpen(false);
+    } catch (error) {
+      console.error('Error queuing bio removal:', error);
+      toast.error('Failed to queue bio removal');
     }
   };
 
@@ -2457,11 +2550,10 @@ const Accounts: React.FC = () => {
               </Button>
               
               
-              <Button variant="outline" size="sm" onClick={handleSpamBotCheck} disabled={isSpamBotChecking || selectedIds.size === 0} className="gap-1.5">
-                <Shield className="w-3.5 h-3.5" />
-                SpamBot
+              <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting || selectedIds.size === 0} className="gap-1.5">
+                {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                Export
               </Button>
-              
               <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting || selectedIds.size === 0} className="gap-1.5">
                 {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                 Export
@@ -2481,21 +2573,34 @@ const Accounts: React.FC = () => {
                     <UserCircle className="w-4 h-4 mr-2" />
                     Change Name
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setIsUsernameDialogOpen(true)}>
+                    <Users className="w-4 h-4 mr-2" />
+                    Change Username
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => { setIsProfilePicOpen(true); fetchPictureTags(); }}>
                     <Image className="w-4 h-4 mr-2" />
                     Change Profile Picture
                   </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setIsBioDialogOpen(true)} className="text-orange-600">
+                    <X className="w-4 h-4 mr-2" />
+                    Remove Bio
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
                     <EyeOff className="w-4 h-4 mr-2" />
                     Privacy Settings
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setIsPasswordDialogOpen(true)}>
                     <Lock className="w-4 h-4 mr-2" />
-                    Change Password
+                    Change 2FA Password
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleLogoutOtherSessions}>
                     <LogOut className="w-4 h-4 mr-2" />
                     Logout Other Sessions
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleSpamBotCheck} disabled={isSpamBotChecking}>
+                    <Bot className="w-4 h-4 mr-2" />
+                    SpamBot Check
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
@@ -3223,7 +3328,7 @@ const Accounts: React.FC = () => {
                     <Phone className="w-4 h-4 text-muted-foreground" />
                     <div>
                       <p className="font-medium text-sm">Hide Phone Number</p>
-                      <p className="text-xs text-muted-foreground">Only contacts can see your number</p>
+                      <p className="text-xs text-muted-foreground">Nobody can see your phone number</p>
                     </div>
                   </div>
                   <Switch
@@ -3243,6 +3348,20 @@ const Accounts: React.FC = () => {
                   <Switch
                     checked={privacySettings.hideLastSeen}
                     onCheckedChange={(c) => setPrivacySettings(p => ({ ...p, hideLastSeen: c }))}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between p-3 rounded-lg border">
+                  <div className="flex items-center gap-3">
+                    <Image className="w-4 h-4 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium text-sm">Hide Profile Photo</p>
+                      <p className="text-xs text-muted-foreground">Nobody can see your profile picture</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={privacySettings.hideProfilePhoto}
+                    onCheckedChange={(c) => setPrivacySettings(p => ({ ...p, hideProfilePhoto: c }))}
                   />
                 </div>
                 
@@ -3568,6 +3687,88 @@ const Accounts: React.FC = () => {
                 <Button onClick={handleBulkTagAssign} disabled={isTagAssigning || (selectedTagsForBulk.length === 0 && !newTagName.trim())}>
                   {isTagAssigning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Tag className="w-4 h-4 mr-2" />}
                   {isTagAssigning ? 'Assigning...' : tagAssignMode === 'replace' ? 'Replace Tags' : 'Add Tags'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Username Change Dialog */}
+        <Dialog open={isUsernameDialogOpen} onOpenChange={setIsUsernameDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Change Username</DialogTitle>
+              <DialogDescription>
+                Set or update username for {selectedIds.size} account(s). If username is taken, a random suffix will be added.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              <RadioGroup value={usernameAction} onValueChange={(v) => setUsernameAction(v as 'set' | 'remove')}>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="set" id="username-set" />
+                  <Label htmlFor="username-set">Set/Update username</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="remove" id="username-remove" />
+                  <Label htmlFor="username-remove" className="text-orange-600">Remove username</Label>
+                </div>
+              </RadioGroup>
+              
+              {usernameAction === 'set' && (
+                <div className="space-y-2">
+                  <Label>Username (without @)</Label>
+                  <Input
+                    placeholder="myusername"
+                    value={usernameInput}
+                    onChange={(e) => setUsernameInput(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    If already taken, will auto-append random numbers (e.g., myusername_7291)
+                  </p>
+                </div>
+              )}
+              
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => { setIsUsernameDialogOpen(false); setUsernameInput(''); }}>
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleChangeUsername}
+                  disabled={usernameAction === 'set' && !usernameInput.trim()}
+                >
+                  {usernameAction === 'set' ? 'Set Username' : 'Remove Username'}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Remove Bio Dialog */}
+        <Dialog open={isBioDialogOpen} onOpenChange={setIsBioDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Remove Bio</DialogTitle>
+              <DialogDescription>
+                This will remove the bio/about text from {selectedIds.size} account(s).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              <div className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/30">
+                <div className="flex items-center gap-3">
+                  <AlertTriangle className="w-5 h-5 text-orange-500" />
+                  <div>
+                    <p className="font-medium text-sm">This action will clear all bio text</p>
+                    <p className="text-xs text-muted-foreground">The bio/about section will be set to empty for all selected accounts.</p>
+                  </div>
+                </div>
+              </div>
+              
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setIsBioDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={handleRemoveBio}>
+                  Remove Bio
                 </Button>
               </div>
             </div>
