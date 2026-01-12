@@ -442,18 +442,34 @@ serve(async (req) => {
               })
               .eq("id", account_id);
           } else if (isRetryable && campaign_recipient_id && account_id) {
-            // RATE LIMIT - restrict account for 12h and retry with different account
-            console.log(`[report-task-result] Account ${account_id} rate limited - restricting and retrying: ${error}`);
+            // RATE LIMIT ("Too many requests") - restrict account for 12h and retry with different account
+            console.log(`[report-task-result] Account ${account_id} rate limited (Too many requests) - setting RESTRICTED status for 12h: ${error}`);
             
+            const restrictedUntil = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
             await supabase
               .from("telegram_accounts")
               .update({
-                restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+                status: "restricted",  // CRITICAL: Set status to restricted
+                restricted_until: restrictedUntil,
                 ban_reason: error,
               })
               .eq("id", account_id);
             
+            console.log(`[report-task-result] Account ${account_id} now RESTRICTED until ${restrictedUntil}`);
+            
             // Reset recipient to pending for retry with different account
+            // Track failed account to avoid reassigning to same account
+            const { data: currentRecipient } = await supabase
+              .from("campaign_recipients")
+              .select("failed_account_ids")
+              .eq("id", campaign_recipient_id)
+              .single();
+            
+            const failedAccountIds: string[] = currentRecipient?.failed_account_ids || [];
+            if (!failedAccountIds.includes(account_id)) {
+              failedAccountIds.push(account_id);
+            }
+            
             await supabase
               .from("campaign_recipients")
               .update({
@@ -461,6 +477,7 @@ serve(async (req) => {
                 sent_by_account_id: null,
                 api_credential_id: null,
                 failed_reason: null,
+                failed_account_ids: failedAccountIds,
               })
               .eq("id", campaign_recipient_id);
           } else if (isSkipOnly && campaign_recipient_id) {
