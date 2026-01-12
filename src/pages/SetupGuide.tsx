@@ -2405,8 +2405,8 @@ import base64
 import httpx
 
 from client_manager import (
-    get_or_create_client, report_result, shutdown_all, disconnect_client,
-    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL, active_clients
+    get_or_create_client, get_batch_tasks, report_result, shutdown_all, disconnect_client,
+    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL, active_clients, get_http_client
 )
 
 RUNNING = True
@@ -2813,45 +2813,14 @@ async def run_task_with_timeout(task: dict):
         await report_task_failure(task_type, task_id, account_id, str(e))
 
 
-_http_client = None
-
-async def get_http_client():
-    """Reuse a single HTTP client to avoid socket/resource leaks on some systems."""
-    global _http_client
-    if _http_client is None:
-        _http_client = httpx.AsyncClient(timeout=120.0)
-    return _http_client
-
-
-async def get_batch_tasks(runner="account", batch_size=20):
-    """Get a batch of tasks for parallel processing"""
-    try:
-        client = await get_http_client()
-        resp = await client.post(
-            f"{BACKEND_URL}/get-batch-tasks",
-            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json={"runner": runner, "batch_size": batch_size},
-            timeout=120.0,
-        )
-
-        if resp.status_code != 200:
-            print(f"[HTTP ERROR] get_batch_tasks: status={resp.status_code} body={resp.text[:200]}")
-            return {"tasks": [], "delay_after": 5}
-
-        return resp.json()
-    except Exception as e:
-        print(f"[HTTP ERROR] get_batch_tasks: {type(e).__name__}: {repr(e)}")
-        return {"tasks": [], "delay_after": 5}
-
-
 async def send_heartbeat():
     """Send heartbeat to register this runner.
     Note: get-batch-tasks already records a heartbeat, so this is a backup 
     for when we're idle. Use a longer timeout to reduce noise.
     """
     try:
-        client = await get_http_client()
-        await client.post(
+        http = get_http_client()
+        await http.post(
             f"{BACKEND_URL}/get-batch-tasks",
             headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
             json={"runner": "account", "batch_size": 0},  # batch_size=0 = heartbeat only
@@ -2906,15 +2875,6 @@ async def main_loop():
             print(f"[ERROR] {e}")
             await asyncio.sleep(5)
     
-    # Close shared HTTP client (prevents hangs after many polls on some systems)
-    global _http_client
-    try:
-        if _http_client is not None:
-            await _http_client.aclose()
-            _http_client = None
-    except:
-        pass
-
     await shutdown_all()
 
 
