@@ -349,10 +349,16 @@ serve(async (req) => {
             'flood',
             'spam',
             'user_is_blocked',
-            'frozen',            // Frozen accounts get restricted status
-            'frozen accounts',   // ImportContactsRequest errors on frozen accounts
             'floodwaiterror',    // Telegram flood wait error
             'account restricted' // Only match if it says "account restricted" not "privacy restricted"
+          ];
+          
+          // FROZEN account errors - account is frozen by Telegram, set to FROZEN status permanently
+          // This is NOT a temporary restriction - account cannot be used anymore
+          const frozenAccountErrors = [
+            'frozen',
+            'frozen accounts',
+            'not available for frozen',
           ];
           
           // "Too many requests" - IMMEDIATE restriction with NO RETRIES
@@ -386,15 +392,18 @@ serve(async (req) => {
           // Check for "Too many requests" FIRST - this is IMMEDIATE restriction, no retries
           const isTooManyRequests = tooManyRequestsErrors.some(r => errorLower.includes(r));
           
+          // Check for FROZEN account errors - these are permanent, not temporary
+          const isFrozenAccount = frozenAccountErrors.some(r => errorLower.includes(r));
+          
           // Check for API retry errors
-          const isApiRetryable = !isTooManyRequests && retryWithDifferentApiErrors.some(r => errorLower.includes(r));
+          const isApiRetryable = !isTooManyRequests && !isFrozenAccount && retryWithDifferentApiErrors.some(r => errorLower.includes(r));
           
           // CRITICAL: Check skip-only errors - these are recipient problems that can't be retried
-          const isSkipOnly = !isTooManyRequests && !isApiRetryable && skipRecipientErrors.some(r => errorLower.includes(r));
+          const isSkipOnly = !isTooManyRequests && !isFrozenAccount && !isApiRetryable && skipRecipientErrors.some(r => errorLower.includes(r));
           
-          // Only check account-related errors if it's NOT a recipient error, API-retryable, or too many requests
-          const isPermanentBan = !isSkipOnly && !isApiRetryable && !isTooManyRequests && permanentBanErrors.some(r => errorLower.includes(r));
-          const isTemporaryRestriction = !isSkipOnly && !isApiRetryable && !isTooManyRequests && temporaryRestrictionErrors.some(r => errorLower.includes(r));
+          // Only check account-related errors if it's NOT a recipient error, API-retryable, frozen, or too many requests
+          const isPermanentBan = !isSkipOnly && !isApiRetryable && !isTooManyRequests && !isFrozenAccount && permanentBanErrors.some(r => errorLower.includes(r));
+          const isTemporaryRestriction = !isSkipOnly && !isApiRetryable && !isTooManyRequests && !isFrozenAccount && temporaryRestrictionErrors.some(r => errorLower.includes(r));
           
           // Track account failure for health monitoring (only for account-related errors, not recipient/API issues)
           // Skip-only errors are recipient problems, API-retryable are API problems - neither affects account stats
@@ -492,6 +501,46 @@ serve(async (req) => {
                 ban_reason: error,
               })
               .eq("id", account_id);
+          } else if (isFrozenAccount && account_id) {
+            // FROZEN ACCOUNT - account is frozen by Telegram, set to FROZEN status permanently
+            // This is NOT a temporary restriction - account cannot be used for campaigns anymore
+            console.log(`[report-task-result] Account ${account_id} FROZEN by Telegram: ${error}`);
+            
+            await supabase
+              .from("telegram_accounts")
+              .update({
+                status: "frozen",
+                ban_reason: error,
+              })
+              .eq("id", account_id);
+            
+            // If this was a campaign message, retry with different account
+            if (campaign_recipient_id) {
+              const { data: currentRecipient } = await supabase
+                .from("campaign_recipients")
+                .select("failed_account_ids")
+                .eq("id", campaign_recipient_id)
+                .single();
+              
+              const failedAccountIds: string[] = currentRecipient?.failed_account_ids || [];
+              if (!failedAccountIds.includes(account_id)) {
+                failedAccountIds.push(account_id);
+              }
+              
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  sent_by_account_id: null,
+                  api_credential_id: null,
+                  failed_reason: null,
+                  failed_account_ids: failedAccountIds,
+                  scheduled_at: null,
+                })
+                .eq("id", campaign_recipient_id);
+                
+              console.log(`[report-task-result] Recipient ${campaign_recipient_id} reset for pickup by different account (frozen account)`);
+            }
           } else if (isTooManyRequests && campaign_recipient_id && account_id) {
             // RATE LIMIT ("Too many requests") - IMMEDIATELY restrict account for 12h and switch to different account
             // NO RETRIES - instant switch. This error only happens on NEW campaign messages (first contact)
