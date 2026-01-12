@@ -337,12 +337,74 @@ serve(async (req) => {
 
       // ========== PARALLEL PROCESS FAILURES ==========
       if (failedResults.length > 0) {
-        // Classify errors: API issues (privacy) vs Account issues vs Permanent failures
-        const retryWithDifferentApi = failedResults.filter((r) => r.retry_with_different_api);
-        const retryWithDifferentAccount = failedResults.filter((r) => r.retry_with_different_account && !r.retry_with_different_api);
-        const permanent = failedResults.filter((r) => !r.retry_with_different_account && !r.retry_with_different_api);
+        // DETECT "Too many requests" from error text - IMMEDIATE restriction, no retries
+        // This is handled SEPARATELY from flags sent by Python runner
+        const tooManyRequestsResults = failedResults.filter((r) => {
+          const errorLower = (r.error || '').toLowerCase();
+          return errorLower.includes('too many requests');
+        });
+        
+        // Classify other errors: API issues (privacy) vs Account issues vs Permanent failures
+        // EXCLUDE "too many requests" from other categories
+        const otherFailed = failedResults.filter((r) => {
+          const errorLower = (r.error || '').toLowerCase();
+          return !errorLower.includes('too many requests');
+        });
+        
+        const retryWithDifferentApi = otherFailed.filter((r) => r.retry_with_different_api);
+        const retryWithDifferentAccount = otherFailed.filter((r) => r.retry_with_different_account && !r.retry_with_different_api);
+        const permanent = otherFailed.filter((r) => !r.retry_with_different_account && !r.retry_with_different_api);
 
         const failPromises: Promise<any>[] = [];
+
+        // FIRST: Handle "Too many requests" - IMMEDIATE restriction, NO RETRIES
+        // This is detected from error text, not from flags
+        for (const r of tooManyRequestsResults) {
+          failPromises.push(
+            (async () => {
+              // IMMEDIATELY RESTRICT the account for 12 hours
+              if (r.account_id) {
+                const restrictedUntil = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+                await supabase
+                  .from("telegram_accounts")
+                  .update({
+                    status: "restricted",
+                    restricted_until: restrictedUntil,
+                    ban_reason: `Rate limited (Too many requests). Can still reply to existing chats.`,
+                  })
+                  .eq("id", r.account_id);
+                console.log(`[report-batch-results] Account ${r.account_id} IMMEDIATELY RESTRICTED for 12h (Too many requests)`);
+              }
+
+              // Track failed account and reset recipient for different account
+              const { data: current } = await supabase
+                .from("campaign_recipients")
+                .select("failed_account_ids")
+                .eq("id", r.campaign_recipient_id)
+                .single();
+
+              const failedIds: string[] = current?.failed_account_ids || [];
+              if (r.account_id && !failedIds.includes(r.account_id)) {
+                failedIds.push(r.account_id);
+              }
+
+              // IMMEDIATE switch to different account - no retry count needed
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  failed_reason: null,
+                  failed_account_ids: failedIds,
+                  sent_by_account_id: null,
+                  api_credential_id: null,
+                  scheduled_at: null,
+                })
+                .eq("id", r.campaign_recipient_id);
+                
+              console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} reset for IMMEDIATE pickup by different account (Too many requests)`);
+            })()
+          );
+        }
 
         // Handle permanent failures
         if (permanent.length > 0) {
@@ -508,7 +570,7 @@ serve(async (req) => {
         }
 
         await Promise.all(failPromises);
-        console.log(`[report-batch-results] Failed: ${failedResults.length} (${permanent.length} permanent, ${retryWithDifferentApi.length} API-retry, ${retryWithDifferentAccount.length} account-retry)`);
+        console.log(`[report-batch-results] Failed: ${failedResults.length} (${tooManyRequestsResults.length} rate-limited, ${permanent.length} permanent, ${retryWithDifferentApi.length} API-retry, ${retryWithDifferentAccount.length} account-retry)`);
       }
 
       const elapsed = Date.now() - startTime;
