@@ -2417,10 +2417,10 @@ async def change_profile_photo(client, photo_source: str):
         return False, str(e)
 
 
-async def update_privacy(client, hide_phone, hide_last_seen, disable_calls):
+async def update_privacy(client, hide_phone, hide_last_seen, disable_calls, hide_profile_photo=False):
     try:
         from telethon.tl.functions.account import SetPrivacyRequest
-        from telethon.tl.types import InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, InputPrivacyKeyPhoneCall
+        from telethon.tl.types import InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, InputPrivacyKeyPhoneCall, InputPrivacyKeyProfilePhoto
         from telethon.tl.types import InputPrivacyValueDisallowAll
         if hide_phone:
             await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneNumber(), rules=[InputPrivacyValueDisallowAll()]))
@@ -2428,6 +2428,54 @@ async def update_privacy(client, hide_phone, hide_last_seen, disable_calls):
             await client(SetPrivacyRequest(key=InputPrivacyKeyStatusTimestamp(), rules=[InputPrivacyValueDisallowAll()]))
         if disable_calls:
             await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneCall(), rules=[InputPrivacyValueDisallowAll()]))
+        if hide_profile_photo:
+            await client(SetPrivacyRequest(key=InputPrivacyKeyProfilePhoto(), rules=[InputPrivacyValueDisallowAll()]))
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+async def change_username(client, action: str, username: str = None):
+    """Change or remove username"""
+    try:
+        from telethon.tl.functions.account import UpdateUsernameRequest, CheckUsernameRequest
+        import random
+        import string
+        
+        if action == "remove":
+            await client(UpdateUsernameRequest(username=""))
+            return True, None, None
+        else:
+            # Try to set username
+            try:
+                # Check if username is available
+                result = await client(CheckUsernameRequest(username=username))
+                if result:
+                    await client(UpdateUsernameRequest(username=username))
+                    return True, None, username
+                else:
+                    # Username taken, add random suffix
+                    suffix = ''.join(random.choices(string.digits, k=5))
+                    new_username = f"{username}{suffix}"
+                    await client(UpdateUsernameRequest(username=new_username))
+                    return True, None, new_username
+            except Exception as e:
+                if "taken" in str(e).lower() or "occupied" in str(e).lower():
+                    # Username taken, add random suffix
+                    suffix = ''.join(random.choices(string.digits, k=5))
+                    new_username = f"{username}{suffix}"
+                    await client(UpdateUsernameRequest(username=new_username))
+                    return True, None, new_username
+                raise e
+    except Exception as e:
+        return False, str(e), None
+
+
+async def remove_bio(client):
+    """Remove account bio"""
+    try:
+        from telethon.tl.functions.account import UpdateProfileRequest
+        await client(UpdateProfileRequest(about=""))
         return True, None
     except Exception as e:
         return False, str(e)
@@ -2519,7 +2567,13 @@ async def process_single_task(task):
             client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [PRIVACY] Updating for {phone}...")
-                success, error = await update_privacy(client, task_data.get("hidePhone", False), task_data.get("hideLastSeen", False), task_data.get("disableCalls", False))
+                success, error = await update_privacy(
+                    client, 
+                    task_data.get("hidePhone", False), 
+                    task_data.get("hideLastSeen", False), 
+                    task_data.get("disableCalls", False),
+                    task_data.get("hideProfilePhoto", False)
+                )
                 await report_result("privacy_settings", {"task_id": task_id, "account_id": account_id, "success": success, "error": error})
         
         elif task_type == "change_password":
@@ -2584,6 +2638,37 @@ async def process_single_task(task):
             except Exception as e:
                 await report_result("sync_profile", {"task_id": task_id, "account_id": account_id, "success": False, "error": str(e)})
                 print(f"    Error: {e}")
+        
+        elif task_type == "change_username":
+            client = await get_or_create_client(account, task_proxy=task_proxy)
+            if client:
+                action = task_data.get("action", "set")  # "set" or "remove"
+                username = task_data.get("username", "")
+                print(f"  [USERNAME] {action} for {phone}...")
+                success, error, final_username = await change_username(client, action, username)
+                await report_result("change_username", {
+                    "task_id": task_id, 
+                    "account_id": account_id, 
+                    "success": success, 
+                    "error": error,
+                    "username": final_username,
+                    "action": action
+                })
+                if success:
+                    print(f"    Username {action}: {final_username or 'removed'}")
+                else:
+                    print(f"    Failed: {error}")
+        
+        elif task_type == "remove_bio":
+            client = await get_or_create_client(account, task_proxy=task_proxy)
+            if client:
+                print(f"  [BIO] Removing bio for {phone}...")
+                success, error = await remove_bio(client)
+                await report_result("remove_bio", {"task_id": task_id, "account_id": account_id, "success": success, "error": error})
+                if success:
+                    print(f"    Bio removed")
+                else:
+                    print(f"    Failed: {error}")
     
     except Exception as e:
         # CRITICAL: Report failure to backend so task doesn't stay stuck in "in_progress"
