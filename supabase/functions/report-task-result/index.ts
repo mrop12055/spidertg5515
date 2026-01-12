@@ -704,7 +704,10 @@ serve(async (req) => {
 
         // DEDUPLICATION Strategy 2: Content-based fallback (catches messages without telegram_message_id or legacy duplicates)
         // Check if same content from same sender within last 24 hours exists
-        if (account_id && sender_id && content) {
+        // SKIP content-based dedup for media messages - they all have "[Photo] " or "[Video] " content
+        const isMediaMessage = media_type && (content?.startsWith("[Photo]") || content?.startsWith("[Video]") || content?.startsWith("[File]"));
+        
+        if (account_id && sender_id && content && !isMediaMessage) {
           const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
           
           // First find conversations with this sender
