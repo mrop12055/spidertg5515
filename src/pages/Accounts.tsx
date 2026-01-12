@@ -2673,130 +2673,125 @@ const Accounts: React.FC = () => {
             </Select>
           )}
           
-          {/* Quick Filter Pills */}
-          <div className="flex items-center gap-2 flex-wrap">
-            {/* Proxy Filters */}
-            <button
-              onClick={() => setProxyFilter(proxyFilter === 'with_proxy' ? 'all' : 'with_proxy')}
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-full flex items-center gap-1.5 transition-all border",
-                proxyFilter === 'with_proxy' 
-                  ? "bg-green-500 text-white border-green-500 shadow-sm" 
-                  : "bg-card hover:bg-muted border-border"
-              )}
-            >
-              <Link2 className="w-3.5 h-3.5" />
-              With Proxy
-            </button>
-            <button
-              onClick={() => setProxyFilter(proxyFilter === 'without_proxy' ? 'all' : 'without_proxy')}
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-full flex items-center gap-1.5 transition-all border",
-                proxyFilter === 'without_proxy' 
-                  ? "bg-red-500 text-white border-red-500 shadow-sm" 
-                  : "bg-card hover:bg-muted border-border"
-              )}
-            >
-              <Unlink className="w-3.5 h-3.5" />
-              No Proxy
-            </button>
-            
-            {/* Profile Sync Filters */}
-            <button
-              onClick={() => setProfileFilter(profileFilter === 'synced' ? 'all' : 'synced')}
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-full flex items-center gap-1.5 transition-all border",
-                profileFilter === 'synced' 
-                  ? "bg-blue-500 text-white border-blue-500 shadow-sm" 
-                  : "bg-card hover:bg-muted border-border"
-              )}
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Synced
-            </button>
-            <button
-              onClick={() => setProfileFilter(profileFilter === 'not_synced' ? 'all' : 'not_synced')}
-              className={cn(
-                "h-8 px-3 text-xs font-medium rounded-full flex items-center gap-1.5 transition-all border",
-                profileFilter === 'not_synced' 
-                  ? "bg-orange-500 text-white border-orange-500 shadow-sm" 
-                  : "bg-card hover:bg-muted border-border"
-              )}
-            >
-              <AlertCircle className="w-3.5 h-3.5" />
-              Not Synced
-            </button>
-            
-            {/* Tag Pills - show all tags as clickable pills */}
+          {/* Simple Filter Chips */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Tag Filter Dropdown - Only show dropdown if there are tags */}
             {availableTags.length > 0 && (
-              <>
-                <div className="w-px h-5 bg-border mx-1" />
-                <button
-                  onClick={() => setTagFilter(tagFilter === 'no_tags' ? 'all' : 'no_tags')}
-                  className={cn(
-                    "h-8 px-3 text-xs font-medium rounded-full flex items-center gap-1.5 transition-all border",
-                    tagFilter === 'no_tags' 
-                      ? "bg-muted-foreground text-white border-muted-foreground shadow-sm" 
-                      : "bg-card hover:bg-muted border-border"
-                  )}
-                >
-                  <X className="w-3.5 h-3.5" />
-                  No Tag
-                </button>
-                {availableTags.slice(0, 5).map(tag => (
-                  <button
-                    key={tag}
-                    onClick={() => setTagFilter(tagFilter === tag ? 'all' : tag)}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button 
+                    variant={tagFilter !== 'all' ? 'default' : 'outline'} 
+                    size="sm" 
                     className={cn(
-                      "h-8 px-3 text-xs font-medium rounded-full flex items-center gap-1.5 transition-all border",
-                      tagFilter === tag 
-                        ? "bg-primary text-primary-foreground border-primary shadow-sm" 
-                        : "bg-card hover:bg-muted border-border"
+                      "h-7 px-2.5 text-xs gap-1.5",
+                      tagFilter !== 'all' && "bg-primary text-primary-foreground"
                     )}
                   >
-                    <Tag className="w-3.5 h-3.5" />
-                    {tag}
-                  </button>
-                ))}
-                {/* More tags dropdown if > 5 */}
-                {availableTags.length > 5 && (
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button className="h-8 px-3 text-xs font-medium rounded-full flex items-center gap-1.5 transition-all border bg-card hover:bg-muted border-border">
-                        +{availableTags.length - 5} more
-                        <ChevronDown className="w-3 h-3" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-40 bg-popover border shadow-lg z-50">
-                      {availableTags.slice(5).map(tag => (
-                        <DropdownMenuItem 
-                          key={tag} 
-                          onClick={() => setTagFilter(tagFilter === tag ? 'all' : tag)}
-                          className={cn("cursor-pointer", tagFilter === tag && "bg-primary/10 text-primary")}
-                        >
-                          <Tag className="w-3 h-3 mr-2" />
-                          {tag}
-                        </DropdownMenuItem>
-                      ))}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-              </>
+                    <Tag className="w-3 h-3" />
+                    {tagFilter === 'all' ? 'Tag' : tagFilter === 'no_tags' ? 'No Tag' : tagFilter}
+                    <ChevronDown className="w-3 h-3 opacity-60" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-40">
+                  <DropdownMenuItem 
+                    onClick={() => setTagFilter('all')}
+                    className={cn(tagFilter === 'all' && "bg-muted")}
+                  >
+                    All Tags
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => setTagFilter('no_tags')}
+                    className={cn(tagFilter === 'no_tags' && "bg-muted")}
+                  >
+                    <X className="w-3 h-3 mr-2 text-muted-foreground" />
+                    No Tags
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {availableTags.map(tag => (
+                    <DropdownMenuItem 
+                      key={tag} 
+                      onClick={() => setTagFilter(tag)}
+                      className={cn(tagFilter === tag && "bg-muted")}
+                    >
+                      <Tag className="w-3 h-3 mr-2" />
+                      {tag}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
             
-            {/* Clear All */}
-            {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all') && (
+            {/* Proxy Toggle Chips */}
+            <div className="flex items-center rounded-md border overflow-hidden">
               <button
+                onClick={() => setProxyFilter(proxyFilter === 'with_proxy' ? 'all' : 'with_proxy')}
+                className={cn(
+                  "h-7 px-2.5 text-xs flex items-center gap-1.5 transition-colors",
+                  proxyFilter === 'with_proxy' 
+                    ? "bg-green-500/15 text-green-600 border-r border-green-500/30" 
+                    : "hover:bg-muted border-r"
+                )}
+              >
+                <Link2 className="w-3 h-3" />
+                Proxy
+              </button>
+              <button
+                onClick={() => setProxyFilter(proxyFilter === 'without_proxy' ? 'all' : 'without_proxy')}
+                className={cn(
+                  "h-7 px-2.5 text-xs flex items-center gap-1.5 transition-colors",
+                  proxyFilter === 'without_proxy' 
+                    ? "bg-red-500/15 text-red-600" 
+                    : "hover:bg-muted"
+                )}
+              >
+                <Unlink className="w-3 h-3" />
+                No Proxy
+              </button>
+            </div>
+            
+            {/* Profile Sync Toggle Chips */}
+            <div className="flex items-center rounded-md border overflow-hidden">
+              <button
+                onClick={() => setProfileFilter(profileFilter === 'synced' ? 'all' : 'synced')}
+                className={cn(
+                  "h-7 px-2.5 text-xs flex items-center gap-1.5 transition-colors",
+                  profileFilter === 'synced' 
+                    ? "bg-green-500/15 text-green-600 border-r border-green-500/30" 
+                    : "hover:bg-muted border-r"
+                )}
+              >
+                <CheckCircle2 className="w-3 h-3" />
+                Synced
+              </button>
+              <button
+                onClick={() => setProfileFilter(profileFilter === 'not_synced' ? 'all' : 'not_synced')}
+                className={cn(
+                  "h-7 px-2.5 text-xs flex items-center gap-1.5 transition-colors",
+                  profileFilter === 'not_synced' 
+                    ? "bg-orange-500/15 text-orange-600" 
+                    : "hover:bg-muted"
+                )}
+              >
+                <AlertCircle className="w-3 h-3" />
+                Not Synced
+              </button>
+            </div>
+            
+            {/* Clear All - only show when filters active */}
+            {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all') && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => {
                   setTagFilter('all');
                   setProxyFilter('all');
                   setProfileFilter('all');
                 }}
-                className="h-8 px-3 text-xs font-medium rounded-full flex items-center gap-1.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-all"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-3 h-3 mr-1" />
                 Clear
-              </button>
+              </Button>
             )}
           </div>
         </div>
