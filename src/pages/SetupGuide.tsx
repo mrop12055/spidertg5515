@@ -1936,6 +1936,7 @@ async def setup_message_handler(client, account_id: str):
                 try:
                     photo_bytes = await client.download_media(event.message.photo, bytes)
                     if photo_bytes:
+                        print(f"    [PHOTO] Downloaded {len(photo_bytes)} bytes, uploading...")
                         file_name = f"incoming_{account_id}_{int(time.time() * 1000)}.jpg"
                         file_path = f"{account_id}/{file_name}"
                         
@@ -1961,9 +1962,10 @@ async def setup_message_handler(client, account_id: str):
                         else:
                             error_text = upload_response.text[:300] if upload_response.text else "No details"
                             print(f"    [WARN] Photo upload failed: {upload_response.status_code} - {error_text}")
+                    else:
+                        print(f"    [WARN] Photo download returned empty bytes")
                 except Exception as e:
-                    if not is_network_error(str(e)):
-                        print(f"    [WARN] Could not upload photo: {e}")
+                    print(f"    [WARN] Photo error: {str(e)[:100]}")
             
             avatar_base64 = None
             try:
