@@ -2673,128 +2673,127 @@ const Accounts: React.FC = () => {
             </Select>
           )}
           
-          {/* Unified Filter Dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9 gap-2">
-                <Filter className="w-4 h-4" />
-                Filters
-                {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all') && (
-                  <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                    {[tagFilter !== 'all', proxyFilter !== 'all', profileFilter !== 'all'].filter(Boolean).length}
-                  </Badge>
-                )}
-                <ChevronDown className="w-3 h-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64 p-3">
-              {/* Tag Filter */}
-              <div className="space-y-2 mb-4">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <Tag className="w-3.5 h-3.5" />
-                  Tags
-                </Label>
-                <Select value={tagFilter} onValueChange={setTagFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Tags" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Tags</SelectItem>
-                    <SelectItem value="no_tags">
-                      <span className="flex items-center gap-2 text-muted-foreground">
-                        <X className="w-3 h-3" />
-                        No Tags
-                      </span>
-                    </SelectItem>
-                    {availableTags.map(tag => (
-                      <SelectItem key={tag} value={tag}>
-                        <span className="flex items-center gap-2">
-                          <Tag className="w-3 h-3" />
-                          {tag}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Proxy Filter */}
-              <div className="space-y-2 mb-4">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <Globe className="w-3.5 h-3.5" />
-                  Proxy
-                </Label>
-                <Select value={proxyFilter} onValueChange={setProxyFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Accounts" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Accounts</SelectItem>
-                    <SelectItem value="with_proxy">
-                      <span className="flex items-center gap-2">
-                        <Link2 className="w-3 h-3 text-green-500" />
-                        With Proxy
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="without_proxy">
-                      <span className="flex items-center gap-2">
-                        <Unlink className="w-3 h-3 text-red-500" />
-                        Without Proxy
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Profile Sync Filter */}
-              <div className="space-y-2 mb-3">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Profile Sync
-                </Label>
-                <Select value={profileFilter} onValueChange={setProfileFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Profiles" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Profiles</SelectItem>
-                    <SelectItem value="synced">
-                      <span className="flex items-center gap-2">
-                        <CheckCircle2 className="w-3 h-3 text-green-500" />
-                        Synced
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="not_synced">
-                      <span className="flex items-center gap-2">
-                        <AlertCircle className="w-3 h-3 text-orange-500" />
-                        Not Synced
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Clear Filters */}
-              {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all') && (
-                <>
-                  <DropdownMenuSeparator className="my-2" />
+          {/* Simple Filter Chips */}
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {/* Tag Filter Dropdown - Only show dropdown if there are tags */}
+            {availableTags.length > 0 && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <Button 
-                    variant="ghost" 
+                    variant={tagFilter !== 'all' ? 'default' : 'outline'} 
                     size="sm" 
-                    className="w-full h-8 text-xs"
-                    onClick={() => {
-                      setTagFilter('all');
-                      setProxyFilter('all');
-                      setProfileFilter('all');
-                    }}
+                    className={cn(
+                      "h-7 px-2.5 text-xs gap-1.5",
+                      tagFilter !== 'all' && "bg-primary text-primary-foreground"
+                    )}
                   >
-                    <X className="w-3 h-3 mr-1" />
-                    Clear All Filters
+                    <Tag className="w-3 h-3" />
+                    {tagFilter === 'all' ? 'Tag' : tagFilter === 'no_tags' ? 'No Tag' : tagFilter}
+                    <ChevronDown className="w-3 h-3 opacity-60" />
                   </Button>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-40">
+                  <DropdownMenuItem 
+                    onClick={() => setTagFilter('all')}
+                    className={cn(tagFilter === 'all' && "bg-muted")}
+                  >
+                    All Tags
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => setTagFilter('no_tags')}
+                    className={cn(tagFilter === 'no_tags' && "bg-muted")}
+                  >
+                    <X className="w-3 h-3 mr-2 text-muted-foreground" />
+                    No Tags
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  {availableTags.map(tag => (
+                    <DropdownMenuItem 
+                      key={tag} 
+                      onClick={() => setTagFilter(tag)}
+                      className={cn(tagFilter === tag && "bg-muted")}
+                    >
+                      <Tag className="w-3 h-3 mr-2" />
+                      {tag}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            
+            {/* Proxy Toggle Chips */}
+            <div className="flex items-center rounded-md border overflow-hidden">
+              <button
+                onClick={() => setProxyFilter(proxyFilter === 'with_proxy' ? 'all' : 'with_proxy')}
+                className={cn(
+                  "h-7 px-2.5 text-xs flex items-center gap-1.5 transition-colors",
+                  proxyFilter === 'with_proxy' 
+                    ? "bg-green-500/15 text-green-600 border-r border-green-500/30" 
+                    : "hover:bg-muted border-r"
+                )}
+              >
+                <Link2 className="w-3 h-3" />
+                Proxy
+              </button>
+              <button
+                onClick={() => setProxyFilter(proxyFilter === 'without_proxy' ? 'all' : 'without_proxy')}
+                className={cn(
+                  "h-7 px-2.5 text-xs flex items-center gap-1.5 transition-colors",
+                  proxyFilter === 'without_proxy' 
+                    ? "bg-red-500/15 text-red-600" 
+                    : "hover:bg-muted"
+                )}
+              >
+                <Unlink className="w-3 h-3" />
+                No Proxy
+              </button>
+            </div>
+            
+            {/* Profile Sync Toggle Chips */}
+            <div className="flex items-center rounded-md border overflow-hidden">
+              <button
+                onClick={() => setProfileFilter(profileFilter === 'synced' ? 'all' : 'synced')}
+                className={cn(
+                  "h-7 px-2.5 text-xs flex items-center gap-1.5 transition-colors",
+                  profileFilter === 'synced' 
+                    ? "bg-green-500/15 text-green-600 border-r border-green-500/30" 
+                    : "hover:bg-muted border-r"
+                )}
+              >
+                <CheckCircle2 className="w-3 h-3" />
+                Synced
+              </button>
+              <button
+                onClick={() => setProfileFilter(profileFilter === 'not_synced' ? 'all' : 'not_synced')}
+                className={cn(
+                  "h-7 px-2.5 text-xs flex items-center gap-1.5 transition-colors",
+                  profileFilter === 'not_synced' 
+                    ? "bg-orange-500/15 text-orange-600" 
+                    : "hover:bg-muted"
+                )}
+              >
+                <AlertCircle className="w-3 h-3" />
+                Not Synced
+              </button>
+            </div>
+            
+            {/* Clear All - only show when filters active */}
+            {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all') && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-7 px-2 text-xs text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setTagFilter('all');
+                  setProxyFilter('all');
+                  setProfileFilter('all');
+                }}
+              >
+                <X className="w-3 h-3 mr-1" />
+                Clear
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Account Tabs */}
