@@ -4,7 +4,7 @@ import {
   LayoutDashboard, 
   Users, 
   MessageSquare, 
-  Settings, 
+  Key,
   Send,
   LogOut,
   ChevronLeft,
@@ -41,7 +41,7 @@ const navItems: NavItem[] = [
   { icon: Package, label: 'Material', path: '/material' },
   { icon: Database, label: 'Database', path: '/database' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
-  { icon: Settings, label: 'Settings', path: '/settings' },
+  { icon: Key, label: 'API', path: '/settings' },
 ];
 
 export const Sidebar: React.FC = () => {
