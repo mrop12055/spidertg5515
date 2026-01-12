@@ -2061,13 +2061,13 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (1-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-11-1hour-sync")
+    print("  LiveChat Runner (PARALLEL MODE)")
+    print("  BUILD: 2026-01-12-parallel-ordered")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⏰ Only syncs messages from last 1 hour")
-    print("  🔄 Skips older messages to prevent duplicates")
-    print("  📨 Tracks last synced IDs per sender")
-    print("=" * 50)
+    print("  ⚡ Parallel message sending (no limits)")
+    print("  📨 Maintains order per recipient")
+    print("  🔄 Auto-assigns proxy if missing")
+    print("  🔧 Auto-generates fingerprint if missing")
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
@@ -2116,89 +2116,184 @@ async def main_loop():
                 gc.collect()
                 last_cleanup = time.time()
             
-            task = await get_next_task(runner="livechat")
-            task_type = task.get("task", "wait")
+            # ========== USE BATCH TASKS FOR PARALLEL PROCESSING ==========
+            batch_response = await get_batch_tasks(runner="livechat", batch_size=100)
+            tasks = batch_response.get("tasks", [])
+            accounts = batch_response.get("accounts", [])
+            delay_after = batch_response.get("delay_after", 1)
             
+            # ========== CONNECT NEW ACCOUNTS ==========
+            # Only connect NEW accounts (skip already connected and recently failed)
+            new_accounts = [
+                acc for acc in accounts 
+                if acc.get("id") not in connected_ids 
+                and acc.get("id") not in failed_proxy_accounts
+            ]
             
-            if task_type == "wait":
-                accounts = task.get("accounts", [])
-                # Only connect NEW accounts (skip already connected and recently failed)
-                new_accounts = [
-                    acc for acc in accounts 
-                    if acc.get("id") not in connected_ids 
-                    and acc.get("id") not in failed_proxy_accounts
-                ]
+            if new_accounts:
+                print(f"  [CONNECT] Connecting {len(new_accounts)} accounts in PARALLEL...")
                 
-                if new_accounts:
-                    print(f"  [CONNECT] Connecting {len(new_accounts)} accounts in PARALLEL...")
+                async def connect_one(acc):
+                    acc_id = acc.get("id")
+                    phone = acc.get("phone_number", "???")[-4:]
+                    if not acc_id:
+                        return None, None, "No ID", phone, False
                     
-                    async def connect_one(acc):
-                        acc_id = acc.get("id")
-                        phone = acc.get("phone_number", "???")[-4:]
-                        if not acc_id:
-                            return None, None, "No ID", phone, False
-                        try:
-                            client, error = await asyncio.wait_for(
-                                connect_account_with_fingerprint(acc, setup_handler=setup_message_handler),
-                                timeout=CONNECT_TIMEOUT_SECONDS
-                            )
-                            if client:
-                                # Sync missed messages after successful connection
-                                sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
-                                return acc_id, client, error, phone, needs_retry
-                            return acc_id, client, error, phone, False
-                        except asyncio.TimeoutError:
-                            return acc_id, None, "TIMEOUT", phone, False
-                        except Exception as e:
-                            return acc_id, None, f"ERROR:{e}", phone, False
+                    # Check if fingerprint needs to be generated
+                    needs_fp = acc.get("needs_fingerprint", False)
+                    if needs_fp or not acc.get("device_model") or not acc.get("system_version"):
+                        print(f"  [{phone}] Generating fingerprint...")
+                        fp = generate_fingerprint()
+                        acc["device_model"] = fp["device_model"]
+                        acc["system_version"] = fp["system_version"]
+                        acc["app_version"] = fp["app_version"]
+                        acc["lang_code"] = fp["lang_code"]
+                        acc["system_lang_code"] = fp["system_lang_code"]
+                        # Save fingerprint to DB
+                        await report_result("fingerprint_generated", {
+                            "account_id": acc_id,
+                            **fp
+                        })
                     
-                    results = await asyncio.gather(
-                        *[connect_one(acc) for acc in new_accounts],
-                        return_exceptions=True
-                    )
-                    
-                    # Process results
-                    success_count = 0
-                    timeout_count = 0
-                    error_count = 0
-                    sync_pending_count = 0
-                    for result in results:
-                        if isinstance(result, Exception):
-                            error_count += 1
-                            continue
-                        acc_id, client, error, phone, needs_sync_retry = result
-                        if not acc_id:
-                            continue
+                    try:
+                        client, error = await asyncio.wait_for(
+                            connect_account_with_fingerprint(acc, setup_handler=setup_message_handler),
+                            timeout=CONNECT_TIMEOUT_SECONDS
+                        )
                         if client:
-                            connected_ids.add(acc_id)
-                            success_count += 1
-                            # Queue for sync retry if needed
-                            if needs_sync_retry:
-                                pending_sync_accounts[acc_id] = (time.time() + SYNC_RETRY_INTERVAL, phone)
-                                sync_pending_count += 1
-                        elif error:
-                            if error.startswith("NETWORK_ERROR:"):
-                                pass  # Will retry next iteration
-                            elif error == "TIMEOUT" or error == "All proxies failed":
-                                timeout_count += 1
-                                # NO cooldown - will retry next iteration with different proxy
-                            else:
-                                error_count += 1
-                                # NO cooldown - keep trying
-                    
-                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
+                            # Sync missed messages after successful connection
+                            sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
+                            return acc_id, client, error, phone, needs_retry
+                        return acc_id, client, error, phone, False
+                    except asyncio.TimeoutError:
+                        return acc_id, None, "TIMEOUT", phone, False
+                    except Exception as e:
+                        return acc_id, None, f"ERROR:{e}", phone, False
+                
+                results = await asyncio.gather(
+                    *[connect_one(acc) for acc in new_accounts],
+                    return_exceptions=True
+                )
+                
+                # Process results
+                success_count = 0
+                timeout_count = 0
+                error_count = 0
+                sync_pending_count = 0
+                for result in results:
+                    if isinstance(result, Exception):
+                        error_count += 1
+                        continue
+                    acc_id, client, error, phone, needs_sync_retry = result
+                    if not acc_id:
+                        continue
+                    if client:
+                        connected_ids.add(acc_id)
+                        success_count += 1
+                        # Queue for sync retry if needed
+                        if needs_sync_retry:
+                            pending_sync_accounts[acc_id] = (time.time() + SYNC_RETRY_INTERVAL, phone)
+                            sync_pending_count += 1
+                    elif error:
+                        if error.startswith("NETWORK_ERROR:"):
+                            pass  # Will retry next iteration
+                        elif error == "TIMEOUT" or error == "All proxies failed":
+                            timeout_count += 1
+                            # NO cooldown - will retry next iteration with different proxy
+                        else:
+                            error_count += 1
+                            # NO cooldown - keep trying
+                
+                print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
 
-                # Get delay from server response (usually 0 for fast polling)
-                wait_seconds = task.get("seconds", 0.5)
-                if wait_seconds > 0:
-                    # Use small sleeps to allow update processing
-                    for _ in range(int(wait_seconds * 10)):
-                        if not RUNNING:
-                            break
-                        await asyncio.sleep(0.1)
-                else:
-                    # Even with 0 delay, yield briefly for updates
-                    await asyncio.sleep(0.05)
+            # ========== PROCESS SEND TASKS IN PARALLEL ==========
+            send_tasks = [t for t in tasks if t.get("task") == "send"]
+            
+            if send_tasks:
+                print(f"  [SEND] Processing {len(send_tasks)} messages in PARALLEL...")
+                
+                # Group tasks by account to maintain ORDER within each account
+                tasks_by_account = {}
+                for task in send_tasks:
+                    acc_id = task.get("account", {}).get("id")
+                    if acc_id not in tasks_by_account:
+                        tasks_by_account[acc_id] = []
+                    tasks_by_account[acc_id].append(task)
+                
+                # Sort tasks within each account by sequence number to maintain order
+                for acc_id in tasks_by_account:
+                    tasks_by_account[acc_id].sort(key=lambda t: t.get("message", {}).get("sequence", 0))
+                
+                async def send_account_messages(acc_id, account_tasks):
+                    """Send all messages for one account IN ORDER"""
+                    results = []
+                    account = account_tasks[0].get("account", {})
+                    phone = account.get("phone_number", "???")[-4:]
+                    
+                    # Connect account once, reuse for all messages
+                    client, conn_error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler)
+                    
+                    if not client:
+                        # Connection failed - mark all messages as failed
+                        for task in account_tasks:
+                            msg = task.get("message", {})
+                            results.append({
+                                "message_id": msg.get("id"),
+                                "success": False,
+                                "error": conn_error or "Connection failed",
+                                "account_id": acc_id
+                            })
+                        return results
+                    
+                    # Send messages IN ORDER for this account
+                    for task in account_tasks:
+                        msg = task.get("message", {})
+                        recipient = task.get("recipient")
+                        
+                        try:
+                            success, send_error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+                            
+                            if not is_network_error(str(send_error)):
+                                results.append({
+                                    "message_id": msg.get("id"),
+                                    "success": success,
+                                    "error": send_error,
+                                    "account_id": acc_id
+                                })
+                            else:
+                                print(f"  [{phone}] Network error for msg {msg.get('id')}, skipping report")
+                        except Exception as e:
+                            if not is_network_error(str(e)):
+                                results.append({
+                                    "message_id": msg.get("id"),
+                                    "success": False,
+                                    "error": str(e),
+                                    "account_id": acc_id
+                                })
+                    
+                    return results
+                
+                # Process all accounts in PARALLEL, but messages within each account are SEQUENTIAL (ordered)
+                all_results = await asyncio.gather(
+                    *[send_account_messages(acc_id, acc_tasks) for acc_id, acc_tasks in tasks_by_account.items()],
+                    return_exceptions=True
+                )
+                
+                # Flatten results and report in batch
+                batch_results = []
+                for result in all_results:
+                    if isinstance(result, list):
+                        batch_results.extend(result)
+                    elif isinstance(result, Exception):
+                        print(f"  [ERROR] Send account exception: {result}")
+                
+                if batch_results:
+                    # Report all results in parallel batch
+                    for r in batch_results:
+                        await report_result("send", r)
+                    
+                    success_msgs = sum(1 for r in batch_results if r.get("success"))
+                    print(f"  [SENT] {success_msgs}/{len(batch_results)} messages sent successfully")
             
             # ========== RETRY PENDING SYNCS ==========
             # Retry missed message sync for accounts that failed due to Telegram server issues
@@ -2236,35 +2331,14 @@ async def main_loop():
                 
                 last_sync_retry = time.time()
             
-            elif task_type == "send":
-                msg = task.get("message", {})
-                recipient = task.get("recipient")
-                account = task.get("account", {})
-                
-                client, error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler)
-                
-                if client and recipient:
-                    print(f"  [REPLY] To {recipient}...")
-                    success, send_error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
-                    
-                    # Only report if not a network error
-                    if not is_network_error(str(send_error)):
-                        await report_result("send", {
-                            "message_id": msg.get("id"),
-                            "success": success,
-                            "error": send_error,
-                            "account_id": account.get("id")
-                        })
-                    else:
-                        print(f"  [SKIP REPORT] Network error, not updating status")
-                elif error and not error.startswith("NETWORK_ERROR:"):
-                    # Only report failure if not a network error
-                    await report_result("send", {
-                        "message_id": msg.get("id"),
-                        "success": False,
-                        "error": error,
-                        "account_id": account.get("id")
-                    })
+            # Wait based on server response
+            if delay_after > 0:
+                for _ in range(int(delay_after * 10)):
+                    if not RUNNING:
+                        break
+                    await asyncio.sleep(0.1)
+            else:
+                await asyncio.sleep(0.05)
         
         except Exception as e:
             global _network_error_count, _last_network_error_time

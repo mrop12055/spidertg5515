@@ -46,6 +46,13 @@ export interface CampaignSpeedSettings {
   messagesPerAccountPerDay: number;
 }
 
+export interface ProxySettings {
+  autoAssign: boolean;
+  autoFingerprint: boolean;
+  requireProxy: boolean;
+  logAssignments: boolean;
+}
+
 export interface AllSettings {
   message_timing: MessageTimingSettings;
   scheduler: SchedulerSettings;
@@ -54,6 +61,7 @@ export interface AllSettings {
   cleanup: CleanupSettings;
   warmup_batch_size: WarmupBatchSettings;
   campaign_speed: CampaignSpeedSettings;
+  proxy: ProxySettings;
 }
 
 const defaultSettings: AllSettings = {
@@ -92,6 +100,12 @@ const defaultSettings: AllSettings = {
     pollingInterval: 3,
     batchSize: 100,
     messagesPerAccountPerDay: 10,
+  },
+  proxy: {
+    autoAssign: true,
+    autoFingerprint: true,
+    requireProxy: true,
+    logAssignments: true,
   },
 };
 

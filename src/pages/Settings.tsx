@@ -29,7 +29,8 @@ import {
   Save,
   Settings as SettingsIcon,
   Upload,
-  RefreshCw
+  RefreshCw,
+  Globe
 } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
@@ -473,10 +474,14 @@ const Settings: React.FC = () => {
         )}
 
         <Tabs defaultValue="api" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 h-11">
+          <TabsList className="grid w-full grid-cols-4 h-11">
             <TabsTrigger value="api" className="gap-2">
               <Key className="w-4 h-4" />
               API Credentials
+            </TabsTrigger>
+            <TabsTrigger value="proxy" className="gap-2">
+              <Globe className="w-4 h-4" />
+              Proxy
             </TabsTrigger>
             <TabsTrigger value="cleanup" className="gap-2">
               <Calendar className="w-4 h-4" />
@@ -798,6 +803,71 @@ const Settings: React.FC = () => {
                 </div>
               </>
             )}
+          </CardContent>
+        </Card>
+      </TabsContent>
+
+      {/* Proxy Settings Tab */}
+      <TabsContent value="proxy" className="mt-0">
+        <Card>
+          <CardHeader className="pb-4">
+            <CardTitle className="text-lg">Proxy Settings</CardTitle>
+            <CardDescription>
+              Configure proxy auto-assignment and behavior for accounts
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="flex items-center justify-between py-2">
+              <div className="space-y-0.5">
+                <Label className="text-base">Auto-Assign Proxy</Label>
+                <p className="text-sm text-muted-foreground">
+                  Automatically assign a random proxy to accounts without one
+                </p>
+              </div>
+              <Switch
+                checked={dbSettings.proxy?.autoAssign ?? true}
+                onCheckedChange={(checked) => updateDbSettings('proxy', { autoAssign: checked })}
+              />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between py-2">
+              <div className="space-y-0.5">
+                <Label className="text-base">Auto-Generate Fingerprint</Label>
+                <p className="text-sm text-muted-foreground">
+                  Generate device fingerprint for accounts missing one
+                </p>
+              </div>
+              <Switch
+                checked={dbSettings.proxy?.autoFingerprint ?? true}
+                onCheckedChange={(checked) => updateDbSettings('proxy', { autoFingerprint: checked })}
+              />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between py-2">
+              <div className="space-y-0.5">
+                <Label className="text-base">Require Proxy for Operations</Label>
+                <p className="text-sm text-muted-foreground">
+                  Don't run any account operations without an active proxy
+                </p>
+              </div>
+              <Switch
+                checked={dbSettings.proxy?.requireProxy ?? true}
+                onCheckedChange={(checked) => updateDbSettings('proxy', { requireProxy: checked })}
+              />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between py-2">
+              <div className="space-y-0.5">
+                <Label className="text-base">Log Auto-Assignments</Label>
+                <p className="text-sm text-muted-foreground">
+                  Report when a proxy is auto-assigned to an account
+                </p>
+              </div>
+              <Switch
+                checked={dbSettings.proxy?.logAssignments ?? true}
+                onCheckedChange={(checked) => updateDbSettings('proxy', { logAssignments: checked })}
+              />
+            </div>
           </CardContent>
         </Card>
       </TabsContent>
