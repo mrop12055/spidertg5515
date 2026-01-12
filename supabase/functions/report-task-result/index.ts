@@ -299,10 +299,11 @@ serve(async (req) => {
             'account restricted' // Only match if it says "account restricted" not "privacy restricted"
           ];
           
-          // NOTE: "Too many requests" moved to retryWithDifferentAccountErrors
-          // It's a sender-side rate limit, not a recipient problem
-          const immediateRestrictionErrors: string[] = [
-            // Currently empty - all rate limits now retry with different account
+          // "Too many requests" - IMMEDIATE restriction with NO RETRIES
+          // This is a sender-side rate limit - account goes to restricted immediately
+          // Only applies to NEW campaign messages, NOT to replies in existing conversations
+          const tooManyRequestsErrors = [
+            'too many requests',
           ];
           
           // Errors that should just SKIP the recipient (don't affect account status)
@@ -324,26 +325,20 @@ serve(async (req) => {
             'privacy restricted',    // Privacy restrictions - try different API
           ];
           
-          // Errors that should RETRY with a different account
-          // These are SENDER-SIDE rate limits - the recipient is fine, just try with another account
-          const retryWithDifferentAccountErrors = [
-            'too many requests', // Rate limit on THIS account - try another (applies 12h restriction to account)
-          ];
-          
           const errorLower = (error || '').toLowerCase();
           
-          // Check for API retry errors FIRST
-          const isApiRetryable = retryWithDifferentApiErrors.some(r => errorLower.includes(r));
+          // Check for "Too many requests" FIRST - this is IMMEDIATE restriction, no retries
+          const isTooManyRequests = tooManyRequestsErrors.some(r => errorLower.includes(r));
+          
+          // Check for API retry errors
+          const isApiRetryable = !isTooManyRequests && retryWithDifferentApiErrors.some(r => errorLower.includes(r));
           
           // CRITICAL: Check skip-only errors - these are recipient problems that can't be retried
-          const isSkipOnly = !isApiRetryable && skipRecipientErrors.some(r => errorLower.includes(r));
+          const isSkipOnly = !isTooManyRequests && !isApiRetryable && skipRecipientErrors.some(r => errorLower.includes(r));
           
-          // Only check account-related errors if it's NOT a recipient error or API-retryable
-          const isPermanentBan = !isSkipOnly && !isApiRetryable && permanentBanErrors.some(r => errorLower.includes(r));
-          const isTemporaryRestriction = !isSkipOnly && !isApiRetryable && temporaryRestrictionErrors.some(r => errorLower.includes(r));
-          const isImmediateRestriction = !isSkipOnly && !isApiRetryable && immediateRestrictionErrors.some(r => errorLower.includes(r));
-          // Also check for explicit skip_account flag from Python runner
-          const isRetryable = !isSkipOnly && !isApiRetryable && (retryWithDifferentAccountErrors.some(r => errorLower.includes(r)) || (skip_account && retry_with_different_account));
+          // Only check account-related errors if it's NOT a recipient error, API-retryable, or too many requests
+          const isPermanentBan = !isSkipOnly && !isApiRetryable && !isTooManyRequests && permanentBanErrors.some(r => errorLower.includes(r));
+          const isTemporaryRestriction = !isSkipOnly && !isApiRetryable && !isTooManyRequests && temporaryRestrictionErrors.some(r => errorLower.includes(r));
           
           // Track account failure for health monitoring (only for account-related errors, not recipient/API issues)
           // Skip-only errors are recipient problems, API-retryable are API problems - neither affects account stats
@@ -441,7 +436,7 @@ serve(async (req) => {
                 ban_reason: error,
               })
               .eq("id", account_id);
-          } else if (isRetryable && campaign_recipient_id && account_id) {
+          } else if (isTooManyRequests && campaign_recipient_id && account_id) {
             // RATE LIMIT ("Too many requests") - IMMEDIATELY restrict account for 12h and switch to different account
             // NO RETRIES - instant switch. This error only happens on NEW campaign messages (first contact)
             // The restricted account can STILL handle existing conversations (replies, ongoing chats)
@@ -512,7 +507,7 @@ serve(async (req) => {
 
           // AUTOMATIC ACCOUNT ROTATION: Try to reassign to next available account (with retry limit)
           // SKIP if the error was already handled by specific error handlers above (privacy, skip-only, etc.)
-          if (campaign_recipient_id && !isRetryable && !isSkipOnly && !isApiRetryable) {
+          if (campaign_recipient_id && !isTooManyRequests && !isSkipOnly && !isApiRetryable) {
             const MAX_RETRIES = 3; // Stop retrying after 3 failed attempts
             
             // Get recipient details including campaign and retry count
