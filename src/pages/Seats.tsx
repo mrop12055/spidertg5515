@@ -13,7 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { 
   Plus, Copy, Trash2, Users, MessageSquare, Send, Eye, 
-  ExternalLink, RefreshCw, CheckCircle, RotateCcw, Sparkles, Link2, AlertTriangle, Clock
+  ExternalLink, RefreshCw, CheckCircle, RotateCcw, Sparkles, Link2, AlertTriangle, Clock, TrendingUp
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -279,7 +279,7 @@ const handleDeleteSeat = async (seat: Seat) => {
 
       <div className="space-y-6">
         {/* Overview Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
           <Card className="bg-gradient-to-br from-primary/10 to-primary/5">
             <CardContent className="pt-6">
               <div className="flex items-center gap-3">
@@ -351,6 +351,47 @@ const handleDeleteSeat = async (seat: Seat) => {
                     {Array.from(seatStats.values()).reduce((sum, s) => sum + (s.responses_today || 0), 0)}
                   </p>
                   <p className="text-sm text-muted-foreground">Replies Today</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          
+          <Card className={`bg-gradient-to-br ${
+            (() => {
+              const totalSent = Array.from(seatStats.values()).reduce((sum, s) => sum + s.messages_sent_today, 0);
+              const totalReplies = Array.from(seatStats.values()).reduce((sum, s) => sum + (s.responses_today || 0), 0);
+              const rate = totalSent > 0 ? (totalReplies / totalSent) * 100 : 0;
+              return rate >= 5 ? 'from-green-500/10 to-green-500/5' : 'from-amber-500/10 to-amber-500/5';
+            })()
+          }`}>
+            <CardContent className="pt-6">
+              <div className="flex items-center gap-3">
+                <div className={`p-2 rounded-lg ${
+                  (() => {
+                    const totalSent = Array.from(seatStats.values()).reduce((sum, s) => sum + s.messages_sent_today, 0);
+                    const totalReplies = Array.from(seatStats.values()).reduce((sum, s) => sum + (s.responses_today || 0), 0);
+                    const rate = totalSent > 0 ? (totalReplies / totalSent) * 100 : 0;
+                    return rate >= 5 ? 'bg-green-500/20' : 'bg-amber-500/20';
+                  })()
+                }`}>
+                  <TrendingUp className={`w-5 h-5 ${
+                    (() => {
+                      const totalSent = Array.from(seatStats.values()).reduce((sum, s) => sum + s.messages_sent_today, 0);
+                      const totalReplies = Array.from(seatStats.values()).reduce((sum, s) => sum + (s.responses_today || 0), 0);
+                      const rate = totalSent > 0 ? (totalReplies / totalSent) * 100 : 0;
+                      return rate >= 5 ? 'text-green-500' : 'text-amber-500';
+                    })()
+                  }`} />
+                </div>
+                <div>
+                  <p className="text-2xl font-bold">
+                    {(() => {
+                      const totalSent = Array.from(seatStats.values()).reduce((sum, s) => sum + s.messages_sent_today, 0);
+                      const totalReplies = Array.from(seatStats.values()).reduce((sum, s) => sum + (s.responses_today || 0), 0);
+                      return totalSent > 0 ? ((totalReplies / totalSent) * 100).toFixed(1) : '0.0';
+                    })()}%
+                  </p>
+                  <p className="text-sm text-muted-foreground">Reply Rate</p>
                 </div>
               </div>
             </CardContent>
@@ -530,17 +571,17 @@ const handleDeleteSeat = async (seat: Seat) => {
                           <p className="text-[8px] text-muted-foreground uppercase tracking-wide">Replies</p>
                         </div>
                         <div className={`rounded-lg p-2 text-center ${
-                          ((stats?.responses_received || 0) / (stats?.total_conversations || 1) * 100) >= 5
+                          ((stats?.responses_today || 0) / (stats?.messages_sent_today || 1) * 100) >= 5
                             ? 'bg-green-500/10 border border-green-500/30'
                             : 'bg-muted/50'
                         }`}>
                           <p className={`text-sm font-bold ${
-                            ((stats?.responses_received || 0) / (stats?.total_conversations || 1) * 100) >= 5
+                            ((stats?.responses_today || 0) / (stats?.messages_sent_today || 1) * 100) >= 5
                               ? 'text-green-600'
                               : ''
                           }`}>
-                            {stats?.total_conversations 
-                              ? ((stats.responses_received || 0) / stats.total_conversations * 100).toFixed(1)
+                            {stats?.messages_sent_today 
+                              ? ((stats.responses_today || 0) / stats.messages_sent_today * 100).toFixed(1)
                               : '0.0'}%
                           </p>
                           <p className="text-[8px] text-muted-foreground uppercase tracking-wide">Rate</p>
