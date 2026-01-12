@@ -857,7 +857,8 @@ const Campaigns: React.FC = () => {
           toast.error('Failed to pause campaign');
         } else {
           toast.success('Campaign paused');
-          refreshData();
+          // Only refresh campaign reports, not the full page
+          fetchAllCampaignReports();
         }
       } catch (err) {
         console.error('Pause campaign error:', err);
