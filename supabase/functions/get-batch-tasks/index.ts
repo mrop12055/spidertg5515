@@ -11,6 +11,70 @@ let MESSAGE_DELAY_MIN_SECONDS = 5;
 let MESSAGE_DELAY_MAX_SECONDS = 15;
 let DAILY_MESSAGE_LIMIT = 25;
 
+// Helper function to auto-assign a proxy to an account that doesn't have one
+async function autoAssignProxy(
+  supabase: any, 
+  accountId: string, 
+  phoneNumber: string
+): Promise<{ success: boolean; proxy?: any }> {
+  console.log(`[get-batch-tasks] Attempting to auto-assign proxy for account ${phoneNumber}`);
+  
+  // Find available active proxy (prefer unassigned ones)
+  const { data: availableProxies } = await supabase
+    .from("proxies")
+    .select("id, host, port, username, password, proxy_type")
+    .eq("status", "active")
+    .is("assigned_account_id", null)
+    .limit(5);
+  
+  let proxyPool = availableProxies || [];
+  
+  if (proxyPool.length === 0) {
+    // No unassigned proxies - find ANY active proxy (shared usage)
+    const { data: anyProxy } = await supabase
+      .from("proxies")
+      .select("id, host, port, username, password, proxy_type")
+      .eq("status", "active")
+      .limit(1);
+    
+    if (!anyProxy || anyProxy.length === 0) {
+      console.log(`[get-batch-tasks] NO PROXIES AVAILABLE for ${phoneNumber}`);
+      return { success: false };
+    }
+    proxyPool = anyProxy;
+  }
+  
+  // Pick random proxy from pool
+  const randomProxy = proxyPool[Math.floor(Math.random() * proxyPool.length)];
+  
+  // Assign to account
+  await supabase
+    .from("telegram_accounts")
+    .update({ proxy_id: randomProxy.id })
+    .eq("id", accountId);
+  
+  // Update proxy assignment
+  await supabase
+    .from("proxies")
+    .update({ assigned_account_id: accountId })
+    .eq("id", randomProxy.id);
+  
+  console.log(`[get-batch-tasks] AUTO-ASSIGNED proxy ${randomProxy.host}:${randomProxy.port} to ${phoneNumber}`);
+  
+  return { 
+    success: true, 
+    proxy: {
+      id: randomProxy.id,
+      host: randomProxy.host,
+      port: randomProxy.port,
+      username: randomProxy.username,
+      password: randomProxy.password,
+      proxy_type: randomProxy.proxy_type,
+      type: randomProxy.proxy_type,
+    }
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -1216,7 +1280,24 @@ serve(async (req) => {
       
       // For livechat, also return accounts for initial connection
       // This helps the runner connect accounts that need message handlers
-      const accountsForConnection = usableAccounts.map((a: any) => ({
+      // CRITICAL: Only return accounts with active proxies AND complete fingerprint data
+      const accountsWithValidProxyAndFingerprint = usableAccounts.filter((a: any) => {
+        // Check proxy - must have active proxy
+        if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') {
+          console.log(`[get-batch-tasks] SKIP livechat account ${a.phone_number} - NO ACTIVE PROXY`);
+          return false;
+        }
+        // Check fingerprint fields - must have all required fingerprint data
+        if (!a.device_model || !a.system_version || !a.app_version) {
+          console.log(`[get-batch-tasks] SKIP livechat account ${a.phone_number} - MISSING FINGERPRINT (device_model: ${a.device_model}, system_version: ${a.system_version}, app_version: ${a.app_version})`);
+          return false;
+        }
+        return true;
+      });
+      
+      console.log(`[get-batch-tasks] Livechat: ${accountsWithValidProxyAndFingerprint.length} accounts with valid proxy+fingerprint (from ${usableAccounts.length} usable)`);
+      
+      const accountsForConnection = accountsWithValidProxyAndFingerprint.map((a: any) => ({
         id: a.id,
         phone_number: a.phone_number,
         session_data: a.session_data,
@@ -1228,14 +1309,14 @@ serve(async (req) => {
         api_id: a.telegram_api_credentials?.api_id || a.api_id,
         api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
         proxy_id: a.proxy_id,
-        proxy: a.proxies ? {
+        proxy: {
           host: a.proxies.host,
           port: a.proxies.port,
           username: a.proxies.username,
           password: a.proxies.password,
           proxy_type: a.proxies.proxy_type,
           type: a.proxies.proxy_type,
-        } : null,
+        },
       }));
       
       return new Response(JSON.stringify({
@@ -1296,7 +1377,27 @@ serve(async (req) => {
           }
 
           const apiCred = accountData.telegram_api_credentials;
-          const proxyData = accountData.proxies;
+          let proxyData = accountData.proxies;
+
+          // CHECK 1: Fingerprint validation - skip if missing required fingerprint data
+          if (!accountData.device_model || !accountData.system_version || !accountData.app_version) {
+            console.log(`[get-batch-tasks] SKIP account task ${task.id} - MISSING FINGERPRINT for ${accountData.phone_number} (device_model: ${accountData.device_model}, system_version: ${accountData.system_version}, app_version: ${accountData.app_version})`);
+            failIds.push(task.id);
+            continue;
+          }
+
+          // CHECK 2: Proxy validation - try to auto-assign if missing or inactive
+          if (!accountData.proxy_id || !proxyData || proxyData.status !== 'active') {
+            console.log(`[get-batch-tasks] Account ${accountData.phone_number} has no active proxy - attempting auto-assign...`);
+            const result = await autoAssignProxy(supabase, accountData.id, accountData.phone_number);
+            if (result.success && result.proxy) {
+              proxyData = result.proxy;
+            } else {
+              console.log(`[get-batch-tasks] SKIP account task ${task.id} - NO PROXY AVAILABLE for ${accountData.phone_number}`);
+              failIds.push(task.id);
+              continue;
+            }
+          }
 
           claimIds.push(task.id);
           tasks.push({
@@ -1314,18 +1415,16 @@ serve(async (req) => {
               system_lang_code: accountData.system_lang_code,
               api_id: apiCred?.api_id || accountData.api_id,
               api_hash: apiCred?.api_hash || accountData.api_hash,
-              proxy_id: accountData.proxy_id,
+              proxy_id: accountData.proxy_id || proxyData.id,
             },
-            proxy: proxyData
-              ? {
-                  host: proxyData.host,
-                  port: proxyData.port,
-                  username: proxyData.username,
-                  password: proxyData.password,
-                  proxy_type: proxyData.proxy_type,
-                  type: proxyData.proxy_type,
-                }
-              : null,
+            proxy: {
+              host: proxyData.host,
+              port: proxyData.port,
+              username: proxyData.username,
+              password: proxyData.password,
+              proxy_type: proxyData.proxy_type,
+              type: proxyData.proxy_type,
+            },
           });
         }
 
