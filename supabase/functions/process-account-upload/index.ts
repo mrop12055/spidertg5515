@@ -539,7 +539,7 @@ serve(async (req) => {
       await Promise.all(updatePromises.slice(i, i + BATCH_SIZE));
     }
 
-    // ========== AUTO-ASSIGN PROXIES ==========
+    // ========== AUTO-ASSIGN PROXIES (BATCH) ==========
     if (autoAssignProxy && results.account_ids.length > 0 && availableProxies.length > 0) {
       console.log(`[process-account-upload] Auto-assigning proxies to ${results.account_ids.length} accounts...`);
       
@@ -557,32 +557,57 @@ serve(async (req) => {
         
         console.log(`[process-account-upload] ${accountsWithoutProxy.length} accounts need proxies, ${allProxies.length} proxies available`);
         
+        // Prepare batch assignments
+        const proxyAssignments: { accountId: string; proxyId: string; phone: string; isNewAssignment: boolean }[] = [];
+        
         for (let i = 0; i < accountsWithoutProxy.length; i++) {
           const account = accountsWithoutProxy[i];
-          // Round-robin proxy assignment
           const proxy = allProxies[i % allProxies.length];
-          
-          try {
-            // Update account with proxy
-            await supabase
-              .from('telegram_accounts')
-              .update({ proxy_id: proxy.id })
-              .eq('id', account.id);
-            
-            // Update proxy assignment (only if not already assigned)
-            if (!proxy.assigned_account_id) {
-              await supabase
-                .from('proxies')
-                .update({ assigned_account_id: account.id })
-                .eq('id', proxy.id);
-            }
-            
-            results.proxies_assigned++;
-            console.log(`[process-account-upload] Assigned proxy to ${account.phone_number}`);
-          } catch (e) {
-            console.error(`[process-account-upload] Failed to assign proxy to ${account.phone_number}:`, (e as Error).message);
-          }
+          proxyAssignments.push({
+            accountId: account.id,
+            proxyId: proxy.id,
+            phone: account.phone_number,
+            isNewAssignment: !proxy.assigned_account_id
+          });
         }
+        
+        // Execute all proxy assignments in parallel batches of 50
+        const PROXY_BATCH_SIZE = 50;
+        for (let i = 0; i < proxyAssignments.length; i += PROXY_BATCH_SIZE) {
+          const batch = proxyAssignments.slice(i, i + PROXY_BATCH_SIZE);
+          
+          const batchPromises = batch.map(async ({ accountId, proxyId, phone, isNewAssignment }) => {
+            try {
+              // Update both in parallel
+              const updates = [
+                supabase
+                  .from('telegram_accounts')
+                  .update({ proxy_id: proxyId })
+                  .eq('id', accountId)
+              ];
+              
+              if (isNewAssignment) {
+                updates.push(
+                  supabase
+                    .from('proxies')
+                    .update({ assigned_account_id: accountId })
+                    .eq('id', proxyId)
+                );
+              }
+              
+              await Promise.all(updates);
+              return true;
+            } catch (e) {
+              console.error(`[process-account-upload] Failed to assign proxy to ${phone}:`, (e as Error).message);
+              return false;
+            }
+          });
+          
+          const batchResults = await Promise.all(batchPromises);
+          results.proxies_assigned += batchResults.filter(Boolean).length;
+        }
+        
+        console.log(`[process-account-upload] Batch assigned ${results.proxies_assigned} proxies`);
       }
     }
 
