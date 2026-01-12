@@ -442,8 +442,10 @@ serve(async (req) => {
               })
               .eq("id", account_id);
           } else if (isRetryable && campaign_recipient_id && account_id) {
-            // RATE LIMIT ("Too many requests") - restrict account for 12h and retry with different account
-            console.log(`[report-task-result] Account ${account_id} rate limited (Too many requests) - setting RESTRICTED status for 12h: ${error}`);
+            // RATE LIMIT ("Too many requests") - IMMEDIATELY restrict account for 12h and switch to different account
+            // NO RETRIES - instant switch. This error only happens on NEW campaign messages (first contact)
+            // The restricted account can STILL handle existing conversations (replies, ongoing chats)
+            console.log(`[report-task-result] Account ${account_id} rate limited (Too many requests) - IMMEDIATELY restricting for 12h and switching account`);
             
             const restrictedUntil = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
             await supabase
@@ -451,14 +453,14 @@ serve(async (req) => {
               .update({
                 status: "restricted",  // CRITICAL: Set status to restricted
                 restricted_until: restrictedUntil,
-                ban_reason: error,
+                ban_reason: `Rate limited for new campaign messages. Can still reply to existing chats. Error: ${error}`,
               })
               .eq("id", account_id);
             
-            console.log(`[report-task-result] Account ${account_id} now RESTRICTED until ${restrictedUntil}`);
+            console.log(`[report-task-result] Account ${account_id} now RESTRICTED until ${restrictedUntil} (can still reply to existing conversations)`);
             
-            // Reset recipient to pending for retry with different account
-            // Track failed account to avoid reassigning to same account
+            // Reset recipient to pending for IMMEDIATE retry with different account
+            // Track failed account to prevent reassignment
             const { data: currentRecipient } = await supabase
               .from("campaign_recipients")
               .select("failed_account_ids")
@@ -470,6 +472,7 @@ serve(async (req) => {
               failedAccountIds.push(account_id);
             }
             
+            // IMMEDIATE switch - no retry count, no delay
             await supabase
               .from("campaign_recipients")
               .update({
@@ -478,8 +481,11 @@ serve(async (req) => {
                 api_credential_id: null,
                 failed_reason: null,
                 failed_account_ids: failedAccountIds,
+                scheduled_at: null,  // Clear scheduling for immediate pickup
               })
               .eq("id", campaign_recipient_id);
+              
+            console.log(`[report-task-result] Recipient ${campaign_recipient_id} reset for IMMEDIATE pickup by different account`);
           } else if (isSkipOnly && campaign_recipient_id) {
             // SKIP-ONLY: Recipient issue (not account) - mark as failed immediately
             console.log(`[report-task-result] Recipient issue (skip-only) - marking as failed: ${error}`);
