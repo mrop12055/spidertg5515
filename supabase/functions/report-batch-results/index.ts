@@ -344,11 +344,19 @@ serve(async (req) => {
           return errorLower.includes('too many requests');
         });
         
+        // DETECT FROZEN ACCOUNT errors - account is frozen by Telegram, set to FROZEN status permanently
+        const frozenAccountResults = failedResults.filter((r) => {
+          const errorLower = (r.error || '').toLowerCase();
+          return errorLower.includes('frozen') || errorLower.includes('not available for frozen');
+        });
+        
         // Classify other errors: API issues (privacy) vs Account issues vs Permanent failures
-        // EXCLUDE "too many requests" from other categories
+        // EXCLUDE "too many requests" and "frozen" from other categories
         const otherFailed = failedResults.filter((r) => {
           const errorLower = (r.error || '').toLowerCase();
-          return !errorLower.includes('too many requests');
+          return !errorLower.includes('too many requests') && 
+                 !errorLower.includes('frozen') && 
+                 !errorLower.includes('not available for frozen');
         });
         
         const retryWithDifferentApi = otherFailed.filter((r) => r.retry_with_different_api);
@@ -402,6 +410,52 @@ serve(async (req) => {
                 .eq("id", r.campaign_recipient_id);
                 
               console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} reset for IMMEDIATE pickup by different account (Too many requests)`);
+            })()
+          );
+        }
+
+        // HANDLE FROZEN ACCOUNTS - set status to frozen permanently
+        for (const r of frozenAccountResults) {
+          failPromises.push(
+            (async () => {
+              // Set account status to FROZEN permanently
+              if (r.account_id) {
+                await supabase
+                  .from("telegram_accounts")
+                  .update({
+                    status: "frozen",
+                    ban_reason: r.error || "Account frozen by Telegram",
+                  })
+                  .eq("id", r.account_id);
+                console.log(`[report-batch-results] Account ${r.account_id} FROZEN by Telegram: ${r.error}`);
+              }
+
+              // Track failed account and reset recipient for different account
+              const { data: current } = await supabase
+                .from("campaign_recipients")
+                .select("failed_account_ids")
+                .eq("id", r.campaign_recipient_id)
+                .single();
+
+              const failedIds: string[] = current?.failed_account_ids || [];
+              if (r.account_id && !failedIds.includes(r.account_id)) {
+                failedIds.push(r.account_id);
+              }
+
+              // Reset for pickup by different account
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  failed_reason: null,
+                  failed_account_ids: failedIds,
+                  sent_by_account_id: null,
+                  api_credential_id: null,
+                  scheduled_at: null,
+                })
+                .eq("id", r.campaign_recipient_id);
+                
+              console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} reset for pickup by different account (frozen account)`);
             })()
           );
         }
