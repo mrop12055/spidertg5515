@@ -1248,12 +1248,22 @@ const SeatChat: React.FC = () => {
                               "text-sm truncate",
                               conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
                             )}>
-                              {conv.last_message_content ? (
+                            {conv.last_message_content ? (
                                 <>
                                   {conv.last_message_direction === 'outgoing' && (
                                     <span className="text-muted-foreground/50">You: </span>
                                   )}
                                   {conv.last_message_content.slice(0, 45)}{conv.last_message_content.length > 45 ? '...' : ''}
+                                </>
+                              ) : conv.last_message_at ? (
+                                <>
+                                  {conv.last_message_direction === 'outgoing' && (
+                                    <span className="text-muted-foreground/50">You: </span>
+                                  )}
+                                  <span className="flex items-center gap-1">
+                                    <Image className="w-3 h-3" />
+                                    Photo
+                                  </span>
                                 </>
                               ) : (
                                 <span className="italic text-muted-foreground/50">No messages</span>
