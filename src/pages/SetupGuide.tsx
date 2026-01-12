@@ -55,6 +55,7 @@ RETRY_DELAY = 0              # No retry delay
 HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks) - increased for heavy queries
 HTTP_TIMEOUT_REPORT = 10     # Reporting (report-task-result, report-batch-results)
 HTTP_TIMEOUT_PROXY = 5       # Proxy switch calls
+HTTP_TIMEOUT_UPLOAD = 30     # Media uploads (photos, videos) - needs more time for large files
 HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
 
 # Backoff tracking for HTTP errors
@@ -1613,7 +1614,8 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                                         "Content-Type": mime_type,
                                         "x-upsert": "true"
                                     },
-                                    content=photo_bytes
+                                    content=photo_bytes,
+                                    timeout=HTTP_TIMEOUT_UPLOAD
                                 )
                                 if upload_response.status_code in (200, 201):
                                     media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
@@ -1778,7 +1780,8 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                                         "Content-Type": mime_type,
                                         "x-upsert": "true"
                                     },
-                                    content=photo_bytes
+                                    content=photo_bytes,
+                                    timeout=HTTP_TIMEOUT_UPLOAD
                                 )
                                 if upload_response.status_code in (200, 201):
                                     media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
@@ -1949,7 +1952,8 @@ async def setup_message_handler(client, account_id: str):
                                 "Content-Type": mime_type,
                                 "x-upsert": "true"
                             },
-                            content=photo_bytes
+                            content=photo_bytes,
+                            timeout=HTTP_TIMEOUT_UPLOAD
                         )
                         if upload_response.status_code in (200, 201):
                             media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
