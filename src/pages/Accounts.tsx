@@ -88,9 +88,11 @@ const Accounts: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isUploading, setIsUploading] = useState(false);
   const [sessionFiles, setSessionFiles] = useState<SessionFile[]>([]);
-  const [uploadResults, setUploadResults] = useState<{ successful: number; failed: number } | null>(null);
+  const [uploadResults, setUploadResults] = useState<{ successful: number; failed: number; proxiesAssigned?: number } | null>(null);
   const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
   const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
+  const [autoAssignProxy, setAutoAssignProxy] = useState(true); // Auto-assign proxy during upload
+  const [generateFingerprint, setGenerateFingerprint] = useState(true); // Auto-generate fingerprint (always true)
   
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -548,7 +550,12 @@ const Accounts: React.FC = () => {
       }
 
       const { data, error } = await supabase.functions.invoke('process-account-upload', {
-        body: { accounts: accountsToUpload, tags: tagsToAssign }
+        body: { 
+          accounts: accountsToUpload, 
+          tags: tagsToAssign,
+          auto_assign_proxy: autoAssignProxy,
+          generate_fingerprint: generateFingerprint
+        }
       });
 
       if (error) throw error;
@@ -556,6 +563,7 @@ const Accounts: React.FC = () => {
       setUploadResults({
         successful: data.successful || 0,
         failed: data.failed || 0,
+        proxiesAssigned: data.proxies_assigned || 0,
       });
 
       if (data.successful > 0) {
@@ -2205,10 +2213,15 @@ const Accounts: React.FC = () => {
                     )}
 
                     {uploadResults && (
-                      <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 text-sm">
+                      <div className="flex items-center flex-wrap gap-4 p-3 rounded-lg bg-muted/50 text-sm">
                         <span className="flex items-center gap-1 text-status-active">
                           <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
                         </span>
+                        {uploadResults.proxiesAssigned && uploadResults.proxiesAssigned > 0 && (
+                          <span className="flex items-center gap-1 text-blue-500">
+                            <Globe className="w-4 h-4" /> {uploadResults.proxiesAssigned} proxies assigned
+                          </span>
+                        )}
                         {uploadResults.failed > 0 && (
                           <span className="flex items-center gap-1 text-destructive">
                             <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
@@ -2218,47 +2231,104 @@ const Accounts: React.FC = () => {
                     )}
 
                     {sessionFiles.length > 0 && (
-                      <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
-                        <div className="flex items-center gap-2 text-sm font-medium">
-                          <Tag className="w-4 h-4" />
-                          Assign Tags (Optional)
-                        </div>
-                        {availableTags.length > 0 && (
-                          <div className="flex flex-wrap gap-2">
-                            {availableTags.map(tag => (
-                              <Badge
-                                key={tag}
-                                variant={uploadTags.includes(tag) ? "default" : "outline"}
-                                className="cursor-pointer"
-                                onClick={() => {
-                                  if (uploadTags.includes(tag)) {
-                                    setUploadTags(prev => prev.filter(t => t !== tag));
-                                  } else {
-                                    setUploadTags(prev => [...prev, tag]);
-                                  }
-                                }}
-                              >
-                                <Tag className="w-3 h-3 mr-1" />
-                                {tag}
-                                {uploadTags.includes(tag) && <Check className="w-3 h-3 ml-1" />}
-                              </Badge>
-                            ))}
+                      <>
+                        {/* Auto-assign options */}
+                        <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                          <div className="flex items-center gap-2 text-sm font-medium">
+                            <Settings className="w-4 h-4" />
+                            Setup Options
                           </div>
-                        )}
-                        <div className="flex gap-2">
-                          <Input
-                            placeholder="Or enter new tag name..."
-                            value={newUploadTag}
-                            onChange={(e) => setNewUploadTag(e.target.value)}
-                            className="h-8 text-sm"
-                          />
+                          
+                          <div className="space-y-3">
+                            {/* Auto-assign Proxy */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Globe className="w-4 h-4 text-muted-foreground" />
+                                <div>
+                                  <p className="text-sm font-medium">Auto-assign Proxy</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Assign available proxy to each account ({proxies.filter(p => p.status === 'active').length} active proxies)
+                                  </p>
+                                </div>
+                              </div>
+                              <Switch
+                                checked={autoAssignProxy}
+                                onCheckedChange={setAutoAssignProxy}
+                              />
+                            </div>
+                            
+                            {/* Generate Fingerprint (always on, just informational) */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-2">
+                                <Smartphone className="w-4 h-4 text-muted-foreground" />
+                                <div>
+                                  <p className="text-sm font-medium">Generate Fingerprint</p>
+                                  <p className="text-xs text-muted-foreground">
+                                    Unique device fingerprint (auto-generated)
+                                  </p>
+                                </div>
+                              </div>
+                              <Badge variant="outline" className="text-xs">
+                                <CheckCircle2 className="w-3 h-3 mr-1 text-status-active" />
+                                Auto
+                              </Badge>
+                            </div>
+                          </div>
+                          
+                          {autoAssignProxy && proxies.filter(p => p.status === 'active' && !p.assignedAccountId).length < sessionFiles.length && (
+                            <div className="flex items-center gap-2 p-2 rounded bg-yellow-500/10 text-yellow-600 text-xs">
+                              <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                              <span>
+                                {proxies.filter(p => p.status === 'active' && !p.assignedAccountId).length} unassigned proxies available. 
+                                Some accounts may share proxies.
+                              </span>
+                            </div>
+                          )}
                         </div>
-                        {(uploadTags.length > 0 || newUploadTag.trim()) && (
-                          <p className="text-xs text-muted-foreground">
-                            {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
-                          </p>
-                        )}
-                      </div>
+
+                        {/* Tags section */}
+                        <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                          <div className="flex items-center gap-2 text-sm font-medium">
+                            <Tag className="w-4 h-4" />
+                            Assign Tags (Optional)
+                          </div>
+                          {availableTags.length > 0 && (
+                            <div className="flex flex-wrap gap-2">
+                              {availableTags.map(tag => (
+                                <Badge
+                                  key={tag}
+                                  variant={uploadTags.includes(tag) ? "default" : "outline"}
+                                  className="cursor-pointer"
+                                  onClick={() => {
+                                    if (uploadTags.includes(tag)) {
+                                      setUploadTags(prev => prev.filter(t => t !== tag));
+                                    } else {
+                                      setUploadTags(prev => [...prev, tag]);
+                                    }
+                                  }}
+                                >
+                                  <Tag className="w-3 h-3 mr-1" />
+                                  {tag}
+                                  {uploadTags.includes(tag) && <Check className="w-3 h-3 ml-1" />}
+                                </Badge>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <Input
+                              placeholder="Or enter new tag name..."
+                              value={newUploadTag}
+                              onChange={(e) => setNewUploadTag(e.target.value)}
+                              className="h-8 text-sm"
+                            />
+                          </div>
+                          {(uploadTags.length > 0 || newUploadTag.trim()) && (
+                            <p className="text-xs text-muted-foreground">
+                              {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
+                            </p>
+                          )}
+                        </div>
+                      </>
                     )}
 
                     <div className="flex justify-end gap-2">

@@ -308,6 +308,8 @@ serve(async (req) => {
     
     const accounts: AccountData[] = body.accounts || [];
     const tags: string[] = body.tags || []; // Accept tags from request
+    const autoAssignProxy: boolean = body.auto_assign_proxy !== false; // Default true
+    const generateFingerprintFlag: boolean = body.generate_fingerprint !== false; // Default true
     
     if (!accounts.length) {
       return new Response(
@@ -316,7 +318,7 @@ serve(async (req) => {
       );
     }
 
-    console.log(`[process-account-upload] Processing ${accounts.length} accounts`);
+    console.log(`[process-account-upload] Processing ${accounts.length} accounts (auto_assign_proxy: ${autoAssignProxy})`);
 
     // Fetch API credentials for distribution
     const { data: apiCredentials } = await supabase
@@ -328,6 +330,17 @@ serve(async (req) => {
       console.log('[process-account-upload] No API credentials found - using default');
     } else {
       console.log(`[process-account-upload] Found ${apiCredentials.length} API credentials for distribution`);
+    }
+
+    // Fetch available proxies for auto-assignment
+    let availableProxies: { id: string; assigned_account_id: string | null }[] = [];
+    if (autoAssignProxy) {
+      const { data: proxiesData } = await supabase
+        .from('proxies')
+        .select('id, assigned_account_id')
+        .eq('status', 'active');
+      availableProxies = proxiesData || [];
+      console.log(`[process-account-upload] Found ${availableProxies.length} active proxies for assignment`);
     }
 
     // Fetch existing fingerprints to ensure uniqueness
@@ -349,7 +362,8 @@ serve(async (req) => {
       failed: 0,
       errors: [] as string[],
       accounts: [] as any[],
-      account_ids: [] as string[]
+      account_ids: [] as string[],
+      proxies_assigned: 0,
     };
 
     // Fetch all existing accounts in one query for faster lookup
@@ -525,7 +539,54 @@ serve(async (req) => {
       await Promise.all(updatePromises.slice(i, i + BATCH_SIZE));
     }
 
-    console.log(`[process-account-upload] Completed: ${results.successful} successful, ${results.failed} failed`);
+    // ========== AUTO-ASSIGN PROXIES ==========
+    if (autoAssignProxy && results.account_ids.length > 0 && availableProxies.length > 0) {
+      console.log(`[process-account-upload] Auto-assigning proxies to ${results.account_ids.length} accounts...`);
+      
+      // Fetch accounts that don't have a proxy yet
+      const { data: accountsWithoutProxy } = await supabase
+        .from('telegram_accounts')
+        .select('id, phone_number')
+        .in('id', results.account_ids)
+        .is('proxy_id', null);
+      
+      if (accountsWithoutProxy && accountsWithoutProxy.length > 0) {
+        // Prefer unassigned proxies first
+        const unassignedProxies = availableProxies.filter(p => !p.assigned_account_id);
+        const allProxies = unassignedProxies.length > 0 ? unassignedProxies : availableProxies;
+        
+        console.log(`[process-account-upload] ${accountsWithoutProxy.length} accounts need proxies, ${allProxies.length} proxies available`);
+        
+        for (let i = 0; i < accountsWithoutProxy.length; i++) {
+          const account = accountsWithoutProxy[i];
+          // Round-robin proxy assignment
+          const proxy = allProxies[i % allProxies.length];
+          
+          try {
+            // Update account with proxy
+            await supabase
+              .from('telegram_accounts')
+              .update({ proxy_id: proxy.id })
+              .eq('id', account.id);
+            
+            // Update proxy assignment (only if not already assigned)
+            if (!proxy.assigned_account_id) {
+              await supabase
+                .from('proxies')
+                .update({ assigned_account_id: account.id })
+                .eq('id', proxy.id);
+            }
+            
+            results.proxies_assigned++;
+            console.log(`[process-account-upload] Assigned proxy to ${account.phone_number}`);
+          } catch (e) {
+            console.error(`[process-account-upload] Failed to assign proxy to ${account.phone_number}:`, (e as Error).message);
+          }
+        }
+      }
+    }
+
+    console.log(`[process-account-upload] Completed: ${results.successful} successful, ${results.failed} failed, ${results.proxies_assigned} proxies assigned`);
 
     return new Response(
       JSON.stringify(results),
