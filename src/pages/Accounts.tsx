@@ -340,9 +340,24 @@ const Accounts: React.FC = () => {
             };
             
             setAccountTasksProgress(prev => {
-              const newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
-              const newFailed = task.status === 'failed' ? prev.failed + 1 : prev.failed;
-              const newLogs = [logEntry, ...prev.logs].slice(0, 100);
+              // Check if this log already exists (avoid duplicates from realtime updates)
+              const existingLogIndex = prev.logs.findIndex(log => log.id === task.id);
+              
+              let newLogs: typeof prev.logs;
+              let newCompleted = prev.completed;
+              let newFailed = prev.failed;
+              
+              if (existingLogIndex >= 0) {
+                // Log already exists, update it in place but don't increment counters
+                newLogs = [...prev.logs];
+                newLogs[existingLogIndex] = logEntry;
+              } else {
+                // New log, add to beginning and increment counters
+                newLogs = [logEntry, ...prev.logs].slice(0, 100);
+                newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
+                newFailed = task.status === 'failed' ? prev.failed + 1 : prev.failed;
+              }
+              
               const nowIso = new Date().toISOString();
               const allDone = newCompleted + newFailed >= prev.total;
               
@@ -380,8 +395,16 @@ const Accounts: React.FC = () => {
               };
             });
             
-            // Also add to history
-            setAccountTaskHistory(prev => [logEntry, ...prev].slice(0, 200));
+            // Also add to history (avoid duplicates)
+            setAccountTaskHistory(prev => {
+              const existingIndex = prev.findIndex(h => h.id === task.id);
+              if (existingIndex >= 0) {
+                const updated = [...prev];
+                updated[existingIndex] = logEntry;
+                return updated;
+              }
+              return [logEntry, ...prev].slice(0, 200);
+            });
           }
         }
       )
