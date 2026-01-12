@@ -389,23 +389,21 @@ const Campaigns: React.FC = () => {
 
   // Fetch all reports on mount and when campaigns length changes
   const campaignsLength = campaigns.length;
+  const hasRunningCampaigns = campaigns.some(c => c.status === 'running');
+  
   useEffect(() => {
     if (campaignsLength > 0) fetchAllCampaignReports();
   }, [campaignsLength, fetchAllCampaignReports]);
 
   // Fast polling for RUNNING campaigns only - every 1 second
   useEffect(() => {
-    const runningCount = campaigns.filter(c => c.status === 'running').length;
-    if (runningCount === 0) return;
+    if (!hasRunningCampaigns) return;
 
-    // Immediate fetch for running campaigns
-    fetchRunningCampaignStats();
-
-    // Poll every 1 second for running campaigns only
+    // Poll every 1 second for running campaigns only (no immediate fetch to avoid double-fetch)
     const interval = window.setInterval(fetchRunningCampaignStats, 1000);
 
     return () => window.clearInterval(interval);
-  }, [campaigns, fetchRunningCampaignStats]);
+  }, [hasRunningCampaigns, fetchRunningCampaignStats]);
 
   // Listen for campaign status changes only (not recipient changes - too noisy)
   useEffect(() => {
