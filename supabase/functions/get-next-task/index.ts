@@ -43,6 +43,17 @@ serve(async (req) => {
     // Livechat needs instant response (<100ms). Skip ALL heavy operations.
     // Only check for pending messages and return immediately.
     if (runner === "livechat") {
+      // Recovery: Reset stuck "sending" messages older than 30 seconds back to pending
+      // This prevents messages getting permanently stuck if runner crashes
+      const thirtySecondsAgo = new Date(Date.now() - 30 * 1000).toISOString();
+      await supabase
+        .from("messages")
+        .update({ status: "pending" })
+        .eq("status", "sending")
+        .eq("direction", "outgoing")
+        .is("campaign_recipient_id", null)
+        .lt("created_at", thirtySecondsAgo);
+
       // Minimal select for speed - only what we need
       const { data: pendingMessages } = await supabase
         .from("messages")
