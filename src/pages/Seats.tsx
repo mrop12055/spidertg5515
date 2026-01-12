@@ -512,39 +512,55 @@ const handleDeleteSeat = async (seat: Seat) => {
                       </div>
 
                       {/* Stats Grid */}
-                      <div className="grid grid-cols-5 gap-2 mb-4">
+                      <div className="grid grid-cols-6 gap-1.5 mb-4">
                         <div className="bg-muted/50 rounded-lg p-2 text-center">
-                          <p className="text-base font-bold">{stats?.total_conversations || 0}</p>
-                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Chats</p>
+                          <p className="text-sm font-bold">{stats?.total_conversations || 0}</p>
+                          <p className="text-[8px] text-muted-foreground uppercase tracking-wide">Chats</p>
                         </div>
                         <div className="bg-muted/50 rounded-lg p-2 text-center">
-                          <p className="text-base font-bold">{stats?.messages_sent_today || 0}</p>
-                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Sent</p>
+                          <p className="text-sm font-bold">{stats?.messages_sent_today || 0}</p>
+                          <p className="text-[8px] text-muted-foreground uppercase tracking-wide">Sent</p>
                         </div>
                         <div className="bg-muted/50 rounded-lg p-2 text-center">
-                          <p className="text-base font-bold">{stats?.responses_today || 0}</p>
-                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Today</p>
+                          <p className="text-sm font-bold">{stats?.responses_today || 0}</p>
+                          <p className="text-[8px] text-muted-foreground uppercase tracking-wide">Today</p>
                         </div>
                         <div className="bg-muted/50 rounded-lg p-2 text-center">
-                          <p className="text-base font-bold">{stats?.responses_received || 0}</p>
-                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Replies</p>
+                          <p className="text-sm font-bold">{stats?.responses_received || 0}</p>
+                          <p className="text-[8px] text-muted-foreground uppercase tracking-wide">Replies</p>
+                        </div>
+                        <div className={`rounded-lg p-2 text-center ${
+                          ((stats?.responses_received || 0) / (stats?.total_conversations || 1) * 100) >= 5
+                            ? 'bg-green-500/10 border border-green-500/30'
+                            : 'bg-muted/50'
+                        }`}>
+                          <p className={`text-sm font-bold ${
+                            ((stats?.responses_received || 0) / (stats?.total_conversations || 1) * 100) >= 5
+                              ? 'text-green-600'
+                              : ''
+                          }`}>
+                            {stats?.total_conversations 
+                              ? ((stats.responses_received || 0) / stats.total_conversations * 100).toFixed(1)
+                              : '0.0'}%
+                          </p>
+                          <p className="text-[8px] text-muted-foreground uppercase tracking-wide">Rate</p>
                         </div>
                         <div className={`rounded-lg p-2 text-center ${
                           (unreadReplies[seat.id] || 0) > 0 
                             ? 'bg-red-500/10 border border-red-500/30' 
                             : 'bg-muted/50'
                         }`}>
-                          <div className="flex items-center justify-center gap-1">
+                          <div className="flex items-center justify-center gap-0.5">
                             {(unreadReplies[seat.id] || 0) > 0 && (
-                              <MessageSquare className="w-3 h-3 text-red-500" />
+                              <MessageSquare className="w-2.5 h-2.5 text-red-500" />
                             )}
-                            <p className={`text-base font-bold ${
+                            <p className={`text-sm font-bold ${
                               (unreadReplies[seat.id] || 0) > 0 ? 'text-red-500' : ''
                             }`}>
                               {unreadReplies[seat.id] || 0}
                             </p>
                           </div>
-                          <p className="text-[9px] text-muted-foreground uppercase tracking-wide">Unseen</p>
+                          <p className="text-[8px] text-muted-foreground uppercase tracking-wide">Unseen</p>
                         </div>
                       </div>
 
