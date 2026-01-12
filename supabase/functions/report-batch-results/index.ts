@@ -428,7 +428,9 @@ serve(async (req) => {
         }
 
         // Handle account retry (rate limits like "Too many requests")
-        // CRITICAL: Mark these accounts as RESTRICTED for 12 hours
+        // CRITICAL: IMMEDIATELY restrict these accounts for 12 hours and switch
+        // NO RETRIES - instant switch. This error only happens on NEW campaign messages
+        // The restricted account can STILL handle existing conversations (replies)
         for (const r of retryWithDifferentAccount) {
           failPromises.push(
             (async () => {
@@ -443,7 +445,8 @@ serve(async (req) => {
                 failedIds.push(r.account_id);
               }
 
-              // RESTRICT the account for 12 hours (rate limit error = "Too many requests")
+              // IMMEDIATELY RESTRICT the account for 12 hours (rate limit = "Too many requests")
+              // This restriction is for NEW campaign messages only - can still reply to existing chats
               if (r.account_id) {
                 const restrictedUntil = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
                 await supabase
@@ -451,23 +454,26 @@ serve(async (req) => {
                   .update({
                     status: "restricted",
                     restricted_until: restrictedUntil,
-                    ban_reason: r.error || "Too many requests",
+                    ban_reason: `Rate limited for new campaign messages. Can still reply to existing chats. Error: ${r.error || "Too many requests"}`,
                   })
                   .eq("id", r.account_id);
-                console.log(`[report-batch-results] Account ${r.account_id} RESTRICTED for 12h due to rate limit`);
+                console.log(`[report-batch-results] Account ${r.account_id} IMMEDIATELY RESTRICTED for 12h - can still reply to existing conversations`);
               }
 
+              // IMMEDIATE switch to different account - no delay, no retry count
               await supabase
                 .from("campaign_recipients")
                 .update({
                   status: "pending",
-                  failed_reason: null,  // Clear error since we're retrying
+                  failed_reason: null,  // Clear error since switching account
                   failed_account_ids: failedIds,
                   sent_by_account_id: null,
                   api_credential_id: null,
-                  scheduled_at: null,  // Reset scheduling
+                  scheduled_at: null,  // Clear for immediate pickup
                 })
                 .eq("id", r.campaign_recipient_id);
+                
+              console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} reset for IMMEDIATE pickup by different account`);
             })()
           );
         }
