@@ -46,10 +46,21 @@ from fingerprint_generator import generate_fingerprint
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
+# ========== SESSION LOCKING FIX ==========
+# Track which sessions are currently being accessed to prevent SQLite locks
+_session_locks: Dict[str, asyncio.Lock] = {}
+
+def get_session_lock(account_id: str) -> asyncio.Lock:
+    """Get or create a lock for a specific account session"""
+    if account_id not in _session_locks:
+        _session_locks[account_id] = asyncio.Lock()
+    return _session_locks[account_id]
+
 # ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 10      # Telegram connection timeout
+CONNECTION_TIMEOUT = 15      # Telegram connection timeout (increased for slow proxies)
 CONNECTION_RETRIES = 1       # Fail fast, switch proxy immediately
 RETRY_DELAY = 0              # No retry delay
+SQLITE_TIMEOUT = 30          # SQLite database timeout to prevent "database is locked"
 
 # HTTP Timeouts - split by purpose
 HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks) - increased for heavy queries
@@ -66,7 +77,8 @@ MAX_HTTP_BACKOFF = 30
 PROXY_ERROR_PATTERNS = [
     "semaphore timeout", "winerror 121", "connection refused", 
     "proxy", "socks", "timed out", "timeout", "cannot connect",
-    "connection reset", "connection closed", "no route"
+    "connection reset", "connection closed", "no route", "database is locked",
+    "network name is no longer available", "winerror 64"
 ]
 
 # ========== SHARED HTTP CLIENT POOL ==========
@@ -85,11 +97,23 @@ def get_http_client() -> httpx.AsyncClient:
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
+    """Decode session file and set SQLite timeout to prevent locking errors"""
     session_path = os.path.join(SESSION_FOLDER, phone_number.replace("+", ""))
     try:
         session_bytes = base64.b64decode(base64_data)
         with open(session_path + ".session", "wb") as f:
             f.write(session_bytes)
+        
+        # Set SQLite timeout on the session file to prevent "database is locked" errors
+        import sqlite3
+        try:
+            conn = sqlite3.connect(session_path + ".session", timeout=SQLITE_TIMEOUT)
+            conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
+            conn.execute("PRAGMA journal_mode = WAL")    # Write-Ahead Logging for better concurrency
+            conn.close()
+        except Exception as sql_err:
+            print(f"  [WARN] Could not set SQLite options: {sql_err}")
+        
         return session_path
     except Exception as e:
         print(f"  [ERROR] Session decode: {e}")
@@ -128,20 +152,41 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
 
 
 async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> bool:
-    """Fast connect - fail immediately on timeout/proxy error"""
-    try:
-        await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-        return True
-    except asyncio.TimeoutError:
-        print(f"    [TIMEOUT] Connection timeout")
-        return False
-    except Exception as e:
-        err_str = str(e).lower()
-        if any(p in err_str for p in PROXY_ERROR_PATTERNS):
-            print(f"    [PROXY FAIL] {e}")
+    """Fast connect with better error handling for network and SQLite errors"""
+    for attempt in range(max_retries + 1):
+        try:
+            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+            return True
+        except asyncio.TimeoutError:
+            print(f"    [TIMEOUT] Connection timeout (attempt {attempt + 1}/{max_retries + 1})")
+            if attempt < max_retries:
+                await asyncio.sleep(1)
+                continue
             return False
-        print(f"    [ERROR] {e}")
-        return False
+        except Exception as e:
+            err_str = str(e).lower()
+            
+            # Database locked - wait and retry
+            if "database is locked" in err_str:
+                print(f"    [DB LOCK] SQLite locked, waiting 2s... (attempt {attempt + 1})")
+                if attempt < max_retries:
+                    await asyncio.sleep(2)
+                    continue
+                return False
+            
+            # WinError 121 semaphore timeout - proxy network issue
+            if "winerror 121" in err_str or "semaphore timeout" in err_str:
+                print(f"    [NETWORK] Semaphore timeout - proxy slow/dead")
+                return False
+            
+            # Other proxy errors - fail fast
+            if any(p in err_str for p in PROXY_ERROR_PATTERNS):
+                print(f"    [PROXY FAIL] {str(e)[:80]}")
+                return False
+            
+            print(f"    [ERROR] {str(e)[:80]}")
+            return False
+    return False
 
 
 async def switch_account_proxy(account_id: str, old_proxy_id: str = None) -> dict:
@@ -187,6 +232,9 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     """
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
+    
+    # ========== SESSION LOCKING: Prevent "database is locked" errors ==========
+    session_lock = get_session_lock(account_id)
     
     # ========== STEP 1: CHECK / CLEAR EXISTING CLIENT ==========
     # If no_cache=True, we MUST NOT reuse any cached Telethon client.
@@ -2343,6 +2391,21 @@ async def main_loop():
         except Exception as e:
             global _network_error_count, _last_network_error_time
             error_str = str(e).lower()
+            
+            # Handle SQLite database locked errors - clear stale locks
+            if "database is locked" in error_str:
+                print(f"  [DB LOCK] SQLite locked in main loop - cleaning up sessions...")
+                # Force garbage collection to release file handles
+                gc.collect()
+                await asyncio.sleep(3)
+                continue
+            
+            # Handle WinError 121 (semaphore timeout) - proxy/network issue
+            if "winerror 121" in error_str or "semaphore timeout" in error_str:
+                print(f"  [NETWORK] Semaphore timeout - proxy connection slow/dead")
+                print(f"  [ACTION] Will switch to different proxies on next connect...")
+                await asyncio.sleep(5)
+                continue
             
             # Check if this is a network error (including WinError 64)
             if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
