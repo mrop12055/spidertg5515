@@ -1404,6 +1404,8 @@ serve(async (req) => {
           "change_photo",
           "sync_profile",
           "verify_session",
+          "change_username",
+          "remove_bio",
         ])
         .order("created_at", { ascending: true })
         .limit(accountBatchSize);

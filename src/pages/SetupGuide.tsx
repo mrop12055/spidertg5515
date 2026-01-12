@@ -2482,16 +2482,22 @@ async def remove_bio(client):
 
 
 async def change_password(client, existing_pwd, new_pwd):
+    """Change or set 2FA cloud password using Telethon's edit_2fa method"""
     try:
-        from telethon.tl.functions.account import UpdatePasswordSettingsRequest, GetPasswordRequest
-        from telethon.password import compute_check
-        pwd = await client(GetPasswordRequest())
-        check = compute_check(pwd, existing_pwd) if pwd.has_password and existing_pwd else None
-        from telethon.tl.types.account import PasswordInputSettings
-        new_settings = PasswordInputSettings(new_algo=pwd.new_algo, new_password_hash=new_pwd.encode())
-        await client(UpdatePasswordSettingsRequest(password=check, new_settings=new_settings))
+        # Use Telethon's built-in edit_2fa which handles all the complexity
+        if existing_pwd:
+            # Change existing password
+            await client.edit_2fa(current_password=existing_pwd, new_password=new_pwd)
+        else:
+            # Set new password for first time (no existing password)
+            await client.edit_2fa(new_password=new_pwd)
         return True, None
     except Exception as e:
+        error_str = str(e).lower()
+        if "password" in error_str and "invalid" in error_str:
+            return False, "Invalid current password"
+        elif "flood" in error_str:
+            return False, "Too many attempts, try again later"
         return False, str(e)
 
 
