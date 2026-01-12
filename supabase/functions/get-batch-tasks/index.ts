@@ -1276,56 +1276,96 @@ serve(async (req) => {
         // Collect all messages to update status in BATCH (parallel)
         const messagesToClaim: string[] = [];
         const tasksToAdd: any[] = [];
+        const accountsNeedingProxy: string[] = [];
+        const accountsNeedingFingerprint: string[] = [];
         
+        // Group messages by account to maintain ORDER within each account
+        const messagesByAccount = new Map<string, typeof pendingMessages>();
         for (const msg of pendingMessages) {
-          const conv = msg.conversations;
-          
+          const accountId = msg.conversations.account_id;
+          if (!messagesByAccount.has(accountId)) {
+            messagesByAccount.set(accountId, []);
+          }
+          messagesByAccount.get(accountId)!.push(msg);
+        }
+        
+        // Process each account's messages IN ORDER (they're already sorted by created_at)
+        for (const [accountId, accountMessages] of messagesByAccount) {
           // Find the account for this conversation (NO per-account limit - parallel mode)
-          const account = accountsMap.get(conv.account_id);
+          let account = accountsMap.get(accountId);
 
           if (!account) {
-            console.log(`[get-batch-tasks] LIVECHAT: Skipping msg ${msg.id} - account ${conv.account_id} not usable`);
+            console.log(`[get-batch-tasks] LIVECHAT: Skipping ${accountMessages.length} msgs - account ${accountId} not usable`);
             continue;
+          }
+
+          // AUTO-ASSIGN PROXY if missing
+          let proxyData = account.proxies;
+          if (!account.proxy_id || !proxyData || proxyData.status !== 'active') {
+            console.log(`[get-batch-tasks] LIVECHAT: Account ${account.phone_number} has no proxy - auto-assigning...`);
+            const proxyResult = await autoAssignProxy(supabase, account.id, account.phone_number);
+            if (proxyResult.success && proxyResult.proxy) {
+              proxyData = proxyResult.proxy;
+              accountsNeedingProxy.push(account.phone_number);
+              console.log(`[get-batch-tasks] LIVECHAT: Auto-assigned proxy to ${account.phone_number}`);
+            } else {
+              console.log(`[get-batch-tasks] LIVECHAT: No proxy available for ${account.phone_number} - skipping messages`);
+              continue;
+            }
+          }
+
+          // CHECK FINGERPRINT - flag if missing (Python will generate)
+          if (!account.device_model || !account.system_version || !account.app_version) {
+            accountsNeedingFingerprint.push(account.phone_number);
+            console.log(`[get-batch-tasks] LIVECHAT: Account ${account.phone_number} needs fingerprint - Python will generate`);
           }
 
           const apiCred = account.telegram_api_credentials;
 
-          messagesToClaim.push(msg.id);
-          tasksToAdd.push({
-            task: "send",
-            message: {
-              id: msg.id,
-              content: msg.content,
-              media_url: msg.media_url,
-            },
-            recipient: conv.recipient_telegram_id?.toString() || conv.recipient_phone,
-            recipient_name: conv.recipient_name,
-            recipient_telegram_id: conv.recipient_telegram_id,
-            account: {
-              id: account.id,
-              phone_number: account.phone_number,
-              session_data: account.session_data,
-              device_model: account.device_model,
-              system_version: account.system_version,
-              app_version: account.app_version,
-              lang_code: account.lang_code,
-              system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
-              proxy_id: account.proxy_id,
-            },
-            proxy: account.proxies
-              ? {
-                  host: account.proxies.host,
-                  port: account.proxies.port,
-                  username: account.proxies.username,
-                  password: account.proxies.password,
-                  proxy_type: account.proxies.proxy_type,
-                  type: account.proxies.proxy_type,
-                }
-              : null,
-            mode: "livechat",
-          });
+          // Process messages IN ORDER for this account
+          for (const msg of accountMessages) {
+            const conv = msg.conversations;
+            
+            messagesToClaim.push(msg.id);
+            tasksToAdd.push({
+              task: "send",
+              message: {
+                id: msg.id,
+                content: msg.content,
+                media_url: msg.media_url,
+                // Include sequence number for ordering in Python
+                sequence: messagesToClaim.length,
+              },
+              recipient: conv.recipient_telegram_id?.toString() || conv.recipient_phone,
+              recipient_name: conv.recipient_name,
+              recipient_telegram_id: conv.recipient_telegram_id,
+              account: {
+                id: account.id,
+                phone_number: account.phone_number,
+                session_data: account.session_data,
+                device_model: account.device_model,
+                system_version: account.system_version,
+                app_version: account.app_version,
+                lang_code: account.lang_code,
+                system_lang_code: account.system_lang_code,
+                api_id: apiCred?.api_id || account.api_id,
+                api_hash: apiCred?.api_hash || account.api_hash,
+                proxy_id: account.proxy_id,
+              },
+              proxy: proxyData
+                ? {
+                    id: proxyData.id,
+                    host: proxyData.host,
+                    port: proxyData.port,
+                    username: proxyData.username,
+                    password: proxyData.password,
+                    proxy_type: proxyData.proxy_type,
+                    type: proxyData.proxy_type,
+                  }
+                : null,
+              mode: "livechat",
+            });
+          }
         }
         
         // BATCH UPDATE: Mark all messages as sending in ONE query (parallel)
@@ -1336,30 +1376,50 @@ serve(async (req) => {
             .in("id", messagesToClaim);
           
           tasks.push(...tasksToAdd);
-          console.log(`[get-batch-tasks] LIVECHAT PARALLEL: Claimed ${messagesToClaim.length} messages in batch`);
+          console.log(`[get-batch-tasks] LIVECHAT PARALLEL: Claimed ${messagesToClaim.length} messages in batch (proxy auto-assigned: ${accountsNeedingProxy.length}, fingerprint needed: ${accountsNeedingFingerprint.length})`);
         }
       }
       
       // For livechat, also return accounts for initial connection
       // This helps the runner connect accounts that need message handlers
-      // CRITICAL: Only return accounts with active proxies AND complete fingerprint data
-      const accountsWithValidProxyAndFingerprint = usableAccounts.filter((a: any) => {
-        // Check proxy - must have active proxy
-        if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') {
-          console.log(`[get-batch-tasks] SKIP livechat account ${a.phone_number} - NO ACTIVE PROXY`);
-          return false;
+      // AUTO-ASSIGN PROXY for accounts that don't have one
+      const accountsWithProxy: any[] = [];
+      const autoAssignedProxyAccounts: string[] = [];
+      
+      for (const a of usableAccounts) {
+        let proxyData = a.proxies;
+        
+        // Try to auto-assign proxy if missing
+        if (!a.proxy_id || !proxyData || proxyData.status !== 'active') {
+          console.log(`[get-batch-tasks] LIVECHAT: Account ${a.phone_number} has no proxy - auto-assigning for connection...`);
+          const proxyResult = await autoAssignProxy(supabase, a.id, a.phone_number);
+          if (proxyResult.success && proxyResult.proxy) {
+            proxyData = proxyResult.proxy;
+            autoAssignedProxyAccounts.push(a.phone_number);
+          } else {
+            console.log(`[get-batch-tasks] SKIP livechat account ${a.phone_number} - NO PROXY AVAILABLE`);
+            continue;
+          }
         }
-        // Check fingerprint fields - must have all required fingerprint data
+        
+        // DON'T skip accounts without fingerprint - Python will generate it
         if (!a.device_model || !a.system_version || !a.app_version) {
-          console.log(`[get-batch-tasks] SKIP livechat account ${a.phone_number} - MISSING FINGERPRINT (device_model: ${a.device_model}, system_version: ${a.system_version}, app_version: ${a.app_version})`);
-          return false;
+          console.log(`[get-batch-tasks] LIVECHAT: Account ${a.phone_number} missing fingerprint - Python will generate`);
         }
-        return true;
-      });
+        
+        accountsWithProxy.push({
+          ...a,
+          _proxy: proxyData  // Use auto-assigned proxy
+        });
+      }
       
-      console.log(`[get-batch-tasks] Livechat: ${accountsWithValidProxyAndFingerprint.length} accounts with valid proxy+fingerprint (from ${usableAccounts.length} usable)`);
+      if (autoAssignedProxyAccounts.length > 0) {
+        console.log(`[get-batch-tasks] LIVECHAT: Auto-assigned proxies to ${autoAssignedProxyAccounts.length} accounts: ${autoAssignedProxyAccounts.join(', ')}`);
+      }
       
-      const accountsForConnection = accountsWithValidProxyAndFingerprint.map((a: any) => ({
+      console.log(`[get-batch-tasks] Livechat: ${accountsWithProxy.length} accounts ready (from ${usableAccounts.length} usable)`);
+      
+      const accountsForConnection = accountsWithProxy.map((a: any) => ({
         id: a.id,
         phone_number: a.phone_number,
         session_data: a.session_data,
@@ -1370,15 +1430,17 @@ serve(async (req) => {
         system_lang_code: a.system_lang_code,
         api_id: a.telegram_api_credentials?.api_id || a.api_id,
         api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
-        proxy_id: a.proxy_id,
+        proxy_id: a._proxy?.id || a.proxy_id,
         proxy: {
-          host: a.proxies.host,
-          port: a.proxies.port,
-          username: a.proxies.username,
-          password: a.proxies.password,
-          proxy_type: a.proxies.proxy_type,
-          type: a.proxies.proxy_type,
+          id: a._proxy?.id || a.proxies?.id,
+          host: a._proxy?.host || a.proxies?.host,
+          port: a._proxy?.port || a.proxies?.port,
+          username: a._proxy?.username || a.proxies?.username,
+          password: a._proxy?.password || a.proxies?.password,
+          proxy_type: a._proxy?.proxy_type || a.proxies?.proxy_type,
+          type: a._proxy?.proxy_type || a.proxies?.proxy_type,
         },
+        needs_fingerprint: !a.device_model || !a.system_version || !a.app_version,
       }));
       
       return new Response(JSON.stringify({
@@ -1386,6 +1448,7 @@ serve(async (req) => {
         accounts: accountsForConnection,
         delay_after: 1, // 1-second polling for livechat
         accounts_available: usableAccounts.length,
+        auto_assigned_proxies: autoAssignedProxyAccounts.length,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
