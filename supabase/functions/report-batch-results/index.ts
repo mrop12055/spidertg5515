@@ -414,20 +414,21 @@ serve(async (req) => {
           );
         }
 
-        // HANDLE FROZEN ACCOUNTS - set status to frozen permanently
+        // HANDLE FROZEN ACCOUNTS - set status to frozen/inactive permanently (no restriction time)
         for (const r of frozenAccountResults) {
           failPromises.push(
             (async () => {
-              // Set account status to FROZEN permanently
+              // Set account status to FROZEN/inactive permanently - no restriction, just mark inactive
               if (r.account_id) {
                 await supabase
                   .from("telegram_accounts")
                   .update({
                     status: "frozen",
                     ban_reason: r.error || "Account frozen by Telegram",
+                    restricted_until: null,
                   })
                   .eq("id", r.account_id);
-                console.log(`[report-batch-results] Account ${r.account_id} FROZEN by Telegram: ${r.error}`);
+                console.log(`[report-batch-results] Account ${r.account_id} FROZEN (inactive) by Telegram: ${r.error}`);
               }
 
               // Track failed account and reset recipient for different account
