@@ -1593,6 +1593,36 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                     if msg.photo:
                         content = "[Photo] " + (msg.text or "")
                         media_type = "image"
+                        # Download and upload photo to storage
+                        try:
+                            photo_bytes = await client.download_media(msg.photo, bytes)
+                            if photo_bytes:
+                                file_name = f"incoming_{account_id}_{msg.id}_{int(time.time() * 1000)}.jpg"
+                                file_path = f"{account_id}/{file_name}"
+                                
+                                mime_type = "image/jpeg"
+                                if hasattr(msg, 'file') and msg.file:
+                                    mime_type = getattr(msg.file, 'mime_type', None) or "image/jpeg"
+                                
+                                http = get_http_client()
+                                upload_response = await http.put(
+                                    f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{file_path}",
+                                    headers={
+                                        "apikey": SUPABASE_KEY,
+                                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                                        "Content-Type": mime_type,
+                                        "x-upsert": "true"
+                                    },
+                                    content=photo_bytes
+                                )
+                                if upload_response.status_code in (200, 201):
+                                    media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
+                                    print(f"      [OK] Synced photo uploaded: {file_name}")
+                                else:
+                                    print(f"      [WARN] Sync photo upload failed: {upload_response.status_code}")
+                        except Exception as e:
+                            if not is_network_error(str(e)):
+                                print(f"      [WARN] Could not upload synced photo: {str(e)[:50]}")
                     elif msg.video:
                         content = "[Video] " + (msg.text or "")
                         media_type = "video"
@@ -1728,7 +1758,36 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                     if msg.photo:
                         content = "[Photo] " + (msg.text or "")
                         media_type = "image"
-                        # Note: Not uploading photo for fallback - just notify about the message
+                        # Download and upload photo to storage
+                        try:
+                            photo_bytes = await client.download_media(msg.photo, bytes)
+                            if photo_bytes:
+                                file_name = f"incoming_{account_id}_{msg.id}_{int(time.time() * 1000)}.jpg"
+                                file_path = f"{account_id}/{file_name}"
+                                
+                                mime_type = "image/jpeg"
+                                if hasattr(msg, 'file') and msg.file:
+                                    mime_type = getattr(msg.file, 'mime_type', None) or "image/jpeg"
+                                
+                                http = get_http_client()
+                                upload_response = await http.put(
+                                    f"{SUPABASE_URL_BASE}/storage/v1/object/message-attachments/{file_path}",
+                                    headers={
+                                        "apikey": SUPABASE_KEY,
+                                        "Authorization": f"Bearer {SUPABASE_KEY}",
+                                        "Content-Type": mime_type,
+                                        "x-upsert": "true"
+                                    },
+                                    content=photo_bytes
+                                )
+                                if upload_response.status_code in (200, 201):
+                                    media_url = f"{SUPABASE_URL_BASE}/storage/v1/object/public/message-attachments/{file_path}"
+                                    print(f"      [OK] Fallback photo uploaded: {file_name}")
+                                else:
+                                    print(f"      [WARN] Fallback photo upload failed: {upload_response.status_code}")
+                        except Exception as e:
+                            if not is_network_error(str(e)):
+                                print(f"      [WARN] Could not upload fallback photo: {str(e)[:50]}")
                     
                     # Report the missed message with telegram_message_id for deduplication
                     await report_result("incoming_message", {
