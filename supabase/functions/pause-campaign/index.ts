@@ -7,15 +7,12 @@ const corsHeaders = {
 };
 
 /**
- * Atomic pause-campaign function
+ * Fast atomic pause-campaign function
  * 
- * This function atomically:
- * 1. Updates campaign status to 'paused'
- * 2. Resets ALL 'sending' recipients to 'queued' (prevents stuck tasks)
- * 3. Resets ALL 'pending' recipients to 'queued' (clean restart on resume)
- * 4. Clears assignment fields (sent_by_account_id, api_credential_id, scheduled_at)
- * 
- * This prevents the "stuck sending" problem when pausing campaigns.
+ * This function:
+ * 1. Updates campaign status to 'paused' immediately
+ * 2. Returns response right away (fast UI feedback)
+ * 3. Resets recipients in background (doesn't block response)
  */
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -40,7 +37,7 @@ serve(async (req) => {
 
     console.log(`[pause-campaign] Pausing campaign ${campaign_id}`);
 
-    // Step 1: Update campaign status to 'paused'
+    // Step 1: Update campaign status to 'paused' immediately
     const { error: campaignError } = await supabase
       .from("campaigns")
       .update({ 
@@ -57,31 +54,12 @@ serve(async (req) => {
       );
     }
 
-    // Step 2: Count recipients in each status for logging
-    const [{ count: sendingCount }, { count: pendingCount }] = await Promise.all([
-      supabase
-        .from("campaign_recipients")
-        .select("id", { count: "exact", head: true })
-        .eq("campaign_id", campaign_id)
-        .eq("status", "sending"),
-      supabase
-        .from("campaign_recipients")
-        .select("id", { count: "exact", head: true })
-        .eq("campaign_id", campaign_id)
-        .eq("status", "pending"),
-    ]);
-
-    console.log(`[pause-campaign] Found ${sendingCount || 0} sending, ${pendingCount || 0} pending recipients`);
-
-    // Step 3: Reset ALL 'sending' and 'pending' recipients to 'queued'
-    // This ensures a clean restart when campaign is resumed
-    const resetPromises: Promise<any>[] = [];
-
-    // Reset 'sending' recipients (these were in-progress but not completed)
-    if ((sendingCount || 0) > 0) {
-      resetPromises.push(
-        (async () => {
-          return await supabase
+    // Background task: Reset recipients after response is sent
+    const resetRecipients = async () => {
+      try {
+        // Reset ALL 'sending' and 'pending' recipients to 'queued' in parallel
+        const [sendingResult, pendingResult] = await Promise.all([
+          supabase
             .from("campaign_recipients")
             .update({
               status: "queued",
@@ -91,16 +69,8 @@ serve(async (req) => {
               failed_reason: null,
             })
             .eq("campaign_id", campaign_id)
-            .eq("status", "sending");
-        })()
-      );
-    }
-
-    // Reset 'pending' recipients (these were assigned but not sent)
-    if ((pendingCount || 0) > 0) {
-      resetPromises.push(
-        (async () => {
-          return await supabase
+            .eq("status", "sending"),
+          supabase
             .from("campaign_recipients")
             .update({
               status: "queued",
@@ -110,31 +80,34 @@ serve(async (req) => {
               failed_reason: null,
             })
             .eq("campaign_id", campaign_id)
-            .eq("status", "pending");
-        })()
-      );
-    }
+            .eq("status", "pending"),
+        ]);
 
-    // Execute all resets in parallel
-    if (resetPromises.length > 0) {
-      const results = await Promise.all(resetPromises);
-      const errors = results.filter(r => r.error);
-      if (errors.length > 0) {
-        console.error(`[pause-campaign] Some resets failed:`, errors.map(e => e.error?.message));
+        if (sendingResult.error) {
+          console.error(`[pause-campaign] Error resetting sending:`, sendingResult.error);
+        }
+        if (pendingResult.error) {
+          console.error(`[pause-campaign] Error resetting pending:`, pendingResult.error);
+        }
+        
+        console.log(`[pause-campaign] Background: Reset recipients completed for campaign ${campaign_id}`);
+      } catch (err) {
+        console.error(`[pause-campaign] Background reset error:`, err);
       }
-    }
+    };
 
-    const totalReset = (sendingCount || 0) + (pendingCount || 0);
-    console.log(`[pause-campaign] Campaign ${campaign_id} paused. Reset ${totalReset} recipients to queued.`);
+    // Start background task without waiting
+    // @ts-ignore - EdgeRuntime is available in Supabase Edge Functions
+    (globalThis as any).EdgeRuntime?.waitUntil?.(resetRecipients()) ?? resetRecipients();
 
+    console.log(`[pause-campaign] Campaign ${campaign_id} paused. Resetting recipients in background.`);
+
+    // Return immediately - don't wait for recipient resets
     return new Response(
       JSON.stringify({
         success: true,
         campaign_id,
-        sending_reset: sendingCount || 0,
-        pending_reset: pendingCount || 0,
-        total_reset: totalReset,
-        message: `Campaign paused. ${totalReset} recipients reset to queued for clean restart.`,
+        message: "Campaign paused successfully",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
