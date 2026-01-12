@@ -260,14 +260,9 @@ const DatabaseHealth = () => {
           .eq('status', 'failed')
           .order('created_at', { ascending: false })
           .limit(100),
-        // Account errors - accounts with ban_reason (restricted, banned, frozen, disconnected)
-        supabase
-          .from('telegram_accounts')
-          .select('id, phone_number, status, ban_reason, restricted_until, created_at')
-          .not('ban_reason', 'is', null)
-          .neq('ban_reason', '')
-          .order('restricted_until', { ascending: false, nullsFirst: false })
-          .limit(100),
+        // Skip fetching account ban_reason - these are auto-generated, not real errors
+        // Real errors come from task tables (account_check_tasks, campaign_recipients, messages, etc.)
+        Promise.resolve({ data: [] }),
         // Count restricted accounts
         supabase
           .from('telegram_accounts')
@@ -347,16 +342,9 @@ const DatabaseHealth = () => {
         });
       });
 
-      // Account errors (restricted, banned, frozen, disconnected with ban_reason)
-      (accountErrorsRes.data || []).forEach(a => {
-        allErrors.push({
-          id: a.id,
-          phone: a.phone_number,
-          reason: `[${a.status?.toUpperCase()}] ${a.ban_reason}`,
-          timestamp: a.restricted_until || a.created_at || new Date().toISOString(),
-          source: 'Account'
-        });
-      });
+      // Skip account ban_reason errors - we only want REAL errors from task tables
+      // The ban_reason field contains auto-generated messages, not the actual errors
+      // Real errors are already captured from account_check_tasks, campaign_recipients, messages, etc.
 
       // Sort by timestamp descending and take latest 300
       allErrors.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
