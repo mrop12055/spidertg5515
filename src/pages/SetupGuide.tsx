@@ -2406,8 +2406,9 @@ import httpx
 
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result, shutdown_all, disconnect_client,
-    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL, active_clients, get_http_client
+    validate_contact, SESSION_FOLDER, active_clients, get_http_client
 )
+from config import BACKEND_URL, SUPABASE_KEY
 
 RUNNING = True
 
