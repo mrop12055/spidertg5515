@@ -1227,7 +1227,8 @@ from telethon import events
 
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client
+    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
+    HTTP_TIMEOUT_UPLOAD
 )
 from fingerprint_generator import generate_fingerprint
 from config import SUPABASE_URL, SUPABASE_KEY
