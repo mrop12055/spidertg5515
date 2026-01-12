@@ -384,70 +384,68 @@ serve(async (req) => {
           // Skip if sender already has a task in this batch (avoid parallel sends from same account)
           if (usedAccountIds.has(senderAccount?.id)) continue;
 
-          // Check account is active/restricted and has active proxy (restricted accounts CAN do warmup)
+          // Check account is active/restricted (restricted accounts CAN do warmup)
           const isUsableStatus = senderAccount && (senderAccount.status === "active" || senderAccount.status === "restricted");
-          if (isUsableStatus && receiverAccount && proxy?.status === "active") {
-            const apiCred = senderAccount.telegram_api_credentials;
-
-            // Mark as "sending" with claim info (task leasing)
-            await supabase
-              .from("warmup_messages")
-              .update({ 
-                status: "sending",
-                claimed_at: new Date().toISOString(),
-                claimed_by: "warmup_chat_runner"
-              })
-              .eq("id", msg.id);
-
-            // Determine task type based on message_type
-            const taskType = msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat";
-
-            tasks.push({
-              task: taskType,
-              task_id: msg.id,
-              pair_id: msg.pair_id,
-              is_cycle_last: msg.is_cycle_last || false,
-              task_data: {
-                recipient_phone: receiverAccount.phone_number,
-                recipient_telegram_id: receiverAccount.telegram_id,
-                recipient_username: receiverAccount.username,
-                message: msg.message_content,
-                message_type: msg.message_type,
-                first_name: msg.message_type === "add_contact" ? msg.message_content : receiverAccount.first_name,
-                phone: receiverAccount.phone_number,
-              },
-              account: {
-                id: senderAccount.id,
-                phone_number: senderAccount.phone_number,
-                session_data: senderAccount.session_data,
-                device_model: senderAccount.device_model,
-                system_version: senderAccount.system_version,
-                app_version: senderAccount.app_version,
-                lang_code: senderAccount.lang_code,
-                system_lang_code: senderAccount.system_lang_code,
-                api_id: apiCred?.api_id || senderAccount.api_id,
-                api_hash: apiCred?.api_hash || senderAccount.api_hash,
-                proxy: proxy,
-              },
-            });
-
-            usedAccountIds.add(senderAccount.id);
-            console.log(`[get-batch-tasks] Added warmup task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
-          } else {
-            // Account not usable, mark as failed
-            const reason = !senderAccount ? "Sender account not found" :
-                           (senderAccount.status !== "active" && senderAccount.status !== "restricted") ? `Sender status: ${senderAccount.status}` :
-                           !proxy ? "No proxy assigned" :
-                           proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
-                           "Unknown reason";
-            
+          
+          if (!isUsableStatus) {
+            const reason = !senderAccount ? "Sender account not found" : `Sender status: ${senderAccount.status}`;
             await supabase
               .from("warmup_messages")
               .update({ status: "failed", error_message: reason })
               .eq("id", msg.id);
+            console.log(`[get-batch-tasks] Warmup task skipped: ${reason}`);
+            continue;
+          }
 
-            // If proxy error, mark the pair as failed
-            if (reason.includes("Proxy") || reason.includes("proxy")) {
+          if (!receiverAccount) {
+            await supabase
+              .from("warmup_messages")
+              .update({ status: "failed", error_message: "Receiver account not found" })
+              .eq("id", msg.id);
+            console.log(`[get-batch-tasks] Warmup task skipped: Receiver account not found`);
+            continue;
+          }
+
+          // CHECK 1: Fingerprint validation - skip if missing required fingerprint data
+          if (!senderAccount.device_model || !senderAccount.system_version || !senderAccount.app_version) {
+            const reason = `Missing fingerprint data (device_model: ${senderAccount.device_model}, system_version: ${senderAccount.system_version}, app_version: ${senderAccount.app_version})`;
+            await supabase
+              .from("warmup_messages")
+              .update({ status: "failed", error_message: reason })
+              .eq("id", msg.id);
+            
+            // Mark pair as failed due to fingerprint issue
+            await supabase
+              .from("warmup_pairs")
+              .update({ status: "failed", failed_reason: "Missing fingerprint data" })
+              .eq("id", msg.pair_id);
+            
+            // Cancel other pending messages for this pair
+            await supabase
+              .from("warmup_messages")
+              .update({ status: "cancelled", error_message: "Pair stopped due to missing fingerprint" })
+              .eq("pair_id", msg.pair_id)
+              .eq("status", "pending");
+            
+            console.log(`[get-batch-tasks] Warmup task skipped for ${senderAccount.phone_number}: ${reason}`);
+            continue;
+          }
+
+          // CHECK 2: Proxy validation - try to auto-assign if missing or inactive
+          let activeProxy = proxy;
+          if (!proxy || proxy.status !== 'active') {
+            console.log(`[get-batch-tasks] Warmup account ${senderAccount.phone_number} has no active proxy - attempting auto-assign...`);
+            const result = await autoAssignProxy(supabase, senderAccount.id, senderAccount.phone_number);
+            if (result.success && result.proxy) {
+              activeProxy = result.proxy;
+            } else {
+              const reason = "No proxy available for auto-assignment";
+              await supabase
+                .from("warmup_messages")
+                .update({ status: "failed", error_message: reason })
+                .eq("id", msg.id);
+
+              // Mark the pair as failed
               await supabase
                 .from("warmup_pairs")
                 .update({ status: "failed", failed_reason: "Proxy error" })
@@ -459,10 +457,59 @@ serve(async (req) => {
                 .update({ status: "cancelled", error_message: "Pair stopped due to proxy error" })
                 .eq("pair_id", msg.pair_id)
                 .eq("status", "pending");
+              
+              console.log(`[get-batch-tasks] Warmup task skipped for ${senderAccount.phone_number}: ${reason}`);
+              continue;
             }
-            
-            console.log(`[get-batch-tasks] Warmup task skipped: ${reason}`);
           }
+
+          // All validations passed - proceed with task
+          const apiCred = senderAccount.telegram_api_credentials;
+
+          // Mark as "sending" with claim info (task leasing)
+          await supabase
+            .from("warmup_messages")
+            .update({ 
+              status: "sending",
+              claimed_at: new Date().toISOString(),
+              claimed_by: "warmup_chat_runner"
+            })
+            .eq("id", msg.id);
+
+          // Determine task type based on message_type
+          const taskType = msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat";
+
+          tasks.push({
+            task: taskType,
+            task_id: msg.id,
+            pair_id: msg.pair_id,
+            is_cycle_last: msg.is_cycle_last || false,
+            task_data: {
+              recipient_phone: receiverAccount.phone_number,
+              recipient_telegram_id: receiverAccount.telegram_id,
+              recipient_username: receiverAccount.username,
+              message: msg.message_content,
+              message_type: msg.message_type,
+              first_name: msg.message_type === "add_contact" ? msg.message_content : receiverAccount.first_name,
+              phone: receiverAccount.phone_number,
+            },
+            account: {
+              id: senderAccount.id,
+              phone_number: senderAccount.phone_number,
+              session_data: senderAccount.session_data,
+              device_model: senderAccount.device_model,
+              system_version: senderAccount.system_version,
+              app_version: senderAccount.app_version,
+              lang_code: senderAccount.lang_code,
+              system_lang_code: senderAccount.system_lang_code,
+              api_id: apiCred?.api_id || senderAccount.api_id,
+              api_hash: apiCred?.api_hash || senderAccount.api_hash,
+              proxy: activeProxy,
+            },
+          });
+
+          usedAccountIds.add(senderAccount.id);
+          console.log(`[get-batch-tasks] Added warmup task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
         }
       }
       
