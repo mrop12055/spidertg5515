@@ -1246,8 +1246,10 @@ serve(async (req) => {
     }
 
     // LIVECHAT RUNNER: Get pending outgoing messages
+    // PARALLEL MODE: No limit per account - send ALL pending messages in parallel
     if (runner === "livechat") {
-      const actualBatchSize = Math.min(batch_size || 50, usableAccounts.length);
+      // Use larger batch size for parallel processing (no per-account limit)
+      const parallelBatchSize = batch_size || 100;
       
       const { data: pendingMessages } = await supabase
         .from("messages")
@@ -1262,30 +1264,34 @@ serve(async (req) => {
         .is("campaign_recipient_id", null)
         .order("priority", { ascending: false })
         .order("created_at", { ascending: true })
-        .limit(actualBatchSize * 2);
+        .limit(parallelBatchSize);
+
+      // Create account lookup map for O(1) access
+      const accountsMap = new Map<string, any>();
+      for (const acc of usableAccounts) {
+        accountsMap.set(acc.id, acc);
+      }
 
       if (pendingMessages && pendingMessages.length > 0) {
+        // Collect all messages to update status in BATCH (parallel)
+        const messagesToClaim: string[] = [];
+        const tasksToAdd: any[] = [];
+        
         for (const msg of pendingMessages) {
-          if (tasks.length >= actualBatchSize) break;
-
           const conv = msg.conversations;
           
-          // Find the account for this conversation
-          const account = usableAccounts.find((a: any) => 
-            a.id === conv.account_id && !usedAccountIds.has(a.id)
-          );
+          // Find the account for this conversation (NO per-account limit - parallel mode)
+          const account = accountsMap.get(conv.account_id);
 
-          if (!account) continue;
-
-          // Mark message as sending
-          await supabase
-            .from("messages")
-            .update({ status: "sending" })
-            .eq("id", msg.id);
+          if (!account) {
+            console.log(`[get-batch-tasks] LIVECHAT: Skipping msg ${msg.id} - account ${conv.account_id} not usable`);
+            continue;
+          }
 
           const apiCred = account.telegram_api_credentials;
 
-          tasks.push({
+          messagesToClaim.push(msg.id);
+          tasksToAdd.push({
             task: "send",
             message: {
               id: msg.id,
@@ -1320,8 +1326,17 @@ serve(async (req) => {
               : null,
             mode: "livechat",
           });
-
-          usedAccountIds.add(account.id);
+        }
+        
+        // BATCH UPDATE: Mark all messages as sending in ONE query (parallel)
+        if (messagesToClaim.length > 0) {
+          await supabase
+            .from("messages")
+            .update({ status: "sending" })
+            .in("id", messagesToClaim);
+          
+          tasks.push(...tasksToAdd);
+          console.log(`[get-batch-tasks] LIVECHAT PARALLEL: Claimed ${messagesToClaim.length} messages in batch`);
         }
       }
       
