@@ -271,6 +271,20 @@ const Accounts: React.FC = () => {
   const taskRefreshRef = useRef<NodeJS.Timeout | null>(null);
   const pendingRefreshCount = useRef(0);
   
+  // Create a stable map of account IDs to phone numbers for log lookup
+  const accountPhoneMapRef = useRef<Map<string, string>>(new Map());
+  
+  // Keep the map updated when accounts change
+  useEffect(() => {
+    const newMap = new Map<string, string>();
+    accounts.forEach(acc => {
+      if (acc.id && acc.phoneNumber) {
+        newMap.set(acc.id, acc.phoneNumber);
+      }
+    });
+    accountPhoneMapRef.current = newMap;
+  }, [accounts]);
+  
   useEffect(() => {
     if (!isAccountTaskRunning) return;
     
@@ -279,16 +293,38 @@ const Accounts: React.FC = () => {
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'account_check_tasks' },
-        (payload) => {
+        async (payload) => {
           const task = payload.new as any;
           if (task && ACCOUNT_TASK_TYPES.includes(task.task_type) && (task.status === 'completed' || task.status === 'failed')) {
-            const account = accounts.find(a => a.id === task.account_id);
+            // First try local map, then fallback to a quick DB lookup
+            let accountPhone = accountPhoneMapRef.current.get(task.account_id);
+            
+            // If not found in local cache, fetch from DB
+            if (!accountPhone) {
+              const { data: accountData } = await supabase
+                .from('telegram_accounts')
+                .select('phone_number')
+                .eq('id', task.account_id)
+                .single();
+              accountPhone = accountData?.phone_number || task.account_id.slice(0, 8) + '...';
+              // Cache for future lookups
+              if (accountData?.phone_number) {
+                accountPhoneMapRef.current.set(task.account_id, accountData.phone_number);
+              }
+            }
+            
+            // For sync_profile, show more meaningful result
+            let displayResult = task.result;
+            if (task.task_type === 'sync_profile' && task.status === 'completed') {
+              displayResult = 'Synced';
+            }
+            
             const logEntry = {
               id: task.id,
               taskType: task.task_type,
-              accountPhone: account?.phoneNumber || task.account_id,
+              accountPhone: accountPhone,
               status: task.status as 'completed' | 'failed',
-              result: task.result,
+              result: displayResult,
               timestamp: new Date(),
             };
             
@@ -346,7 +382,7 @@ const Accounts: React.FC = () => {
         clearTimeout(taskRefreshRef.current);
       }
     };
-  }, [isAccountTaskRunning, accounts, refreshAccounts]);
+  }, [isAccountTaskRunning, refreshAccounts]);
 
   // Watchdog: if the UI says "processing" but no tasks exist (or nothing is being picked up), stop and show a clear reason.
   useEffect(() => {
