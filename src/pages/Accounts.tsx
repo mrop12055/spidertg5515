@@ -560,44 +560,43 @@ const Accounts: React.FC = () => {
 
       if (error) throw error;
 
-      setUploadResults({
+      const results = {
         successful: data.successful || 0,
         failed: data.failed || 0,
         proxiesAssigned: data.proxies_assigned || 0,
-      });
+      };
+      
+      setUploadResults(results);
 
-      if (data.successful > 0) {
-        toast.success(`Uploaded ${data.successful} account(s) - verifying...`);
+      if (results.successful > 0) {
+        toast.success(`Uploaded ${results.successful} account(s)${results.proxiesAssigned ? `, ${results.proxiesAssigned} proxies assigned` : ''}`);
         
-        // Auto-verify after upload
-        if (data.account_ids && data.account_ids.length > 0) {
-          setTimeout(async () => {
-            try {
-              const { data: verifyData } = await supabase.functions.invoke('verify-sessions', {
-                body: { account_ids: data.account_ids }
-              });
-              if (verifyData?.summary) {
-                toast.success(`Verified: ${verifyData.summary.valid || 0} active, ${verifyData.summary.invalid || 0} invalid`);
-              }
-              refreshData();
-            } catch (e) {
-              console.error('Auto-verify error:', e);
-            }
-          }, 1000);
-        }
-      }
-      if (data.failed > 0) {
-        toast.error(`${data.failed} account(s) failed`);
-      }
-
-      if (data.successful > 0 && data.failed === 0) {
+        // Close dialog immediately on success
         setSessionFiles([]);
         setUploadTags([]);
         setNewUploadTag('');
         setIsAddOpen(false);
+        
+        // Refresh data in background (non-blocking)
+        refreshData();
+        
+        // Auto-verify in background if accounts were added
+        if (data.account_ids && data.account_ids.length > 0) {
+          // Fire and forget - don't wait
+          supabase.functions.invoke('verify-sessions', {
+            body: { account_ids: data.account_ids }
+          }).then(({ data: verifyData }) => {
+            if (verifyData?.summary) {
+              toast.success(`Verified: ${verifyData.summary.valid || 0} active, ${verifyData.summary.invalid || 0} invalid`);
+              refreshData();
+            }
+          }).catch(e => console.error('Auto-verify error:', e));
+        }
       }
       
-      refreshData();
+      if (results.failed > 0) {
+        toast.error(`${results.failed} account(s) failed`);
+      }
     } catch (error) {
       console.error('Error uploading accounts:', error);
       toast.error('Failed to upload accounts');
@@ -2153,15 +2152,7 @@ const Accounts: React.FC = () => {
                 <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
                 Refresh
               </Button>
-              <Dialog open={isAddOpen} onOpenChange={(open) => {
-                setIsAddOpen(open);
-                if (!open) {
-                  setSessionFiles([]);
-                  setUploadResults(null);
-                  setUploadTags([]);
-                  setNewUploadTag('');
-                }
-              }}>
+              <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
                 <DialogTrigger asChild>
                   <Button size="sm" className="gap-2">
                     <Plus className="w-4 h-4" />
@@ -2332,7 +2323,16 @@ const Accounts: React.FC = () => {
                     )}
 
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
+                      <Button variant="outline" onClick={() => {
+                        setIsAddOpen(false);
+                        // Reset state after close animation
+                        setTimeout(() => {
+                          setSessionFiles([]);
+                          setUploadResults(null);
+                          setUploadTags([]);
+                          setNewUploadTag('');
+                        }, 150);
+                      }}>Cancel</Button>
                       <Button onClick={handleUploadSessions} disabled={isUploading || sessionFiles.length === 0}>
                         {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
                         Upload {sessionFiles.length} Account{sessionFiles.length !== 1 ? 's' : ''}
