@@ -680,9 +680,8 @@ serve(async (req) => {
         }
       }
 
-      // ========== RELEASE QUEUED RECIPIENTS TO PENDING (PARALLEL) ==========
-      // This is the core queue mechanism - gradually release recipients based on batch settings
-      // Process all campaigns in parallel to avoid sequential delays
+      // ========== RELEASE QUEUED RECIPIENTS TO PENDING (BATCH) ==========
+      // This is the core queue mechanism - release recipients in BATCHES for speed
       // IMPORTANT: Limit release to available accounts, not just batch size setting
       const effectiveReleaseLimit = campaignBatchSize === 0 
         ? campaignUsableAccounts.length 
@@ -714,8 +713,10 @@ serve(async (req) => {
             .limit(toRelease);
 
           if (queuedToRelease && queuedToRelease.length > 0) {
-            // Smart API assignment for each queued recipient
-            // Distribute across APIs with lowest usage
+            // BATCH API ASSIGNMENT: Distribute across APIs with lowest usage
+            // Prepare batch update - group by API for efficiency
+            const recipientApiAssignments: { id: string; apiId: string | null }[] = [];
+            
             for (const queued of queuedToRelease) {
               // Find API with current lowest usage (including what we've assigned)
               let bestApiId = availableApis[0]?.id || null;
@@ -734,17 +735,33 @@ serve(async (req) => {
                 dynamicApiUsage.set(bestApiId, (dynamicApiUsage.get(bestApiId) || 0) + 1);
               }
               
+              recipientApiAssignments.push({ id: queued.id, apiId: bestApiId });
+            }
+            
+            // Group recipients by API for batch updates
+            const recipientsByApi = new Map<string | null, string[]>();
+            for (const assignment of recipientApiAssignments) {
+              const key = assignment.apiId;
+              if (!recipientsByApi.has(key)) {
+                recipientsByApi.set(key, []);
+              }
+              recipientsByApi.get(key)!.push(assignment.id);
+            }
+            
+            // Execute batch updates in parallel (one update per API group)
+            const nowIso = new Date().toISOString();
+            await Promise.all(Array.from(recipientsByApi.entries()).map(async ([apiId, recipientIds]) => {
               await supabase
                 .from("campaign_recipients")
                 .update({ 
                   status: "pending",
-                  scheduled_at: new Date().toISOString(),
-                  api_credential_id: bestApiId
+                  scheduled_at: nowIso,
+                  api_credential_id: apiId
                 })
-                .eq("id", queued.id);
-            }
+                .in("id", recipientIds);
+            }));
 
-            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} (limit: ${effectiveReleaseLimit}, in-progress: ${currentInProgress})`);
+            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} in BATCH (limit: ${effectiveReleaseLimit}, in-progress: ${currentInProgress})`);
           }
         }
       }));
