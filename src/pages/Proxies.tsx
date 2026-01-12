@@ -85,7 +85,7 @@ interface ProxyToAdd {
 }
 
 const Proxies: React.FC = () => {
-  const { proxies, accounts, refreshData, isLoading } = useTelegram();
+  const { proxies, accounts, refreshData, refreshProxies, isLoading } = useTelegram();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -157,7 +157,7 @@ const Proxies: React.FC = () => {
         (payload) => {
           // Refresh when proxy_id changes on any account
           if (payload.old?.proxy_id !== payload.new?.proxy_id) {
-            refreshData();
+            refreshProxies();
           }
         }
       )
@@ -201,7 +201,7 @@ const Proxies: React.FC = () => {
           body: { proxy_ids: proxyIds, auto_detect_country: true }
         });
         setLastHealthCheck(new Date());
-        refreshData();
+        refreshProxies();
         toast.success('Health check completed');
       } catch (error) {
         console.error('Health check failed:', error);
@@ -276,7 +276,7 @@ const Proxies: React.FC = () => {
           .eq('id', tempProxy.id);
       }
 
-      refreshData();
+      refreshProxies();
     } catch (error) {
       console.error('Error testing proxy:', error);
       setSingleTestResult({ status: 'failed', error: 'Test failed' });
@@ -366,7 +366,7 @@ const Proxies: React.FC = () => {
       }
 
       toast.success(`Tested: ${working} working, ${failed} failed`);
-      refreshData();
+      refreshProxies();
       
       if (working > 0) {
         setBulkProxies('');
@@ -419,7 +419,7 @@ const Proxies: React.FC = () => {
 
       if (error) throw error;
       toast.success('Proxy deleted');
-      refreshData();
+      refreshProxies();
     } catch (error) {
       console.error('Error deleting proxy:', error);
       toast.error('Failed to delete proxy');
@@ -446,7 +446,7 @@ const Proxies: React.FC = () => {
       
       toast.success(`Deleted ${selectedIds.size} proxies`);
       setSelectedIds(new Set());
-      refreshData();
+      refreshProxies();
     } catch (error) {
       console.error('Error bulk deleting:', error);
       toast.error('Failed to delete proxies');
@@ -484,7 +484,7 @@ const Proxies: React.FC = () => {
 
       setTestResults(new Map(newResults));
       toast.success(`Tested: ${data.summary?.working || 0} working, ${data.summary?.failed || 0} failed`);
-      refreshData();
+      refreshProxies();
     } catch (error) {
       console.error('Error testing proxies:', error);
       toast.error('Failed to test proxies');
@@ -524,7 +524,7 @@ const Proxies: React.FC = () => {
       setTestResults(new Map(newResults));
       setLastHealthCheck(new Date());
       toast.success(`Tested all: ${data.summary?.working || 0} working, ${data.summary?.failed || 0} failed`);
-      refreshData();
+      refreshProxies();
     } catch (error) {
       console.error('Error testing all proxies:', error);
       toast.error('Failed to test proxies');
@@ -541,7 +541,7 @@ const Proxies: React.FC = () => {
         .eq('id', id);
 
       if (error) throw error;
-      refreshData();
+      refreshProxies();
     } catch (error) {
       console.error('Error updating status:', error);
       toast.error('Failed to update status');
@@ -924,7 +924,7 @@ const Proxies: React.FC = () => {
             </SelectContent>
           </Select>
         )}
-        <Button variant="outline" onClick={() => refreshData()} className="gap-2">
+        <Button variant="outline" onClick={() => refreshProxies()} className="gap-2">
           <RefreshCw className="w-4 h-4" />
           Refresh
         </Button>

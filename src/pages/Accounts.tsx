@@ -79,7 +79,7 @@ const GROUP_COLORS = [
 
 const Accounts: React.FC = () => {
   const { 
-    accounts, proxies, refreshData, isLoading, 
+    accounts, proxies, refreshData, refreshAccounts, refreshProxies, isLoading, 
     accountTasksProgress, setAccountTasksProgress, isAccountTaskRunning, setIsAccountTaskRunning, 
     showAccountTaskLogs, setShowAccountTaskLogs, accountTaskHistory, setAccountTaskHistory
   } = useTelegram();
@@ -196,7 +196,7 @@ const Accounts: React.FC = () => {
             clearTimeout(realtimeRefreshRef.current);
           }
           realtimeRefreshRef.current = setTimeout(() => {
-            refreshData();
+            refreshAccounts();
           }, 500); // Wait 500ms before refreshing
         }
       )
@@ -243,7 +243,7 @@ const Accounts: React.FC = () => {
                 
                 setIsSpamBotChecking(false);
                 toast.success(`SpamBot check: ${successCount} OK, ${failedCount} failed, ${skippedCount} skipped`);
-                refreshData();
+                refreshAccounts();
               }
               
               return { ...prev, completed: processed, results: newResults };
@@ -256,7 +256,7 @@ const Accounts: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isSpamBotChecking, refreshData]);
+  }, [isSpamBotChecking, refreshAccounts]);
   
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
   const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
@@ -284,7 +284,7 @@ const Accounts: React.FC = () => {
             
             // For sync_profile, refresh immediately on each completion to update UI
             if (task.task_type === 'sync_profile' && task.status === 'completed') {
-              refreshData();
+              refreshAccounts();
             }
             
             setAccountTasksProgress(prev => {
@@ -297,7 +297,7 @@ const Accounts: React.FC = () => {
               if (newCompleted + newFailed >= prev.total) {
                 setIsAccountTaskRunning(false);
                 toast.success(`${prev.taskType} complete: ${newCompleted} success, ${newFailed} failed`);
-                refreshData();
+                refreshAccounts();
               }
               
               return {
@@ -577,8 +577,8 @@ const Accounts: React.FC = () => {
         setNewUploadTag('');
         setIsAddOpen(false);
         
-        // Refresh data in background (non-blocking)
-        refreshData();
+        // Refresh accounts only (fast, non-blocking)
+        refreshAccounts();
         
         // Auto-verify in background if accounts were added
         if (data.account_ids && data.account_ids.length > 0) {
@@ -588,7 +588,7 @@ const Accounts: React.FC = () => {
           }).then(({ data: verifyData }) => {
             if (verifyData?.summary) {
               toast.success(`Verified: ${verifyData.summary.valid || 0} active, ${verifyData.summary.invalid || 0} invalid`);
-              refreshData();
+              refreshAccounts();
             }
           }).catch(e => console.error('Auto-verify error:', e));
         }
@@ -614,7 +614,7 @@ const Accounts: React.FC = () => {
 
       if (error) throw error;
       toast.success('Account deleted');
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error deleting account:', error);
       toast.error('Failed to delete account');
@@ -630,7 +630,7 @@ const Accounts: React.FC = () => {
 
       if (error) throw error;
       toast.success(proxyId ? 'Proxy assigned' : 'Proxy removed');
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error updating proxy:', error);
       toast.error('Failed to update proxy');
@@ -698,7 +698,7 @@ const Accounts: React.FC = () => {
       
       toast.success(`Deleted ${selectedIds.size} account(s)`);
       setSelectedIds(new Set());
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error bulk deleting:', error);
       toast.error('Failed to delete accounts: ' + (error as Error).message);
@@ -1181,7 +1181,7 @@ const Accounts: React.FC = () => {
       
       setIsBulkProxyOpen(false);
       setSelectedIds(new Set());
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error assigning proxies:', error);
       toast.error('Failed to assign proxies');
@@ -1306,7 +1306,7 @@ const Accounts: React.FC = () => {
       }
       
       toast.success('Proxy removed from account');
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error removing proxy:', error);
       toast.error('Failed to remove proxy');
@@ -1339,7 +1339,7 @@ const Accounts: React.FC = () => {
 
       setVerifyResults(new Map(newResults));
       toast.success(`Verified: ${data.summary?.valid || 0} active, ${data.summary?.invalid || 0} invalid`);
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error checking accounts:', error);
       toast.error('Failed to verify accounts');
@@ -1393,7 +1393,7 @@ const Accounts: React.FC = () => {
       setIsTagDialogOpen(false);
       setNewTagName('');
       setSelectedTagsForBulk([]);
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error assigning tags:', error);
       toast.error('Failed to assign tags');
@@ -1418,7 +1418,7 @@ const Accounts: React.FC = () => {
       
       toast.success(`Removed all tags from ${selectedIds.size} account(s)`);
       setSelectedIds(new Set());
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error removing tags:', error);
       toast.error('Failed to remove tags');
@@ -1457,7 +1457,7 @@ const Accounts: React.FC = () => {
       
       toast.success(`Removed proxy from ${accountsWithProxy.length} account(s)`);
       setSelectedIds(new Set());
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error removing proxies:', error);
       toast.error('Failed to remove proxies');
@@ -1514,7 +1514,7 @@ const Accounts: React.FC = () => {
         .eq('id', accountId);
       
       toast.success('Tag removed');
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error removing tag:', error);
       toast.error('Failed to remove tag');
@@ -1549,7 +1549,7 @@ const Accounts: React.FC = () => {
       toast.success(`Tag renamed from "${oldTagName}" to "${newTagValue}" on ${accountsWithTag.length} account(s)`);
       setEditingTagName('');
       setEditedTagValue('');
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error renaming tag:', error);
       toast.error('Failed to rename tag');
@@ -1580,7 +1580,7 @@ const Accounts: React.FC = () => {
       setEditingTagName('');
       setEditedTagValue('');
       setSelectedTagsForBulk(prev => prev.filter(t => t !== tagToDelete));
-      refreshData();
+      refreshAccounts();
     } catch (error) {
       console.error('Error deleting tag:', error);
       toast.error('Failed to delete tag');
