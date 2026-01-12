@@ -1,3 +1,4 @@
+// Accounts page - manages Telegram accounts
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
