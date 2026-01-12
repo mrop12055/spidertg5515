@@ -406,6 +406,10 @@ const Campaigns: React.FC = () => {
   }, [hasRunningCampaigns, fetchRunningCampaignStats]);
 
   // Listen for campaign status changes only (not recipient changes - too noisy)
+  // Debounced to prevent UI flickering when switching pages
+  const campaignRealtimeDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const campaignInitialMountRef = useRef(true);
+  
   useEffect(() => {
     if (campaignsLength === 0) return;
 
@@ -415,13 +419,32 @@ const Campaigns: React.FC = () => {
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'campaigns' },
         () => {
-          // Only refresh the full list when campaign status changes
-          fetchAllCampaignReports();
+          // Skip on initial mount
+          if (campaignInitialMountRef.current) {
+            campaignInitialMountRef.current = false;
+            return;
+          }
+          
+          // Debounce refresh calls
+          if (campaignRealtimeDebounceRef.current) {
+            clearTimeout(campaignRealtimeDebounceRef.current);
+          }
+          campaignRealtimeDebounceRef.current = setTimeout(() => {
+            fetchAllCampaignReports();
+          }, 300);
         }
       )
       .subscribe();
 
+    // Mark initial mount complete after a short delay
+    setTimeout(() => {
+      campaignInitialMountRef.current = false;
+    }, 1000);
+
     return () => {
+      if (campaignRealtimeDebounceRef.current) {
+        clearTimeout(campaignRealtimeDebounceRef.current);
+      }
       supabase.removeChannel(channel);
     };
   }, [campaignsLength, fetchAllCampaignReports]);

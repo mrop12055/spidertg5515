@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
@@ -170,7 +170,10 @@ const Accounts: React.FC = () => {
   // Processing tasks state
   const [processingTasks, setProcessingTasks] = useState<Map<string, string>>(new Map());
   
-  // Realtime subscription for instant account updates
+  // Realtime subscription for instant account updates - debounced to prevent flickering
+  const realtimeRefreshRef = useRef<NodeJS.Timeout | null>(null);
+  const isInitialMount = useRef(true);
+  
   useEffect(() => {
     const channel = supabase
       .channel('accounts-changes')
@@ -178,13 +181,34 @@ const Accounts: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'telegram_accounts' },
         (payload) => {
+          // Skip refresh on initial subscription sync
+          if (isInitialMount.current) {
+            isInitialMount.current = false;
+            return;
+          }
+          
           console.log('Account change detected:', payload.eventType);
-          refreshData();
+          
+          // Debounce refresh calls to prevent rapid fire
+          if (realtimeRefreshRef.current) {
+            clearTimeout(realtimeRefreshRef.current);
+          }
+          realtimeRefreshRef.current = setTimeout(() => {
+            refreshData();
+          }, 500); // Wait 500ms before refreshing
         }
       )
       .subscribe();
 
+    // Mark initial mount complete after a short delay
+    setTimeout(() => {
+      isInitialMount.current = false;
+    }, 1000);
+
     return () => {
+      if (realtimeRefreshRef.current) {
+        clearTimeout(realtimeRefreshRef.current);
+      }
       supabase.removeChannel(channel);
     };
   }, [refreshData]);
