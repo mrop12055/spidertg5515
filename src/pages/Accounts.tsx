@@ -1153,23 +1153,62 @@ const Accounts: React.FC = () => {
         );
         toast.success(`Assigned proxy to ${selectedAccountIds.length} account(s)`);
       } else {
-        // Random distribution - only for selected accounts
-        // Randomly assign available proxies to selected accounts only
-        let assignedCount = 0;
+        // STRICT 1:1 DISTRIBUTION - each account gets a UNIQUE unassigned proxy
+        // Get all proxies currently assigned to any account
+        const { data: allAccounts } = await supabase
+          .from('telegram_accounts')
+          .select('proxy_id')
+          .not('proxy_id', 'is', null);
         
-        for (const accountId of selectedAccountIds) {
-          // Pick a random proxy from active proxies
-          const randomProxy = activeProxies[Math.floor(Math.random() * activeProxies.length)];
-          
-          const { error } = await supabase
-            .from('telegram_accounts')
-            .update({ proxy_id: randomProxy.id })
-            .eq('id', accountId);
-          
-          if (!error) assignedCount++;
+        const usedProxyIds = new Set((allAccounts || []).map(a => a.proxy_id).filter(Boolean));
+        
+        // Filter to only unassigned proxies
+        const unassignedProxies = activeProxies.filter(p => !usedProxyIds.has(p.id));
+        
+        if (unassignedProxies.length === 0) {
+          toast.error('No unassigned proxies available. Add more proxies or run Enforce 1:1 Mapping.');
+          setIsBulkProxyAssigning(false);
+          return;
         }
         
-        toast.success(`Randomly assigned proxies to ${assignedCount} selected account(s)`);
+        // Shuffle unassigned proxies for random distribution
+        const shuffled = [...unassignedProxies].sort(() => Math.random() - 0.5);
+        
+        let assignedCount = 0;
+        let skippedCount = 0;
+        
+        for (let i = 0; i < selectedAccountIds.length; i++) {
+          const accountId = selectedAccountIds[i];
+          
+          if (i >= shuffled.length) {
+            skippedCount++;
+            continue; // Not enough proxies
+          }
+          
+          const proxy = shuffled[i];
+          
+          // Update account's proxy_id
+          const { error: accError } = await supabase
+            .from('telegram_accounts')
+            .update({ proxy_id: proxy.id })
+            .eq('id', accountId);
+          
+          if (!accError) {
+            // Also update proxy's assigned_account_id for bidirectional tracking
+            await supabase
+              .from('proxies')
+              .update({ assigned_account_id: accountId })
+              .eq('id', proxy.id);
+            
+            assignedCount++;
+          }
+        }
+        
+        if (skippedCount > 0) {
+          toast.warning(`Assigned ${assignedCount} accounts. ${skippedCount} skipped (not enough unassigned proxies).`);
+        } else {
+          toast.success(`Assigned unique proxies to ${assignedCount} account(s) (strict 1:1)`);
+        }
       }
       
       setIsBulkProxyOpen(false);

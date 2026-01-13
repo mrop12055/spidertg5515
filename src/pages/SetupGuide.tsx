@@ -23,15 +23,16 @@ TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
-  // ========== 2. CLIENT_MANAGER.PY (ULTRA-FAST + Proxy Auto-Switch) ==========
+  // ========== 2. CLIENT_MANAGER.PY (STRICT 1:1 PROXY - NO AUTO-SWITCH) ==========
   const clientManagerPy = `"""
-TelegramCRM - Client Manager (ULTRA-FAST)
-Zero stagger, unlimited concurrency, split timeouts, proxy auto-switch
+TelegramCRM - Client Manager (STRICT 1:1 PROXY)
 
-IMPORTANT: STRICT 1:1 PROXY MAPPING
-- Each account uses exactly ONE proxy (never shared)
-- When a proxy fails, switch-account-proxy finds an UNASSIGNED proxy only
-- Run enforce-proxy-mapping to redistribute all proxies 1:1
+CRITICAL RULES:
+- Each account uses EXACTLY ONE proxy (assigned by admin)
+- NO automatic proxy switching - ever
+- If proxy fails, report error and STOP using account
+- Admin must manually reassign proxy in dashboard
+- Fingerprint generated ONCE on first connection, never changed
 """
 
 import os
@@ -53,21 +54,20 @@ active_clients: Dict[str, TelegramClient] = {}
 
 # ========== SPLIT TIMEOUTS ==========
 CONNECTION_TIMEOUT = 10      # Telegram connection timeout
-CONNECTION_RETRIES = 1       # Fail fast, switch proxy immediately
+CONNECTION_RETRIES = 1       # Fail fast - no proxy switching
 RETRY_DELAY = 0              # No retry delay
 
 # HTTP Timeouts - split by purpose
-HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks) - increased for heavy queries
+HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks)
 HTTP_TIMEOUT_REPORT = 10     # Reporting (report-task-result, report-batch-results)
-HTTP_TIMEOUT_PROXY = 15      # Proxy switch calls
-HTTP_TIMEOUT_UPLOAD = 30     # Media uploads (photos, videos) - needs more time for large files
+HTTP_TIMEOUT_UPLOAD = 30     # Media uploads (photos, videos)
 HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
 MAX_HTTP_BACKOFF = 30
 
-# Proxy error patterns - fail fast on these
+# Proxy error patterns - report these immediately
 PROXY_ERROR_PATTERNS = [
     "semaphore timeout", "winerror 121", "connection refused", 
     "proxy", "socks", "timed out", "timeout", "cannot connect",
@@ -133,7 +133,7 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
 
 
 async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> bool:
-    """Fast connect - fail immediately on timeout/proxy error"""
+    """Fast connect - fail immediately on timeout/proxy error. NO RETRY."""
     try:
         await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
         return True
@@ -149,53 +149,31 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTI
         return False
 
 
-async def switch_account_proxy(account_id: str, old_proxy_id: str = None) -> dict:
-    """Call edge function to switch account proxy and save to DB"""
-    try:
-        http = get_http_client()
-        resp = await asyncio.wait_for(
-            http.post(
-                f"{BACKEND_URL}/switch-account-proxy",
-                headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                json={"account_id": account_id, "old_proxy_id": old_proxy_id},
-                timeout=HTTP_TIMEOUT_PROXY
-            ),
-            timeout=HTTP_TIMEOUT_PROXY + 1
-        )
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("success"):
-                return data.get("new_proxy")
-        return None
-    except Exception as e:
-        print(f"    [PROXY SWITCH ERROR] {e}")
-        return None
-
-
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,
-                                auto_switch_proxy: bool = True, skip_avatar: bool = False,
-                                require_proxy: bool = True, no_cache: bool = False,
-                                long_lived: bool = False) -> Optional[TelegramClient]:
+                                skip_avatar: bool = False, require_proxy: bool = True, 
+                                no_cache: bool = False, long_lived: bool = False) -> Optional[TelegramClient]:
     """
     Get or create a Telegram client for an account.
+    
+    STRICT 1:1 PROXY POLICY:
+    - Each account uses its assigned proxy ONLY
+    - NO automatic proxy switching
+    - If proxy fails, report error and return None
+    - Admin must fix proxy assignment in dashboard
     
     Args:
         account: Account data with session, fingerprint, proxy info
         setup_handler: Optional handler to setup after connection
         task_proxy: Proxy from task (overrides account.proxy)
-        auto_switch_proxy: If True, switch proxy on connection failure
         skip_avatar: If True, skip profile sync
         require_proxy: If True (default), skip account if no proxy assigned
-        no_cache: If True, skip client caching (REQUIRED for parallel asyncio.gather tasks
-                  to avoid 'asyncio event loop must not change' errors from Telethon)
-        long_lived: If True, use settings optimized for long-lived connections (live chat)
+        no_cache: If True, skip client caching
+        long_lived: If True, use settings optimized for long-lived connections
     """
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
     
     # ========== STEP 1: CHECK / CLEAR EXISTING CLIENT ==========
-    # If no_cache=True, we MUST NOT reuse any cached Telethon client.
-    # (Telethon binds a client to the asyncio event loop where it connected.)
     if no_cache and account_id in active_clients:
         try:
             old_client = active_clients.pop(account_id)
@@ -208,12 +186,11 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         except Exception:
             active_clients.pop(account_id, None)
 
-    # Normal behavior (other runners): reuse an already-connected client
+    # Normal behavior: reuse an already-connected client
     if (not no_cache) and account_id in active_clients:
         client = active_clients[account_id]
         try:
             if client.is_connected():
-                # Client already connected with correct proxy/fingerprint - reuse it
                 print(f"  [CACHED] Reusing existing connection for {phone}")
                 if setup_handler and not getattr(client, "_handler", False):
                     await setup_handler(client, account_id)
@@ -228,12 +205,12 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         print(f"  [SKIP] {phone} - No session data")
         return None
     
-    # ========== STEP 3: CHECK PROXY (CRITICAL SAFETY) ==========
+    # ========== STEP 3: CHECK PROXY (MANDATORY) ==========
     proxy = get_proxy_settings(account, task_proxy=task_proxy)
-    old_proxy_id = task_proxy.get("id") if task_proxy else account.get("proxy_id")
+    proxy_id = task_proxy.get("id") if task_proxy else account.get("proxy_id")
     
     if require_proxy and not proxy:
-        print(f"  [SKIP] {phone} - No proxy assigned (safety: accounts without proxy are skipped)")
+        print(f"  [SKIP] {phone} - No proxy assigned (assign proxy in admin dashboard)")
         return None
     
     # ========== STEP 4: DECODE SESSION FILE ==========
@@ -241,14 +218,14 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     if not session_path:
         return None
     
-    # ========== STEP 5: USE OR GENERATE FINGERPRINT ==========
+    # ========== STEP 5: USE OR GENERATE FINGERPRINT (ONCE ONLY) ==========
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     app_version = account.get("app_version") or "10.14.2"
     lang_code = account.get("lang_code") or "en"
     system_lang_code = account.get("system_lang_code") or "en-US"
     
-    # If fingerprint is missing, generate one and save to DB
+    # If fingerprint is missing, generate ONCE and save to DB
     if not device_model or not system_version:
         fp = generate_fingerprint()
         device_model = fp["device_model"]
@@ -256,8 +233,8 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         app_version = fp["app_version"]
         lang_code = fp["lang_code"]
         system_lang_code = fp["system_lang_code"]
-        print(f"  [FP] Generated new fingerprint: {device_model} ({system_version})")
-        # Save fingerprint to database immediately
+        print(f"  [FP] Generated NEW fingerprint (saved to DB): {device_model} ({system_version})")
+        # Save fingerprint to database immediately - NEVER CHANGE AGAIN
         asyncio.create_task(report_result("fingerprint_generated", {
             "account_id": account_id,
             "device_model": device_model,
@@ -270,7 +247,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         print(f"  [FP] Using existing: {device_model} ({system_version})")
     
     if proxy:
-        print(f"  [PROXY] Using: {proxy[1]}:{proxy[2]}")
+        print(f"  [PROXY] Using assigned: {proxy[1]}:{proxy[2]}")
     
     try:
         api_id = account.get("api_id") or TELEGRAM_API_ID
@@ -285,26 +262,21 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             system_lang_code=system_lang_code,
             proxy=proxy,
             timeout=CONNECTION_TIMEOUT,
-            # Long-lived connections (live chat): stable settings with retries
-            # Short-lived connections (campaign): fail fast settings
             connection_retries=3 if long_lived else 0,
             retry_delay=2 if long_lived else 0,
-            auto_reconnect=long_lived,  # Only auto-reconnect for live chat
+            auto_reconnect=long_lived,
             request_retries=3 if long_lived else 1
         )
         
         print(f"  [CONNECT] {account['phone_number']}...")
         if not await connect_with_retry(client):
-            # Proxy timeout - switch proxy and retry immediately
-            if auto_switch_proxy:
-                print(f"  [PROXY SWITCH] Trying new proxy for {account['phone_number']}...")
-                new_proxy = await switch_account_proxy(account_id, old_proxy_id)
-                if new_proxy:
-                    print(f"  [PROXY SWITCH] Got: {new_proxy['host']}:{new_proxy['port']}")
-                    account["proxy"] = new_proxy
-                    return await get_or_create_client(account, setup_handler, task_proxy=new_proxy,
-                                                       auto_switch_proxy=False, skip_avatar=skip_avatar, require_proxy=False)
-            print(f"  [FAIL] Could not connect (proxy failed): {account['phone_number']}")
+            # PROXY FAILED - Report error to admin, DO NOT switch proxy
+            print(f"  [PROXY ERROR] Connection failed for {phone} - update proxy in admin dashboard")
+            asyncio.create_task(report_result("proxy_error", {
+                "account_id": account_id,
+                "proxy_id": proxy_id,
+                "reason": "Connection failed - proxy may be dead or blocked"
+            }))
             return None
         
         if not await client.is_user_authorized():
@@ -334,7 +306,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             await setup_handler(client, account_id)
             setattr(client, "_handler", True)
         
-        # Only cache if caching is enabled (not for parallel campaign tasks)
+        # Only cache if caching is enabled
         if not no_cache:
             active_clients[account_id] = client
         asyncio.create_task(report_result("account_connected", {"account_id": account_id, "skip_profile_update": True}))
@@ -1210,22 +1182,26 @@ if __name__ == "__main__":
 LiveChat Runner - Handles incoming messages and live chat replies
 RUNS FOREVER with crash recovery, memory cleanup, and heartbeat logging
 
-BUILD: 2026-01-11-missed-message-recovery
+BUILD: 2026-01-13-strict-proxy-policy
+
+STRICT 1:1 PROXY POLICY:
+- Each account uses EXACTLY ONE proxy (assigned by admin)
+- NO automatic proxy switching - ever
+- If proxy fails, report error and SKIP account
+- Admin must manually reassign proxy in dashboard
+- Fingerprint generated ONCE on first connection, never changed
 
 Features:
 - MISSED MESSAGE RECOVERY: Syncs messages received while offline on startup
-- EARLY FILTERING: Only processes messages from known campaign recipients
+- EARLY FILTERING: Only processes messages from contacts
 - Uses fingerprint from DB if exists, generates new if not
-- On proxy failure, switches to a different random proxy (no retry same proxy)
 - Detects network/wifi disconnect and skips account updates
-- RpcCallFailError handling with retry queue
 """
 import asyncio
 import signal
 import base64
 import time
 import gc
-import random
 
 import httpx
 from telethon import events
@@ -1246,20 +1222,15 @@ SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else
 RUNNING = True
 CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
 HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
-CONNECT_TIMEOUT_SECONDS = 30  # Increased timeout for stable connections
+CONNECT_TIMEOUT_SECONDS = 30  # Timeout for stable connections
 RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
 
 # ========== NETWORK ERROR HANDLING ==========
-# Track consecutive network errors for exponential backoff
 _network_error_count = 0
 _last_network_error_time = 0
-MAX_NETWORK_BACKOFF = 60  # Maximum backoff time in seconds
+MAX_NETWORK_BACKOFF = 60
 
-# ========== EARLY FILTERING: Contacts only ==========
-# Only process messages from users who are in the account's contact list
-# This is simple and efficient - no server-side lookups needed
-
-# Network error detection - these indicate LOCAL network issues, not account problems
+# Network error detection - these indicate LOCAL network issues
 NETWORK_ERROR_PATTERNS = [
     "temporary failure in name resolution",
     "network is unreachable", 
@@ -1276,20 +1247,20 @@ NETWORK_ERROR_PATTERNS = [
     "network error",
     "socket error",
     "dns lookup failed",
-    "errno 11001",  # Windows DNS error
-    "errno 110",    # Connection timed out
-    "errno 111",    # Connection refused
-    "errno 113",    # No route to host
+    "errno 11001",
+    "errno 110",
+    "errno 111",
+    "errno 113",
     "oserror",
     "gaierror",
-    "winerror 64",  # Network name no longer available (Windows)
-    "winerror 121", # Semaphore timeout (Windows)
+    "winerror 64",
+    "winerror 121",
     "network name",
     "server closed the connection",
     "connection closed",
 ]
 
-# Telegram server error patterns (different from network errors - these are Telegram's issues)
+# Telegram server error patterns
 TELEGRAM_SERVER_ERROR_PATTERNS = [
     "internal issues",
     "rpccallfail",
@@ -1300,11 +1271,11 @@ TELEGRAM_SERVER_ERROR_PATTERNS = [
 ]
 
 # Sync retry settings
-SYNC_RETRY_INTERVAL = 60  # Retry missed message sync every 60 seconds
+SYNC_RETRY_INTERVAL = 60
 
 
 def is_network_error(error_str: str) -> bool:
-    """Check if error is a LOCAL network/wifi issue (not account problem)"""
+    """Check if error is a LOCAL network/wifi issue"""
     if not error_str:
         return False
     error_lower = error_str.lower()
@@ -1312,7 +1283,7 @@ def is_network_error(error_str: str) -> bool:
 
 
 def is_telegram_server_error(error_str: str) -> bool:
-    """Check if error is a Telegram server issue (temporary, should retry)"""
+    """Check if error is a Telegram server issue"""
     if not error_str:
         return False
     error_lower = error_str.lower()
@@ -1328,91 +1299,15 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def fetch_random_proxy(exclude_proxy_id: str = None):
-    """Fetch a random active proxy from database, excluding the failed one"""
-    try:
-        http = get_http_client()
-        response = await http.get(
-            f"{SUPABASE_URL_BASE}/rest/v1/proxies",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-            params={
-                "status": "eq.active",
-                "select": "id,host,port,username,password,proxy_type"
-            }
-        )
-        if response.status_code == 200:
-            proxies = response.json()
-            if exclude_proxy_id:
-                proxies = [p for p in proxies if p.get("id") != exclude_proxy_id]
-            if proxies:
-                return random.choice(proxies)
-        return None
-    except Exception as e:
-        print(f"  [WARN] Could not fetch proxy: {e}")
-        return None
-
-
-async def switch_account_proxy_via_edge(account_id: str, old_proxy_id: str = None):
-    """Switch account's proxy using edge function for consistent DB updates.
-    
-    This ensures both telegram_accounts.proxy_id AND proxies.assigned_account_id are updated.
-    Returns new proxy dict or None.
-    """
-    try:
-        http = get_http_client()
-        response = await http.post(
-            f"{SUPABASE_URL_BASE}/functions/v1/switch-account-proxy",
-            headers={
-                "apikey": SUPABASE_KEY, 
-                "Authorization": f"Bearer {SUPABASE_KEY}",
-                "Content-Type": "application/json"
-            },
-            json={"account_id": account_id, "old_proxy_id": old_proxy_id},
-            timeout=10
-        )
-        if response.status_code == 200:
-            data = response.json()
-            if data.get("success"):
-                return data.get("new_proxy")
-        return None
-    except Exception as e:
-        print(f"  [WARN] Could not switch proxy: {e}")
-        return None
-
-
-async def fetch_random_proxy_excluding(excluded_proxy_ids: list = None):
-    """Fetch a random active proxy, excluding multiple failed ones"""
-    try:
-        http = get_http_client()
-        response = await http.get(
-            f"{SUPABASE_URL_BASE}/rest/v1/proxies",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-            params={
-                "status": "eq.active",
-                "select": "id,host,port,username,password,proxy_type"
-            }
-        )
-        if response.status_code == 200:
-            proxies = response.json()
-            if excluded_proxy_ids:
-                proxies = [p for p in proxies if p.get("id") not in excluded_proxy_ids]
-            if proxies:
-                return random.choice(proxies)
-        return None
-    except Exception as e:
-        print(f"  [WARN] Could not fetch proxy: {e}")
-        return None
-
-
 async def connect_account_with_fingerprint(account: dict, setup_handler=None) -> tuple:
     """
-    Connect account with smart fingerprint and proxy handling.
+    Connect account using STRICT 1:1 proxy policy.
     
-    1. Check if account has fingerprint in DB, use it
-    2. If no fingerprint, generate new and save to DB
-    3. If proxy fails, IMMEDIATELY try 2 different random proxies (NO cooldown)
-    4. Detect network errors and skip account status updates
-    5. NEVER mark account as disconnected due to proxy issues
+    RULES:
+    1. Use fingerprint from DB if exists, generate ONCE if not
+    2. Use assigned proxy ONLY - no switching
+    3. If proxy fails, report error and return None
+    4. Admin must fix proxy in dashboard
     
     Returns: (client, error_str or None)
     """
@@ -1422,15 +1317,11 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     # Check fingerprint from database
     device_model = account.get("device_model")
     system_version = account.get("system_version")
-    app_version = account.get("app_version")
-    lang_code = account.get("lang_code")
-    system_lang_code = account.get("system_lang_code")
-    
     fingerprint_exists = bool(device_model and system_version)
     
-    # If no fingerprint in DB, generate new one
+    # If no fingerprint in DB, generate ONCE and save
     if not fingerprint_exists:
-        print(f"  [{phone}] No fingerprint in DB, generating new...")
+        print(f"  [{phone}] No fingerprint in DB, generating new (will save permanently)...")
         fp = generate_fingerprint()
         account["device_model"] = fp["device_model"]
         account["system_version"] = fp["system_version"]
@@ -1438,7 +1329,7 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
         account["lang_code"] = fp["lang_code"]
         account["system_lang_code"] = fp["system_lang_code"]
         
-        # Save fingerprint to database
+        # Save fingerprint to database - NEVER CHANGE AFTER THIS
         await report_result("fingerprint_generated", {
             "account_id": account_id,
             "device_model": fp["device_model"],
@@ -1451,61 +1342,50 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     else:
         print(f"  [{phone}] Using DB fingerprint: {device_model} ({system_version})")
     
-    # Get current proxy
+    # Check proxy - MANDATORY
     proxy = account.get("proxy")
-    current_proxy_id = proxy.get("id") if proxy else None
-    excluded_proxies = []
+    if not proxy:
+        print(f"  [{phone}] NO PROXY ASSIGNED - skipping (assign proxy in admin dashboard)")
+        return None, "No proxy assigned"
     
-    # Try up to 3 times: current proxy + 2 different random proxies
-    # Add delay between attempts to prevent rapid proxy switching
-    MAX_PROXY_ATTEMPTS = 3
-    PROXY_SWITCH_DELAY = 3  # seconds between proxy switch attempts
+    proxy_id = proxy.get("id") if proxy else None
+    print(f"  [{phone}] Using assigned proxy: {proxy.get('host')}:{proxy.get('port')}")
     
-    for attempt in range(MAX_PROXY_ATTEMPTS):
-        try:
-            # Use long_lived=True for stable live chat connections
-            client = await get_or_create_client(
-                account, 
-                setup_handler=setup_handler, 
-                task_proxy=account.get("proxy"),
-                long_lived=True  # Stable settings for live chat
-            )
-            if client:
-                return client, None
-        except Exception as e:
-            error_str = str(e).lower()
-            
-            # Check if this is a LOCAL network error (wifi disconnect, WinError 64)
-            if is_network_error(error_str) or "winerror 64" in error_str:
-                print(f"  [{phone}] NETWORK ERROR (connection dropped): {str(e)[:50]}")
-                return None, f"NETWORK_ERROR:{e}"
+    # SINGLE connection attempt - no proxy switching
+    try:
+        client = await get_or_create_client(
+            account, 
+            setup_handler=setup_handler, 
+            task_proxy=account.get("proxy"),
+            long_lived=True  # Stable settings for live chat
+        )
+        if client:
+            return client, None
+        else:
+            # Connection failed - report proxy error
+            print(f"  [{phone}] PROXY FAILED - update proxy in admin dashboard")
+            await report_result("proxy_error", {
+                "account_id": account_id,
+                "proxy_id": proxy_id,
+                "reason": "Connection failed"
+            })
+            return None, "Proxy connection failed"
+    except Exception as e:
+        error_str = str(e).lower()
         
-        # Connection failed - try different proxy if we have more attempts
-        if attempt < MAX_PROXY_ATTEMPTS - 1:
-            current_proxy_id = account.get("proxy", {}).get("id") if account.get("proxy") else None
-            if current_proxy_id:
-                excluded_proxies.append(current_proxy_id)
-            
-            # Rate limit proxy switches to prevent spam
-            print(f"  [{phone}] Proxy failed, waiting {PROXY_SWITCH_DELAY}s before trying different proxy...")
-            await asyncio.sleep(PROXY_SWITCH_DELAY)
-            
-            print(f"  [{phone}] Trying different proxy (attempt {attempt + 2}/{MAX_PROXY_ATTEMPTS})...")
-            
-            # Use edge function for consistent proxy switching (updates both tables)
-            new_proxy = await switch_account_proxy_via_edge(account_id, current_proxy_id)
-            
-            if new_proxy:
-                account["proxy"] = new_proxy
-                if new_proxy.get("id"):
-                    excluded_proxies.append(new_proxy.get("id"))
-                print(f"  [{phone}] Switched to: {new_proxy['host']}:{new_proxy['port']}")
-            else:
-                print(f"  [{phone}] No more proxies available to try")
-                break
-    
-    # All attempts failed - but DON'T mark account as disconnected
-    return None, "All proxies failed"
+        # Check if this is a LOCAL network error
+        if is_network_error(error_str) or "winerror 64" in error_str:
+            print(f"  [{phone}] NETWORK ERROR (local connection issue): {str(e)[:50]}")
+            return None, f"NETWORK_ERROR:{e}"
+        
+        # Proxy failed - report to admin
+        print(f"  [{phone}] PROXY ERROR: {str(e)[:50]} - update proxy in admin dashboard")
+        await report_result("proxy_error", {
+            "account_id": account_id,
+            "proxy_id": proxy_id,
+            "reason": str(e)[:200]
+        })
+        return None, f"Proxy error: {e}"
 
 
 async def sync_missed_messages(client, account_id: str, phone: str, last_synced_msg_ids: dict = None) -> tuple:
