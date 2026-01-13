@@ -527,22 +527,42 @@ async def report_batch_results(results: list) -> bool:
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
     try:
         entity = None
-        if recipient.startswith("@"):
-            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)  # Faster
+        recipient_str = str(recipient) if recipient else ""
+        
+        # CASE 1: Username
+        if recipient_str.startswith("@"):
+            entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=10)
+        
+        # CASE 2: Telegram ID (pure numeric string)
+        elif recipient_str.isdigit():
+            telegram_id = int(recipient_str)
+            try:
+                # Use PeerUser for direct access by ID
+                from telethon.tl.types import PeerUser
+                entity = await asyncio.wait_for(client.get_entity(PeerUser(telegram_id)), timeout=10)
+            except Exception as e:
+                print(f"  [SEND] Failed to get entity by ID {telegram_id}: {e}")
+                # Fallback: try direct integer
+                try:
+                    entity = await asyncio.wait_for(client.get_entity(telegram_id), timeout=10)
+                except Exception:
+                    pass
+        
+        # CASE 3: Phone number
         else:
             from telethon.tl.functions.contacts import ImportContactsRequest
             from telethon.tl.types import InputPhoneContact
             import random
             
-            phone = recipient if recipient.startswith("+") else "+" + recipient
+            phone = recipient_str if recipient_str.startswith("+") else "+" + recipient_str
             try:
-                entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)  # Faster
+                entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)
             except:
                 pass
             
             if not entity:
                 contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)  # Faster
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
                 if result.users:
                     entity = result.users[0]
                 elif result.retry_contacts:
