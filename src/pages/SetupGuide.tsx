@@ -27,6 +27,11 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (ULTRA-FAST)
 Zero stagger, unlimited concurrency, split timeouts, proxy auto-switch
+
+IMPORTANT: STRICT 1:1 PROXY MAPPING
+- Each account uses exactly ONE proxy (never shared)
+- When a proxy fails, switch-account-proxy finds an UNASSIGNED proxy only
+- Run enforce-proxy-mapping to redistribute all proxies 1:1
 """
 
 import os
