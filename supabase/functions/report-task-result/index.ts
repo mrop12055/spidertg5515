@@ -726,15 +726,35 @@ serve(async (req) => {
           }
 
           if (message_id) {
-            // Non-campaign message: update existing message as failed
-            await supabase
-              .from("messages")
-              .update({
-                status: "failed",
-                failed_reason: error,
-              })
-              .eq("id", message_id)
-              .in("status", ["pending", "sending"]);
+            // Non-campaign message (live chat reply): handle differently based on error type
+            
+            // For rate limit errors ("Too many requests"), retry after a delay instead of failing immediately
+            if (isTooManyRequests) {
+              // Reset message to pending for retry after 30 seconds
+              // The live chat runner will pick it up again
+              console.log(`[report-task-result] Live chat message ${message_id} rate limited - will retry in 30s`);
+              
+              // Don't mark as failed immediately - just keep it pending
+              // The get-next-task will pick it up again after the account cooldown
+              await supabase
+                .from("messages")
+                .update({
+                  status: "pending",
+                  failed_reason: `Rate limited, retrying... (${error})`,
+                })
+                .eq("id", message_id)
+                .in("status", ["pending", "sending"]);
+            } else {
+              // Other errors: mark as failed
+              await supabase
+                .from("messages")
+                .update({
+                  status: "failed",
+                  failed_reason: error,
+                })
+                .eq("id", message_id)
+                .in("status", ["pending", "sending"]);
+            }
           }
 
           console.log(`[report-task-result] Message failed for recipient ${campaign_recipient_id || message_id}: ${error}`);
