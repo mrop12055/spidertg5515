@@ -3014,8 +3014,9 @@ async def block_contact(client, target, action="block"):
 
 async def main_loop():
     print("=" * 50)
-    print("  Block Runner")
+    print("  Block Runner (STRICT 1:1 PROXY)")
     print("  [Block/Unblock Contacts]")
+    print("  Uses assigned proxy only - no auto-switch")
     print("=" * 50)
     
     while RUNNING:
@@ -3030,9 +3031,17 @@ async def main_loop():
                 account = task.get("account", {})
                 target = task.get("target", {})
                 action = task.get("action", "block")
-                client = await get_or_create_client(account)
+                task_proxy = task.get("proxy")  # Get assigned proxy from task
+                phone = account.get("phone_number", "????")[-4:]
+                
+                if task_proxy:
+                    print(f"  [{phone}] Using proxy: {task_proxy.get('host')}:{task_proxy.get('port')}")
+                else:
+                    print(f"  [{phone}] WARNING: No proxy assigned!")
+                
+                client = await get_or_create_client(account, task_proxy=task_proxy)
                 if client:
-                    print(f"  [{action.upper()}] Processing...")
+                    print(f"  [{action.upper()}] Processing for {phone}...")
                     success, error = await block_contact(client, target, action)
                     await report_result("block_contact", {
                         "task_id": task.get("task_id"),
@@ -3042,6 +3051,15 @@ async def main_loop():
                         "action": action
                     })
                     print(f"    {'[OK]' if success else '[FAIL] ' + str(error)}")
+                else:
+                    print(f"  [{phone}] Could not connect (check proxy in admin)")
+                    await report_result("block_contact", {
+                        "task_id": task.get("task_id"),
+                        "account_id": account.get("id"),
+                        "success": False,
+                        "error": "Could not connect - check proxy assignment",
+                        "action": action
+                    })
         
         except Exception as e:
             print(f"  [ERROR] {e}")
