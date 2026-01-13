@@ -46,21 +46,21 @@ from fingerprint_generator import generate_fingerprint
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
-# ========== SPLIT TIMEOUTS (OPTIMIZED FOR SPEED) ==========
-CONNECTION_TIMEOUT = 15      # Telegram connection timeout (reduced for faster failure)
-CONNECTION_RETRIES = 1       # Fail fast, switch proxy quickly
-RETRY_DELAY = 0              # No delay between retries
+# ========== SPLIT TIMEOUTS ==========
+CONNECTION_TIMEOUT = 10      # Telegram connection timeout
+CONNECTION_RETRIES = 1       # Fail fast, switch proxy immediately
+RETRY_DELAY = 0              # No retry delay
 
-# HTTP Timeouts - optimized for instant response
-HTTP_TIMEOUT_DISPATCH = 15   # Task fetching - FAST (edge function is optimized)
-HTTP_TIMEOUT_REPORT = 10     # Reporting results
+# HTTP Timeouts - split by purpose
+HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks) - increased for heavy queries
+HTTP_TIMEOUT_REPORT = 10     # Reporting (report-task-result, report-batch-results)
 HTTP_TIMEOUT_PROXY = 15      # Proxy switch calls
-HTTP_TIMEOUT_UPLOAD = 45     # Media uploads (photos, videos) - needs more time
+HTTP_TIMEOUT_UPLOAD = 30     # Media uploads (photos, videos) - needs more time for large files
 HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
-MAX_HTTP_BACKOFF = 15  # Reduced from 30 for faster recovery
+MAX_HTTP_BACKOFF = 30
 
 # Proxy error patterns - fail fast on these
 PROXY_ERROR_PATTERNS = [
@@ -78,8 +78,8 @@ def get_http_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
-            timeout=httpx.Timeout(HTTP_TIMEOUT_DEFAULT, connect=30.0),  # Separate connect timeout
-            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200)  # Increased for 582 accounts
+            timeout=HTTP_TIMEOUT_DEFAULT,
+            limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)
         )
     return _http_client
 
@@ -1239,9 +1239,9 @@ _u = urlparse(SUPABASE_URL)
 SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
 RUNNING = True
-CLEANUP_INTERVAL = 300  # 5 minutes - less aggressive cleanup
-HEARTBEAT_INTERVAL = 60  # 60 seconds - less logging
-CONNECT_TIMEOUT_SECONDS = 45  # Increased timeout for 582 accounts with slow proxies
+CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
+HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
+CONNECT_TIMEOUT_SECONDS = 30  # Increased timeout for stable connections
 RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
 
 # ========== NETWORK ERROR HANDLING ==========
@@ -1254,37 +1254,34 @@ MAX_NETWORK_BACKOFF = 60  # Maximum backoff time in seconds
 # Only process messages from users who are in the account's contact list
 # This is simple and efficient - no server-side lookups needed
 
-# Network error detection - ONLY true LOCAL network issues (NOT proxy timeouts!)
-# Removed timeout/connection errors because those are usually PROXY issues, not local network
+# Network error detection - these indicate LOCAL network issues, not account problems
 NETWORK_ERROR_PATTERNS = [
     "temporary failure in name resolution",
     "network is unreachable", 
     "no route to host",
-    "name or service not known",
-    "dns lookup failed",
-    "errno 11001",  # Windows DNS error
-    "errno 113",    # No route to host
-    "gaierror",
-    "winerror 64",  # Network name no longer available (Windows) - true disconnect
-]
-
-# PROXY error patterns - these are proxy issues, not network issues (will switch proxy)
-PROXY_ERROR_PATTERNS = [
     "connection refused",
     "connection reset by peer",
+    "name or service not known",
     "could not connect",
     "timed out",
     "timeout",
     "cannot connect",
     "connection timed out",
     "connecterror",
+    "network error",
     "socket error",
-    "errno 110",    # Connection timed out (proxy)
-    "errno 111",    # Connection refused (proxy)
-    "winerror 121", # Semaphore timeout (Windows) - proxy timeout
+    "dns lookup failed",
+    "errno 11001",  # Windows DNS error
+    "errno 110",    # Connection timed out
+    "errno 111",    # Connection refused
+    "errno 113",    # No route to host
+    "oserror",
+    "gaierror",
+    "winerror 64",  # Network name no longer available (Windows)
+    "winerror 121", # Semaphore timeout (Windows)
+    "network name",
     "server closed the connection",
     "connection closed",
-    "oserror",
 ]
 
 # Telegram server error patterns (different from network errors - these are Telegram's issues)
@@ -1315,14 +1312,6 @@ def is_telegram_server_error(error_str: str) -> bool:
         return False
     error_lower = error_str.lower()
     return any(p in error_lower for p in TELEGRAM_SERVER_ERROR_PATTERNS)
-
-
-def is_proxy_error(error_str: str) -> bool:
-    """Check if error is a PROXY issue (should switch proxy, not stop)"""
-    if not error_str:
-        return False
-    error_lower = error_str.lower()
-    return any(p in error_lower for p in PROXY_ERROR_PATTERNS)
 
 
 def signal_handler(sig, frame):
@@ -1481,15 +1470,10 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
         except Exception as e:
             error_str = str(e).lower()
             
-            # Check if this is a TRUE LOCAL network error (DNS failure, wifi disconnect)
-            # NOT proxy timeouts - those should trigger proxy switch
-            if is_network_error(error_str):
-                print(f"  [{phone}] TRUE NETWORK ERROR (DNS/wifi): {str(e)[:50]}")
+            # Check if this is a LOCAL network error (wifi disconnect, WinError 64)
+            if is_network_error(error_str) or "winerror 64" in error_str:
+                print(f"  [{phone}] NETWORK ERROR (connection dropped): {str(e)[:50]}")
                 return None, f"NETWORK_ERROR:{e}"
-            
-            # Proxy errors - continue to next attempt (will switch proxy)
-            if is_proxy_error(error_str):
-                print(f"  [{phone}] PROXY ERROR (will switch): {str(e)[:50]}")
         
         # Connection failed - try different proxy if we have more attempts
         if attempt < MAX_PROXY_ATTEMPTS - 1:
@@ -2017,8 +2001,8 @@ async def keep_clients_alive():
     
     while RUNNING:
         try:
-            # FAST loop - 50 checks per second for instant message delivery
-            await asyncio.sleep(0.02)  # 20ms between checks
+            # Balanced loop - fast but not aggressive
+            await asyncio.sleep(0.1)  # 10 checks per second (less aggressive)
             
             # Process updates for all connected clients
             disconnected_ids = []
@@ -2077,12 +2061,12 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (ULTRA-FAST POLLING)")
-    print("  BUILD: 2026-01-13-instant-reply")
+    print("  LiveChat Runner (1-HOUR SYNC WINDOW)")
+    print("  BUILD: 2026-01-11-1hour-sync")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⚡ INSTANT message delivery (<100ms)")
-    print("  🔄 Parallel queries, no blocking waits")
-    print("  📨 High-frequency polling (50/sec)")
+    print("  ⏰ Only syncs messages from last 1 hour")
+    print("  🔄 Skips older messages to prevent duplicates")
+    print("  📨 Tracks last synced IDs per sender")
     print("=" * 50)
     print("=" * 50)
     
@@ -2204,9 +2188,17 @@ async def main_loop():
                     
                     print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
 
-                # ZERO-DELAY POLLING - no stagger, instant message delivery
-                # Server returns seconds=0 for instant, no artificial delays
-                await asyncio.sleep(0)  # Just yield to event loop, no actual delay
+                # Get delay from server response (usually 0 for fast polling)
+                wait_seconds = task.get("seconds", 0.5)
+                if wait_seconds > 0:
+                    # Use small sleeps to allow update processing
+                    for _ in range(int(wait_seconds * 10)):
+                        if not RUNNING:
+                            break
+                        await asyncio.sleep(0.1)
+                else:
+                    # Even with 0 delay, yield briefly for updates
+                    await asyncio.sleep(0.05)
             
             # ========== RETRY PENDING SYNCS ==========
             # Retry missed message sync for accounts that failed due to Telegram server issues
@@ -2289,9 +2281,10 @@ async def main_loop():
                 print(f"  [BACKOFF] Waiting {backoff}s for network recovery...")
                 await asyncio.sleep(backoff)
             else:
-                # Reset error count on non-network errors - NO delay
+                # Reset error count on non-network errors
                 _network_error_count = 0
                 print(f"  [ERROR] {e}")
+                await asyncio.sleep(0.5)
     
     await shutdown_all()
 

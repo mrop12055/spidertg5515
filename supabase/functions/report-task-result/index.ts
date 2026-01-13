@@ -726,59 +726,15 @@ serve(async (req) => {
           }
 
           if (message_id) {
-            // Non-campaign message (live chat reply to EXISTING conversation)
-            // IMPORTANT: These are replies to existing contacts, so:
-            // 1. Lighter restrictions than campaign messages (no 12-hour cooldown)
-            // 2. For rate limits: add SHORT cooldown (30s) to prevent hammering Telegram
-            // 3. For network errors: immediate retry
-            
-            const isNetworkError = error?.toLowerCase().includes('timeout') || 
-                                   error?.toLowerCase().includes('connection') ||
-                                   error?.toLowerCase().includes('network');
-            
-            if (isTooManyRequests) {
-              // Rate limited - add 10 second cooldown to account (minimal delay)
-              console.log(`[report-task-result] Live chat message ${message_id} rate limited - adding 10s account cooldown`);
-              
-              // Set short restricted_until for account (10 seconds)
-              const shortCooldown = new Date(Date.now() + 10 * 1000).toISOString();
-              await supabase
-                .from("telegram_accounts")
-                .update({ restricted_until: shortCooldown })
-                .eq("id", account_id);
-              
-              // Keep message as pending for retry after cooldown
-              await supabase
-                .from("messages")
-                .update({
-                  status: "pending",
-                  failed_reason: "Rate limited - retrying in 10s",
-                })
-                .eq("id", message_id);
-                
-            } else if (isNetworkError) {
-              // Network errors - immediate retry
-              console.log(`[report-task-result] Live chat message ${message_id} network error - immediate retry`);
-              
-              await supabase
-                .from("messages")
-                .update({
-                  status: "pending",
-                  failed_reason: null,
-                })
-                .eq("id", message_id)
-                .in("status", ["pending", "sending"]);
-            } else {
-              // Permanent errors: mark as failed
-              await supabase
-                .from("messages")
-                .update({
-                  status: "failed",
-                  failed_reason: error,
-                })
-                .eq("id", message_id)
-                .in("status", ["pending", "sending"]);
-            }
+            // Non-campaign message: update existing message as failed
+            await supabase
+              .from("messages")
+              .update({
+                status: "failed",
+                failed_reason: error,
+              })
+              .eq("id", message_id)
+              .in("status", ["pending", "sending"]);
           }
 
           console.log(`[report-task-result] Message failed for recipient ${campaign_recipient_id || message_id}: ${error}`);
