@@ -170,6 +170,10 @@ const Accounts: React.FC = () => {
   // Processing tasks state
   const [processingTasks, setProcessingTasks] = useState<Map<string, string>>(new Map());
   
+  // Proxy errors - map of proxy_id to latest error info
+  const [proxyErrors, setProxyErrors] = useState<Map<string, { error_type: string; error_message: string; created_at: string }>>(new Map());
+  const [proxyErrorFilter, setProxyErrorFilter] = useState<string>('all'); // 'all' | 'with_error' | 'no_error'
+  
   // Realtime subscription for instant account updates - debounced to prevent flickering
   const realtimeRefreshRef = useRef<NodeJS.Timeout | null>(null);
   const isInitialMount = useRef(true);
@@ -464,6 +468,66 @@ const Accounts: React.FC = () => {
     });
     setAvailableTags(Array.from(allTags).sort());
   }, [accounts]);
+
+  // Fetch proxy errors and proxies with error status
+  useEffect(() => {
+    const fetchProxyErrors = async () => {
+      try {
+        // Get proxies with error status
+        const { data: errorProxies, error: proxyError } = await supabase
+          .from('proxies')
+          .select('id')
+          .eq('status', 'error');
+        
+        if (proxyError) {
+          console.error('Error fetching error proxies:', proxyError);
+          return;
+        }
+        
+        const errorProxyIds = new Set((errorProxies || []).map(p => p.id));
+        
+        // Get latest error for each proxy
+        const { data: errors, error: errorsError } = await supabase
+          .from('proxy_errors')
+          .select('proxy_id, error_type, error_message, created_at')
+          .order('created_at', { ascending: false });
+        
+        if (errorsError) {
+          console.error('Error fetching proxy errors:', errorsError);
+          return;
+        }
+        
+        // Build map of proxy_id -> latest error
+        const errorMap = new Map<string, { error_type: string; error_message: string; created_at: string }>();
+        
+        // First mark all error-status proxies
+        errorProxyIds.forEach(proxyId => {
+          if (!errorMap.has(proxyId)) {
+            errorMap.set(proxyId, { error_type: 'error', error_message: 'Proxy marked as error', created_at: new Date().toISOString() });
+          }
+        });
+        
+        // Then add actual error messages where available
+        (errors || []).forEach(err => {
+          if (!errorMap.has(err.proxy_id)) {
+            errorMap.set(err.proxy_id, {
+              error_type: err.error_type || 'unknown',
+              error_message: err.error_message || 'Unknown error',
+              created_at: err.created_at
+            });
+          }
+        });
+        
+        setProxyErrors(errorMap);
+      } catch (err) {
+        console.error('Error in fetchProxyErrors:', err);
+      }
+    };
+    
+    fetchProxyErrors();
+    const interval = setInterval(fetchProxyErrors, 30000); // Refresh every 30s
+    return () => clearInterval(interval);
+  }, []);
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
@@ -1663,7 +1727,14 @@ const Accounts: React.FC = () => {
       (profileFilter === 'synced' && isProfileSynced) ||
       (profileFilter === 'not_synced' && !isProfileSynced);
     
-    return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile;
+    // Proxy error filter
+    const hasProxyError = acc.proxyId && proxyErrors.has(acc.proxyId);
+    const matchesProxyError = 
+      proxyErrorFilter === 'all' ||
+      (proxyErrorFilter === 'with_error' && hasProxyError) ||
+      (proxyErrorFilter === 'no_error' && !hasProxyError);
+    
+    return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile && matchesProxyError;
   });
 
   // Split accounts by status
@@ -1938,6 +2009,27 @@ const Accounts: React.FC = () => {
               </TooltipProvider>
             )}
             
+            {/* Proxy Error Badge - prominent warning for failing proxy */}
+            {account.proxyId && proxyErrors.has(account.proxyId) && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-banned text-white text-[10px] font-semibold animate-pulse">
+                      <AlertTriangle className="w-3 h-3" />
+                      PROXY ERROR
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p className="font-medium">Proxy Connection Failed</p>
+                    <p className="text-xs">{proxyErrors.get(account.proxyId)?.error_message || 'Connection failed'}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Change proxy from admin to continue using this account
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+            
             {/* Health Badge - Success rate indicator */}
             {(account.successCount !== undefined || account.failureCount !== undefined) && 
              ((account.successCount || 0) + (account.failureCount || 0)) >= 3 && (
@@ -2132,14 +2224,56 @@ const Accounts: React.FC = () => {
             </TooltipProvider>
           )}
           
+          {/* Proxy with error indicator */}
           {proxyLabel && (
-            <div className={cn(
-              "flex items-center gap-1 px-2 py-1 rounded text-xs",
-              proxyStatus === 'active' ? "bg-status-active/10 text-status-active" : "bg-muted text-muted-foreground"
-            )}>
-              <Globe className="w-3 h-3" />
-              <span className="max-w-[80px] truncate">{proxyLabel}</span>
-            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className={cn(
+                    "flex items-center gap-1 px-2 py-1 rounded text-xs",
+                    account.proxyId && proxyErrors.has(account.proxyId) 
+                      ? "bg-status-banned/15 text-status-banned border border-status-banned/30"
+                      : proxyStatus === 'active' 
+                        ? "bg-status-active/10 text-status-active" 
+                        : "bg-muted text-muted-foreground"
+                  )}>
+                    {account.proxyId && proxyErrors.has(account.proxyId) ? (
+                      <AlertTriangle className="w-3 h-3" />
+                    ) : (
+                      <Globe className="w-3 h-3" />
+                    )}
+                    <span className="max-w-[80px] truncate">{proxyLabel}</span>
+                  </div>
+                </TooltipTrigger>
+                {account.proxyId && proxyErrors.has(account.proxyId) && (
+                  <TooltipContent className="max-w-xs">
+                    <p className="font-medium text-status-banned">Proxy Error</p>
+                    <p className="text-xs">{proxyErrors.get(account.proxyId)?.error_message || 'Connection failed'}</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Change proxy from admin to continue using this account
+                    </p>
+                  </TooltipContent>
+                )}
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          
+          {/* Proxy Error Badge - also show when no proxy label but has error */}
+          {account.proxyId && proxyErrors.has(account.proxyId) && !proxyLabel && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-status-banned/15 text-status-banned text-[10px] font-semibold border border-status-banned/30">
+                    <AlertTriangle className="w-3 h-3" />
+                    PROXY ERROR
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  <p className="font-medium text-status-banned">Proxy Error</p>
+                  <p className="text-xs">{proxyErrors.get(account.proxyId)?.error_message || 'Connection failed'}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
         </div>
 
@@ -2315,7 +2449,7 @@ const Accounts: React.FC = () => {
         />
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
           <Card className="cursor-pointer hover:border-primary/30 transition-colors" onClick={() => setStatusFilter('all')}>
             <CardContent className="p-3">
               <div className="text-2xl font-bold">{stats.total}</div>
@@ -2340,6 +2474,30 @@ const Accounts: React.FC = () => {
               </CardContent>
             </Card>
           ))}
+          {/* Proxy Error Stat Card */}
+          {(() => {
+            const accountsWithProxyError = accounts.filter(a => a.proxyId && proxyErrors.has(a.proxyId)).length;
+            if (accountsWithProxyError === 0) return null;
+            return (
+              <Card 
+                className={cn(
+                  "cursor-pointer hover:border-status-banned/50 transition-colors border-status-banned/30",
+                  proxyErrorFilter === 'with_error' && "border-status-banned ring-1 ring-status-banned/30"
+                )}
+                onClick={() => setProxyErrorFilter(proxyErrorFilter === 'with_error' ? 'all' : 'with_error')}
+              >
+                <CardContent className="p-3">
+                  <div className="flex items-center justify-between">
+                    <div className="text-2xl font-bold text-status-banned">{accountsWithProxyError}</div>
+                    <span className="p-1.5 rounded-md bg-status-banned/15 text-status-banned">
+                      <AlertTriangle className="w-3 h-3" />
+                    </span>
+                  </div>
+                  <div className="text-xs text-status-banned">Proxy Errors</div>
+                </CardContent>
+              </Card>
+            );
+          })()}
         </div>
 
         {/* Bulk Actions Bar - Always visible */}
@@ -2648,9 +2806,9 @@ const Accounts: React.FC = () => {
               <Button variant="outline" size="sm" className="h-9 gap-2">
                 <Filter className="w-4 h-4" />
                 Filters
-                {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all') && (
+                {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all') && (
                   <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                    {[tagFilter !== 'all', proxyFilter !== 'all', profileFilter !== 'all'].filter(Boolean).length}
+                    {[tagFilter !== 'all', proxyFilter !== 'all', profileFilter !== 'all', proxyErrorFilter !== 'all'].filter(Boolean).length}
                   </Badge>
                 )}
                 <ChevronDown className="w-3 h-3" />
@@ -2743,8 +2901,36 @@ const Accounts: React.FC = () => {
                 </Select>
               </div>
               
+              {/* Proxy Error Filter */}
+              <div className="space-y-2 mb-3">
+                <Label className="text-xs text-muted-foreground flex items-center gap-2">
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  Proxy Status
+                </Label>
+                <Select value={proxyErrorFilter} onValueChange={setProxyErrorFilter}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder="All Proxies" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Proxies</SelectItem>
+                    <SelectItem value="with_error">
+                      <span className="flex items-center gap-2 text-status-banned">
+                        <AlertTriangle className="w-3 h-3" />
+                        With Errors
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="no_error">
+                      <span className="flex items-center gap-2 text-status-active">
+                        <CheckCircle2 className="w-3 h-3" />
+                        No Errors
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
               {/* Clear Filters */}
-              {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all') && (
+              {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all') && (
                 <>
                   <DropdownMenuSeparator className="my-2" />
                   <Button 
@@ -2755,6 +2941,7 @@ const Accounts: React.FC = () => {
                       setTagFilter('all');
                       setProxyFilter('all');
                       setProfileFilter('all');
+                      setProxyErrorFilter('all');
                     }}
                   >
                     <X className="w-3 h-3 mr-1" />
