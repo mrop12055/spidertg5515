@@ -60,15 +60,25 @@ serve(async (req) => {
 
     const currentProxyId = old_proxy_id || account.proxy_id;
 
-    // Find available active proxies not currently assigned to this account
-    // Prefer proxies that are not assigned to any account (unassigned_first)
-    const { data: availableProxies, error: proxyError } = await supabase
+    // STRICT 1:1 PROXY MAPPING: Only select proxies that are NOT used by ANY account
+    // First, get all proxy IDs currently assigned to accounts
+    const { data: usedProxies } = await supabase
+      .from("telegram_accounts")
+      .select("proxy_id")
+      .not("proxy_id", "is", null);
+    
+    const usedProxyIds = new Set((usedProxies || []).map(a => a.proxy_id).filter(Boolean));
+    
+    // Find active proxies that are NOT in the used set
+    const { data: allActiveProxies, error: proxyError } = await supabase
       .from("proxies")
-      .select("id, host, port, username, password, proxy_type, assigned_account_id")
+      .select("id, host, port, username, password, proxy_type")
       .eq("status", "active")
       .neq("id", currentProxyId || "00000000-0000-0000-0000-000000000000")
-      .order("assigned_account_id", { ascending: true, nullsFirst: true }) // Unassigned first
-      .limit(10);
+      .limit(100);
+    
+    // Filter to only unassigned proxies (strict 1:1)
+    const availableProxies = (allActiveProxies || []).filter(p => !usedProxyIds.has(p.id));
 
     if (proxyError) {
       console.log(`[switch-account-proxy] Error fetching proxies: ${proxyError.message}`);
