@@ -52,19 +52,20 @@ serve(async (req) => {
       });
     }
 
-    // Step 1: Clear all existing assignments in parallel (single query each)
-    console.log("[enforce-proxy-mapping] Clearing existing assignments...");
+    // Step 1: Clear ALL existing proxy assignments (including inactive accounts for strict 1:1)
+    console.log("[enforce-proxy-mapping] Clearing ALL existing proxy assignments (strict 1:1 rule)...");
     await Promise.all([
+      // Clear from ALL accounts (not just active) - ensures no proxy is reused
       supabase
         .from("telegram_accounts")
         .update({ proxy_id: null, geo_mismatch: null })
-        .in("status", ["active", "restricted", "cooldown"]),
+        .not("proxy_id", "is", null),
       supabase
         .from("proxies")
         .update({ assigned_account_id: null })
         .eq("status", "active")
     ]);
-    console.log(`[enforce-proxy-mapping] Cleared assignments (${Date.now() - startTime}ms)`);
+    console.log(`[enforce-proxy-mapping] Cleared ALL assignments (${Date.now() - startTime}ms)`);
 
     // Step 2: Shuffle and calculate distribution
     const shuffledAccounts = [...accounts].sort(() => Math.random() - 0.5);
