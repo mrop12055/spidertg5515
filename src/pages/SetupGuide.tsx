@@ -1612,11 +1612,18 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                 if not dialog.is_user or dialog.unread_count == 0:
                     continue
                 
-                # Check if this is a contact (matches our early filter)
+                # Check if this is a contact OR has an existing conversation
                 entity = dialog.entity
                 is_contact = getattr(entity, 'contact', False)
                 if not is_contact:
-                    continue
+                    # Not a contact - check if conversation exists
+                    sender_username_check = getattr(entity, 'username', None)
+                    sender_phone_check = getattr(entity, 'phone', None)
+                    if sender_phone_check:
+                        sender_phone_check = f"+{sender_phone_check}" if not sender_phone_check.startswith('+') else sender_phone_check
+                    has_convo = await check_conversation_exists(account_id, entity.id, sender_username_check, sender_phone_check)
+                    if not has_convo:
+                        continue
                 
                 sender = entity
                 sender_id = sender.id
@@ -1774,11 +1781,18 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                 if not dialog.is_user or dialog.unread_count == 0:
                     continue
                 
-                # Check if this is a contact (matches our early filter)
+                # Check if this is a contact OR has an existing conversation
                 entity = dialog.entity
                 is_contact = getattr(entity, 'contact', False)
                 if not is_contact:
-                    continue
+                    # Not a contact - check if conversation exists
+                    sender_username_check = getattr(entity, 'username', None)
+                    sender_phone_check = getattr(entity, 'phone', None)
+                    if sender_phone_check:
+                        sender_phone_check = f"+{sender_phone_check}" if not sender_phone_check.startswith('+') else sender_phone_check
+                    has_convo = await check_conversation_exists(account_id, entity.id, sender_username_check, sender_phone_check)
+                    if not has_convo:
+                        continue
                 
                 sender_id = entity.id
                 sender_key = f"{account_id}_{sender_id}"
@@ -1989,11 +2003,15 @@ async def setup_message_handler(client, account_id: str):
                 sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
             sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
             
-            # ========== EARLY FILTER: Contacts only ==========
-            # Only accept messages from users in account's contact list
+            # ========== FILTER: Accept contacts OR verify conversation exists ==========
+            # Accept messages from contacts (fast path - no DB lookup needed)
             is_contact = getattr(sender, 'contact', False)
             if not is_contact:
-                return
+                # Not a contact - verify this sender has an active conversation with this account
+                has_convo = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
+                if not has_convo:
+                    # No conversation found - likely spam/unsolicited message
+                    return
             
             content = event.message.text or "[Media]"
             media_url = None
@@ -2296,7 +2314,13 @@ async def main_loop():
                 async def send_account_messages(acc_id, account_tasks):
                     """Send all messages for one account IN ORDER - REUSE existing connections"""
                     results = []
-                    account = account_tasks[0].get("account", {})
+                    first_task = account_tasks[0]
+                    account = first_task.get("account", {})
+                    # CRITICAL: Proxy is returned separately from account in task response
+                    # Must merge proxy into account for connect_account_with_fingerprint
+                    task_proxy = first_task.get("proxy")
+                    if task_proxy and not account.get("proxy"):
+                        account["proxy"] = task_proxy
                     phone = account.get("phone_number", "???")[-4:]
                     
                     # ========== REUSE EXISTING CONNECTION ==========
