@@ -1782,6 +1782,15 @@ const Campaigns: React.FC = () => {
                                 <span className="text-[10px] text-muted-foreground">{seatName}</span>
                               </>
                             )}
+                            {campaign.createdAt && (
+                              <>
+                                <span className="text-muted-foreground text-[10px]">•</span>
+                                <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+                                  <Clock className="w-2.5 h-2.5" />
+                                  {format(new Date(campaign.createdAt), 'MMM d, yyyy h:mm a')}
+                                </span>
+                              </>
+                            )}
                             {campaignStuck && (
                               <span className="text-[10px] text-destructive flex items-center gap-0.5">
                                 <AlertCircle className="w-2.5 h-2.5" />
