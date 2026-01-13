@@ -726,26 +726,32 @@ serve(async (req) => {
           }
 
           if (message_id) {
-            // Non-campaign message (live chat reply): handle differently based on error type
+            // Non-campaign message (live chat reply to EXISTING conversation)
+            // IMPORTANT: These are replies to existing contacts, so:
+            // 1. NO rate limits apply (Telegram allows replies to existing chats)
+            // 2. NO 12-hour account restriction needed
+            // 3. Just retry the message or mark as failed based on error type
             
-            // For rate limit errors ("Too many requests"), retry after a delay instead of failing immediately
-            if (isTooManyRequests) {
-              // Reset message to pending for retry after 30 seconds
-              // The live chat runner will pick it up again
-              console.log(`[report-task-result] Live chat message ${message_id} rate limited - will retry in 30s`);
+            // For transient errors, retry the message
+            const isTransientError = error?.toLowerCase().includes('timeout') || 
+                                     error?.toLowerCase().includes('connection') ||
+                                     error?.toLowerCase().includes('network') ||
+                                     isTooManyRequests; // Rate limits on replies are rare but handle gracefully
+            
+            if (isTransientError) {
+              // Reset message to pending for immediate retry - NO account restriction
+              console.log(`[report-task-result] Live chat message ${message_id} transient error - resetting to pending for retry (NO account restriction)`);
               
-              // Don't mark as failed immediately - just keep it pending
-              // The get-next-task will pick it up again after the account cooldown
               await supabase
                 .from("messages")
                 .update({
                   status: "pending",
-                  failed_reason: `Rate limited, retrying... (${error})`,
+                  failed_reason: null, // Clear the error since we're retrying
                 })
                 .eq("id", message_id)
                 .in("status", ["pending", "sending"]);
             } else {
-              // Other errors: mark as failed
+              // Permanent errors: mark as failed
               await supabase
                 .from("messages")
                 .update({
