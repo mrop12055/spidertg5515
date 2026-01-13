@@ -514,37 +514,49 @@ const SeatChat: React.FC = () => {
       .channel(`seat-${seat.id}-realtime`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages' },
+        { event: 'INSERT', schema: 'public', table: 'messages' },
         (payload) => {
-          // Incremental update for messages if we have a selected conversation
-          if (selectedConversation && payload.eventType === 'INSERT') {
-            const m = payload.new as any;
-            if (m.conversation_id === selectedConversation.id) {
-              setMessages(prev => {
-                if (prev.some(msg => msg.id === m.id)) return prev;
-                return [...prev, {
-                  id: m.id,
-                  content: m.content,
-                  direction: m.direction,
-                  status: m.status,
-                  created_at: m.created_at,
-                  media_url: m.media_url,
-                  media_type: m.media_type
-                }];
-              });
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            const m = payload.new as any;
-            setMessages(prev => prev.map(msg => 
-              msg.id === m.id ? { ...msg, status: m.status } : msg
-            ));
+          const m = payload.new as any;
+          // Add new message if it belongs to selected conversation
+          if (selectedConversation && m.conversation_id === selectedConversation.id) {
+            setMessages(prev => {
+              if (prev.some(msg => msg.id === m.id)) return prev;
+              return [...prev, {
+                id: m.id,
+                content: m.content,
+                direction: m.direction,
+                status: m.status,
+                created_at: m.created_at,
+                media_url: m.media_url,
+                media_type: m.media_type
+              }];
+            });
           }
           
           // Debounced conversation/stats update
           debouncedRefetch(() => {
             fetchConversations();
             fetchStats();
-          }, 1000);
+          }, 500);
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'messages' },
+        (payload) => {
+          const m = payload.new as any;
+          // Update message status - this is critical for showing sent/delivered status
+          setMessages(prev => prev.map(msg => 
+            msg.id === m.id ? { 
+              ...msg, 
+              status: m.status,
+              delivered_at: m.delivered_at,
+              read_at: m.read_at
+            } : msg
+          ));
+          
+          // Also update conversations for last_message changes
+          debouncedRefetch(fetchConversations, 500);
         }
       )
       .on(
@@ -568,9 +580,9 @@ const SeatChat: React.FC = () => {
             ));
           } else {
             // For INSERT/DELETE, do a debounced full refetch
-            debouncedRefetch(fetchConversations, 500);
+            debouncedRefetch(fetchConversations, 300);
           }
-          debouncedRefetch(fetchStats, 1000);
+          debouncedRefetch(fetchStats, 500);
         }
       )
       .subscribe();
@@ -583,15 +595,18 @@ const SeatChat: React.FC = () => {
     };
   }, [seat, selectedConversation, fetchMessages, fetchConversations, fetchStats, debouncedRefetch]);
 
-  // Refresh every 30 seconds (less aggressive than 10s)
+  // Refresh every 10 seconds for faster updates
   useEffect(() => {
     if (!seat) return;
     const interval = setInterval(() => {
       fetchConversations();
       fetchStats();
-    }, 30000);
+      if (selectedConversation) {
+        fetchMessages();
+      }
+    }, 10000);
     return () => clearInterval(interval);
-  }, [seat, fetchConversations, fetchStats]);
+  }, [seat, selectedConversation, fetchConversations, fetchStats, fetchMessages]);
 
   const handleSendMessage = async () => {
     if ((!messageInput.trim() && !selectedImage) || !selectedConversation || isSending) return;
