@@ -106,8 +106,9 @@ const Proxies: React.FC = () => {
     port: '',
     username: '',
     password: '',
-    type: 'http' as const,
+    type: 'socks5' as const,
   });
+  const [bulkProxyType, setBulkProxyType] = useState<'http' | 'https' | 'socks4' | 'socks5'>('socks5');
   const [bulkProxies, setBulkProxies] = useState('');
   const [isAdding, setIsAdding] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -291,12 +292,15 @@ const Proxies: React.FC = () => {
     const lines = bulkProxies.split('\n').filter(l => l.trim());
     const parsed: ProxyToAdd[] = lines.map(line => {
       const parts = line.trim().split(':');
+      // Support format: host:port:user:pass:type OR host:port:user:pass OR host:port
+      const specifiedType = parts[4]?.toLowerCase();
+      const validTypes = ['http', 'https', 'socks4', 'socks5'];
       return {
         host: parts[0] || '',
         port: parseInt(parts[1]) || 8080,
         username: parts[2] || undefined,
         password: parts[3] || undefined,
-        type: 'http',
+        type: validTypes.includes(specifiedType) ? specifiedType : bulkProxyType,
       };
     }).filter(p => p.host);
     
@@ -394,7 +398,7 @@ const Proxies: React.FC = () => {
     }
 
     // Proxy was already added during test
-    setSingleProxy({ host: '', port: '', username: '', password: '', type: 'http' });
+    setSingleProxy({ host: '', port: '', username: '', password: '', type: 'socks5' });
     setSingleTestResult(null);
     setIsAddOpen(false);
   };
@@ -783,10 +787,47 @@ const Proxies: React.FC = () => {
                   </TabsContent>
                   
                   <TabsContent value="bulk" className="space-y-4 mt-4">
+                    {/* SOCKS5 Recommendation Banner */}
+                    <div className="p-3 rounded-lg border border-green-500/30 bg-green-500/10 flex items-center gap-2">
+                      <Shield className="w-4 h-4 text-green-600" />
+                      <span className="text-sm text-green-700 dark:text-green-400">
+                        <strong>SOCKS5 is recommended</strong> for Telegram — better MTProto protocol support
+                      </span>
+                    </div>
+                    
+                    {/* Bulk Proxy Type Selector */}
+                    <div className="space-y-2">
+                      <Label>Default Proxy Type</Label>
+                      <Select
+                        value={bulkProxyType}
+                        onValueChange={(v) => setBulkProxyType(v as 'http' | 'https' | 'socks4' | 'socks5')}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="socks5">
+                            <span className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                              SOCKS5 (Recommended)
+                            </span>
+                          </SelectItem>
+                          <SelectItem value="socks4">SOCKS4</SelectItem>
+                          <SelectItem value="https">HTTPS</SelectItem>
+                          <SelectItem value="http">
+                            <span className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+                              HTTP (Not recommended)
+                            </span>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    
                     <div className="space-y-2">
                       <Label>Proxy List</Label>
                       <Textarea
-                        placeholder="gate-eu.example.com:1000:username:password&#10;proxy.example.com:8080&#10;host:port:user:pass"
+                        placeholder="gate-eu.example.com:1000:username:password&#10;proxy.example.com:8080&#10;host:port:user:pass:socks5"
                         value={bulkProxies}
                         onChange={(e) => {
                           setBulkProxies(e.target.value);
@@ -796,7 +837,7 @@ const Proxies: React.FC = () => {
                         className="font-mono text-sm"
                       />
                       <p className="text-xs text-muted-foreground">
-                        One proxy per line. Format: <code className="px-1 py-0.5 bg-muted rounded">host:port:username:password</code> or <code className="px-1 py-0.5 bg-muted rounded">host:port</code>
+                        One proxy per line. Format: <code className="px-1 py-0.5 bg-muted rounded">host:port:user:pass</code> or <code className="px-1 py-0.5 bg-muted rounded">host:port:user:pass:type</code>
                       </p>
                     </div>
                     

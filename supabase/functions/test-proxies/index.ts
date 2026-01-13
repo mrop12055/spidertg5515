@@ -135,7 +135,7 @@ serve(async (req) => {
             port: proxy.port,
             username: proxy.username || undefined,
             password: proxy.password || undefined,
-            proxy_type: proxy.proxy_type || 'http',
+            proxy_type: proxy.proxy_type || 'socks5',
           });
 
           const countryFlag = testResult.country ? getCountryFlag(testResult.country) : undefined;
