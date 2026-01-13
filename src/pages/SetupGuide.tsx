@@ -54,7 +54,7 @@ RETRY_DELAY = 0              # No retry delay
 # HTTP Timeouts - split by purpose
 HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks) - increased for heavy queries
 HTTP_TIMEOUT_REPORT = 10     # Reporting (report-task-result, report-batch-results)
-HTTP_TIMEOUT_PROXY = 5       # Proxy switch calls
+HTTP_TIMEOUT_PROXY = 15      # Proxy switch calls
 HTTP_TIMEOUT_UPLOAD = 30     # Media uploads (photos, videos) - needs more time for large files
 HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
 
