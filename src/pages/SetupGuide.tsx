@@ -47,16 +47,16 @@ SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
 # ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 10      # Telegram connection timeout
-CONNECTION_RETRIES = 1       # Fail fast, switch proxy immediately
-RETRY_DELAY = 0              # No retry delay
+CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased for slow proxies)
+CONNECTION_RETRIES = 2       # Allow 2 retries before switching proxy
+RETRY_DELAY = 1              # 1 second between retries
 
-# HTTP Timeouts - split by purpose
-HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks) - increased for heavy queries
-HTTP_TIMEOUT_REPORT = 10     # Reporting (report-task-result, report-batch-results)
-HTTP_TIMEOUT_PROXY = 15      # Proxy switch calls
-HTTP_TIMEOUT_UPLOAD = 30     # Media uploads (photos, videos) - needs more time for large files
-HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
+# HTTP Timeouts - split by purpose (increased for stability)
+HTTP_TIMEOUT_DISPATCH = 45   # Task fetching (get-next-task, get-batch-tasks) - increased for 582 accounts
+HTTP_TIMEOUT_REPORT = 15     # Reporting (report-task-result, report-batch-results)
+HTTP_TIMEOUT_PROXY = 20      # Proxy switch calls
+HTTP_TIMEOUT_UPLOAD = 45     # Media uploads (photos, videos) - needs more time for large files
+HTTP_TIMEOUT_DEFAULT = 15    # Other REST calls
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
@@ -78,8 +78,8 @@ def get_http_client() -> httpx.AsyncClient:
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
-            timeout=HTTP_TIMEOUT_DEFAULT,
-            limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)
+            timeout=httpx.Timeout(HTTP_TIMEOUT_DEFAULT, connect=30.0),  # Separate connect timeout
+            limits=httpx.Limits(max_connections=1000, max_keepalive_connections=200)  # Increased for 582 accounts
         )
     return _http_client
 
@@ -1239,9 +1239,9 @@ _u = urlparse(SUPABASE_URL)
 SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
 RUNNING = True
-CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
-HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
-CONNECT_TIMEOUT_SECONDS = 30  # Increased timeout for stable connections
+CLEANUP_INTERVAL = 300  # 5 minutes - less aggressive cleanup
+HEARTBEAT_INTERVAL = 60  # 60 seconds - less logging
+CONNECT_TIMEOUT_SECONDS = 45  # Increased timeout for 582 accounts with slow proxies
 RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
 
 # ========== NETWORK ERROR HANDLING ==========
@@ -1254,34 +1254,37 @@ MAX_NETWORK_BACKOFF = 60  # Maximum backoff time in seconds
 # Only process messages from users who are in the account's contact list
 # This is simple and efficient - no server-side lookups needed
 
-# Network error detection - these indicate LOCAL network issues, not account problems
+# Network error detection - ONLY true LOCAL network issues (NOT proxy timeouts!)
+# Removed timeout/connection errors because those are usually PROXY issues, not local network
 NETWORK_ERROR_PATTERNS = [
     "temporary failure in name resolution",
     "network is unreachable", 
     "no route to host",
+    "name or service not known",
+    "dns lookup failed",
+    "errno 11001",  # Windows DNS error
+    "errno 113",    # No route to host
+    "gaierror",
+    "winerror 64",  # Network name no longer available (Windows) - true disconnect
+]
+
+# PROXY error patterns - these are proxy issues, not network issues (will switch proxy)
+PROXY_ERROR_PATTERNS = [
     "connection refused",
     "connection reset by peer",
-    "name or service not known",
     "could not connect",
     "timed out",
     "timeout",
     "cannot connect",
     "connection timed out",
     "connecterror",
-    "network error",
     "socket error",
-    "dns lookup failed",
-    "errno 11001",  # Windows DNS error
-    "errno 110",    # Connection timed out
-    "errno 111",    # Connection refused
-    "errno 113",    # No route to host
-    "oserror",
-    "gaierror",
-    "winerror 64",  # Network name no longer available (Windows)
-    "winerror 121", # Semaphore timeout (Windows)
-    "network name",
+    "errno 110",    # Connection timed out (proxy)
+    "errno 111",    # Connection refused (proxy)
+    "winerror 121", # Semaphore timeout (Windows) - proxy timeout
     "server closed the connection",
     "connection closed",
+    "oserror",
 ]
 
 # Telegram server error patterns (different from network errors - these are Telegram's issues)
@@ -1312,6 +1315,14 @@ def is_telegram_server_error(error_str: str) -> bool:
         return False
     error_lower = error_str.lower()
     return any(p in error_lower for p in TELEGRAM_SERVER_ERROR_PATTERNS)
+
+
+def is_proxy_error(error_str: str) -> bool:
+    """Check if error is a PROXY issue (should switch proxy, not stop)"""
+    if not error_str:
+        return False
+    error_lower = error_str.lower()
+    return any(p in error_lower for p in PROXY_ERROR_PATTERNS)
 
 
 def signal_handler(sig, frame):
@@ -1470,10 +1481,15 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
         except Exception as e:
             error_str = str(e).lower()
             
-            # Check if this is a LOCAL network error (wifi disconnect, WinError 64)
-            if is_network_error(error_str) or "winerror 64" in error_str:
-                print(f"  [{phone}] NETWORK ERROR (connection dropped): {str(e)[:50]}")
+            # Check if this is a TRUE LOCAL network error (DNS failure, wifi disconnect)
+            # NOT proxy timeouts - those should trigger proxy switch
+            if is_network_error(error_str):
+                print(f"  [{phone}] TRUE NETWORK ERROR (DNS/wifi): {str(e)[:50]}")
                 return None, f"NETWORK_ERROR:{e}"
+            
+            # Proxy errors - continue to next attempt (will switch proxy)
+            if is_proxy_error(error_str):
+                print(f"  [{phone}] PROXY ERROR (will switch): {str(e)[:50]}")
         
         # Connection failed - try different proxy if we have more attempts
         if attempt < MAX_PROXY_ATTEMPTS - 1:
