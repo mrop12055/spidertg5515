@@ -938,7 +938,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           port: proxy.port || 8080,
           username: proxy.username,
           password: proxy.password,
-          proxy_type: proxy.type || 'http',
+          proxy_type: proxy.type || 'socks5',
           status: 'active',
         });
 
