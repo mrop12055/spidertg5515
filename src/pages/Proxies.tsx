@@ -1256,28 +1256,28 @@ const Proxies: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Assigned Account (Strict 1:1) */}
+                    {/* Assigned Account Count (Strict 1:1) */}
                     <div className={cn(
-                      "text-center px-3 py-1 rounded-lg min-w-[100px]",
-                      accountsUsing.length === 0 ? "bg-yellow-500/10" : 
-                      accountsUsing.length === 1 ? "bg-green-500/10" : "bg-destructive/10"
+                      "text-center px-3 py-1 rounded-lg min-w-[110px]",
+                      accountsUsing.length === 0 ? "bg-yellow-500/10 border border-yellow-500/30" : 
+                      accountsUsing.length === 1 ? "bg-green-500/10 border border-green-500/30" : "bg-destructive/10 border border-destructive/30"
                     )}>
                       {accountsUsing.length === 0 ? (
                         <>
-                          <div className="text-yellow-600 text-xs font-medium">Unassigned</div>
-                          <div className="text-xs text-muted-foreground">Available</div>
+                          <div className="text-yellow-600 font-bold text-lg">0</div>
+                          <div className="text-xs text-yellow-600/80">Unassigned</div>
                         </>
                       ) : accountsUsing.length === 1 ? (
                         <>
-                          <div className="font-medium text-xs text-green-600 truncate max-w-[90px]">
-                            {accountsUsing[0].phoneNumber?.slice(-6) || 'Account'}
+                          <div className="font-bold text-lg text-green-600">1</div>
+                          <div className="text-xs text-green-600/80 truncate max-w-[100px]" title={accountsUsing[0].phoneNumber || 'Account'}>
+                            {accountsUsing[0].phoneNumber?.slice(-8) || 'Account'}
                           </div>
-                          <div className="text-xs text-muted-foreground">Assigned</div>
                         </>
                       ) : (
                         <>
-                          <div className="text-destructive font-medium">{accountsUsing.length}</div>
-                          <div className="text-xs text-destructive">SHARED!</div>
+                          <div className="text-destructive font-bold text-lg animate-pulse">{accountsUsing.length}</div>
+                          <div className="text-xs text-destructive font-medium">⚠️ SHARED!</div>
                         </>
                       )}
                     </div>
