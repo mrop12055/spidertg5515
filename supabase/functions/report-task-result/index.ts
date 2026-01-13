@@ -728,25 +728,43 @@ serve(async (req) => {
           if (message_id) {
             // Non-campaign message (live chat reply to EXISTING conversation)
             // IMPORTANT: These are replies to existing contacts, so:
-            // 1. NO rate limits apply (Telegram allows replies to existing chats)
-            // 2. NO 12-hour account restriction needed
-            // 3. Just retry the message or mark as failed based on error type
+            // 1. Lighter restrictions than campaign messages (no 12-hour cooldown)
+            // 2. For rate limits: add SHORT cooldown (30s) to prevent hammering Telegram
+            // 3. For network errors: immediate retry
             
-            // For transient errors, retry the message
-            const isTransientError = error?.toLowerCase().includes('timeout') || 
-                                     error?.toLowerCase().includes('connection') ||
-                                     error?.toLowerCase().includes('network') ||
-                                     isTooManyRequests; // Rate limits on replies are rare but handle gracefully
+            const isNetworkError = error?.toLowerCase().includes('timeout') || 
+                                   error?.toLowerCase().includes('connection') ||
+                                   error?.toLowerCase().includes('network');
             
-            if (isTransientError) {
-              // Reset message to pending for immediate retry - NO account restriction
-              console.log(`[report-task-result] Live chat message ${message_id} transient error - resetting to pending for retry (NO account restriction)`);
+            if (isTooManyRequests) {
+              // Rate limited - add 30 second cooldown to account and keep message pending
+              console.log(`[report-task-result] Live chat message ${message_id} rate limited - adding 30s account cooldown`);
+              
+              // Set short restricted_until for account (30 seconds)
+              const shortCooldown = new Date(Date.now() + 30 * 1000).toISOString();
+              await supabase
+                .from("telegram_accounts")
+                .update({ restricted_until: shortCooldown })
+                .eq("id", account_id);
+              
+              // Keep message as pending for retry after cooldown
+              await supabase
+                .from("messages")
+                .update({
+                  status: "pending",
+                  failed_reason: "Rate limited - retrying in 30s",
+                })
+                .eq("id", message_id);
+                
+            } else if (isNetworkError) {
+              // Network errors - immediate retry
+              console.log(`[report-task-result] Live chat message ${message_id} network error - immediate retry`);
               
               await supabase
                 .from("messages")
                 .update({
                   status: "pending",
-                  failed_reason: null, // Clear the error since we're retrying
+                  failed_reason: null,
                 })
                 .eq("id", message_id)
                 .in("status", ["pending", "sending"]);
