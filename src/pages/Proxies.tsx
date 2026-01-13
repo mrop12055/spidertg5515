@@ -562,6 +562,17 @@ const Proxies: React.FC = () => {
     return accounts.filter(a => a.proxyId === proxyId);
   };
 
+  // Get the assigned account for a proxy (strict 1:1)
+  const getAssignedAccount = (proxyId: string) => {
+    const assignedAccounts = accounts.filter(a => a.proxyId === proxyId);
+    return assignedAccounts.length > 0 ? assignedAccounts[0] : null;
+  };
+
+  // Count unassigned proxies
+  const unassignedProxiesCount = proxies.filter(p => {
+    return !accounts.some(a => a.proxyId === p.id);
+  }).length;
+
   const filteredProxies = proxies.filter(p => {
     const matchesSearch = 
       p.host.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -1017,6 +1028,20 @@ const Proxies: React.FC = () => {
             </div>
           </CardContent>
         </Card>
+        {/* Unassigned Proxies - Strict 1:1 */}
+        <Card 
+          className="cursor-pointer transition-all hover:border-yellow-500/50"
+        >
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-yellow-500/10 flex items-center justify-center">
+              <User className="w-6 h-6 text-yellow-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{unassignedProxiesCount}</p>
+              <p className="text-sm text-muted-foreground">Unassigned</p>
+            </div>
+          </CardContent>
+        </Card>
         <Card>
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
@@ -1231,10 +1256,30 @@ const Proxies: React.FC = () => {
                       </div>
                     </div>
 
-                    {/* Accounts Using */}
-                    <div className="text-center px-3 py-1 bg-secondary/50 rounded-lg">
-                      <div className="font-medium">{accountsUsing.length}</div>
-                      <div className="text-xs text-muted-foreground">Accounts</div>
+                    {/* Assigned Account (Strict 1:1) */}
+                    <div className={cn(
+                      "text-center px-3 py-1 rounded-lg min-w-[100px]",
+                      accountsUsing.length === 0 ? "bg-yellow-500/10" : 
+                      accountsUsing.length === 1 ? "bg-green-500/10" : "bg-destructive/10"
+                    )}>
+                      {accountsUsing.length === 0 ? (
+                        <>
+                          <div className="text-yellow-600 text-xs font-medium">Unassigned</div>
+                          <div className="text-xs text-muted-foreground">Available</div>
+                        </>
+                      ) : accountsUsing.length === 1 ? (
+                        <>
+                          <div className="font-medium text-xs text-green-600 truncate max-w-[90px]">
+                            {accountsUsing[0].phoneNumber?.slice(-6) || 'Account'}
+                          </div>
+                          <div className="text-xs text-muted-foreground">Assigned</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-destructive font-medium">{accountsUsing.length}</div>
+                          <div className="text-xs text-destructive">SHARED!</div>
+                        </>
+                      )}
                     </div>
 
                     {/* Status Select */}
