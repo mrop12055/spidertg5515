@@ -57,9 +57,10 @@ serve(async (req) => {
           .limit(10),  // Get more messages to find one with available account
         
         // 2. Get ALL usable accounts with proxies in ONE query (for both sending and listening)
+        // Include restricted_until to filter out rate-limited accounts
         supabase
           .from("telegram_accounts")
-          .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
+          .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, restricted_until, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
           .in("status", ["active", "restricted", "cooldown", "frozen"])
           .not("session_data", "is", null),
         
@@ -76,10 +77,15 @@ serve(async (req) => {
       // Build account map for O(1) lookup
       const accountMap = new Map<string, any>();
       const validAccounts: any[] = [];
+      const now = new Date();
       
       for (const acc of accountsResult.data || []) {
         const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
         if (proxy?.status === "active") {
+          // Check if account is rate-limited (restricted_until is in the future)
+          const restrictedUntil = acc.restricted_until ? new Date(acc.restricted_until) : null;
+          const isRateLimited = restrictedUntil && restrictedUntil > now;
+          
           const apiCred = acc.telegram_api_credentials as any;
           const accountData = {
             id: acc.id,
@@ -93,8 +99,14 @@ serve(async (req) => {
             api_id: apiCred?.api_id || acc.api_id,
             api_hash: apiCred?.api_hash || acc.api_hash,
             proxy: proxy,
+            is_rate_limited: isRateLimited,
           };
-          accountMap.set(acc.id, accountData);
+          
+          // Only add to accountMap for sending if NOT rate limited
+          if (!isRateLimited) {
+            accountMap.set(acc.id, accountData);
+          }
+          // Add all accounts (including rate limited) for listening
           validAccounts.push(accountData);
         }
       }
