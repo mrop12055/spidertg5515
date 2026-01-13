@@ -524,9 +524,7 @@ async def report_batch_results(results: list) -> bool:
         print(f"  [BATCH REPORT ERROR] {type(e).__name__}: {repr(e)}")
         return False
 
-async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None, retry_count: int = 0):
-    MAX_RETRIES = 3
-    
+async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
     try:
         entity = None
         recipient_str = str(recipient) if recipient else ""
@@ -634,22 +632,8 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
     except UserPrivacyRestrictedError:
         return False, "Privacy restricted"
     except FloodWaitError as e:
-        wait_time = min(e.seconds, 30)  # Cap at 30 seconds
-        print(f"  [FLOOD] Rate limited for {e.seconds}s, waiting {wait_time}s then retry...")
-        if retry_count < MAX_RETRIES:
-            await asyncio.sleep(wait_time)
-            return await send_message(client, recipient, content, media_url, retry_count + 1)
-        return False, f"Rate limited: {e.seconds}s (max retries reached)"
+        return False, f"Rate limited: {e.seconds}s"
     except Exception as e:
-        error_str = str(e).lower()
-        # Handle "Too many requests" and similar rate limit errors with retry
-        if "too many requests" in error_str or "flood" in error_str or "slowmode" in error_str:
-            if retry_count < MAX_RETRIES:
-                wait_time = 5 * (retry_count + 1)  # Exponential backoff: 5s, 10s, 15s
-                print(f"  [RATE LIMIT] Too many requests, waiting {wait_time}s then retry (attempt {retry_count + 1}/{MAX_RETRIES})...")
-                await asyncio.sleep(wait_time)
-                return await send_message(client, recipient, content, media_url, retry_count + 1)
-            return False, f"Too many requests (max retries reached)"
         return False, str(e)
 
 
@@ -2393,14 +2377,10 @@ async def main_loop():
                             })
                         return results
                     
-                    # Send messages IN ORDER for this account with delay between sends
-                    for idx, task in enumerate(account_tasks):
+                    # Send messages IN ORDER for this account
+                    for task in account_tasks:
                         msg = task.get("message", {})
                         recipient = task.get("recipient")
-                        
-                        # Add delay between messages to prevent rate limiting (except first message)
-                        if idx > 0:
-                            await asyncio.sleep(1.5)  # 1.5 second delay between messages
                         
                         try:
                             success, send_error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
