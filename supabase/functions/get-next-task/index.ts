@@ -40,113 +40,48 @@ serve(async (req) => {
     const { account_id, runner } = body as { account_id?: string; runner?: string };
 
     // ========== ULTRA-FAST PATH FOR LIVECHAT ==========
-    // Livechat needs instant response (<100ms). Skip ALL heavy operations.
-    // Only check for pending messages and return immediately.
+    // Livechat needs INSTANT response (<50ms). Skip ALL heavy operations.
+    // PARALLEL: Check messages AND accounts simultaneously
     if (runner === "livechat") {
-      // Recovery: Reset stuck "sending" messages older than 30 seconds back to pending
-      // This prevents messages getting permanently stuck if runner crashes
-      const thirtySecondsAgo = new Date(Date.now() - 30 * 1000).toISOString();
-      await supabase
-        .from("messages")
-        .update({ status: "pending" })
-        .eq("status", "sending")
-        .eq("direction", "outgoing")
-        .is("campaign_recipient_id", null)
-        .lt("created_at", thirtySecondsAgo);
+      // PARALLEL QUERIES: Run all queries at once for maximum speed
+      const [messagesResult, accountsResult, _resetResult] = await Promise.all([
+        // 1. Get pending messages (minimal select)
+        supabase
+          .from("messages")
+          .select("id, content, media_url, media_type, account_id, priority, conversations!inner(id, recipient_phone, recipient_username, recipient_telegram_id)")
+          .eq("status", "pending")
+          .eq("direction", "outgoing")
+          .is("campaign_recipient_id", null)
+          .order("priority", { ascending: false })
+          .order("created_at", { ascending: true })
+          .limit(10),  // Get more messages to find one with available account
+        
+        // 2. Get ALL usable accounts with proxies in ONE query (for both sending and listening)
+        supabase
+          .from("telegram_accounts")
+          .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
+          .in("status", ["active", "restricted", "cooldown", "frozen"])
+          .not("session_data", "is", null),
+        
+        // 3. Reset stuck messages (fire and forget, don't wait)
+        supabase
+          .from("messages")
+          .update({ status: "pending" })
+          .eq("status", "sending")
+          .eq("direction", "outgoing")
+          .is("campaign_recipient_id", null)
+          .lt("created_at", new Date(Date.now() - 15 * 1000).toISOString())  // 15 seconds (faster recovery)
+      ]);
 
-      // Minimal select for speed - only what we need
-      const { data: pendingMessages } = await supabase
-        .from("messages")
-        .select("id, content, media_url, media_type, account_id, campaign_recipient_id, priority, conversations!inner(id, recipient_phone, recipient_username, recipient_telegram_id)")
-        .eq("status", "pending")
-        .eq("direction", "outgoing")
-        .is("campaign_recipient_id", null)
-        .order("priority", { ascending: false })
-        .order("created_at", { ascending: true })
-        .limit(5);
-
-      if (pendingMessages && pendingMessages.length > 0) {
-        // Get minimal account data for the first message with available account
-        for (const msg of pendingMessages) {
-          const { data: account } = await supabase
-            .from("telegram_accounts")
-            .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
-            .eq("id", msg.account_id)
-            .in("status", ["active", "restricted", "cooldown", "frozen"])
-            .single();
-
-          // proxies is an array from the join, get first element
-          const proxy = Array.isArray(account?.proxies) ? account.proxies[0] : account?.proxies;
-          if (account && proxy?.status === "active") {
-            // Mark as sending
-            await supabase
-              .from("messages")
-              .update({ status: "sending" })
-              .eq("id", msg.id)
-              .eq("status", "pending");
-
-            const conv = (msg as any).conversations || {};
-            const apiCred = account.telegram_api_credentials as any;
-            
-            console.log(`[get-next-task] FAST livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
-            
-            return new Response(JSON.stringify({
-              task: "send",
-              message: {
-                id: msg.id,
-                content: msg.content,
-                media_url: msg.media_url,
-                media_type: msg.media_type,
-                campaign_recipient_id: msg.campaign_recipient_id,
-              },
-              recipient: conv.recipient_username || conv.recipient_phone,
-              recipient_telegram_id: conv.recipient_telegram_id,
-              recipient_username: conv.recipient_username,
-              recipient_phone: conv.recipient_phone,
-              account: {
-                id: account.id,
-                phone_number: account.phone_number,
-                session_data: account.session_data,
-                device_model: account.device_model,
-                system_version: account.system_version,
-                app_version: account.app_version,
-                lang_code: account.lang_code,
-                system_lang_code: account.system_lang_code,
-                api_id: apiCred?.api_id || account.api_id,
-                api_hash: apiCred?.api_hash || account.api_hash,
-                proxy: proxy,
-              },
-              mode: "live",
-            }), {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
-          }
-        }
-      }
-
-      // No messages - but we need to return accounts for incoming message listening
-      // Heartbeat
-      supabase
-        .from("runner_heartbeats")
-        .upsert({ runner_name: "livechat", last_seen: new Date().toISOString(), status: "online" }, { onConflict: "runner_name" })
-        .then(() => {});
-
-      // Get accounts that have active conversations (campaign-initiated) for listening to replies
-      // This is essential - without accounts, the Python listener can't connect to Telegram
-      // No limit - fetch ALL accounts for livechat listening
-      const { data: livechatAccounts } = await supabase
-        .from("telegram_accounts")
-        .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
-        .in("status", ["active", "restricted", "cooldown", "frozen"])
-        .not("session_data", "is", null);
-
-      // Filter to accounts with active proxy
-      const validAccounts = (livechatAccounts || [])
-        .map(acc => {
-          const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
-          if (!proxy || proxy.status !== "active") return null;
+      // Build account map for O(1) lookup
+      const accountMap = new Map<string, any>();
+      const validAccounts: any[] = [];
+      
+      for (const acc of accountsResult.data || []) {
+        const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
+        if (proxy?.status === "active") {
           const apiCred = acc.telegram_api_credentials as any;
-          return {
+          const accountData = {
             id: acc.id,
             phone_number: acc.phone_number,
             session_data: acc.session_data,
@@ -159,10 +94,56 @@ serve(async (req) => {
             api_hash: apiCred?.api_hash || acc.api_hash,
             proxy: proxy,
           };
-        })
-        .filter(Boolean);
+          accountMap.set(acc.id, accountData);
+          validAccounts.push(accountData);
+        }
+      }
 
-      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening (contact-only filtering)`);
+      // Check if any pending message has an available account
+      const pendingMessages = messagesResult.data || [];
+      for (const msg of pendingMessages) {
+        const account = accountMap.get(msg.account_id);
+        if (account) {
+          // Mark as sending (don't await - fire and forget for speed)
+          supabase
+            .from("messages")
+            .update({ status: "sending" })
+            .eq("id", msg.id)
+            .eq("status", "pending")
+            .then(() => {});
+
+          const conv = (msg as any).conversations || {};
+          
+          console.log(`[get-next-task] INSTANT livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
+          
+          return new Response(JSON.stringify({
+            task: "send",
+            message: {
+              id: msg.id,
+              content: msg.content,
+              media_url: msg.media_url,
+              media_type: msg.media_type,
+            },
+            recipient: conv.recipient_username || conv.recipient_phone,
+            recipient_telegram_id: conv.recipient_telegram_id,
+            recipient_username: conv.recipient_username,
+            recipient_phone: conv.recipient_phone,
+            account: account,
+            mode: "live",
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+      }
+
+      // No messages to send - return accounts for listening
+      // Heartbeat (fire and forget)
+      supabase
+        .from("runner_heartbeats")
+        .upsert({ runner_name: "livechat", last_seen: new Date().toISOString(), status: "online" }, { onConflict: "runner_name" })
+        .then(() => {});
+
+      console.log(`[get-next-task] Livechat: ${validAccounts.length} accounts ready`);
 
       return new Response(JSON.stringify({
         task: "wait",
