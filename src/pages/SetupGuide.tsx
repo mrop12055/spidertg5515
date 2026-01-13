@@ -46,21 +46,10 @@ from fingerprint_generator import generate_fingerprint
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
-# ========== SESSION LOCKING FIX ==========
-# Track which sessions are currently being accessed to prevent SQLite locks
-_session_locks: Dict[str, asyncio.Lock] = {}
-
-def get_session_lock(account_id: str) -> asyncio.Lock:
-    """Get or create a lock for a specific account session"""
-    if account_id not in _session_locks:
-        _session_locks[account_id] = asyncio.Lock()
-    return _session_locks[account_id]
-
 # ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 15      # Telegram connection timeout (increased for slow proxies)
+CONNECTION_TIMEOUT = 10      # Telegram connection timeout
 CONNECTION_RETRIES = 1       # Fail fast, switch proxy immediately
 RETRY_DELAY = 0              # No retry delay
-SQLITE_TIMEOUT = 30          # SQLite database timeout to prevent "database is locked"
 
 # HTTP Timeouts - split by purpose
 HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks) - increased for heavy queries
@@ -77,8 +66,7 @@ MAX_HTTP_BACKOFF = 30
 PROXY_ERROR_PATTERNS = [
     "semaphore timeout", "winerror 121", "connection refused", 
     "proxy", "socks", "timed out", "timeout", "cannot connect",
-    "connection reset", "connection closed", "no route", "database is locked",
-    "network name is no longer available", "winerror 64"
+    "connection reset", "connection closed", "no route"
 ]
 
 # ========== SHARED HTTP CLIENT POOL ==========
@@ -97,23 +85,11 @@ def get_http_client() -> httpx.AsyncClient:
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
-    """Decode session file and set SQLite timeout to prevent locking errors"""
     session_path = os.path.join(SESSION_FOLDER, phone_number.replace("+", ""))
     try:
         session_bytes = base64.b64decode(base64_data)
         with open(session_path + ".session", "wb") as f:
             f.write(session_bytes)
-        
-        # Set SQLite timeout on the session file to prevent "database is locked" errors
-        import sqlite3
-        try:
-            conn = sqlite3.connect(session_path + ".session", timeout=SQLITE_TIMEOUT)
-            conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
-            conn.execute("PRAGMA journal_mode = WAL")    # Write-Ahead Logging for better concurrency
-            conn.close()
-        except Exception as sql_err:
-            print(f"  [WARN] Could not set SQLite options: {sql_err}")
-        
         return session_path
     except Exception as e:
         print(f"  [ERROR] Session decode: {e}")
@@ -152,41 +128,20 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
 
 
 async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> bool:
-    """Fast connect with better error handling for network and SQLite errors"""
-    for attempt in range(max_retries + 1):
-        try:
-            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-            return True
-        except asyncio.TimeoutError:
-            print(f"    [TIMEOUT] Connection timeout (attempt {attempt + 1}/{max_retries + 1})")
-            if attempt < max_retries:
-                await asyncio.sleep(1)
-                continue
+    """Fast connect - fail immediately on timeout/proxy error"""
+    try:
+        await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+        return True
+    except asyncio.TimeoutError:
+        print(f"    [TIMEOUT] Connection timeout")
+        return False
+    except Exception as e:
+        err_str = str(e).lower()
+        if any(p in err_str for p in PROXY_ERROR_PATTERNS):
+            print(f"    [PROXY FAIL] {e}")
             return False
-        except Exception as e:
-            err_str = str(e).lower()
-            
-            # Database locked - wait and retry
-            if "database is locked" in err_str:
-                print(f"    [DB LOCK] SQLite locked, waiting 2s... (attempt {attempt + 1})")
-                if attempt < max_retries:
-                    await asyncio.sleep(2)
-                    continue
-                return False
-            
-            # WinError 121 semaphore timeout - proxy network issue
-            if "winerror 121" in err_str or "semaphore timeout" in err_str:
-                print(f"    [NETWORK] Semaphore timeout - proxy slow/dead")
-                return False
-            
-            # Other proxy errors - fail fast
-            if any(p in err_str for p in PROXY_ERROR_PATTERNS):
-                print(f"    [PROXY FAIL] {str(e)[:80]}")
-                return False
-            
-            print(f"    [ERROR] {str(e)[:80]}")
-            return False
-    return False
+        print(f"    [ERROR] {e}")
+        return False
 
 
 async def switch_account_proxy(account_id: str, old_proxy_id: str = None) -> dict:
@@ -232,9 +187,6 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     """
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
-    
-    # ========== SESSION LOCKING: Prevent "database is locked" errors ==========
-    session_lock = get_session_lock(account_id)
     
     # ========== STEP 1: CHECK / CLEAR EXISTING CLIENT ==========
     # If no_cache=True, we MUST NOT reuse any cached Telethon client.
@@ -527,42 +479,22 @@ async def report_batch_results(results: list) -> bool:
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
     try:
         entity = None
-        recipient_str = str(recipient) if recipient else ""
-        
-        # CASE 1: Username
-        if recipient_str.startswith("@"):
-            entity = await asyncio.wait_for(client.get_entity(recipient_str), timeout=10)
-        
-        # CASE 2: Telegram ID (pure numeric string)
-        elif recipient_str.isdigit():
-            telegram_id = int(recipient_str)
-            try:
-                # Use PeerUser for direct access by ID
-                from telethon.tl.types import PeerUser
-                entity = await asyncio.wait_for(client.get_entity(PeerUser(telegram_id)), timeout=10)
-            except Exception as e:
-                print(f"  [SEND] Failed to get entity by ID {telegram_id}: {e}")
-                # Fallback: try direct integer
-                try:
-                    entity = await asyncio.wait_for(client.get_entity(telegram_id), timeout=10)
-                except Exception:
-                    pass
-        
-        # CASE 3: Phone number
+        if recipient.startswith("@"):
+            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)  # Faster
         else:
             from telethon.tl.functions.contacts import ImportContactsRequest
             from telethon.tl.types import InputPhoneContact
             import random
             
-            phone = recipient_str if recipient_str.startswith("+") else "+" + recipient_str
+            phone = recipient if recipient.startswith("+") else "+" + recipient
             try:
-                entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)
+                entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)  # Faster
             except:
                 pass
             
             if not entity:
                 contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)  # Faster
                 if result.users:
                     entity = result.users[0]
                 elif result.retry_contacts:
@@ -1294,7 +1226,7 @@ import httpx
 from telethon import events
 
 from client_manager import (
-    get_or_create_client, get_next_task, get_batch_tasks, report_result,
+    get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
     HTTP_TIMEOUT_UPLOAD
 )
@@ -1471,37 +1403,16 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     """
     Connect account with smart fingerprint and proxy handling.
     
-    1. FIRST check if we already have a connected client (REUSE existing connections)
-    2. Check if account has fingerprint in DB, use it
-    3. If no fingerprint, generate new and save to DB
-    4. If proxy fails, IMMEDIATELY try 2 different random proxies (NO cooldown)
-    5. Detect network errors and skip account status updates
-    6. NEVER mark account as disconnected due to proxy issues
+    1. Check if account has fingerprint in DB, use it
+    2. If no fingerprint, generate new and save to DB
+    3. If proxy fails, IMMEDIATELY try 2 different random proxies (NO cooldown)
+    4. Detect network errors and skip account status updates
+    5. NEVER mark account as disconnected due to proxy issues
     
     Returns: (client, error_str or None)
     """
     account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
-    
-    # ========== STEP 0: CHECK FOR EXISTING CONNECTION (CRITICAL FIX) ==========
-    # ALWAYS reuse existing connected client to prevent duplicate connections
-    if account_id in active_clients:
-        client = active_clients[account_id]
-        try:
-            if client.is_connected():
-                # Setup handler if not already set
-                if setup_handler and not getattr(client, "_handler", False):
-                    await setup_handler(client, account_id)
-                    setattr(client, "_handler", True)
-                print(f"  [{phone}] REUSING cached connection (already connected)")
-                return client, None
-            else:
-                # Client disconnected - clean up and reconnect
-                print(f"  [{phone}] Cached client disconnected, will reconnect...")
-                del active_clients[account_id]
-        except Exception as e:
-            print(f"  [{phone}] Cached client check failed: {e}, will reconnect...")
-            active_clients.pop(account_id, None)
     
     # Check fingerprint from database
     device_model = account.get("device_model")
@@ -1632,18 +1543,11 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                 if not dialog.is_user or dialog.unread_count == 0:
                     continue
                 
-                # Check if this is a contact OR has an existing conversation
+                # Check if this is a contact (matches our early filter)
                 entity = dialog.entity
                 is_contact = getattr(entity, 'contact', False)
                 if not is_contact:
-                    # Not a contact - check if conversation exists
-                    sender_username_check = getattr(entity, 'username', None)
-                    sender_phone_check = getattr(entity, 'phone', None)
-                    if sender_phone_check:
-                        sender_phone_check = f"+{sender_phone_check}" if not sender_phone_check.startswith('+') else sender_phone_check
-                    has_convo = await check_conversation_exists(account_id, entity.id, sender_username_check, sender_phone_check)
-                    if not has_convo:
-                        continue
+                    continue
                 
                 sender = entity
                 sender_id = sender.id
@@ -1801,18 +1705,11 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                 if not dialog.is_user or dialog.unread_count == 0:
                     continue
                 
-                # Check if this is a contact OR has an existing conversation
+                # Check if this is a contact (matches our early filter)
                 entity = dialog.entity
                 is_contact = getattr(entity, 'contact', False)
                 if not is_contact:
-                    # Not a contact - check if conversation exists
-                    sender_username_check = getattr(entity, 'username', None)
-                    sender_phone_check = getattr(entity, 'phone', None)
-                    if sender_phone_check:
-                        sender_phone_check = f"+{sender_phone_check}" if not sender_phone_check.startswith('+') else sender_phone_check
-                    has_convo = await check_conversation_exists(account_id, entity.id, sender_username_check, sender_phone_check)
-                    if not has_convo:
-                        continue
+                    continue
                 
                 sender_id = entity.id
                 sender_key = f"{account_id}_{sender_id}"
@@ -2023,15 +1920,11 @@ async def setup_message_handler(client, account_id: str):
                 sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
             sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
             
-            # ========== FILTER: Accept contacts OR verify conversation exists ==========
-            # Accept messages from contacts (fast path - no DB lookup needed)
+            # ========== EARLY FILTER: Contacts only ==========
+            # Only accept messages from users in account's contact list
             is_contact = getattr(sender, 'contact', False)
             if not is_contact:
-                # Not a contact - verify this sender has an active conversation with this account
-                has_convo = await check_conversation_exists(account_id, sender.id, sender_username, sender_phone)
-                if not has_convo:
-                    # No conversation found - likely spam/unsolicited message
-                    return
+                return
             
             content = event.message.text or "[Media]"
             media_url = None
@@ -2168,13 +2061,13 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (PARALLEL MODE)")
-    print("  BUILD: 2026-01-12-parallel-ordered")
+    print("  LiveChat Runner (1-HOUR SYNC WINDOW)")
+    print("  BUILD: 2026-01-11-1hour-sync")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⚡ Parallel message sending (no limits)")
-    print("  📨 Maintains order per recipient")
-    print("  🔄 Auto-assigns proxy if missing")
-    print("  🔧 Auto-generates fingerprint if missing")
+    print("  ⏰ Only syncs messages from last 1 hour")
+    print("  🔄 Skips older messages to prevent duplicates")
+    print("  📨 Tracks last synced IDs per sender")
+    print("=" * 50)
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
@@ -2223,210 +2116,89 @@ async def main_loop():
                 gc.collect()
                 last_cleanup = time.time()
             
-            # ========== USE BATCH TASKS FOR PARALLEL PROCESSING ==========
-            # IMPORTANT: Keep this modest to avoid Telegram "Too many requests" rate limits.
-            batch_response = await get_batch_tasks(runner="livechat", batch_size=20)
-            tasks = batch_response.get("tasks", [])
-            accounts = batch_response.get("accounts", [])
-            delay_after = batch_response.get("delay_after", 1)
+            task = await get_next_task(runner="livechat")
+            task_type = task.get("task", "wait")
             
-            # ========== CONNECT NEW ACCOUNTS ==========
-            # Only connect NEW accounts (skip already connected and recently failed)
-            new_accounts = [
-                acc for acc in accounts 
-                if acc.get("id") not in connected_ids 
-                and acc.get("id") not in failed_proxy_accounts
-            ]
             
-            if new_accounts:
-                print(f"  [CONNECT] Connecting {len(new_accounts)} accounts in PARALLEL...")
+            if task_type == "wait":
+                accounts = task.get("accounts", [])
+                # Only connect NEW accounts (skip already connected and recently failed)
+                new_accounts = [
+                    acc for acc in accounts 
+                    if acc.get("id") not in connected_ids 
+                    and acc.get("id") not in failed_proxy_accounts
+                ]
                 
-                async def connect_one(acc):
-                    acc_id = acc.get("id")
-                    phone = acc.get("phone_number", "???")[-4:]
-                    if not acc_id:
-                        return None, None, "No ID", phone, False
+                if new_accounts:
+                    print(f"  [CONNECT] Connecting {len(new_accounts)} accounts in PARALLEL...")
                     
-                    # Check if fingerprint needs to be generated
-                    needs_fp = acc.get("needs_fingerprint", False)
-                    if needs_fp or not acc.get("device_model") or not acc.get("system_version"):
-                        print(f"  [{phone}] Generating fingerprint...")
-                        fp = generate_fingerprint()
-                        acc["device_model"] = fp["device_model"]
-                        acc["system_version"] = fp["system_version"]
-                        acc["app_version"] = fp["app_version"]
-                        acc["lang_code"] = fp["lang_code"]
-                        acc["system_lang_code"] = fp["system_lang_code"]
-                        # Save fingerprint to DB
-                        await report_result("fingerprint_generated", {
-                            "account_id": acc_id,
-                            **fp
-                        })
-                    
-                    try:
-                        client, error = await asyncio.wait_for(
-                            connect_account_with_fingerprint(acc, setup_handler=setup_message_handler),
-                            timeout=CONNECT_TIMEOUT_SECONDS
-                        )
-                        if client:
-                            # Sync missed messages after successful connection
-                            sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
-                            return acc_id, client, error, phone, needs_retry
-                        return acc_id, client, error, phone, False
-                    except asyncio.TimeoutError:
-                        return acc_id, None, "TIMEOUT", phone, False
-                    except Exception as e:
-                        return acc_id, None, f"ERROR:{e}", phone, False
-                
-                results = await asyncio.gather(
-                    *[connect_one(acc) for acc in new_accounts],
-                    return_exceptions=True
-                )
-                
-                # Process results
-                success_count = 0
-                timeout_count = 0
-                error_count = 0
-                sync_pending_count = 0
-                for result in results:
-                    if isinstance(result, Exception):
-                        error_count += 1
-                        continue
-                    acc_id, client, error, phone, needs_sync_retry = result
-                    if not acc_id:
-                        continue
-                    if client:
-                        connected_ids.add(acc_id)
-                        success_count += 1
-                        # Queue for sync retry if needed
-                        if needs_sync_retry:
-                            pending_sync_accounts[acc_id] = (time.time() + SYNC_RETRY_INTERVAL, phone)
-                            sync_pending_count += 1
-                    elif error:
-                        if error.startswith("NETWORK_ERROR:"):
-                            pass  # Will retry next iteration
-                        elif error == "TIMEOUT" or error == "All proxies failed":
-                            timeout_count += 1
-                            # NO cooldown - will retry next iteration with different proxy
-                        else:
-                            error_count += 1
-                            # NO cooldown - keep trying
-                
-                print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
-
-            # ========== PROCESS SEND TASKS IN PARALLEL ==========
-            send_tasks = [t for t in tasks if t.get("task") == "send"]
-            
-            if send_tasks:
-                print(f"  [SEND] Processing {len(send_tasks)} messages in PARALLEL...")
-                
-                # Group tasks by account to maintain ORDER within each account
-                tasks_by_account = {}
-                for task in send_tasks:
-                    acc_id = task.get("account", {}).get("id")
-                    if acc_id not in tasks_by_account:
-                        tasks_by_account[acc_id] = []
-                    tasks_by_account[acc_id].append(task)
-                
-                # Sort tasks within each account by sequence number to maintain order
-                for acc_id in tasks_by_account:
-                    tasks_by_account[acc_id].sort(key=lambda t: t.get("message", {}).get("sequence", 0))
-                
-                async def send_account_messages(acc_id, account_tasks):
-                    """Send all messages for one account IN ORDER - REUSE existing connections"""
-                    results = []
-                    first_task = account_tasks[0]
-                    account = first_task.get("account", {})
-                    # CRITICAL: Proxy is returned separately from account in task response
-                    # Must merge proxy into account for connect_account_with_fingerprint
-                    task_proxy = first_task.get("proxy")
-                    if task_proxy and not account.get("proxy"):
-                        account["proxy"] = task_proxy
-                    phone = account.get("phone_number", "???")[-4:]
-                    
-                    # ========== REUSE EXISTING CONNECTION ==========
-                    # First check if we already have a connected client for this account
-                    client = active_clients.get(acc_id)
-                    if client:
+                    async def connect_one(acc):
+                        acc_id = acc.get("id")
+                        phone = acc.get("phone_number", "???")[-4:]
+                        if not acc_id:
+                            return None, None, "No ID", phone, False
                         try:
-                            if client.is_connected():
-                                print(f"  [{phone}] REUSING existing connection")
-                            else:
-                                # Client exists but not connected - remove and reconnect
-                                del active_clients[acc_id]
-                                client = None
-                        except Exception:
-                            del active_clients[acc_id]
-                            client = None
-                    
-                    # Only create new connection if no cached client exists
-                    if not client:
-                        print(f"  [{phone}] Creating NEW connection...")
-                        client, conn_error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler)
-                    else:
-                        conn_error = None
-                    
-                    if not client:
-                        # Connection failed - mark all messages as failed
-                        for task in account_tasks:
-                            msg = task.get("message", {})
-                            results.append({
-                                "message_id": msg.get("id"),
-                                "success": False,
-                                "error": conn_error or "Connection failed",
-                                "account_id": acc_id
-                            })
-                        return results
-                    
-                    # Send messages IN ORDER for this account
-                    for task in account_tasks:
-                        msg = task.get("message", {})
-                        recipient = task.get("recipient")
-                        
-                        try:
-                            success, send_error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
-                            
-                            if not is_network_error(str(send_error)):
-                                results.append({
-                                    "message_id": msg.get("id"),
-                                    "success": success,
-                                    "error": send_error,
-                                    "account_id": acc_id
-                                })
-                            else:
-                                print(f"  [{phone}] Network error for msg {msg.get('id')}, skipping report")
+                            client, error = await asyncio.wait_for(
+                                connect_account_with_fingerprint(acc, setup_handler=setup_message_handler),
+                                timeout=CONNECT_TIMEOUT_SECONDS
+                            )
+                            if client:
+                                # Sync missed messages after successful connection
+                                sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
+                                return acc_id, client, error, phone, needs_retry
+                            return acc_id, client, error, phone, False
+                        except asyncio.TimeoutError:
+                            return acc_id, None, "TIMEOUT", phone, False
                         except Exception as e:
-                            if not is_network_error(str(e)):
-                                results.append({
-                                    "message_id": msg.get("id"),
-                                    "success": False,
-                                    "error": str(e),
-                                    "account_id": acc_id
-                                })
+                            return acc_id, None, f"ERROR:{e}", phone, False
                     
-                    return results
-                
-                # Process all accounts in PARALLEL, but messages within each account are SEQUENTIAL (ordered)
-                all_results = await asyncio.gather(
-                    *[send_account_messages(acc_id, acc_tasks) for acc_id, acc_tasks in tasks_by_account.items()],
-                    return_exceptions=True
-                )
-                
-                # Flatten results and report in batch
-                batch_results = []
-                for result in all_results:
-                    if isinstance(result, list):
-                        batch_results.extend(result)
-                    elif isinstance(result, Exception):
-                        print(f"  [ERROR] Send account exception: {result}")
-                
-                if batch_results:
-                    # Report all results in parallel batch
-                    for r in batch_results:
-                        await report_result("send", r)
+                    results = await asyncio.gather(
+                        *[connect_one(acc) for acc in new_accounts],
+                        return_exceptions=True
+                    )
                     
-                    success_msgs = sum(1 for r in batch_results if r.get("success"))
-                    print(f"  [SENT] {success_msgs}/{len(batch_results)} messages sent successfully")
+                    # Process results
+                    success_count = 0
+                    timeout_count = 0
+                    error_count = 0
+                    sync_pending_count = 0
+                    for result in results:
+                        if isinstance(result, Exception):
+                            error_count += 1
+                            continue
+                        acc_id, client, error, phone, needs_sync_retry = result
+                        if not acc_id:
+                            continue
+                        if client:
+                            connected_ids.add(acc_id)
+                            success_count += 1
+                            # Queue for sync retry if needed
+                            if needs_sync_retry:
+                                pending_sync_accounts[acc_id] = (time.time() + SYNC_RETRY_INTERVAL, phone)
+                                sync_pending_count += 1
+                        elif error:
+                            if error.startswith("NETWORK_ERROR:"):
+                                pass  # Will retry next iteration
+                            elif error == "TIMEOUT" or error == "All proxies failed":
+                                timeout_count += 1
+                                # NO cooldown - will retry next iteration with different proxy
+                            else:
+                                error_count += 1
+                                # NO cooldown - keep trying
+                    
+                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
+
+                # Get delay from server response (usually 0 for fast polling)
+                wait_seconds = task.get("seconds", 0.5)
+                if wait_seconds > 0:
+                    # Use small sleeps to allow update processing
+                    for _ in range(int(wait_seconds * 10)):
+                        if not RUNNING:
+                            break
+                        await asyncio.sleep(0.1)
+                else:
+                    # Even with 0 delay, yield briefly for updates
+                    await asyncio.sleep(0.05)
             
             # ========== RETRY PENDING SYNCS ==========
             # Retry missed message sync for accounts that failed due to Telegram server issues
@@ -2464,33 +2236,39 @@ async def main_loop():
                 
                 last_sync_retry = time.time()
             
-            # Wait based on server response
-            if delay_after > 0:
-                for _ in range(int(delay_after * 10)):
-                    if not RUNNING:
-                        break
-                    await asyncio.sleep(0.1)
-            else:
-                await asyncio.sleep(0.05)
+            elif task_type == "send":
+                msg = task.get("message", {})
+                recipient = task.get("recipient")
+                account = task.get("account", {})
+                
+                client, error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler)
+                
+                if client and recipient:
+                    print(f"  [REPLY] To {recipient}...")
+                    success, send_error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+                    
+                    # Only report if not a network error
+                    if not is_network_error(str(send_error)):
+                        await report_result("send", {
+                            "message_id": msg.get("id"),
+                            "success": success,
+                            "error": send_error,
+                            "account_id": account.get("id")
+                        })
+                    else:
+                        print(f"  [SKIP REPORT] Network error, not updating status")
+                elif error and not error.startswith("NETWORK_ERROR:"):
+                    # Only report failure if not a network error
+                    await report_result("send", {
+                        "message_id": msg.get("id"),
+                        "success": False,
+                        "error": error,
+                        "account_id": account.get("id")
+                    })
         
         except Exception as e:
             global _network_error_count, _last_network_error_time
             error_str = str(e).lower()
-            
-            # Handle SQLite database locked errors - clear stale locks
-            if "database is locked" in error_str:
-                print(f"  [DB LOCK] SQLite locked in main loop - cleaning up sessions...")
-                # Force garbage collection to release file handles
-                gc.collect()
-                await asyncio.sleep(3)
-                continue
-            
-            # Handle WinError 121 (semaphore timeout) - proxy/network issue
-            if "winerror 121" in error_str or "semaphore timeout" in error_str:
-                print(f"  [NETWORK] Semaphore timeout - proxy connection slow/dead")
-                print(f"  [ACTION] Will switch to different proxies on next connect...")
-                await asyncio.sleep(5)
-                continue
             
             # Check if this is a network error (including WinError 64)
             if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
@@ -2553,10 +2331,9 @@ import base64
 import httpx
 
 from client_manager import (
-    get_or_create_client, get_batch_tasks, report_result, shutdown_all, disconnect_client,
-    validate_contact, SESSION_FOLDER, active_clients, get_http_client
+    get_or_create_client, report_result, shutdown_all, disconnect_client,
+    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL, active_clients
 )
-from config import BACKEND_URL, SUPABASE_KEY
 
 RUNNING = True
 
@@ -2640,10 +2417,10 @@ async def change_profile_photo(client, photo_source: str):
         return False, str(e)
 
 
-async def update_privacy(client, hide_phone, hide_last_seen, disable_calls, hide_profile_photo=False):
+async def update_privacy(client, hide_phone, hide_last_seen, disable_calls):
     try:
         from telethon.tl.functions.account import SetPrivacyRequest
-        from telethon.tl.types import InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, InputPrivacyKeyPhoneCall, InputPrivacyKeyProfilePhoto
+        from telethon.tl.types import InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, InputPrivacyKeyPhoneCall
         from telethon.tl.types import InputPrivacyValueDisallowAll
         if hide_phone:
             await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneNumber(), rules=[InputPrivacyValueDisallowAll()]))
@@ -2651,76 +2428,22 @@ async def update_privacy(client, hide_phone, hide_last_seen, disable_calls, hide
             await client(SetPrivacyRequest(key=InputPrivacyKeyStatusTimestamp(), rules=[InputPrivacyValueDisallowAll()]))
         if disable_calls:
             await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneCall(), rules=[InputPrivacyValueDisallowAll()]))
-        if hide_profile_photo:
-            await client(SetPrivacyRequest(key=InputPrivacyKeyProfilePhoto(), rules=[InputPrivacyValueDisallowAll()]))
-        return True, None
-    except Exception as e:
-        return False, str(e)
-
-
-async def change_username(client, action: str, username: str = None):
-    """Change or remove username"""
-    try:
-        from telethon.tl.functions.account import UpdateUsernameRequest, CheckUsernameRequest
-        import random
-        import string
-        
-        if action == "remove":
-            await client(UpdateUsernameRequest(username=""))
-            return True, None, None
-        else:
-            # Try to set username
-            try:
-                # Check if username is available
-                result = await client(CheckUsernameRequest(username=username))
-                if result:
-                    await client(UpdateUsernameRequest(username=username))
-                    return True, None, username
-                else:
-                    # Username taken, add random suffix
-                    suffix = ''.join(random.choices(string.digits, k=5))
-                    new_username = f"{username}{suffix}"
-                    await client(UpdateUsernameRequest(username=new_username))
-                    return True, None, new_username
-            except Exception as e:
-                if "taken" in str(e).lower() or "occupied" in str(e).lower():
-                    # Username taken, add random suffix
-                    suffix = ''.join(random.choices(string.digits, k=5))
-                    new_username = f"{username}{suffix}"
-                    await client(UpdateUsernameRequest(username=new_username))
-                    return True, None, new_username
-                raise e
-    except Exception as e:
-        return False, str(e), None
-
-
-async def remove_bio(client):
-    """Remove account bio"""
-    try:
-        from telethon.tl.functions.account import UpdateProfileRequest
-        await client(UpdateProfileRequest(about=""))
         return True, None
     except Exception as e:
         return False, str(e)
 
 
 async def change_password(client, existing_pwd, new_pwd):
-    """Change or set 2FA cloud password using Telethon's edit_2fa method"""
     try:
-        # Use Telethon's built-in edit_2fa which handles all the complexity
-        if existing_pwd:
-            # Change existing password
-            await client.edit_2fa(current_password=existing_pwd, new_password=new_pwd)
-        else:
-            # Set new password for first time (no existing password)
-            await client.edit_2fa(new_password=new_pwd)
+        from telethon.tl.functions.account import UpdatePasswordSettingsRequest, GetPasswordRequest
+        from telethon.password import compute_check
+        pwd = await client(GetPasswordRequest())
+        check = compute_check(pwd, existing_pwd) if pwd.has_password and existing_pwd else None
+        from telethon.tl.types.account import PasswordInputSettings
+        new_settings = PasswordInputSettings(new_algo=pwd.new_algo, new_password_hash=new_pwd.encode())
+        await client(UpdatePasswordSettingsRequest(password=check, new_settings=new_settings))
         return True, None
     except Exception as e:
-        error_str = str(e).lower()
-        if "password" in error_str and "invalid" in error_str:
-            return False, "Invalid current password"
-        elif "flood" in error_str:
-            return False, "Too many attempts, try again later"
         return False, str(e)
 
 
@@ -2796,13 +2519,7 @@ async def process_single_task(task):
             client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [PRIVACY] Updating for {phone}...")
-                success, error = await update_privacy(
-                    client, 
-                    task_data.get("hidePhone", False), 
-                    task_data.get("hideLastSeen", False), 
-                    task_data.get("disableCalls", False),
-                    task_data.get("hideProfilePhoto", False)
-                )
+                success, error = await update_privacy(client, task_data.get("hidePhone", False), task_data.get("hideLastSeen", False), task_data.get("disableCalls", False))
                 await report_result("privacy_settings", {"task_id": task_id, "account_id": account_id, "success": success, "error": error})
         
         elif task_type == "change_password":
@@ -2867,37 +2584,6 @@ async def process_single_task(task):
             except Exception as e:
                 await report_result("sync_profile", {"task_id": task_id, "account_id": account_id, "success": False, "error": str(e)})
                 print(f"    Error: {e}")
-        
-        elif task_type == "change_username":
-            client = await get_or_create_client(account, task_proxy=task_proxy)
-            if client:
-                action = task_data.get("action", "set")  # "set" or "remove"
-                username = task_data.get("username", "")
-                print(f"  [USERNAME] {action} for {phone}...")
-                success, error, final_username = await change_username(client, action, username)
-                await report_result("change_username", {
-                    "task_id": task_id, 
-                    "account_id": account_id, 
-                    "success": success, 
-                    "error": error,
-                    "username": final_username,
-                    "action": action
-                })
-                if success:
-                    print(f"    Username {action}: {final_username or 'removed'}")
-                else:
-                    print(f"    Failed: {error}")
-        
-        elif task_type == "remove_bio":
-            client = await get_or_create_client(account, task_proxy=task_proxy)
-            if client:
-                print(f"  [BIO] Removing bio for {phone}...")
-                success, error = await remove_bio(client)
-                await report_result("remove_bio", {"task_id": task_id, "account_id": account_id, "success": success, "error": error})
-                if success:
-                    print(f"    Bio removed")
-                else:
-                    print(f"    Failed: {error}")
     
     except Exception as e:
         # CRITICAL: Report failure to backend so task doesn't stay stuck in "in_progress"
@@ -2962,14 +2648,45 @@ async def run_task_with_timeout(task: dict):
         await report_task_failure(task_type, task_id, account_id, str(e))
 
 
+_http_client = None
+
+async def get_http_client():
+    """Reuse a single HTTP client to avoid socket/resource leaks on some systems."""
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=120.0)
+    return _http_client
+
+
+async def get_batch_tasks(runner="account", batch_size=20):
+    """Get a batch of tasks for parallel processing"""
+    try:
+        client = await get_http_client()
+        resp = await client.post(
+            f"{BACKEND_URL}/get-batch-tasks",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json={"runner": runner, "batch_size": batch_size},
+            timeout=120.0,
+        )
+
+        if resp.status_code != 200:
+            print(f"[HTTP ERROR] get_batch_tasks: status={resp.status_code} body={resp.text[:200]}")
+            return {"tasks": [], "delay_after": 5}
+
+        return resp.json()
+    except Exception as e:
+        print(f"[HTTP ERROR] get_batch_tasks: {type(e).__name__}: {repr(e)}")
+        return {"tasks": [], "delay_after": 5}
+
+
 async def send_heartbeat():
     """Send heartbeat to register this runner.
     Note: get-batch-tasks already records a heartbeat, so this is a backup 
     for when we're idle. Use a longer timeout to reduce noise.
     """
     try:
-        http = get_http_client()
-        await http.post(
+        client = await get_http_client()
+        await client.post(
             f"{BACKEND_URL}/get-batch-tasks",
             headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
             json={"runner": "account", "batch_size": 0},  # batch_size=0 = heartbeat only
@@ -3024,6 +2741,15 @@ async def main_loop():
             print(f"[ERROR] {e}")
             await asyncio.sleep(5)
     
+    # Close shared HTTP client (prevents hangs after many polls on some systems)
+    global _http_client
+    try:
+        if _http_client is not None:
+            await _http_client.aclose()
+            _http_client = None
+    except:
+        pass
+
     await shutdown_all()
 
 

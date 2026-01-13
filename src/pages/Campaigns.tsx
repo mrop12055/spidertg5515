@@ -87,7 +87,7 @@ interface Seat {
 }
 
 const Campaigns: React.FC = () => {
-  const { campaigns, accounts, createCampaign, updateCampaign, deleteCampaign, uploadRecipients, startCampaign, isLoading, refreshData, refreshCampaigns } = useTelegram();
+  const { campaigns, accounts, createCampaign, updateCampaign, deleteCampaign, uploadRecipients, startCampaign, isLoading, refreshData } = useTelegram();
   const { settings: appSettings, updateSettings: updateAppSettings, saveSetting, fetchSettings, isLoading: isLoadingSettings, isSaving } = useAppSettings();
   
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -681,8 +681,8 @@ const Campaigns: React.FC = () => {
       }
     }
     
-    refreshCampaigns();
-  }, [createCampaign, uploadRecipients, refreshCampaigns]);
+    refreshData();
+  }, [createCampaign, uploadRecipients, refreshData]);
 
   // Normalize recipient - handles phone numbers OR usernames
   const normalizeRecipient = (input: string): { identifier: string; isUsername: boolean } => {
@@ -741,8 +741,8 @@ const Campaigns: React.FC = () => {
     // Toast is already shown by context, just close the dialog
     setRecipientText('');
     setIsUploadOpen(false);
-    refreshCampaigns();
-  }, [selectedCampaignId, recipientText, uploadRecipients, refreshCampaigns]);
+    refreshData();
+  }, [selectedCampaignId, recipientText, uploadRecipients, refreshData]);
 
   const handleStartCampaign = async (campaignId: string) => {
     setIsStarting(campaignId);

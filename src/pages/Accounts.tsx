@@ -1,4 +1,3 @@
-// Accounts page - manages Telegram accounts
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -80,7 +79,7 @@ const GROUP_COLORS = [
 
 const Accounts: React.FC = () => {
   const { 
-    accounts, proxies, refreshData, refreshAccounts, refreshProxies, isLoading, 
+    accounts, proxies, refreshData, isLoading, 
     accountTasksProgress, setAccountTasksProgress, isAccountTaskRunning, setIsAccountTaskRunning, 
     showAccountTaskLogs, setShowAccountTaskLogs, accountTaskHistory, setAccountTaskHistory
   } = useTelegram();
@@ -89,11 +88,9 @@ const Accounts: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isUploading, setIsUploading] = useState(false);
   const [sessionFiles, setSessionFiles] = useState<SessionFile[]>([]);
-  const [uploadResults, setUploadResults] = useState<{ successful: number; failed: number; proxiesAssigned?: number } | null>(null);
+  const [uploadResults, setUploadResults] = useState<{ successful: number; failed: number } | null>(null);
   const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
   const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
-  const [autoAssignProxy, setAutoAssignProxy] = useState(true); // Auto-assign proxy during upload
-  const [generateFingerprint, setGenerateFingerprint] = useState(true); // Auto-generate fingerprint (always true)
   
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -133,18 +130,8 @@ const Accounts: React.FC = () => {
   const [privacySettings, setPrivacySettings] = useState({
     hidePhone: false,
     hideLastSeen: false,
-    hideProfilePhoto: false,
     disableCalls: false,
   });
-  
-  // Username dialog
-  const [isUsernameDialogOpen, setIsUsernameDialogOpen] = useState(false);
-  const [usernameInput, setUsernameInput] = useState('');
-  const [usernameAction, setUsernameAction] = useState<'set' | 'remove'>('set');
-  
-  // Bio dialog
-  const [isBioDialogOpen, setIsBioDialogOpen] = useState(false);
-  const [bioAction, setBioAction] = useState<'remove'>('remove');
   
   // Password dialog
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
@@ -200,12 +187,6 @@ const Accounts: React.FC = () => {
             return;
           }
           
-          // Skip realtime updates during task operations to avoid double refreshes
-          // The task subscription handles its own refreshes
-          if (isAccountTaskRunning) {
-            return;
-          }
-          
           console.log('Account change detected:', payload.eventType);
           
           // Debounce refresh calls to prevent rapid fire
@@ -213,7 +194,7 @@ const Accounts: React.FC = () => {
             clearTimeout(realtimeRefreshRef.current);
           }
           realtimeRefreshRef.current = setTimeout(() => {
-            refreshAccounts();
+            refreshData();
           }, 500); // Wait 500ms before refreshing
         }
       )
@@ -230,7 +211,7 @@ const Accounts: React.FC = () => {
       }
       supabase.removeChannel(channel);
     };
-  }, [refreshAccounts, isAccountTaskRunning]);
+  }, [refreshData]);
 
   
   // Realtime subscription for SpamBot check tasks
@@ -260,7 +241,7 @@ const Accounts: React.FC = () => {
                 
                 setIsSpamBotChecking(false);
                 toast.success(`SpamBot check: ${successCount} OK, ${failedCount} failed, ${skippedCount} skipped`);
-                refreshAccounts();
+                refreshData();
               }
               
               return { ...prev, completed: processed, results: newResults };
@@ -273,28 +254,10 @@ const Accounts: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isSpamBotChecking, refreshAccounts]);
+  }, [isSpamBotChecking, refreshData]);
   
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
-  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile', 'change_username', 'remove_bio', 'spambot_check'];
-  
-  // Debounce ref for task-triggered refreshes
-  const taskRefreshRef = useRef<NodeJS.Timeout | null>(null);
-  const pendingRefreshCount = useRef(0);
-  
-  // Create a stable map of account IDs to phone numbers for log lookup
-  const accountPhoneMapRef = useRef<Map<string, string>>(new Map());
-  
-  // Keep the map updated when accounts change
-  useEffect(() => {
-    const newMap = new Map<string, string>();
-    accounts.forEach(acc => {
-      if (acc.id && acc.phoneNumber) {
-        newMap.set(acc.id, acc.phoneNumber);
-      }
-    });
-    accountPhoneMapRef.current = newMap;
-  }, [accounts]);
+  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
   
   useEffect(() => {
     if (!isAccountTaskRunning) return;
@@ -304,86 +267,35 @@ const Accounts: React.FC = () => {
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'account_check_tasks' },
-        async (payload) => {
+        (payload) => {
           const task = payload.new as any;
           if (task && ACCOUNT_TASK_TYPES.includes(task.task_type) && (task.status === 'completed' || task.status === 'failed')) {
-            // First try local map, then fallback to a quick DB lookup
-            let accountPhone = accountPhoneMapRef.current.get(task.account_id);
-            
-            // If not found in local cache, fetch from DB
-            if (!accountPhone) {
-              const { data: accountData } = await supabase
-                .from('telegram_accounts')
-                .select('phone_number')
-                .eq('id', task.account_id)
-                .single();
-              accountPhone = accountData?.phone_number || task.account_id.slice(0, 8) + '...';
-              // Cache for future lookups
-              if (accountData?.phone_number) {
-                accountPhoneMapRef.current.set(task.account_id, accountData.phone_number);
-              }
-            }
-            
-            // For sync_profile, show more meaningful result
-            let displayResult = task.result;
-            if (task.task_type === 'sync_profile' && task.status === 'completed') {
-              displayResult = 'Synced';
-            }
-            
+            const account = accounts.find(a => a.id === task.account_id);
             const logEntry = {
               id: task.id,
               taskType: task.task_type,
-              accountPhone: accountPhone,
+              accountPhone: account?.phoneNumber || task.account_id,
               status: task.status as 'completed' | 'failed',
-              result: displayResult,
+              result: task.result,
               timestamp: new Date(),
             };
             
+            // For sync_profile, refresh immediately on each completion to update UI
+            if (task.task_type === 'sync_profile' && task.status === 'completed') {
+              refreshData();
+            }
+            
             setAccountTasksProgress(prev => {
-              // Check if this log already exists (avoid duplicates from realtime updates)
-              const existingLogIndex = prev.logs.findIndex(log => log.id === task.id);
-              
-              let newLogs: typeof prev.logs;
-              let newCompleted = prev.completed;
-              let newFailed = prev.failed;
-              
-              if (existingLogIndex >= 0) {
-                // Log already exists, update it in place but don't increment counters
-                newLogs = [...prev.logs];
-                newLogs[existingLogIndex] = logEntry;
-              } else {
-                // New log, add to beginning and increment counters
-                newLogs = [logEntry, ...prev.logs].slice(0, 100);
-                newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
-                newFailed = task.status === 'failed' ? prev.failed + 1 : prev.failed;
-              }
-              
+              const newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
+              const newFailed = task.status === 'failed' ? prev.failed + 1 : prev.failed;
+              const newLogs = [logEntry, ...prev.logs].slice(0, 100);
               const nowIso = new Date().toISOString();
-              const allDone = newCompleted + newFailed >= prev.total;
               
               // Check if all done
-              if (allDone) {
+              if (newCompleted + newFailed >= prev.total) {
                 setIsAccountTaskRunning(false);
                 toast.success(`${prev.taskType} complete: ${newCompleted} success, ${newFailed} failed`);
-                // Single refresh at the end - debounced
-                if (taskRefreshRef.current) {
-                  clearTimeout(taskRefreshRef.current);
-                }
-                taskRefreshRef.current = setTimeout(() => {
-                  refreshAccounts();
-                  pendingRefreshCount.current = 0;
-                }, 300);
-              } else if (task.task_type === 'sync_profile' && task.status === 'completed') {
-                // For sync_profile, debounce refreshes to avoid rapid-fire updates
-                pendingRefreshCount.current++;
-                if (taskRefreshRef.current) {
-                  clearTimeout(taskRefreshRef.current);
-                }
-                // Wait for batch of updates before refreshing
-                taskRefreshRef.current = setTimeout(() => {
-                  refreshAccounts();
-                  pendingRefreshCount.current = 0;
-                }, 800); // Longer debounce for mid-task updates
+                refreshData();
               }
               
               return {
@@ -395,16 +307,8 @@ const Accounts: React.FC = () => {
               };
             });
             
-            // Also add to history (avoid duplicates)
-            setAccountTaskHistory(prev => {
-              const existingIndex = prev.findIndex(h => h.id === task.id);
-              if (existingIndex >= 0) {
-                const updated = [...prev];
-                updated[existingIndex] = logEntry;
-                return updated;
-              }
-              return [logEntry, ...prev].slice(0, 200);
-            });
+            // Also add to history
+            setAccountTaskHistory(prev => [logEntry, ...prev].slice(0, 200));
           }
         }
       )
@@ -412,11 +316,8 @@ const Accounts: React.FC = () => {
 
     return () => {
       supabase.removeChannel(channel);
-      if (taskRefreshRef.current) {
-        clearTimeout(taskRefreshRef.current);
-      }
     };
-  }, [isAccountTaskRunning, refreshAccounts]);
+  }, [isAccountTaskRunning, accounts, refreshData]);
 
   // Watchdog: if the UI says "processing" but no tasks exist (or nothing is being picked up), stop and show a clear reason.
   useEffect(() => {
@@ -647,53 +548,48 @@ const Accounts: React.FC = () => {
       }
 
       const { data, error } = await supabase.functions.invoke('process-account-upload', {
-        body: { 
-          accounts: accountsToUpload, 
-          tags: tagsToAssign,
-          auto_assign_proxy: autoAssignProxy,
-          generate_fingerprint: generateFingerprint
-        }
+        body: { accounts: accountsToUpload, tags: tagsToAssign }
       });
 
       if (error) throw error;
 
-      const results = {
+      setUploadResults({
         successful: data.successful || 0,
         failed: data.failed || 0,
-        proxiesAssigned: data.proxies_assigned || 0,
-      };
-      
-      setUploadResults(results);
+      });
 
-      if (results.successful > 0) {
-        toast.success(`Uploaded ${results.successful} account(s)${results.proxiesAssigned ? `, ${results.proxiesAssigned} proxies assigned` : ''}`);
+      if (data.successful > 0) {
+        toast.success(`Uploaded ${data.successful} account(s) - verifying...`);
         
-        // Close dialog immediately on success
+        // Auto-verify after upload
+        if (data.account_ids && data.account_ids.length > 0) {
+          setTimeout(async () => {
+            try {
+              const { data: verifyData } = await supabase.functions.invoke('verify-sessions', {
+                body: { account_ids: data.account_ids }
+              });
+              if (verifyData?.summary) {
+                toast.success(`Verified: ${verifyData.summary.valid || 0} active, ${verifyData.summary.invalid || 0} invalid`);
+              }
+              refreshData();
+            } catch (e) {
+              console.error('Auto-verify error:', e);
+            }
+          }, 1000);
+        }
+      }
+      if (data.failed > 0) {
+        toast.error(`${data.failed} account(s) failed`);
+      }
+
+      if (data.successful > 0 && data.failed === 0) {
         setSessionFiles([]);
         setUploadTags([]);
         setNewUploadTag('');
         setIsAddOpen(false);
-        
-        // Refresh accounts only (fast, non-blocking)
-        refreshAccounts();
-        
-        // Auto-verify in background if accounts were added
-        if (data.account_ids && data.account_ids.length > 0) {
-          // Fire and forget - don't wait
-          supabase.functions.invoke('verify-sessions', {
-            body: { account_ids: data.account_ids }
-          }).then(({ data: verifyData }) => {
-            if (verifyData?.summary) {
-              toast.success(`Verified: ${verifyData.summary.valid || 0} active, ${verifyData.summary.invalid || 0} invalid`);
-              refreshAccounts();
-            }
-          }).catch(e => console.error('Auto-verify error:', e));
-        }
       }
       
-      if (results.failed > 0) {
-        toast.error(`${results.failed} account(s) failed`);
-      }
+      refreshData();
     } catch (error) {
       console.error('Error uploading accounts:', error);
       toast.error('Failed to upload accounts');
@@ -711,7 +607,7 @@ const Accounts: React.FC = () => {
 
       if (error) throw error;
       toast.success('Account deleted');
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error deleting account:', error);
       toast.error('Failed to delete account');
@@ -727,7 +623,7 @@ const Accounts: React.FC = () => {
 
       if (error) throw error;
       toast.success(proxyId ? 'Proxy assigned' : 'Proxy removed');
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error updating proxy:', error);
       toast.error('Failed to update proxy');
@@ -795,7 +691,7 @@ const Accounts: React.FC = () => {
       
       toast.success(`Deleted ${selectedIds.size} account(s)`);
       setSelectedIds(new Set());
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error bulk deleting:', error);
       toast.error('Failed to delete accounts: ' + (error as Error).message);
@@ -872,12 +768,6 @@ const Accounts: React.FC = () => {
           return 'logout_sessions';
         case 'Sync Profile':
           return 'sync_profile';
-        case 'Change Username':
-          return 'change_username';
-        case 'Remove Bio':
-          return 'remove_bio';
-        case 'SpamBot Check':
-          return 'spambot_check';
         default:
           return undefined;
       }
@@ -1210,83 +1100,6 @@ const Accounts: React.FC = () => {
     }
   };
 
-  // Change username - creates tasks for Python to process
-  const handleChangeUsername = async () => {
-    if (selectedIds.size === 0) return;
-    
-    try {
-      const accountIds = Array.from(selectedIds);
-      
-      // Delete any existing pending change_username tasks for these accounts
-      await supabase
-        .from('account_check_tasks')
-        .delete()
-        .in('account_id', accountIds)
-        .eq('task_type', 'change_username')
-        .in('status', ['pending', 'in_progress']);
-      
-      const tasks = accountIds.map(accountId => ({
-        account_id: accountId,
-        task_type: 'change_username',
-        status: 'pending',
-        result: JSON.stringify({ 
-          action: usernameAction,
-          username: usernameAction === 'set' ? usernameInput.trim() : null
-        }),
-      }));
-      
-      const { error } = await supabase
-        .from('account_check_tasks')
-        .insert(tasks);
-      
-      if (error) throw error;
-      
-      startAccountTaskTracking('Change Username', selectedIds.size);
-      toast.info(`Queued username ${usernameAction === 'set' ? 'change' : 'removal'} for ${selectedIds.size} account(s)`);
-      setIsUsernameDialogOpen(false);
-      setUsernameInput('');
-    } catch (error) {
-      console.error('Error queuing username change:', error);
-      toast.error('Failed to queue username change');
-    }
-  };
-
-  // Remove bio - creates tasks for Python to process
-  const handleRemoveBio = async () => {
-    if (selectedIds.size === 0) return;
-    
-    try {
-      const accountIds = Array.from(selectedIds);
-      
-      // Delete any existing pending remove_bio tasks for these accounts
-      await supabase
-        .from('account_check_tasks')
-        .delete()
-        .in('account_id', accountIds)
-        .eq('task_type', 'remove_bio')
-        .in('status', ['pending', 'in_progress']);
-      
-      const tasks = accountIds.map(accountId => ({
-        account_id: accountId,
-        task_type: 'remove_bio',
-        status: 'pending',
-      }));
-      
-      const { error } = await supabase
-        .from('account_check_tasks')
-        .insert(tasks);
-      
-      if (error) throw error;
-      
-      startAccountTaskTracking('Remove Bio', selectedIds.size);
-      toast.info(`Queued bio removal for ${selectedIds.size} account(s)`);
-      setIsBioDialogOpen(false);
-    } catch (error) {
-      console.error('Error queuing bio removal:', error);
-      toast.error('Failed to queue bio removal');
-    }
-  };
-
   // Create groups from selected accounts with specified size
   const handleCreateGroups = () => {
     if (selectedIds.size === 0 || !newGroupName.trim()) return;
@@ -1361,7 +1174,7 @@ const Accounts: React.FC = () => {
       
       setIsBulkProxyOpen(false);
       setSelectedIds(new Set());
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error assigning proxies:', error);
       toast.error('Failed to assign proxies');
@@ -1486,7 +1299,7 @@ const Accounts: React.FC = () => {
       }
       
       toast.success('Proxy removed from account');
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error removing proxy:', error);
       toast.error('Failed to remove proxy');
@@ -1519,7 +1332,7 @@ const Accounts: React.FC = () => {
 
       setVerifyResults(new Map(newResults));
       toast.success(`Verified: ${data.summary?.valid || 0} active, ${data.summary?.invalid || 0} invalid`);
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error checking accounts:', error);
       toast.error('Failed to verify accounts');
@@ -1573,7 +1386,7 @@ const Accounts: React.FC = () => {
       setIsTagDialogOpen(false);
       setNewTagName('');
       setSelectedTagsForBulk([]);
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error assigning tags:', error);
       toast.error('Failed to assign tags');
@@ -1598,7 +1411,7 @@ const Accounts: React.FC = () => {
       
       toast.success(`Removed all tags from ${selectedIds.size} account(s)`);
       setSelectedIds(new Set());
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error removing tags:', error);
       toast.error('Failed to remove tags');
@@ -1637,7 +1450,7 @@ const Accounts: React.FC = () => {
       
       toast.success(`Removed proxy from ${accountsWithProxy.length} account(s)`);
       setSelectedIds(new Set());
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error removing proxies:', error);
       toast.error('Failed to remove proxies');
@@ -1694,7 +1507,7 @@ const Accounts: React.FC = () => {
         .eq('id', accountId);
       
       toast.success('Tag removed');
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error removing tag:', error);
       toast.error('Failed to remove tag');
@@ -1729,7 +1542,7 @@ const Accounts: React.FC = () => {
       toast.success(`Tag renamed from "${oldTagName}" to "${newTagValue}" on ${accountsWithTag.length} account(s)`);
       setEditingTagName('');
       setEditedTagValue('');
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error renaming tag:', error);
       toast.error('Failed to rename tag');
@@ -1760,7 +1573,7 @@ const Accounts: React.FC = () => {
       setEditingTagName('');
       setEditedTagValue('');
       setSelectedTagsForBulk(prev => prev.filter(t => t !== tagToDelete));
-      refreshAccounts();
+      refreshData();
     } catch (error) {
       console.error('Error deleting tag:', error);
       toast.error('Failed to delete tag');
@@ -2332,7 +2145,15 @@ const Accounts: React.FC = () => {
                 <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
                 Refresh
               </Button>
-              <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+              <Dialog open={isAddOpen} onOpenChange={(open) => {
+                setIsAddOpen(open);
+                if (!open) {
+                  setSessionFiles([]);
+                  setUploadResults(null);
+                  setUploadTags([]);
+                  setNewUploadTag('');
+                }
+              }}>
                 <DialogTrigger asChild>
                   <Button size="sm" className="gap-2">
                     <Plus className="w-4 h-4" />
@@ -2384,15 +2205,10 @@ const Accounts: React.FC = () => {
                     )}
 
                     {uploadResults && (
-                      <div className="flex items-center flex-wrap gap-4 p-3 rounded-lg bg-muted/50 text-sm">
+                      <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 text-sm">
                         <span className="flex items-center gap-1 text-status-active">
                           <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
                         </span>
-                        {uploadResults.proxiesAssigned && uploadResults.proxiesAssigned > 0 && (
-                          <span className="flex items-center gap-1 text-blue-500">
-                            <Globe className="w-4 h-4" /> {uploadResults.proxiesAssigned} proxies assigned
-                          </span>
-                        )}
                         {uploadResults.failed > 0 && (
                           <span className="flex items-center gap-1 text-destructive">
                             <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
@@ -2402,117 +2218,51 @@ const Accounts: React.FC = () => {
                     )}
 
                     {sessionFiles.length > 0 && (
-                      <>
-                        {/* Auto-assign options */}
-                        <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
-                          <div className="flex items-center gap-2 text-sm font-medium">
-                            <Settings className="w-4 h-4" />
-                            Setup Options
-                          </div>
-                          
-                          <div className="space-y-3">
-                            {/* Auto-assign Proxy */}
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <Globe className="w-4 h-4 text-muted-foreground" />
-                                <div>
-                                  <p className="text-sm font-medium">Auto-assign Proxy</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Assign available proxy to each account ({proxies.filter(p => p.status === 'active').length} active proxies)
-                                  </p>
-                                </div>
-                              </div>
-                              <Switch
-                                checked={autoAssignProxy}
-                                onCheckedChange={setAutoAssignProxy}
-                              />
-                            </div>
-                            
-                            {/* Generate Fingerprint (always on, just informational) */}
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-2">
-                                <Smartphone className="w-4 h-4 text-muted-foreground" />
-                                <div>
-                                  <p className="text-sm font-medium">Generate Fingerprint</p>
-                                  <p className="text-xs text-muted-foreground">
-                                    Unique device fingerprint (auto-generated)
-                                  </p>
-                                </div>
-                              </div>
-                              <Badge variant="outline" className="text-xs">
-                                <CheckCircle2 className="w-3 h-3 mr-1 text-status-active" />
-                                Auto
+                      <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Tag className="w-4 h-4" />
+                          Assign Tags (Optional)
+                        </div>
+                        {availableTags.length > 0 && (
+                          <div className="flex flex-wrap gap-2">
+                            {availableTags.map(tag => (
+                              <Badge
+                                key={tag}
+                                variant={uploadTags.includes(tag) ? "default" : "outline"}
+                                className="cursor-pointer"
+                                onClick={() => {
+                                  if (uploadTags.includes(tag)) {
+                                    setUploadTags(prev => prev.filter(t => t !== tag));
+                                  } else {
+                                    setUploadTags(prev => [...prev, tag]);
+                                  }
+                                }}
+                              >
+                                <Tag className="w-3 h-3 mr-1" />
+                                {tag}
+                                {uploadTags.includes(tag) && <Check className="w-3 h-3 ml-1" />}
                               </Badge>
-                            </div>
+                            ))}
                           </div>
-                          
-                          {autoAssignProxy && proxies.filter(p => p.status === 'active' && !p.assignedAccountId).length < sessionFiles.length && (
-                            <div className="flex items-center gap-2 p-2 rounded bg-yellow-500/10 text-yellow-600 text-xs">
-                              <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                              <span>
-                                {proxies.filter(p => p.status === 'active' && !p.assignedAccountId).length} unassigned proxies available. 
-                                Some accounts may share proxies.
-                              </span>
-                            </div>
-                          )}
+                        )}
+                        <div className="flex gap-2">
+                          <Input
+                            placeholder="Or enter new tag name..."
+                            value={newUploadTag}
+                            onChange={(e) => setNewUploadTag(e.target.value)}
+                            className="h-8 text-sm"
+                          />
                         </div>
-
-                        {/* Tags section */}
-                        <div className="space-y-3 p-3 rounded-lg border bg-muted/30">
-                          <div className="flex items-center gap-2 text-sm font-medium">
-                            <Tag className="w-4 h-4" />
-                            Assign Tags (Optional)
-                          </div>
-                          {availableTags.length > 0 && (
-                            <div className="flex flex-wrap gap-2">
-                              {availableTags.map(tag => (
-                                <Badge
-                                  key={tag}
-                                  variant={uploadTags.includes(tag) ? "default" : "outline"}
-                                  className="cursor-pointer"
-                                  onClick={() => {
-                                    if (uploadTags.includes(tag)) {
-                                      setUploadTags(prev => prev.filter(t => t !== tag));
-                                    } else {
-                                      setUploadTags(prev => [...prev, tag]);
-                                    }
-                                  }}
-                                >
-                                  <Tag className="w-3 h-3 mr-1" />
-                                  {tag}
-                                  {uploadTags.includes(tag) && <Check className="w-3 h-3 ml-1" />}
-                                </Badge>
-                              ))}
-                            </div>
-                          )}
-                          <div className="flex gap-2">
-                            <Input
-                              placeholder="Or enter new tag name..."
-                              value={newUploadTag}
-                              onChange={(e) => setNewUploadTag(e.target.value)}
-                              className="h-8 text-sm"
-                            />
-                          </div>
-                          {(uploadTags.length > 0 || newUploadTag.trim()) && (
-                            <p className="text-xs text-muted-foreground">
-                              {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
-                            </p>
-                          )}
-                        </div>
-                      </>
+                        {(uploadTags.length > 0 || newUploadTag.trim()) && (
+                          <p className="text-xs text-muted-foreground">
+                            {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
+                          </p>
+                        )}
+                      </div>
                     )}
 
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => {
-                        setIsAddOpen(false);
-                        // Reset state after close animation
-                        setTimeout(() => {
-                          setSessionFiles([]);
-                          setUploadResults(null);
-                          setUploadTags([]);
-                          setNewUploadTag('');
-                        }, 150);
-                      }}>Cancel</Button>
+                      <Button variant="outline" onClick={() => setIsAddOpen(false)}>Cancel</Button>
                       <Button onClick={handleUploadSessions} disabled={isUploading || sessionFiles.length === 0}>
                         {isUploading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Upload className="w-4 h-4 mr-2" />}
                         Upload {sessionFiles.length} Account{sessionFiles.length !== 1 ? 's' : ''}
@@ -2574,10 +2324,11 @@ const Accounts: React.FC = () => {
               </Button>
               
               
-              <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting || selectedIds.size === 0} className="gap-1.5">
-                {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                Export
+              <Button variant="outline" size="sm" onClick={handleSpamBotCheck} disabled={isSpamBotChecking || selectedIds.size === 0} className="gap-1.5">
+                <Shield className="w-3.5 h-3.5" />
+                SpamBot
               </Button>
+              
               <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting || selectedIds.size === 0} className="gap-1.5">
                 {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
                 Export
@@ -2597,34 +2348,21 @@ const Accounts: React.FC = () => {
                     <UserCircle className="w-4 h-4 mr-2" />
                     Change Name
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setIsUsernameDialogOpen(true)}>
-                    <Users className="w-4 h-4 mr-2" />
-                    Change Username
-                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => { setIsProfilePicOpen(true); fetchPictureTags(); }}>
                     <Image className="w-4 h-4 mr-2" />
                     Change Profile Picture
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setIsBioDialogOpen(true)} className="text-orange-600">
-                    <X className="w-4 h-4 mr-2" />
-                    Remove Bio
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
                     <EyeOff className="w-4 h-4 mr-2" />
                     Privacy Settings
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setIsPasswordDialogOpen(true)}>
                     <Lock className="w-4 h-4 mr-2" />
-                    Change 2FA Password
+                    Change Password
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={handleLogoutOtherSessions}>
                     <LogOut className="w-4 h-4 mr-2" />
                     Logout Other Sessions
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleSpamBotCheck} disabled={isSpamBotChecking}>
-                    <Bot className="w-4 h-4 mr-2" />
-                    SpamBot Check
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
@@ -3352,7 +3090,7 @@ const Accounts: React.FC = () => {
                     <Phone className="w-4 h-4 text-muted-foreground" />
                     <div>
                       <p className="font-medium text-sm">Hide Phone Number</p>
-                      <p className="text-xs text-muted-foreground">Nobody can see your phone number</p>
+                      <p className="text-xs text-muted-foreground">Only contacts can see your number</p>
                     </div>
                   </div>
                   <Switch
@@ -3372,20 +3110,6 @@ const Accounts: React.FC = () => {
                   <Switch
                     checked={privacySettings.hideLastSeen}
                     onCheckedChange={(c) => setPrivacySettings(p => ({ ...p, hideLastSeen: c }))}
-                  />
-                </div>
-                
-                <div className="flex items-center justify-between p-3 rounded-lg border">
-                  <div className="flex items-center gap-3">
-                    <Image className="w-4 h-4 text-muted-foreground" />
-                    <div>
-                      <p className="font-medium text-sm">Hide Profile Photo</p>
-                      <p className="text-xs text-muted-foreground">Nobody can see your profile picture</p>
-                    </div>
-                  </div>
-                  <Switch
-                    checked={privacySettings.hideProfilePhoto}
-                    onCheckedChange={(c) => setPrivacySettings(p => ({ ...p, hideProfilePhoto: c }))}
                   />
                 </div>
                 
@@ -3711,88 +3435,6 @@ const Accounts: React.FC = () => {
                 <Button onClick={handleBulkTagAssign} disabled={isTagAssigning || (selectedTagsForBulk.length === 0 && !newTagName.trim())}>
                   {isTagAssigning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Tag className="w-4 h-4 mr-2" />}
                   {isTagAssigning ? 'Assigning...' : tagAssignMode === 'replace' ? 'Replace Tags' : 'Add Tags'}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Username Change Dialog */}
-        <Dialog open={isUsernameDialogOpen} onOpenChange={setIsUsernameDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Change Username</DialogTitle>
-              <DialogDescription>
-                Set or update username for {selectedIds.size} account(s). If username is taken, a random suffix will be added.
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 pt-4">
-              <RadioGroup value={usernameAction} onValueChange={(v) => setUsernameAction(v as 'set' | 'remove')}>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="set" id="username-set" />
-                  <Label htmlFor="username-set">Set/Update username</Label>
-                </div>
-                <div className="flex items-center space-x-2">
-                  <RadioGroupItem value="remove" id="username-remove" />
-                  <Label htmlFor="username-remove" className="text-orange-600">Remove username</Label>
-                </div>
-              </RadioGroup>
-              
-              {usernameAction === 'set' && (
-                <div className="space-y-2">
-                  <Label>Username (without @)</Label>
-                  <Input
-                    placeholder="myusername"
-                    value={usernameInput}
-                    onChange={(e) => setUsernameInput(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    If already taken, will auto-append random numbers (e.g., myusername_7291)
-                  </p>
-                </div>
-              )}
-              
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => { setIsUsernameDialogOpen(false); setUsernameInput(''); }}>
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={handleChangeUsername}
-                  disabled={usernameAction === 'set' && !usernameInput.trim()}
-                >
-                  {usernameAction === 'set' ? 'Set Username' : 'Remove Username'}
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
-
-        {/* Remove Bio Dialog */}
-        <Dialog open={isBioDialogOpen} onOpenChange={setIsBioDialogOpen}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Remove Bio</DialogTitle>
-              <DialogDescription>
-                This will remove the bio/about text from {selectedIds.size} account(s).
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4 pt-4">
-              <div className="p-4 rounded-lg bg-orange-500/10 border border-orange-500/30">
-                <div className="flex items-center gap-3">
-                  <AlertTriangle className="w-5 h-5 text-orange-500" />
-                  <div>
-                    <p className="font-medium text-sm">This action will clear all bio text</p>
-                    <p className="text-xs text-muted-foreground">The bio/about section will be set to empty for all selected accounts.</p>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsBioDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button variant="destructive" onClick={handleRemoveBio}>
-                  Remove Bio
                 </Button>
               </div>
             </div>

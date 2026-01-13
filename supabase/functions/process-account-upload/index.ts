@@ -308,8 +308,6 @@ serve(async (req) => {
     
     const accounts: AccountData[] = body.accounts || [];
     const tags: string[] = body.tags || []; // Accept tags from request
-    const autoAssignProxy: boolean = body.auto_assign_proxy !== false; // Default true
-    const generateFingerprintFlag: boolean = body.generate_fingerprint !== false; // Default true
     
     if (!accounts.length) {
       return new Response(
@@ -318,7 +316,7 @@ serve(async (req) => {
       );
     }
 
-    console.log(`[process-account-upload] Processing ${accounts.length} accounts (auto_assign_proxy: ${autoAssignProxy})`);
+    console.log(`[process-account-upload] Processing ${accounts.length} accounts`);
 
     // Fetch API credentials for distribution
     const { data: apiCredentials } = await supabase
@@ -330,17 +328,6 @@ serve(async (req) => {
       console.log('[process-account-upload] No API credentials found - using default');
     } else {
       console.log(`[process-account-upload] Found ${apiCredentials.length} API credentials for distribution`);
-    }
-
-    // Fetch available proxies for auto-assignment
-    let availableProxies: { id: string; assigned_account_id: string | null }[] = [];
-    if (autoAssignProxy) {
-      const { data: proxiesData } = await supabase
-        .from('proxies')
-        .select('id, assigned_account_id')
-        .eq('status', 'active');
-      availableProxies = proxiesData || [];
-      console.log(`[process-account-upload] Found ${availableProxies.length} active proxies for assignment`);
     }
 
     // Fetch existing fingerprints to ensure uniqueness
@@ -362,8 +349,7 @@ serve(async (req) => {
       failed: 0,
       errors: [] as string[],
       accounts: [] as any[],
-      account_ids: [] as string[],
-      proxies_assigned: 0,
+      account_ids: [] as string[]
     };
 
     // Fetch all existing accounts in one query for faster lookup
@@ -539,79 +525,7 @@ serve(async (req) => {
       await Promise.all(updatePromises.slice(i, i + BATCH_SIZE));
     }
 
-    // ========== AUTO-ASSIGN PROXIES (BATCH) ==========
-    if (autoAssignProxy && results.account_ids.length > 0 && availableProxies.length > 0) {
-      console.log(`[process-account-upload] Auto-assigning proxies to ${results.account_ids.length} accounts...`);
-      
-      // Fetch accounts that don't have a proxy yet
-      const { data: accountsWithoutProxy } = await supabase
-        .from('telegram_accounts')
-        .select('id, phone_number')
-        .in('id', results.account_ids)
-        .is('proxy_id', null);
-      
-      if (accountsWithoutProxy && accountsWithoutProxy.length > 0) {
-        // Prefer unassigned proxies first
-        const unassignedProxies = availableProxies.filter(p => !p.assigned_account_id);
-        const allProxies = unassignedProxies.length > 0 ? unassignedProxies : availableProxies;
-        
-        console.log(`[process-account-upload] ${accountsWithoutProxy.length} accounts need proxies, ${allProxies.length} proxies available`);
-        
-        // Prepare batch assignments
-        const proxyAssignments: { accountId: string; proxyId: string; phone: string; isNewAssignment: boolean }[] = [];
-        
-        for (let i = 0; i < accountsWithoutProxy.length; i++) {
-          const account = accountsWithoutProxy[i];
-          const proxy = allProxies[i % allProxies.length];
-          proxyAssignments.push({
-            accountId: account.id,
-            proxyId: proxy.id,
-            phone: account.phone_number,
-            isNewAssignment: !proxy.assigned_account_id
-          });
-        }
-        
-        // Execute all proxy assignments in parallel batches of 50
-        const PROXY_BATCH_SIZE = 50;
-        for (let i = 0; i < proxyAssignments.length; i += PROXY_BATCH_SIZE) {
-          const batch = proxyAssignments.slice(i, i + PROXY_BATCH_SIZE);
-          
-          const batchPromises = batch.map(async ({ accountId, proxyId, phone, isNewAssignment }) => {
-            try {
-              // Update both in parallel
-              const updates = [
-                supabase
-                  .from('telegram_accounts')
-                  .update({ proxy_id: proxyId })
-                  .eq('id', accountId)
-              ];
-              
-              if (isNewAssignment) {
-                updates.push(
-                  supabase
-                    .from('proxies')
-                    .update({ assigned_account_id: accountId })
-                    .eq('id', proxyId)
-                );
-              }
-              
-              await Promise.all(updates);
-              return true;
-            } catch (e) {
-              console.error(`[process-account-upload] Failed to assign proxy to ${phone}:`, (e as Error).message);
-              return false;
-            }
-          });
-          
-          const batchResults = await Promise.all(batchPromises);
-          results.proxies_assigned += batchResults.filter(Boolean).length;
-        }
-        
-        console.log(`[process-account-upload] Batch assigned ${results.proxies_assigned} proxies`);
-      }
-    }
-
-    console.log(`[process-account-upload] Completed: ${results.successful} successful, ${results.failed} failed, ${results.proxies_assigned} proxies assigned`);
+    console.log(`[process-account-upload] Completed: ${results.successful} successful, ${results.failed} failed`);
 
     return new Response(
       JSON.stringify(results),

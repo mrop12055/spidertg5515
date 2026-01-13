@@ -6,44 +6,6 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Helper function to detect frozen account errors and mark account as frozen
-// Returns true if the account was frozen (caller should handle task failure)
-async function checkAndMarkFrozenAccount(supabase: any, accountId: string, errorMessage: string | null | undefined): Promise<boolean> {
-  if (!errorMessage || !accountId) return false;
-  
-  const errorLower = errorMessage.toLowerCase();
-  
-  // Detect frozen account patterns
-  const frozenPatterns = [
-    "frozen account",
-    "method that is not available for frozen",
-    "account is frozen",
-    "temporarily frozen",
-    "account has been frozen",
-  ];
-  
-  const isFrozen = frozenPatterns.some(pattern => errorLower.includes(pattern));
-  
-  if (isFrozen) {
-    console.log(`[report-task-result] 🥶 FROZEN ACCOUNT DETECTED for ${accountId}: "${errorMessage}"`);
-    
-    // Update account to frozen/inactive status - no restriction, just mark inactive
-    await supabase
-      .from("telegram_accounts")
-      .update({
-        status: "frozen",
-        ban_reason: errorMessage,
-        restricted_until: null,
-      })
-      .eq("id", accountId);
-    
-    console.log(`[report-task-result] Account ${accountId} marked as FROZEN (inactive)`);
-    return true;
-  }
-  
-  return false;
-}
-
 // Helper function to check and auto-complete campaigns when all recipients are processed
 async function checkAndAutoCompleteCampaign(supabase: any, campaignId: string) {
   try {
@@ -1259,11 +1221,6 @@ serve(async (req) => {
       case "change_name": {
         const { task_id, account_id, success, error, first_name, last_name } = result;
 
-        // Check for frozen account error
-        if (!success && error) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
-
         if (success) {
           // Update account name in database
           await supabase
@@ -1293,11 +1250,6 @@ serve(async (req) => {
       case "privacy_settings": {
         const { task_id, account_id, success, error } = result;
 
-        // Check for frozen account error
-        if (!success && error) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
-
         await supabase
           .from("account_check_tasks")
           .update({
@@ -1313,11 +1265,6 @@ serve(async (req) => {
 
       case "change_password": {
         const { task_id, account_id, success, error } = result;
-
-        // Check for frozen account error
-        if (!success && error) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
 
         await supabase
           .from("account_check_tasks")
@@ -1335,11 +1282,6 @@ serve(async (req) => {
       case "logout_sessions": {
         const { task_id, account_id, success, error } = result;
 
-        // Check for frozen account error
-        if (!success && error) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
-
         await supabase
           .from("account_check_tasks")
           .update({
@@ -1355,11 +1297,6 @@ serve(async (req) => {
 
       case "change_photo": {
         const { task_id, account_id, success, error, avatar_url } = result;
-
-        // Check for frozen account error
-        if (!success && error) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
 
         if (success && avatar_url) {
           await supabase
@@ -1386,11 +1323,6 @@ serve(async (req) => {
 
       case "sync_profile": {
         const { task_id, account_id, success, error, first_name, last_name, username, telegram_id, avatar_url } = result;
-
-        // Check for frozen account error
-        if (!success && error) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
 
         if (success) {
           // Update the account with synced profile data
@@ -1422,61 +1354,6 @@ serve(async (req) => {
           .eq("id", task_id);
 
         console.log(`[report-task-result] Profile sync ${success ? "completed" : "failed"} for ${account_id}`);
-        break;
-      }
-
-      case "change_username": {
-        const { task_id, account_id, success, error, username, action } = result;
-
-        // Check for frozen account error
-        if (!success && error) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
-
-        if (success) {
-          // Update account username in database
-          await supabase
-            .from("telegram_accounts")
-            .update({
-              username: action === "remove" ? null : username,
-              last_active: new Date().toISOString(),
-            })
-            .eq("id", account_id);
-        }
-
-        // Update task
-        await supabase
-          .from("account_check_tasks")
-          .update({
-            status: success ? "completed" : "failed",
-            result: success ? (action === "remove" ? "Username removed" : `Username set to @${username}`) : error,
-            completed_at: new Date().toISOString(),
-          })
-          .eq("id", task_id);
-
-        console.log(`[report-task-result] Username ${action} ${success ? "completed" : "failed"} for ${account_id}`);
-        break;
-      }
-
-      case "remove_bio": {
-        const { task_id, account_id, success, error } = result;
-
-        // Check for frozen account error
-        if (!success && error) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
-
-        // Update task
-        await supabase
-          .from("account_check_tasks")
-          .update({
-            status: success ? "completed" : "failed",
-            result: success ? "Bio removed" : error,
-            completed_at: new Date().toISOString(),
-          })
-          .eq("id", task_id);
-
-        console.log(`[report-task-result] Remove bio ${success ? "completed" : "failed"} for ${account_id}`);
         break;
       }
 
@@ -1570,11 +1447,6 @@ serve(async (req) => {
 
       case "warmup": {
         const { task_id, task_type: warmupType, account_id, success, error, channel } = result;
-
-        // Check for frozen account error
-        if (!success && error && account_id) {
-          await checkAndMarkFrozenAccount(supabase, account_id, error);
-        }
 
         // Check if it's an interaction task (from interaction_scheduler)
         if (warmupType === "interaction") {
@@ -1978,23 +1850,12 @@ serve(async (req) => {
 
           console.log(`[report-task-result] Warmup ${actualMessageType || 'chat'} sent successfully: ${task_id}`);
         } else {
-          // Check for frozen account error - if frozen, mark and handle specially
-          if (account_id && error) {
-            const wasFrozen = await checkAndMarkFrozenAccount(supabase, account_id, error);
-            if (wasFrozen) {
-              // Log the frozen error specifically
-              console.log(`[report-task-result] Warmup chat failed due to FROZEN account: ${account_id}`);
-            }
-          }
-
           // Determine the failure reason for the pair
           let pairFailedReason = error || "Unknown error";
           if (error_type === "proxy_error" || (error && error.toLowerCase().includes("proxy"))) {
             pairFailedReason = "Proxy error";
           } else if (error_type === "connection_error" || (error && (error.toLowerCase().includes("timeout") || error.toLowerCase().includes("connection")))) {
             pairFailedReason = "Connection error";
-          } else if (error && error.toLowerCase().includes("frozen")) {
-            pairFailedReason = "Account frozen";
           }
 
           // Mark message as failed with error message

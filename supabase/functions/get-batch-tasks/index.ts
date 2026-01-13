@@ -11,70 +11,6 @@ let MESSAGE_DELAY_MIN_SECONDS = 5;
 let MESSAGE_DELAY_MAX_SECONDS = 15;
 let DAILY_MESSAGE_LIMIT = 25;
 
-// Helper function to auto-assign a proxy to an account that doesn't have one
-async function autoAssignProxy(
-  supabase: any, 
-  accountId: string, 
-  phoneNumber: string
-): Promise<{ success: boolean; proxy?: any }> {
-  console.log(`[get-batch-tasks] Attempting to auto-assign proxy for account ${phoneNumber}`);
-  
-  // Find available active proxy (prefer unassigned ones)
-  const { data: availableProxies } = await supabase
-    .from("proxies")
-    .select("id, host, port, username, password, proxy_type")
-    .eq("status", "active")
-    .is("assigned_account_id", null)
-    .limit(5);
-  
-  let proxyPool = availableProxies || [];
-  
-  if (proxyPool.length === 0) {
-    // No unassigned proxies - find ANY active proxy (shared usage)
-    const { data: anyProxy } = await supabase
-      .from("proxies")
-      .select("id, host, port, username, password, proxy_type")
-      .eq("status", "active")
-      .limit(1);
-    
-    if (!anyProxy || anyProxy.length === 0) {
-      console.log(`[get-batch-tasks] NO PROXIES AVAILABLE for ${phoneNumber}`);
-      return { success: false };
-    }
-    proxyPool = anyProxy;
-  }
-  
-  // Pick random proxy from pool
-  const randomProxy = proxyPool[Math.floor(Math.random() * proxyPool.length)];
-  
-  // Assign to account
-  await supabase
-    .from("telegram_accounts")
-    .update({ proxy_id: randomProxy.id })
-    .eq("id", accountId);
-  
-  // Update proxy assignment
-  await supabase
-    .from("proxies")
-    .update({ assigned_account_id: accountId })
-    .eq("id", randomProxy.id);
-  
-  console.log(`[get-batch-tasks] AUTO-ASSIGNED proxy ${randomProxy.host}:${randomProxy.port} to ${phoneNumber}`);
-  
-  return { 
-    success: true, 
-    proxy: {
-      id: randomProxy.id,
-      host: randomProxy.host,
-      port: randomProxy.port,
-      username: randomProxy.username,
-      password: randomProxy.password,
-      proxy_type: randomProxy.proxy_type,
-      type: randomProxy.proxy_type,
-    }
-  };
-}
-
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -180,172 +116,6 @@ serve(async (req) => {
           }
         );
       }
-    }
-
-    // ACCOUNT RUNNER: Handle account management tasks BEFORE general account filtering
-    // Account tasks load their own accounts via join and have their own proxy/fingerprint checks
-    if (runner === "account") {
-      // Record heartbeat
-      supabase
-        .from("runner_heartbeats")
-        .upsert({
-          runner_name: "account",
-          last_seen: new Date().toISOString(),
-          status: 'online'
-        }, { onConflict: 'runner_name' })
-        .then(() => {});
-
-      const accountBatchSize = Math.min(batch_size, 20); // Max 20 parallel account tasks
-      
-      // Auto-recover stuck tasks (in_progress for more than 90 seconds)
-      const stuckCutoffIso = new Date(Date.now() - 90 * 1000).toISOString();
-      await supabase
-        .from("account_check_tasks")
-        .update({ status: "pending" })
-        .eq("status", "in_progress")
-        .lt("updated_at", stuckCutoffIso);
-      
-      // Get pending account tasks - fetch accounts via JOIN (no filtering by proxy/restriction)
-      const { data: checkTasks } = await supabase
-        .from("account_check_tasks")
-        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(*))")
-        .eq("status", "pending")
-        .in("task_type", [
-          "spambot_check",
-          "change_name",
-          "privacy_settings",
-          "change_password",
-          "logout_sessions",
-          "change_photo",
-          "sync_profile",
-          "verify_session",
-          "change_username",
-          "remove_bio",
-        ])
-        .order("created_at", { ascending: true })
-        .limit(accountBatchSize);
-
-      console.log(`[get-batch-tasks] Account runner: found ${checkTasks?.length || 0} pending tasks`);
-
-      if (checkTasks && checkTasks.length > 0) {
-        const tasks: any[] = [];
-        const claimIds: string[] = [];
-        const failIds: string[] = [];
-
-        for (const task of checkTasks as any[]) {
-          const accountData = task.telegram_accounts;
-          if (!accountData) {
-            failIds.push(task.id);
-            console.log(`[get-batch-tasks] SKIP account task ${task.id} - no account data`);
-            continue;
-          }
-
-          const apiCred = accountData.telegram_api_credentials;
-          let proxyData = accountData.proxies;
-
-          // CHECK 1: Fingerprint validation - skip if missing required fingerprint data
-          if (!accountData.device_model || !accountData.system_version || !accountData.app_version) {
-            console.log(`[get-batch-tasks] SKIP account task ${task.id} - MISSING FINGERPRINT for ${accountData.phone_number}`);
-            failIds.push(task.id);
-            continue;
-          }
-
-          // CHECK 2: Proxy validation - try to auto-assign if missing or inactive
-          if (!accountData.proxy_id || !proxyData || proxyData.status !== 'active') {
-            console.log(`[get-batch-tasks] Account ${accountData.phone_number} has no active proxy - attempting auto-assign...`);
-            const result = await autoAssignProxy(supabase, accountData.id, accountData.phone_number);
-            if (result.success && result.proxy) {
-              proxyData = result.proxy;
-            } else {
-              console.log(`[get-batch-tasks] SKIP account task ${task.id} - NO PROXY AVAILABLE for ${accountData.phone_number}`);
-              failIds.push(task.id);
-              continue;
-            }
-          }
-
-          claimIds.push(task.id);
-          tasks.push({
-            task: task.task_type,
-            task_id: task.id,
-            task_data: task.result ? JSON.parse(task.result) : {},
-            account: {
-              id: accountData.id,
-              phone_number: accountData.phone_number,
-              session_data: accountData.session_data,
-              device_model: accountData.device_model,
-              system_version: accountData.system_version,
-              app_version: accountData.app_version,
-              lang_code: accountData.lang_code,
-              system_lang_code: accountData.system_lang_code,
-              api_id: apiCred?.api_id || accountData.api_id,
-              api_hash: apiCred?.api_hash || accountData.api_hash,
-              proxy_id: accountData.proxy_id || proxyData.id,
-            },
-            proxy: {
-              host: proxyData.host,
-              port: proxyData.port,
-              username: proxyData.username,
-              password: proxyData.password,
-              proxy_type: proxyData.proxy_type,
-              type: proxyData.proxy_type,
-            },
-          });
-        }
-
-        if (failIds.length > 0) {
-          console.warn(`[get-batch-tasks] ${failIds.length} account tasks missing data; marking as failed`);
-          await supabase
-            .from("account_check_tasks")
-            .update({
-              status: "failed",
-              completed_at: nowIso,
-              result: "Task cannot be processed: missing account/fingerprint/proxy data",
-            })
-            .in("id", failIds);
-        }
-
-        if (claimIds.length === 0) {
-          return new Response(
-            JSON.stringify({
-              tasks: [],
-              delay_after: 15,
-              reason: "No processable account tasks (all failed validation)",
-            }),
-            {
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            }
-          );
-        }
-
-        // Claim ONLY the tasks we are returning
-        await supabase
-          .from("account_check_tasks")
-          .update({ status: "in_progress" })
-          .in("id", claimIds)
-          .eq("status", "pending");
-
-        console.log(`[get-batch-tasks] Returning ${tasks.length} account tasks for parallel processing`);
-
-        return new Response(
-          JSON.stringify({
-            tasks,
-            delay_after: tasks.length > 0 ? 1 : 3,
-            batch_mode: true,
-          }),
-          {
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
-          }
-        );
-      }
-
-      // No tasks - return empty with 15s delay
-      return new Response(JSON.stringify({
-        tasks: [],
-        delay_after: 15,
-        reason: "No pending account tasks",
-      }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
     }
 
     // Load active accounts only when needed
@@ -550,68 +320,70 @@ serve(async (req) => {
           // Skip if sender already has a task in this batch (avoid parallel sends from same account)
           if (usedAccountIds.has(senderAccount?.id)) continue;
 
-          // Check account is active/restricted (restricted accounts CAN do warmup)
+          // Check account is active/restricted and has active proxy (restricted accounts CAN do warmup)
           const isUsableStatus = senderAccount && (senderAccount.status === "active" || senderAccount.status === "restricted");
-          
-          if (!isUsableStatus) {
-            const reason = !senderAccount ? "Sender account not found" : `Sender status: ${senderAccount.status}`;
+          if (isUsableStatus && receiverAccount && proxy?.status === "active") {
+            const apiCred = senderAccount.telegram_api_credentials;
+
+            // Mark as "sending" with claim info (task leasing)
+            await supabase
+              .from("warmup_messages")
+              .update({ 
+                status: "sending",
+                claimed_at: new Date().toISOString(),
+                claimed_by: "warmup_chat_runner"
+              })
+              .eq("id", msg.id);
+
+            // Determine task type based on message_type
+            const taskType = msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat";
+
+            tasks.push({
+              task: taskType,
+              task_id: msg.id,
+              pair_id: msg.pair_id,
+              is_cycle_last: msg.is_cycle_last || false,
+              task_data: {
+                recipient_phone: receiverAccount.phone_number,
+                recipient_telegram_id: receiverAccount.telegram_id,
+                recipient_username: receiverAccount.username,
+                message: msg.message_content,
+                message_type: msg.message_type,
+                first_name: msg.message_type === "add_contact" ? msg.message_content : receiverAccount.first_name,
+                phone: receiverAccount.phone_number,
+              },
+              account: {
+                id: senderAccount.id,
+                phone_number: senderAccount.phone_number,
+                session_data: senderAccount.session_data,
+                device_model: senderAccount.device_model,
+                system_version: senderAccount.system_version,
+                app_version: senderAccount.app_version,
+                lang_code: senderAccount.lang_code,
+                system_lang_code: senderAccount.system_lang_code,
+                api_id: apiCred?.api_id || senderAccount.api_id,
+                api_hash: apiCred?.api_hash || senderAccount.api_hash,
+                proxy: proxy,
+              },
+            });
+
+            usedAccountIds.add(senderAccount.id);
+            console.log(`[get-batch-tasks] Added warmup task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
+          } else {
+            // Account not usable, mark as failed
+            const reason = !senderAccount ? "Sender account not found" :
+                           (senderAccount.status !== "active" && senderAccount.status !== "restricted") ? `Sender status: ${senderAccount.status}` :
+                           !proxy ? "No proxy assigned" :
+                           proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
+                           "Unknown reason";
+            
             await supabase
               .from("warmup_messages")
               .update({ status: "failed", error_message: reason })
               .eq("id", msg.id);
-            console.log(`[get-batch-tasks] Warmup task skipped: ${reason}`);
-            continue;
-          }
 
-          if (!receiverAccount) {
-            await supabase
-              .from("warmup_messages")
-              .update({ status: "failed", error_message: "Receiver account not found" })
-              .eq("id", msg.id);
-            console.log(`[get-batch-tasks] Warmup task skipped: Receiver account not found`);
-            continue;
-          }
-
-          // CHECK 1: Fingerprint validation - skip if missing required fingerprint data
-          if (!senderAccount.device_model || !senderAccount.system_version || !senderAccount.app_version) {
-            const reason = `Missing fingerprint data (device_model: ${senderAccount.device_model}, system_version: ${senderAccount.system_version}, app_version: ${senderAccount.app_version})`;
-            await supabase
-              .from("warmup_messages")
-              .update({ status: "failed", error_message: reason })
-              .eq("id", msg.id);
-            
-            // Mark pair as failed due to fingerprint issue
-            await supabase
-              .from("warmup_pairs")
-              .update({ status: "failed", failed_reason: "Missing fingerprint data" })
-              .eq("id", msg.pair_id);
-            
-            // Cancel other pending messages for this pair
-            await supabase
-              .from("warmup_messages")
-              .update({ status: "cancelled", error_message: "Pair stopped due to missing fingerprint" })
-              .eq("pair_id", msg.pair_id)
-              .eq("status", "pending");
-            
-            console.log(`[get-batch-tasks] Warmup task skipped for ${senderAccount.phone_number}: ${reason}`);
-            continue;
-          }
-
-          // CHECK 2: Proxy validation - try to auto-assign if missing or inactive
-          let activeProxy = proxy;
-          if (!proxy || proxy.status !== 'active') {
-            console.log(`[get-batch-tasks] Warmup account ${senderAccount.phone_number} has no active proxy - attempting auto-assign...`);
-            const result = await autoAssignProxy(supabase, senderAccount.id, senderAccount.phone_number);
-            if (result.success && result.proxy) {
-              activeProxy = result.proxy;
-            } else {
-              const reason = "No proxy available for auto-assignment";
-              await supabase
-                .from("warmup_messages")
-                .update({ status: "failed", error_message: reason })
-                .eq("id", msg.id);
-
-              // Mark the pair as failed
+            // If proxy error, mark the pair as failed
+            if (reason.includes("Proxy") || reason.includes("proxy")) {
               await supabase
                 .from("warmup_pairs")
                 .update({ status: "failed", failed_reason: "Proxy error" })
@@ -623,59 +395,10 @@ serve(async (req) => {
                 .update({ status: "cancelled", error_message: "Pair stopped due to proxy error" })
                 .eq("pair_id", msg.pair_id)
                 .eq("status", "pending");
-              
-              console.log(`[get-batch-tasks] Warmup task skipped for ${senderAccount.phone_number}: ${reason}`);
-              continue;
             }
+            
+            console.log(`[get-batch-tasks] Warmup task skipped: ${reason}`);
           }
-
-          // All validations passed - proceed with task
-          const apiCred = senderAccount.telegram_api_credentials;
-
-          // Mark as "sending" with claim info (task leasing)
-          await supabase
-            .from("warmup_messages")
-            .update({ 
-              status: "sending",
-              claimed_at: new Date().toISOString(),
-              claimed_by: "warmup_chat_runner"
-            })
-            .eq("id", msg.id);
-
-          // Determine task type based on message_type
-          const taskType = msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat";
-
-          tasks.push({
-            task: taskType,
-            task_id: msg.id,
-            pair_id: msg.pair_id,
-            is_cycle_last: msg.is_cycle_last || false,
-            task_data: {
-              recipient_phone: receiverAccount.phone_number,
-              recipient_telegram_id: receiverAccount.telegram_id,
-              recipient_username: receiverAccount.username,
-              message: msg.message_content,
-              message_type: msg.message_type,
-              first_name: msg.message_type === "add_contact" ? msg.message_content : receiverAccount.first_name,
-              phone: receiverAccount.phone_number,
-            },
-            account: {
-              id: senderAccount.id,
-              phone_number: senderAccount.phone_number,
-              session_data: senderAccount.session_data,
-              device_model: senderAccount.device_model,
-              system_version: senderAccount.system_version,
-              app_version: senderAccount.app_version,
-              lang_code: senderAccount.lang_code,
-              system_lang_code: senderAccount.system_lang_code,
-              api_id: apiCred?.api_id || senderAccount.api_id,
-              api_hash: apiCred?.api_hash || senderAccount.api_hash,
-              proxy: activeProxy,
-            },
-          });
-
-          usedAccountIds.add(senderAccount.id);
-          console.log(`[get-batch-tasks] Added warmup task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
         }
       }
       
@@ -1412,10 +1135,8 @@ serve(async (req) => {
     }
 
     // LIVECHAT RUNNER: Get pending outgoing messages
-    // PARALLEL MODE: No limit per account - send ALL pending messages in parallel
     if (runner === "livechat") {
-      // Use larger batch size for parallel processing (no per-account limit)
-      const parallelBatchSize = batch_size || 100;
+      const actualBatchSize = Math.min(batch_size || 50, usableAccounts.length);
       
       const { data: pendingMessages } = await supabase
         .from("messages")
@@ -1430,162 +1151,72 @@ serve(async (req) => {
         .is("campaign_recipient_id", null)
         .order("priority", { ascending: false })
         .order("created_at", { ascending: true })
-        .limit(parallelBatchSize);
-
-      // Create account lookup map for O(1) access
-      const accountsMap = new Map<string, any>();
-      for (const acc of usableAccounts) {
-        accountsMap.set(acc.id, acc);
-      }
+        .limit(actualBatchSize * 2);
 
       if (pendingMessages && pendingMessages.length > 0) {
-        // Collect all messages to update status in BATCH (parallel)
-        const messagesToClaim: string[] = [];
-        const tasksToAdd: any[] = [];
-        const accountsNeedingProxy: string[] = [];
-        const accountsNeedingFingerprint: string[] = [];
-        
-        // Group messages by account to maintain ORDER within each account
-        const messagesByAccount = new Map<string, typeof pendingMessages>();
         for (const msg of pendingMessages) {
-          const accountId = msg.conversations.account_id;
-          if (!messagesByAccount.has(accountId)) {
-            messagesByAccount.set(accountId, []);
-          }
-          messagesByAccount.get(accountId)!.push(msg);
-        }
-        
-        // Process each account's messages IN ORDER (they're already sorted by created_at)
-        for (const [accountId, accountMessages] of messagesByAccount) {
-          // Find the account for this conversation (NO per-account limit - parallel mode)
-          let account = accountsMap.get(accountId);
+          if (tasks.length >= actualBatchSize) break;
 
-          if (!account) {
-            console.log(`[get-batch-tasks] LIVECHAT: Skipping ${accountMessages.length} msgs - account ${accountId} not usable`);
-            continue;
-          }
+          const conv = msg.conversations;
+          
+          // Find the account for this conversation
+          const account = usableAccounts.find((a: any) => 
+            a.id === conv.account_id && !usedAccountIds.has(a.id)
+          );
 
-          // AUTO-ASSIGN PROXY if missing
-          let proxyData = account.proxies;
-          if (!account.proxy_id || !proxyData || proxyData.status !== 'active') {
-            console.log(`[get-batch-tasks] LIVECHAT: Account ${account.phone_number} has no proxy - auto-assigning...`);
-            const proxyResult = await autoAssignProxy(supabase, account.id, account.phone_number);
-            if (proxyResult.success && proxyResult.proxy) {
-              proxyData = proxyResult.proxy;
-              accountsNeedingProxy.push(account.phone_number);
-              console.log(`[get-batch-tasks] LIVECHAT: Auto-assigned proxy to ${account.phone_number}`);
-            } else {
-              console.log(`[get-batch-tasks] LIVECHAT: No proxy available for ${account.phone_number} - skipping messages`);
-              continue;
-            }
-          }
+          if (!account) continue;
 
-          // CHECK FINGERPRINT - flag if missing (Python will generate)
-          if (!account.device_model || !account.system_version || !account.app_version) {
-            accountsNeedingFingerprint.push(account.phone_number);
-            console.log(`[get-batch-tasks] LIVECHAT: Account ${account.phone_number} needs fingerprint - Python will generate`);
-          }
-
-          const apiCred = account.telegram_api_credentials;
-
-          // Process messages IN ORDER for this account
-          for (const msg of accountMessages) {
-            const conv = msg.conversations;
-            
-            messagesToClaim.push(msg.id);
-            tasksToAdd.push({
-              task: "send",
-              message: {
-                id: msg.id,
-                content: msg.content,
-                media_url: msg.media_url,
-                // Include sequence number for ordering in Python
-                sequence: messagesToClaim.length,
-              },
-              recipient: conv.recipient_telegram_id?.toString() || conv.recipient_phone,
-              recipient_name: conv.recipient_name,
-              recipient_telegram_id: conv.recipient_telegram_id,
-              account: {
-                id: account.id,
-                phone_number: account.phone_number,
-                session_data: account.session_data,
-                device_model: account.device_model,
-                system_version: account.system_version,
-                app_version: account.app_version,
-                lang_code: account.lang_code,
-                system_lang_code: account.system_lang_code,
-                api_id: apiCred?.api_id || account.api_id,
-                api_hash: apiCred?.api_hash || account.api_hash,
-                proxy_id: account.proxy_id,
-              },
-              proxy: proxyData
-                ? {
-                    id: proxyData.id,
-                    host: proxyData.host,
-                    port: proxyData.port,
-                    username: proxyData.username,
-                    password: proxyData.password,
-                    proxy_type: proxyData.proxy_type,
-                    type: proxyData.proxy_type,
-                  }
-                : null,
-              mode: "livechat",
-            });
-          }
-        }
-        
-        // BATCH UPDATE: Mark all messages as sending in ONE query (parallel)
-        if (messagesToClaim.length > 0) {
+          // Mark message as sending
           await supabase
             .from("messages")
             .update({ status: "sending" })
-            .in("id", messagesToClaim);
-          
-          tasks.push(...tasksToAdd);
-          console.log(`[get-batch-tasks] LIVECHAT PARALLEL: Claimed ${messagesToClaim.length} messages in batch (proxy auto-assigned: ${accountsNeedingProxy.length}, fingerprint needed: ${accountsNeedingFingerprint.length})`);
+            .eq("id", msg.id);
+
+          const apiCred = account.telegram_api_credentials;
+
+          tasks.push({
+            task: "send",
+            message: {
+              id: msg.id,
+              content: msg.content,
+              media_url: msg.media_url,
+            },
+            recipient: conv.recipient_telegram_id?.toString() || conv.recipient_phone,
+            recipient_name: conv.recipient_name,
+            recipient_telegram_id: conv.recipient_telegram_id,
+            account: {
+              id: account.id,
+              phone_number: account.phone_number,
+              session_data: account.session_data,
+              device_model: account.device_model,
+              system_version: account.system_version,
+              app_version: account.app_version,
+              lang_code: account.lang_code,
+              system_lang_code: account.system_lang_code,
+              api_id: apiCred?.api_id || account.api_id,
+              api_hash: apiCred?.api_hash || account.api_hash,
+              proxy_id: account.proxy_id,
+            },
+            proxy: account.proxies
+              ? {
+                  host: account.proxies.host,
+                  port: account.proxies.port,
+                  username: account.proxies.username,
+                  password: account.proxies.password,
+                  proxy_type: account.proxies.proxy_type,
+                  type: account.proxies.proxy_type,
+                }
+              : null,
+            mode: "livechat",
+          });
+
+          usedAccountIds.add(account.id);
         }
       }
       
       // For livechat, also return accounts for initial connection
       // This helps the runner connect accounts that need message handlers
-      // AUTO-ASSIGN PROXY for accounts that don't have one
-      const accountsWithProxy: any[] = [];
-      const autoAssignedProxyAccounts: string[] = [];
-      
-      for (const a of usableAccounts) {
-        let proxyData = a.proxies;
-        
-        // Try to auto-assign proxy if missing
-        if (!a.proxy_id || !proxyData || proxyData.status !== 'active') {
-          console.log(`[get-batch-tasks] LIVECHAT: Account ${a.phone_number} has no proxy - auto-assigning for connection...`);
-          const proxyResult = await autoAssignProxy(supabase, a.id, a.phone_number);
-          if (proxyResult.success && proxyResult.proxy) {
-            proxyData = proxyResult.proxy;
-            autoAssignedProxyAccounts.push(a.phone_number);
-          } else {
-            console.log(`[get-batch-tasks] SKIP livechat account ${a.phone_number} - NO PROXY AVAILABLE`);
-            continue;
-          }
-        }
-        
-        // DON'T skip accounts without fingerprint - Python will generate it
-        if (!a.device_model || !a.system_version || !a.app_version) {
-          console.log(`[get-batch-tasks] LIVECHAT: Account ${a.phone_number} missing fingerprint - Python will generate`);
-        }
-        
-        accountsWithProxy.push({
-          ...a,
-          _proxy: proxyData  // Use auto-assigned proxy
-        });
-      }
-      
-      if (autoAssignedProxyAccounts.length > 0) {
-        console.log(`[get-batch-tasks] LIVECHAT: Auto-assigned proxies to ${autoAssignedProxyAccounts.length} accounts: ${autoAssignedProxyAccounts.join(', ')}`);
-      }
-      
-      console.log(`[get-batch-tasks] Livechat: ${accountsWithProxy.length} accounts ready (from ${usableAccounts.length} usable)`);
-      
-      const accountsForConnection = accountsWithProxy.map((a: any) => ({
+      const accountsForConnection = usableAccounts.map((a: any) => ({
         id: a.id,
         phone_number: a.phone_number,
         session_data: a.session_data,
@@ -1596,17 +1227,15 @@ serve(async (req) => {
         system_lang_code: a.system_lang_code,
         api_id: a.telegram_api_credentials?.api_id || a.api_id,
         api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
-        proxy_id: a._proxy?.id || a.proxy_id,
-        proxy: {
-          id: a._proxy?.id || a.proxies?.id,
-          host: a._proxy?.host || a.proxies?.host,
-          port: a._proxy?.port || a.proxies?.port,
-          username: a._proxy?.username || a.proxies?.username,
-          password: a._proxy?.password || a.proxies?.password,
-          proxy_type: a._proxy?.proxy_type || a.proxies?.proxy_type,
-          type: a._proxy?.proxy_type || a.proxies?.proxy_type,
-        },
-        needs_fingerprint: !a.device_model || !a.system_version || !a.app_version,
+        proxy_id: a.proxy_id,
+        proxy: a.proxies ? {
+          host: a.proxies.host,
+          port: a.proxies.port,
+          username: a.proxies.username,
+          password: a.proxies.password,
+          proxy_type: a.proxies.proxy_type,
+          type: a.proxies.proxy_type,
+        } : null,
       }));
       
       return new Response(JSON.stringify({
@@ -1614,13 +1243,150 @@ serve(async (req) => {
         accounts: accountsForConnection,
         delay_after: 1, // 1-second polling for livechat
         accounts_available: usableAccounts.length,
-        auto_assigned_proxies: autoAssignedProxyAccounts.length,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-    // NOTE: Account runner is handled early in the function (before account filtering)
-    // to avoid being blocked by the active accounts check
+
+    // ACCOUNT RUNNER: Get batch of account management tasks (sync_profile, change_name, etc.)
+    if (runner === "account") {
+      const accountBatchSize = Math.min(batch_size, 20); // Max 20 parallel account tasks
+      
+      // Auto-recover stuck tasks (in_progress for more than 90 seconds)
+      // Uses updated_at which is set when status changes to in_progress
+      const stuckCutoffIso = new Date(Date.now() - 90 * 1000).toISOString();
+      await supabase
+        .from("account_check_tasks")
+        .update({ status: "pending" })
+        .eq("status", "in_progress")
+        .lt("updated_at", stuckCutoffIso);
+      
+      // Get pending account tasks
+      const { data: checkTasks } = await supabase
+        .from("account_check_tasks")
+        // IMPORTANT: Only tasks with a resolvable telegram_accounts relation can be processed.
+        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(*))")
+        .eq("status", "pending")
+        .in("task_type", [
+          "spambot_check",
+          "change_name",
+          "privacy_settings",
+          "change_password",
+          "logout_sessions",
+          "change_photo",
+          "sync_profile",
+          "verify_session",
+        ])
+        .order("created_at", { ascending: true })
+        .limit(accountBatchSize);
+
+      if (checkTasks && checkTasks.length > 0) {
+        // Build the tasks we can actually execute BEFORE claiming them.
+        const nowIso = new Date().toISOString();
+        const claimIds: string[] = [];
+        const failIds: string[] = [];
+
+        for (const task of checkTasks as any[]) {
+          const accountData = task.telegram_accounts;
+          if (!accountData) {
+            // If this happens, the row cannot be processed (usually missing/invalid relation).
+            // Mark failed so it doesn't get stuck in_progress and doesn't loop forever.
+            failIds.push(task.id);
+            continue;
+          }
+
+          const apiCred = accountData.telegram_api_credentials;
+          const proxyData = accountData.proxies;
+
+          claimIds.push(task.id);
+          tasks.push({
+            task: task.task_type,
+            task_id: task.id,
+            task_data: task.result ? JSON.parse(task.result) : {},
+            account: {
+              id: accountData.id,
+              phone_number: accountData.phone_number,
+              session_data: accountData.session_data,
+              device_model: accountData.device_model,
+              system_version: accountData.system_version,
+              app_version: accountData.app_version,
+              lang_code: accountData.lang_code,
+              system_lang_code: accountData.system_lang_code,
+              api_id: apiCred?.api_id || accountData.api_id,
+              api_hash: apiCred?.api_hash || accountData.api_hash,
+              proxy_id: accountData.proxy_id,
+            },
+            proxy: proxyData
+              ? {
+                  host: proxyData.host,
+                  port: proxyData.port,
+                  username: proxyData.username,
+                  password: proxyData.password,
+                  proxy_type: proxyData.proxy_type,
+                  type: proxyData.proxy_type,
+                }
+              : null,
+          });
+        }
+
+        if (failIds.length > 0) {
+          console.warn(
+            `[get-batch-tasks] ${failIds.length} account tasks missing account data; marking as failed`
+          );
+          await supabase
+            .from("account_check_tasks")
+            .update({
+              status: "failed",
+              completed_at: nowIso,
+              result: "Task cannot be processed: missing account data (relation not resolved)",
+            })
+            .in("id", failIds);
+        }
+
+        if (claimIds.length === 0) {
+          return new Response(
+            JSON.stringify({
+              tasks: [],
+              delay_after: 15,
+              reason: "No processable account tasks",
+            }),
+            {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        // Claim ONLY the tasks we are returning.
+        await supabase
+          .from("account_check_tasks")
+          .update({ status: "in_progress" })
+          .in("id", claimIds)
+          .eq("status", "pending");
+
+        console.log(
+          `[get-batch-tasks] Returning ${tasks.length} account tasks for parallel processing`
+        );
+
+        return new Response(
+          JSON.stringify({
+            tasks,
+            delay_after: tasks.length > 0 ? 1 : 3,
+            batch_mode: true,
+          }),
+          {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+      // No tasks - return empty with 15s delay for account runner
+      return new Response(JSON.stringify({
+        tasks: [],
+        delay_after: 15,
+        reason: "No pending account tasks",
+      }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // Calculate delay for next batch
     const delaySeconds = Math.floor(

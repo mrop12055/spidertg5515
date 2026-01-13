@@ -97,9 +97,6 @@ interface TelegramContextType {
   // Refresh
   refreshStats: () => void;
   refreshData: () => Promise<void>;
-  refreshAccounts: () => Promise<void>;
-  refreshProxies: () => Promise<void>;
-  refreshCampaigns: () => Promise<void>;
 }
 
 // Context for Telegram functionality
@@ -382,178 +379,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       console.error('Error fetching data:', error);
     } finally {
       setIsLoading(false);
-    }
-  }, []);
-
-  // Parallel paged fetcher - used by targeted refreshes (same logic as refreshData)
-  const fetchPagedParallelForRefresh = async (
-    tableName: string,
-    selectColumns: string,
-    orderColumn: string = 'created_at',
-    filters?: (query: any) => any,
-    maxRows: number = 10000
-  ): Promise<{ data: any[] | null; error: any | null }> => {
-    const PAGE_SIZE = 1000;
-    const MAX_PARALLEL_PAGES = Math.ceil(maxRows / PAGE_SIZE);
-
-    try {
-      let firstQuery = (supabase.from as any)(tableName)
-        .select(selectColumns)
-        .order(orderColumn, { ascending: false })
-        .range(0, PAGE_SIZE - 1);
-      
-      if (filters) firstQuery = filters(firstQuery);
-      
-      const { data: firstPage, error: firstError } = await firstQuery;
-      
-      if (firstError) throw firstError;
-      if (!firstPage || firstPage.length === 0) return { data: [], error: null };
-      if (firstPage.length < PAGE_SIZE) return { data: firstPage, error: null };
-      
-      // Need more pages - fetch remaining in parallel
-      const pagePromises: Promise<any>[] = [];
-      for (let page = 1; page < MAX_PARALLEL_PAGES; page++) {
-        const from = page * PAGE_SIZE;
-        const to = from + PAGE_SIZE - 1;
-        
-        let query = (supabase.from as any)(tableName)
-          .select(selectColumns)
-          .order(orderColumn, { ascending: false })
-          .range(from, to);
-        
-        if (filters) query = filters(query);
-        pagePromises.push(query);
-      }
-      
-      const results = await Promise.all(pagePromises);
-      const all = [...firstPage];
-      
-      for (const result of results) {
-        if (result.data && result.data.length > 0) {
-          all.push(...result.data);
-        }
-        if (!result.data || result.data.length < PAGE_SIZE) break;
-      }
-      
-      return { data: all, error: null };
-    } catch (e) {
-      return { data: null, error: e };
-    }
-  };
-
-  // Targeted refresh for accounts only (with pagination for accuracy)
-  const refreshAccounts = useCallback(async () => {
-    try {
-      const { data } = await fetchPagedParallelForRefresh(
-        'telegram_accounts',
-        'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id',
-        'created_at',
-        undefined,
-        25000 // Max 25K accounts
-      );
-      
-      if (data) {
-        setAccounts(data.map(acc => ({
-          id: acc.id,
-          phoneNumber: acc.phone_number,
-          username: acc.username || undefined,
-          firstName: acc.first_name || undefined,
-          lastName: acc.last_name || undefined,
-          status: acc.status as TelegramAccount['status'],
-          proxyId: acc.proxy_id || undefined,
-          sessionFile: undefined,
-          createdAt: new Date(acc.created_at),
-          lastActive: acc.last_active ? new Date(acc.last_active) : undefined,
-          messagesSentToday: acc.messages_sent_today || 0,
-          dailyLimit: acc.daily_limit || 25,
-          maturityScore: acc.maturity_score || 0,
-          maturityDays: acc.maturity_days || 0,
-          restrictedUntil: acc.restricted_until ? new Date(acc.restricted_until) : undefined,
-          banReason: acc.ban_reason || undefined,
-          avatar: acc.avatar_url || undefined,
-          deviceModel: acc.device_model || undefined,
-          systemVersion: acc.system_version || undefined,
-          appVersion: acc.app_version || undefined,
-          langCode: acc.lang_code || undefined,
-          systemLangCode: acc.system_lang_code || undefined,
-          warmupPhase: (acc as any).warmup_phase ?? 0,
-          warmupStartedAt: (acc as any).warmup_started_at ? new Date((acc as any).warmup_started_at) : undefined,
-          spambotStatus: (acc as any).spambot_status || 'unknown',
-          phoneCountry: (acc as any).phone_country || undefined,
-          geoMismatch: (acc as any).geo_mismatch || false,
-          apiCredentialId: (acc as any).api_credential_id || undefined,
-          telegramId: (acc as any).telegram_id || undefined,
-          tags: (acc as any).tags || [],
-          successCount: (acc as any).success_count ?? 0,
-          failureCount: (acc as any).failure_count ?? 0,
-          successRate: (acc as any).success_rate ?? 100,
-          autoDisabled: (acc as any).auto_disabled ?? false,
-          disabledReason: (acc as any).disabled_reason || undefined,
-        })));
-      }
-    } catch (error) {
-      console.error('Error refreshing accounts:', error);
-    }
-  }, []);
-
-  // Targeted refresh for proxies only (with pagination for accuracy)
-  const refreshProxies = useCallback(async () => {
-    try {
-      const { data } = await fetchPagedParallelForRefresh(
-        'proxies',
-        'id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country',
-        'created_at',
-        undefined,
-        15000 // Max 15K proxies
-      );
-      
-      if (data) {
-        setProxies(data.map(p => ({
-          id: p.id,
-          host: p.host,
-          port: p.port,
-          username: p.username || undefined,
-          password: p.password || undefined,
-          type: p.proxy_type as Proxy['type'],
-          status: p.status as Proxy['status'],
-          assignedAccountId: p.assigned_account_id || undefined,
-          lastChecked: p.last_checked ? new Date(p.last_checked) : undefined,
-          responseTime: p.response_time || undefined,
-          country: p.detected_country || p.country || undefined,
-        })));
-      }
-    } catch (error) {
-      console.error('Error refreshing proxies:', error);
-    }
-  }, []);
-
-  // Targeted refresh for campaigns only (fast - usually small dataset)
-  const refreshCampaigns = useCallback(async () => {
-    try {
-      const { data } = await supabase
-        .from('campaigns')
-        .select('*, campaign_accounts(account_id)')
-        .order('created_at', { ascending: false });
-      
-      if (data) {
-        setCampaigns(data.map(c => ({
-          id: c.id,
-          name: c.name,
-          messageTemplate: c.message_template,
-          status: c.status as Campaign['status'],
-          scheduledAt: c.scheduled_at ? new Date(c.scheduled_at) : undefined,
-          recipientCount: c.recipient_count || 0,
-          sentCount: c.sent_count || 0,
-          failedCount: c.failed_count || 0,
-          replyCount: c.reply_count || 0,
-          accountIds: c.campaign_accounts?.map((ca: any) => ca.account_id) || [],
-          createdAt: new Date(c.created_at),
-          updatedAt: new Date(c.updated_at),
-          seatId: c.seat_id || undefined,
-        })));
-      }
-    } catch (error) {
-      console.error('Error refreshing campaigns:', error);
     }
   }, []);
 
@@ -1719,9 +1544,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     startCampaign,
     refreshStats,
     refreshData,
-    refreshAccounts,
-    refreshProxies,
-    refreshCampaigns,
   };
 
   return (
