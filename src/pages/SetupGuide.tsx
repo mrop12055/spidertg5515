@@ -2204,14 +2204,9 @@ async def main_loop():
                     
                     print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
 
-                # FAST POLLING - minimize delay for instant message delivery
-                wait_seconds = task.get("seconds", 0)
-                if wait_seconds > 0:
-                    # Small sleep in chunks to stay responsive
-                    await asyncio.sleep(min(wait_seconds, 0.2))
-                else:
-                    # INSTANT - just yield for update processing (10ms)
-                    await asyncio.sleep(0.01)
+                # ZERO-DELAY POLLING - no stagger, instant message delivery
+                # Server returns seconds=0 for instant, no artificial delays
+                await asyncio.sleep(0)  # Just yield to event loop, no actual delay
             
             # ========== RETRY PENDING SYNCS ==========
             # Retry missed message sync for accounts that failed due to Telegram server issues
@@ -2294,10 +2289,9 @@ async def main_loop():
                 print(f"  [BACKOFF] Waiting {backoff}s for network recovery...")
                 await asyncio.sleep(backoff)
             else:
-                # Reset error count on non-network errors
+                # Reset error count on non-network errors - NO delay
                 _network_error_count = 0
                 print(f"  [ERROR] {e}")
-                await asyncio.sleep(0.5)
     
     await shutdown_all()
 

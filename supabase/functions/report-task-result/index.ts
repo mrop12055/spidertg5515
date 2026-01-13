@@ -737,11 +737,11 @@ serve(async (req) => {
                                    error?.toLowerCase().includes('network');
             
             if (isTooManyRequests) {
-              // Rate limited - add 30 second cooldown to account and keep message pending
-              console.log(`[report-task-result] Live chat message ${message_id} rate limited - adding 30s account cooldown`);
+              // Rate limited - add 10 second cooldown to account (minimal delay)
+              console.log(`[report-task-result] Live chat message ${message_id} rate limited - adding 10s account cooldown`);
               
-              // Set short restricted_until for account (30 seconds)
-              const shortCooldown = new Date(Date.now() + 30 * 1000).toISOString();
+              // Set short restricted_until for account (10 seconds)
+              const shortCooldown = new Date(Date.now() + 10 * 1000).toISOString();
               await supabase
                 .from("telegram_accounts")
                 .update({ restricted_until: shortCooldown })
@@ -752,7 +752,7 @@ serve(async (req) => {
                 .from("messages")
                 .update({
                   status: "pending",
-                  failed_reason: "Rate limited - retrying in 30s",
+                  failed_reason: "Rate limited - retrying in 10s",
                 })
                 .eq("id", message_id);
                 
