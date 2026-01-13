@@ -2224,7 +2224,8 @@ async def main_loop():
                 last_cleanup = time.time()
             
             # ========== USE BATCH TASKS FOR PARALLEL PROCESSING ==========
-            batch_response = await get_batch_tasks(runner="livechat", batch_size=100)
+            # IMPORTANT: Keep this modest to avoid Telegram "Too many requests" rate limits.
+            batch_response = await get_batch_tasks(runner="livechat", batch_size=20)
             tasks = batch_response.get("tasks", [])
             accounts = batch_response.get("accounts", [])
             delay_after = batch_response.get("delay_after", 1)
