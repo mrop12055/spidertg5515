@@ -46,21 +46,21 @@ from fingerprint_generator import generate_fingerprint
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
-# ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased for slow proxies)
-CONNECTION_RETRIES = 2       # Allow 2 retries before switching proxy
-RETRY_DELAY = 1              # 1 second between retries
+# ========== SPLIT TIMEOUTS (OPTIMIZED FOR SPEED) ==========
+CONNECTION_TIMEOUT = 15      # Telegram connection timeout (reduced for faster failure)
+CONNECTION_RETRIES = 1       # Fail fast, switch proxy quickly
+RETRY_DELAY = 0              # No delay between retries
 
-# HTTP Timeouts - split by purpose (increased for stability)
-HTTP_TIMEOUT_DISPATCH = 45   # Task fetching (get-next-task, get-batch-tasks) - increased for 582 accounts
-HTTP_TIMEOUT_REPORT = 15     # Reporting (report-task-result, report-batch-results)
-HTTP_TIMEOUT_PROXY = 20      # Proxy switch calls
-HTTP_TIMEOUT_UPLOAD = 45     # Media uploads (photos, videos) - needs more time for large files
-HTTP_TIMEOUT_DEFAULT = 15    # Other REST calls
+# HTTP Timeouts - optimized for instant response
+HTTP_TIMEOUT_DISPATCH = 15   # Task fetching - FAST (edge function is optimized)
+HTTP_TIMEOUT_REPORT = 10     # Reporting results
+HTTP_TIMEOUT_PROXY = 15      # Proxy switch calls
+HTTP_TIMEOUT_UPLOAD = 45     # Media uploads (photos, videos) - needs more time
+HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
-MAX_HTTP_BACKOFF = 30
+MAX_HTTP_BACKOFF = 15  # Reduced from 30 for faster recovery
 
 # Proxy error patterns - fail fast on these
 PROXY_ERROR_PATTERNS = [
@@ -2017,8 +2017,8 @@ async def keep_clients_alive():
     
     while RUNNING:
         try:
-            # Balanced loop - fast but not aggressive
-            await asyncio.sleep(0.1)  # 10 checks per second (less aggressive)
+            # FAST loop - 50 checks per second for instant message delivery
+            await asyncio.sleep(0.02)  # 20ms between checks
             
             # Process updates for all connected clients
             disconnected_ids = []
@@ -2077,12 +2077,12 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (1-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-11-1hour-sync")
+    print("  LiveChat Runner (ULTRA-FAST POLLING)")
+    print("  BUILD: 2026-01-13-instant-reply")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⏰ Only syncs messages from last 1 hour")
-    print("  🔄 Skips older messages to prevent duplicates")
-    print("  📨 Tracks last synced IDs per sender")
+    print("  ⚡ INSTANT message delivery (<100ms)")
+    print("  🔄 Parallel queries, no blocking waits")
+    print("  📨 High-frequency polling (50/sec)")
     print("=" * 50)
     print("=" * 50)
     
@@ -2204,17 +2204,14 @@ async def main_loop():
                     
                     print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
 
-                # Get delay from server response (usually 0 for fast polling)
-                wait_seconds = task.get("seconds", 0.5)
+                # FAST POLLING - minimize delay for instant message delivery
+                wait_seconds = task.get("seconds", 0)
                 if wait_seconds > 0:
-                    # Use small sleeps to allow update processing
-                    for _ in range(int(wait_seconds * 10)):
-                        if not RUNNING:
-                            break
-                        await asyncio.sleep(0.1)
+                    # Small sleep in chunks to stay responsive
+                    await asyncio.sleep(min(wait_seconds, 0.2))
                 else:
-                    # Even with 0 delay, yield briefly for updates
-                    await asyncio.sleep(0.05)
+                    # INSTANT - just yield for update processing (10ms)
+                    await asyncio.sleep(0.01)
             
             # ========== RETRY PENDING SYNCS ==========
             # Retry missed message sync for accounts that failed due to Telegram server issues
