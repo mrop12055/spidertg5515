@@ -185,21 +185,38 @@ def detect_account_status(error_str: str) -> str:
     return "disconnected"
 
 
-async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> bool:
-    """Fast connect - fail immediately on timeout/proxy error. NO RETRY."""
-    try:
-        await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-        return True
-    except asyncio.TimeoutError:
-        print(f"    [TIMEOUT] Connection timeout")
-        return False
-    except Exception as e:
-        err_str = str(e).lower()
-        if any(p in err_str for p in PROXY_ERROR_PATTERNS):
-            print(f"    [PROXY FAIL] {e}")
-            return False
-        print(f"    [ERROR] {e}")
-        return False
+async def connect_with_retry(client: TelegramClient, max_retries: int = 3) -> bool:
+    """
+    Connect with automatic retry on proxy/network errors.
+    Retries up to max_retries times before giving up.
+    Returns True if connection succeeded (even after retries).
+    """
+    last_error = None
+    for attempt in range(max_retries):
+        try:
+            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
+            if attempt > 0:
+                print(f"    [RETRY SUCCESS] Connected on attempt {attempt + 1}/{max_retries}")
+            return True
+        except asyncio.TimeoutError:
+            last_error = "Connection timeout"
+            print(f"    [TIMEOUT] Attempt {attempt + 1}/{max_retries}: Connection timeout")
+        except Exception as e:
+            last_error = str(e)
+            err_str = str(e).lower()
+            if any(p in err_str for p in PROXY_ERROR_PATTERNS):
+                print(f"    [PROXY RETRY] Attempt {attempt + 1}/{max_retries}: {e}")
+            else:
+                print(f"    [ERROR] Attempt {attempt + 1}/{max_retries}: {e}")
+        
+        # Wait before retry (exponential backoff: 1s, 2s, 4s)
+        if attempt < max_retries - 1:
+            wait_time = min(2 ** attempt, 4)
+            print(f"    [RETRY] Waiting {wait_time}s before retry...")
+            await asyncio.sleep(wait_time)
+    
+    print(f"    [FAIL] All {max_retries} connection attempts failed: {last_error}")
+    return False
 
 
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,
@@ -330,15 +347,15 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             request_retries=3 if long_lived else 1
         )
         
-        print(f"  [CONNECT] {account['phone_number']}...")
-        if not await connect_with_retry(client):
-            # PROXY FAILED - Report ONLY proxy error, NOT session status
+        print(f"  [CONNECT] {account['phone_number']} (with 3 retries)...")
+        if not await connect_with_retry(client, max_retries=3):
+            # PROXY FAILED after all retries - Report proxy error
             # We can't know session status if we can't connect via proxy
-            print(f"  [PROXY ERROR] Connection failed for {phone} - update proxy in admin dashboard")
+            print(f"  [PROXY ERROR] Connection failed for {phone} after 3 attempts - update proxy in admin dashboard")
             asyncio.create_task(report_result("proxy_error", {
                 "account_id": account_id,
                 "proxy_id": proxy_id,
-                "reason": "Connection failed - proxy may be dead or blocked"
+                "reason": "Connection failed after 3 retries - proxy may be dead or blocked"
             }))
             return None
         
