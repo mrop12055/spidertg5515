@@ -587,49 +587,54 @@ async def report_batch_results(results: list) -> bool:
         return False
 
 
-async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
+async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
     """
     Send message using official Telegram API best practices.
     Uses get_input_entity() for efficiency (avoids extra API calls).
     Follows Telegram's official rate limits and error handling.
+    
+    recipient can be: int (telegram_id), str ("@username"), str ("+phone"), str ("telegram_id as string")
     """
     try:
         entity = None
+        
+        # Normalize recipient to string for consistent handling
+        recipient_str = str(recipient) if recipient is not None else ""
         
         # ========== RESOLVE RECIPIENT ==========
         # Priority 1: Numeric Telegram ID (fastest - direct lookup)
         # IMPORTANT: get_input_entity(int_id) may fail if the entity is not cached.
         # We therefore fall back to get_entity(int_id) which performs a server fetch.
-        if recipient and recipient.isdigit():
+        if recipient_str and recipient_str.lstrip('-').isdigit():
             try:
-                entity = await asyncio.wait_for(client.get_input_entity(int(recipient)), timeout=10)
+                entity = await asyncio.wait_for(client.get_input_entity(int(recipient_str)), timeout=10)
             except (ValueError, KeyError):
                 try:
-                    entity = await asyncio.wait_for(client.get_entity(int(recipient)), timeout=10)
+                    entity = await asyncio.wait_for(client.get_entity(int(recipient_str)), timeout=10)
                 except Exception:
                     pass
             except Exception as e:
-                print(f"    [WARN] Direct ID lookup failed for {recipient}: {e}")
+                print(f"    [WARN] Direct ID lookup failed for {recipient_str}: {e}")
         
         # Priority 2: Username starting with @
-        if not entity and recipient and recipient.startswith("@"):
+        if not entity and recipient_str and recipient_str.startswith("@"):
             try:
-                entity = await asyncio.wait_for(client.get_input_entity(recipient), timeout=10)
+                entity = await asyncio.wait_for(client.get_input_entity(recipient_str), timeout=10)
             except UsernameNotOccupiedError:
                 return False, "Username does not exist"
             except UsernameInvalidError:
                 return False, "Invalid username format"
             except Exception as e:
-                print(f"    [WARN] Username lookup failed for {recipient}: {e}")
+                print(f"    [WARN] Username lookup failed for {recipient_str}: {e}")
         
         # Priority 3: Phone number (requires contact import)
-        if not entity and recipient:
+        if not entity and recipient_str:
             from telethon.tl.functions.contacts import ImportContactsRequest
             from telethon.tl.types import InputPhoneContact
             import random
             
             # Only treat as phone if it starts with + or looks like a phone number
-            phone = recipient if recipient.startswith("+") else ("+" + recipient if len(recipient) > 6 else None)
+            phone = recipient_str if recipient_str.startswith("+") else ("+" + recipient_str if len(recipient_str) > 6 else None)
             
             if phone:
                 # Strategy 1: Try cached entity first (fastest - no API call)
