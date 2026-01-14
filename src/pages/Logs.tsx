@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -17,17 +17,17 @@ import {
   Loader2, 
   Check, 
   XCircle, 
-  RefreshCw,
   CheckCircle,
-  AlertTriangle,
-  Clock,
-  Filter,
-  ChevronDown
+  Download,
+  FileJson,
+  FileSpreadsheet
 } from 'lucide-react';
 import { useTelegram, AccountTaskLog } from '@/context/TelegramContext';
 import { cn } from '@/lib/utils';
 import { format } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { toast } from 'sonner';
 
 const Logs: React.FC = () => {
   const { 
@@ -74,6 +74,51 @@ const Logs: React.FC = () => {
     if (!isAccountTaskRunning) {
       setAccountTasksProgress(prev => ({ ...prev, logs: [], total: 0, completed: 0, failed: 0, taskType: '' }));
     }
+  };
+
+  // Export functions
+  const exportToJSON = (logs: AccountTaskLog[], filename: string) => {
+    const exportData = logs.map(log => ({
+      accountPhone: log.accountPhone,
+      taskType: log.taskType,
+      status: log.status,
+      result: log.result || null,
+      timestamp: log.timestamp.toISOString(),
+    }));
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Exported to JSON');
+  };
+
+  const exportToCSV = (logs: AccountTaskLog[], filename: string) => {
+    const headers = ['Account Phone', 'Task Type', 'Status', 'Result', 'Timestamp'];
+    const rows = logs.map(log => [
+      log.accountPhone,
+      log.taskType,
+      log.status,
+      log.result ? `"${log.result.replace(/"/g, '""')}"` : '',
+      format(log.timestamp, 'yyyy-MM-dd HH:mm:ss'),
+    ]);
+    
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Exported to CSV');
   };
 
   const clearHistory = () => {
@@ -197,15 +242,39 @@ const Logs: React.FC = () => {
                       Live updates from running account tasks
                     </CardDescription>
                   </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={clearCurrentLogs}
-                    disabled={isAccountTaskRunning || accountTasksProgress.logs.length === 0}
-                  >
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Clear
-                  </Button>
+                  <div className="flex gap-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          disabled={accountTasksProgress.logs.length === 0}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Export
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => exportToJSON(accountTasksProgress.logs, 'session-logs')}>
+                          <FileJson className="w-4 h-4 mr-2" />
+                          Export as JSON
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => exportToCSV(accountTasksProgress.logs, 'session-logs')}>
+                          <FileSpreadsheet className="w-4 h-4 mr-2" />
+                          Export as CSV
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={clearCurrentLogs}
+                      disabled={isAccountTaskRunning || accountTasksProgress.logs.length === 0}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Clear
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
@@ -245,15 +314,39 @@ const Logs: React.FC = () => {
                       {historyStats.total} total • {historyStats.completed} completed • {historyStats.failed} failed
                     </CardDescription>
                   </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={clearHistory}
-                    disabled={accountTaskHistory.length === 0}
-                  >
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Clear History
-                  </Button>
+                  <div className="flex gap-2">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          disabled={accountTaskHistory.length === 0}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Export
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => exportToJSON(accountTaskHistory, 'task-history')}>
+                          <FileJson className="w-4 h-4 mr-2" />
+                          Export as JSON
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => exportToCSV(accountTaskHistory, 'task-history')}>
+                          <FileSpreadsheet className="w-4 h-4 mr-2" />
+                          Export as CSV
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={clearHistory}
+                      disabled={accountTaskHistory.length === 0}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Clear
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
