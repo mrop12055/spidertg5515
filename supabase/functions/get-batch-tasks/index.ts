@@ -118,6 +118,30 @@ serve(async (req) => {
       }
     }
 
+    // ========== AUTO-RESTORE EXPIRED COOLDOWNS ==========
+    // Restore accounts whose cooldown has expired back to active status
+    // This runs on every batch request to ensure timely restoration
+    const now = new Date().toISOString();
+    const { data: expiredCooldowns } = await supabase
+      .from("telegram_accounts")
+      .select("id, phone_number")
+      .in("status", ["cooldown", "restricted"])
+      .lt("restricted_until", now);
+    
+    if (expiredCooldowns && expiredCooldowns.length > 0) {
+      const expiredIds = expiredCooldowns.map((a: any) => a.id);
+      await supabase
+        .from("telegram_accounts")
+        .update({
+          status: "active",
+          restricted_until: null,
+          ban_reason: null,
+        })
+        .in("id", expiredIds);
+      
+      console.log(`[get-batch-tasks] AUTO-RESTORED ${expiredCooldowns.length} accounts from cooldown: ${expiredCooldowns.map((a: any) => a.phone_number).join(", ")}`);
+    }
+
     // Load active accounts only when needed
     // For LIVECHAT: Include restricted accounts (they can reply to existing chats)
     // For CAMPAIGN: Exclude restricted accounts (no new outreach)
@@ -127,14 +151,15 @@ serve(async (req) => {
     let accountsError: any = null;
     
     if (isLivechatRunner) {
-      // LIVECHAT: Include all active accounts, even if restricted (they can reply to existing conversations)
+      // LIVECHAT: Include active AND restricted/cooldown accounts (they can reply to existing conversations)
+      // Restricted accounts can still respond to ongoing chats, just can't start new campaigns
       const result = await supabase
         .from("telegram_accounts")
         .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
-        .eq("status", "active");
+        .in("status", ["active", "restricted", "cooldown"]);
       activeAccounts = result.data || [];
       accountsError = result.error;
-      console.log(`[get-batch-tasks] Livechat: ${activeAccounts.length} active accounts (including restricted)`);
+      console.log(`[get-batch-tasks] Livechat: ${activeAccounts.length} accounts (active + restricted/cooldown for replies)`);
     } else {
       // CAMPAIGN/WARMUP: Exclude restricted accounts (no new outreach allowed)
       // First get all active accounts, then filter out those with future restricted_until in code

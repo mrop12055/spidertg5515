@@ -545,19 +545,19 @@ serve(async (req) => {
             // RATE LIMIT ("Too many requests") - IMMEDIATELY restrict account for 12h and switch to different account
             // NO RETRIES - instant switch. This error only happens on NEW campaign messages (first contact)
             // The restricted account can STILL handle existing conversations (replies, ongoing chats)
-            console.log(`[report-task-result] Account ${account_id} rate limited (Too many requests) - IMMEDIATELY restricting for 12h and switching account`);
+            console.log(`[report-task-result] Account ${account_id} rate limited (Too many requests) - setting 12h cooldown and switching account`);
             
             const restrictedUntil = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
             await supabase
               .from("telegram_accounts")
               .update({
-                status: "restricted",  // CRITICAL: Set status to restricted
+                status: "cooldown",  // Use cooldown status for rate limiting
                 restricted_until: restrictedUntil,
-                ban_reason: `Rate limited for new campaign messages. Can still reply to existing chats. Error: ${error}`,
+                ban_reason: `Rate limited for new campaign messages. Can still reply to existing chats. Auto-restores after 12h. Error: ${error}`,
               })
               .eq("id", account_id);
             
-            console.log(`[report-task-result] Account ${account_id} now RESTRICTED until ${restrictedUntil} (can still reply to existing conversations)`);
+            console.log(`[report-task-result] Account ${account_id} now in COOLDOWN until ${restrictedUntil} (can still reply to existing conversations)`);
             
             // Reset recipient to pending for IMMEDIATE retry with different account
             // Track failed account to prevent reassignment
