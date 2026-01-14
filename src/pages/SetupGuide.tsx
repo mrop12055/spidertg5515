@@ -65,7 +65,14 @@ from telethon.errors import (
     UserBlockedError,
     PhoneNumberBannedError,
     PhoneNumberInvalidError,
-    InputUserDeactivatedError
+    InputUserDeactivatedError,
+    UsernameNotOccupiedError,
+    UsernameInvalidError,
+    ChannelPrivateError,
+    ChatAdminRequiredError,
+    UserNotMutualContactError,
+    MessageNotModifiedError,
+    MediaEmptyError
 )
 
 from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
@@ -575,90 +582,103 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
     """
     Send message using official Telegram API best practices.
     Uses get_input_entity() for efficiency (avoids extra API calls).
+    Follows Telegram's official rate limits and error handling.
     """
     try:
         entity = None
+        
+        # ========== RESOLVE RECIPIENT ==========
         if recipient.startswith("@"):
-            # Username - use get_input_entity (faster, less API calls)
-            entity = await asyncio.wait_for(client.get_input_entity(recipient), timeout=10)
+            # Username - use get_input_entity (faster, cached, less API calls)
+            try:
+                entity = await asyncio.wait_for(client.get_input_entity(recipient), timeout=10)
+            except UsernameNotOccupiedError:
+                return False, "Username does not exist"
+            except UsernameInvalidError:
+                return False, "Invalid username format"
         else:
             from telethon.tl.functions.contacts import ImportContactsRequest
             from telethon.tl.types import InputPhoneContact
             import random
             
             phone = recipient if recipient.startswith("+") else "+" + recipient
+            
+            # Strategy 1: Try cached entity first (fastest - no API call)
             try:
-                # Try to get existing entity first (faster)
-                entity = await asyncio.wait_for(client.get_input_entity(phone), timeout=8)
-            except:
+                entity = await asyncio.wait_for(client.get_input_entity(phone), timeout=5)
+            except (ValueError, KeyError):
+                pass  # Not in cache, need to import
+            except Exception:
                 pass
             
+            # Strategy 2: Import contact if not cached
             if not entity:
-                # Import contact with smaller client_id range (official recommendation)
+                # Use smaller client_id range (official Telegram recommendation: 32-bit signed int)
                 contact = InputPhoneContact(
-                    client_id=random.randint(0, 2**31 - 1),  # Smaller range - safer
+                    client_id=random.randint(0, 2**31 - 1),
                     phone=phone, 
-                    first_name="TG", 
-                    last_name=str(random.randint(1000, 9999))
+                    first_name="User",  # Neutral name
+                    last_name=""
                 )
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
-                if result.users:
-                    entity = result.users[0]
-                elif result.retry_contacts:
-                    return False, "Privacy restricted"
+                try:
+                    result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+                    if result.users:
+                        entity = result.users[0]
+                    elif result.retry_contacts:
+                        return False, "Privacy restricted - cannot add contact"
+                except PhoneNumberInvalidError:
+                    return False, "Invalid phone number format"
+                except PhoneNumberBannedError:
+                    return False, "Phone number is banned"
         
         if not entity:
             return False, "User not found on Telegram"
         
-        # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected
+        # ========== FORMAT CONTENT ==========
         formatted_content = content
         parse_mode = None
+        
+        # Auto-detect URLs and format as clickable links
         try:
             import re
             url_re = re.compile(r'(https?://[^\\s<>"\\']+)')
             if content and url_re.search(content):
                 parse_mode = 'md'
-
                 def _to_md_link(m):
                     url = m.group(1)
                     return f"[{url}]({url})"
-
                 formatted_content = url_re.sub(_to_md_link, content)
-                print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
-        except Exception as e:
-            print(f"  [LINK ERROR] {e}")
+        except Exception:
             formatted_content = content
             parse_mode = None
 
+        # ========== SEND MESSAGE ==========
         if media_url:
             try:
                 import io
                 http = get_http_client()
                 resp = await http.get(media_url, timeout=HTTP_TIMEOUT_UPLOAD)
                 if resp.status_code == 200:
-                    # Determine filename from URL to help Telethon classify the file
                     from urllib.parse import urlparse, unquote
                     url_path = urlparse(media_url).path
                     filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
                     
-                    # Check if it's an image based on extension or content-type
                     content_type = resp.headers.get("content-type", "").lower()
                     ext = filename.split(".")[-1].lower() if "." in filename else ""
                     is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
                     
-                    # Wrap bytes in BytesIO with a name so Telethon knows the file type
                     file_bytes = io.BytesIO(resp.content)
-                    file_bytes.name = filename if "." in filename else f"photo.jpg"
+                    file_bytes.name = filename if "." in filename else "photo.jpg"
                     
-                    print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
-                    
-                    # For images, use force_document=False to send as photo preview
                     await asyncio.wait_for(
                         client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                        timeout=20
+                        timeout=30
                     )
                 else:
                     await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
+            except MediaEmptyError:
+                # Media download failed, send text only
+                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
@@ -666,28 +686,38 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
             await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
         
         return True, None
+        
+    # ========== SPECIFIC ERROR HANDLING (Official Telethon exceptions) ==========
     except asyncio.TimeoutError:
         return False, "Request timeout"
     except FloodWaitError as e:
+        # Official rate limit - must wait exactly this many seconds
         return False, f"FloodWait:{e.seconds}s"
     except UserPrivacyRestrictedError:
         return False, "Privacy restricted"
     except PeerFloodError:
-        return False, "Too many requests to different users"
+        # Too many messages to new users - temporary restriction
+        return False, "PeerFlood - too many messages to new users"
     except ChatWriteForbiddenError:
         return False, "Cannot write to this chat"
     except UserBlockedError:
         return False, "User blocked you"
     except UserBannedInChannelError:
         return False, "Banned in channel"
+    except UserNotMutualContactError:
+        return False, "Not mutual contact"
     except SlowModeWaitError as e:
         return False, f"SlowMode:{e.seconds}s"
     except AuthKeyUnregisteredError:
         return False, "Session expired"
     except SessionRevokedError:
         return False, "Session revoked"
+    except UserDeactivatedBanError:
+        return False, "User deactivated"
     except InputUserDeactivatedError:
         return False, "User deactivated"
+    except ChannelPrivateError:
+        return False, "Channel is private"
     except RPCError as e:
         return False, f"RPC:{e.message}"
     except Exception as e:
@@ -2969,72 +2999,137 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def add_contact(client, phone, first_name, last_name=""):
+    """Add contact using official Telegram API with proper error handling."""
     try:
         from telethon.tl.functions.contacts import ImportContactsRequest
         from telethon.tl.types import InputPhoneContact
-        contact = InputPhoneContact(client_id=0, phone=phone, first_name=first_name, last_name=last_name)
-        result = await client(ImportContactsRequest([contact]))
+        from telethon.errors import FloodWaitError, PhoneNumberInvalidError
+        import random
+        
+        # Use official client_id range (32-bit signed int)
+        contact = InputPhoneContact(
+            client_id=random.randint(0, 2**31 - 1),
+            phone=phone if phone.startswith("+") else f"+{phone}",
+            first_name=first_name,
+            last_name=last_name
+        )
+        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
         if result.imported:
             return True, phone, None
+        if result.users:
+            return True, phone, None  # Contact exists
         return True, phone, "Contact exists or invalid"
+        
+    except FloodWaitError as e:
+        return False, phone, f"FloodWait:{e.seconds}s"
+    except PhoneNumberInvalidError:
+        return False, phone, "Invalid phone number"
+    except asyncio.TimeoutError:
+        return False, phone, "Request timeout"
     except Exception as e:
         return False, phone, str(e)
 
 
 async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_id=None, recipient_username=None, recipient_first_name=None):
+    """
+    Send warmup chat message using official Telegram API.
+    Uses get_input_entity for efficiency (cached lookups).
+    NO DELAYS - admin controls speed via dashboard.
+    """
     try:
         from telethon.tl.functions.contacts import ImportContactsRequest
         from telethon.tl.types import InputPhoneContact
+        from telethon.errors import (
+            FloodWaitError, UserPrivacyRestrictedError, PeerFloodError,
+            UserBlockedError, AuthKeyUnregisteredError
+        )
         
         user = None
+        
+        # Strategy 1: Use telegram_id (fastest - direct lookup)
         if recipient_telegram_id:
             try:
-                user = await client.get_entity(recipient_telegram_id)
-            except:
+                user = await asyncio.wait_for(client.get_input_entity(int(recipient_telegram_id)), timeout=5)
+            except (ValueError, KeyError):
                 pass
+            except Exception:
+                pass
+        
+        # Strategy 2: Use username (cached lookup)
         if not user and recipient_username:
             try:
-                user = await client.get_entity(recipient_username)
-            except:
+                username = recipient_username if recipient_username.startswith("@") else f"@{recipient_username}"
+                user = await asyncio.wait_for(client.get_input_entity(username), timeout=5)
+            except Exception:
                 pass
-        if not user:
+        
+        # Strategy 3: Import contact by phone (last resort)
+        if not user and recipient_phone:
+            phone = recipient_phone if recipient_phone.startswith("+") else f"+{recipient_phone}"
             contact = InputPhoneContact(
-                client_id=random.randint(0, 999999),
-                phone=recipient_phone,
+                client_id=random.randint(0, 2**31 - 1),  # Official range
+                phone=phone,
                 first_name=recipient_first_name or "Friend",
                 last_name=""
             )
-            result = await client(ImportContactsRequest([contact]))
-            if result.users:
-                user = result.users[0]
+            try:
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+                if result.users:
+                    user = result.users[0]
+            except Exception:
+                pass
         
         if not user:
             return False, "Could not find user"
         
-        # Human-like typing simulation
-        base_delay = random.uniform(2, 4)
-        typing_delay = len(message) * random.uniform(0.08, 0.15)
-        total_typing_time = min(base_delay + typing_delay, 15)
-        
-        async with client.action(user, 'typing'):
-            await asyncio.sleep(total_typing_time)
-        
-        await client.send_message(user, message)
-        await asyncio.sleep(random.uniform(0.5, 2))
+        # Send message directly - NO DELAYS (admin controls timing)
+        await asyncio.wait_for(client.send_message(user, message), timeout=10)
         
         return True, None
+        
+    except FloodWaitError as e:
+        return False, f"FloodWait:{e.seconds}s"
+    except UserPrivacyRestrictedError:
+        return False, "Privacy restricted"
+    except PeerFloodError:
+        return False, "PeerFlood - too many messages"
+    except UserBlockedError:
+        return False, "User blocked you"
+    except AuthKeyUnregisteredError:
+        return False, "Session expired"
+    except asyncio.TimeoutError:
+        return False, "Request timeout"
     except Exception as e:
         return False, str(e)
 
 
 async def join_channel(client, channel_username=None):
+    """Join a channel using official Telegram API with proper error handling."""
     try:
         from telethon.tl.functions.channels import JoinChannelRequest
+        from telethon.errors import (
+            FloodWaitError, ChannelPrivateError, ChannelInvalidError,
+            InviteHashExpiredError, UserAlreadyParticipantError
+        )
+        
         if not channel_username:
             channel_username = random.choice(WARMUP_CHANNELS)
-        entity = await client.get_entity(channel_username)
-        await client(JoinChannelRequest(entity))
+        
+        # Use get_input_entity for efficiency
+        try:
+            entity = await asyncio.wait_for(client.get_input_entity(channel_username), timeout=10)
+        except Exception:
+            entity = await asyncio.wait_for(client.get_entity(channel_username), timeout=10)
+        
+        await asyncio.wait_for(client(JoinChannelRequest(entity)), timeout=10)
         return True, channel_username, None
+        
+    except UserAlreadyParticipantError:
+        return True, channel_username, None  # Already joined = success
+    except FloodWaitError as e:
+        return False, channel_username, f"FloodWait:{e.seconds}s"
+    except ChannelPrivateError:
+        return False, channel_username, "Channel is private"
     except Exception as e:
         return False, channel_username, str(e)
 
@@ -3053,21 +3148,46 @@ async def view_channel_messages(client, channel_username=None):
 
 
 async def send_reaction(client, channel_username=None):
+    """Send reaction to channel message using official Telegram API."""
     try:
         from telethon.tl.functions.messages import SendReactionRequest
         from telethon.tl.types import ReactionEmoji
+        from telethon.errors import (
+            FloodWaitError, ReactionInvalidError, MessageIdInvalidError,
+            ChannelPrivateError
+        )
+        
         if not channel_username:
             channel_username = random.choice(WARMUP_CHANNELS)
-        entity = await client.get_entity(channel_username)
-        messages = await client.get_messages(entity, limit=5)
+        
+        try:
+            entity = await asyncio.wait_for(client.get_input_entity(channel_username), timeout=10)
+        except Exception:
+            entity = await asyncio.wait_for(client.get_entity(channel_username), timeout=10)
+        
+        messages = await asyncio.wait_for(client.get_messages(entity, limit=5), timeout=10)
         if messages:
             msg = random.choice(messages)
             reaction = random.choice(REACTIONS)
-            await client(SendReactionRequest(peer=entity, msg_id=msg.id, reaction=[ReactionEmoji(emoticon=reaction)]))
+            await asyncio.wait_for(
+                client(SendReactionRequest(peer=entity, msg_id=msg.id, reaction=[ReactionEmoji(emoticon=reaction)])),
+                timeout=10
+            )
             return True, reaction, None
+        return False, None, "No messages in channel"
+        
+    except FloodWaitError as e:
+        return False, None, f"FloodWait:{e.seconds}s"
+    except ReactionInvalidError:
+        return False, None, "Reaction not allowed"
+    except MessageIdInvalidError:
+        return False, None, "Message not found"
+    except ChannelPrivateError:
+        return False, None, "Channel is private"
+    except asyncio.TimeoutError:
+        return False, None, "Request timeout"
     except Exception as e:
         return False, None, str(e)
-    return False, None, "No messages"
 
 
 async def update_profile_bio(client, bio=None):
