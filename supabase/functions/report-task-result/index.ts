@@ -13,12 +13,13 @@ async function checkAndMarkFrozenAccount(supabase: any, accountId: string, error
   
   const errorLower = error.toLowerCase();
   
-  // Check for FROZEN account patterns
+  // Check for FROZEN account patterns - comprehensive list
   const frozenPatterns = [
     'frozen',
     'frozen accounts',
     'not available for frozen',
     'account is frozen',
+    'updateprofilerequest',  // Common frozen error
   ];
   
   const isFrozen = frozenPatterns.some(p => errorLower.includes(p));
@@ -26,14 +27,24 @@ async function checkAndMarkFrozenAccount(supabase: any, accountId: string, error
   if (isFrozen) {
     console.log(`[frozen-detection] Account ${accountId} FROZEN detected in error: ${error}`);
     
-    await supabase
-      .from("telegram_accounts")
-      .update({
-        status: "frozen",
-        ban_reason: error,
-        last_active: new Date().toISOString(),
-      })
-      .eq("id", accountId);
+    try {
+      const { error: updateError } = await supabase
+        .from("telegram_accounts")
+        .update({
+          status: "frozen",
+          ban_reason: error,
+          last_active: new Date().toISOString(),
+        })
+        .eq("id", accountId);
+      
+      if (updateError) {
+        console.error(`[frozen-detection] Failed to update account ${accountId}:`, updateError);
+      } else {
+        console.log(`[frozen-detection] Successfully marked account ${accountId} as FROZEN`);
+      }
+    } catch (err) {
+      console.error(`[frozen-detection] Exception updating account ${accountId}:`, err);
+    }
     
     return true;
   }
