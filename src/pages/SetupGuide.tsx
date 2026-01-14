@@ -3438,14 +3438,116 @@ async def update_profile_bio(client, bio=None):
         return False, str(e)
 
 
+async def exchange_contacts_if_needed(client_a, client_b, account_a: dict, account_b: dict, pair_id: str) -> tuple:
+    """
+    Exchange contacts between paired accounts if not already done.
+    
+    Returns: (success: bool, error: str or None)
+    """
+    try:
+        from telethon.tl.functions.contacts import ImportContactsRequest, GetContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        import random
+        
+        phone_a = account_a.get("phone_number", "")
+        phone_b = account_b.get("phone_number", "")
+        name_a = account_a.get("first_name") or "Friend"
+        name_b = account_b.get("first_name") or "Friend"
+        
+        if not phone_a or not phone_b:
+            return False, "Missing phone numbers"
+        
+        # Normalize phone numbers
+        phone_a = phone_a if phone_a.startswith("+") else f"+{phone_a}"
+        phone_b = phone_b if phone_b.startswith("+") else f"+{phone_b}"
+        
+        # Check if A already has B as contact
+        a_has_b = False
+        try:
+            contacts_a = await asyncio.wait_for(client_a(GetContactsRequest(hash=0)), timeout=10)
+            for user in getattr(contacts_a, 'users', []):
+                user_phone = getattr(user, 'phone', '')
+                if user_phone:
+                    user_phone_norm = user_phone if user_phone.startswith("+") else f"+{user_phone}"
+                    if user_phone_norm == phone_b:
+                        a_has_b = True
+                        break
+        except Exception as e:
+            print(f"      [CONTACT CHECK] Could not check A's contacts: {str(e)[:30]}")
+        
+        # Check if B already has A as contact
+        b_has_a = False
+        try:
+            contacts_b = await asyncio.wait_for(client_b(GetContactsRequest(hash=0)), timeout=10)
+            for user in getattr(contacts_b, 'users', []):
+                user_phone = getattr(user, 'phone', '')
+                if user_phone:
+                    user_phone_norm = user_phone if user_phone.startswith("+") else f"+{user_phone}"
+                    if user_phone_norm == phone_a:
+                        b_has_a = True
+                        break
+        except Exception as e:
+            print(f"      [CONTACT CHECK] Could not check B's contacts: {str(e)[:30]}")
+        
+        # Add B to A's contacts if not already
+        if not a_has_b:
+            contact_b = InputPhoneContact(
+                client_id=random.randint(0, 2**31 - 1),
+                phone=phone_b,
+                first_name=name_b,
+                last_name=""
+            )
+            try:
+                await asyncio.wait_for(client_a(ImportContactsRequest([contact_b])), timeout=10)
+                print(f"      [CONTACT] A added B ({phone_b[-4:]}) to contacts")
+            except Exception as e:
+                print(f"      [CONTACT WARN] A failed to add B: {str(e)[:30]}")
+        else:
+            print(f"      [CONTACT] A already has B ({phone_b[-4:]}) as contact")
+        
+        # Add A to B's contacts if not already
+        if not b_has_a:
+            contact_a = InputPhoneContact(
+                client_id=random.randint(0, 2**31 - 1),
+                phone=phone_a,
+                first_name=name_a,
+                last_name=""
+            )
+            try:
+                await asyncio.wait_for(client_b(ImportContactsRequest([contact_a])), timeout=10)
+                print(f"      [CONTACT] B added A ({phone_a[-4:]}) to contacts")
+            except Exception as e:
+                print(f"      [CONTACT WARN] B failed to add A: {str(e)[:30]}")
+        else:
+            print(f"      [CONTACT] B already has A ({phone_a[-4:]}) as contact")
+        
+        # Report success to mark contacts_exchanged = true
+        await report_result("warmup_contacts_exchanged", {"pair_id": pair_id})
+        return True, None
+        
+    except Exception as e:
+        return False, str(e)
+
+
+# Track pairs that have already exchanged contacts in this session
+_contacts_exchanged_pairs = set()
+
+
 async def process_single_warmup_task(task: dict) -> dict:
     """Process a single warmup task - fully isolated"""
+    global _contacts_exchanged_pairs
+    
     task_type = task.get("task_type") or task.get("task", "unknown")
     task_id = task.get("task_id")
     account = task.get("account", {})
     task_data = task.get("task_data", {})
     pair_id = task.get("pair_id")
     proxy = task.get("proxy")
+    
+    # Check if this pair needs contact exchange
+    contacts_exchanged = task.get("contacts_exchanged", False)
+    partner_account = task.get("partner_account")  # Partner account data for contact exchange
+    partner_proxy = task.get("partner_proxy")
     
     account_id = account.get("id")
     phone = account.get("phone_number", "????")[-4:]
@@ -3460,6 +3562,23 @@ async def process_single_warmup_task(task: dict) -> dict:
                 "success": False, "error": "Could not connect client",
                 "task_id": task_id, "account_id": account_id, "pair_id": pair_id
             }
+        
+        # ========== CONTACT EXCHANGE (if needed and first task for this pair) ==========
+        if pair_id and not contacts_exchanged and pair_id not in _contacts_exchanged_pairs and partner_account:
+            partner_phone = partner_account.get("phone_number", "????")[-4:]
+            print(f"  [CONTACT EXCHANGE] Pair {pair_id[:8]}: {phone} <-> {partner_phone}")
+            
+            # Connect partner account
+            partner_client = await get_or_create_client(partner_account, task_proxy=partner_proxy)
+            if partner_client:
+                success, error = await exchange_contacts_if_needed(client, partner_client, account, partner_account, pair_id)
+                if success:
+                    _contacts_exchanged_pairs.add(pair_id)
+                    print(f"    ✓ Contacts exchanged for pair {pair_id[:8]}")
+                else:
+                    print(f"    ⚠ Contact exchange failed: {error}")
+            else:
+                print(f"    ⚠ Could not connect partner account {partner_phone}")
         
         # NO DELAY - Admin controls speed via dashboard
         

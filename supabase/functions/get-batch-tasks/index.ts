@@ -340,7 +340,7 @@ serve(async (req) => {
           *,
           warmup_pairs(*),
           sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)),
-          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(phone_number, telegram_id, username, first_name)
+          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(id, phone_number, telegram_id, username, first_name, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status))
         `)
         .eq("status", "pending")
         .lte("scheduled_at", new Date().toISOString())
@@ -355,15 +355,21 @@ serve(async (req) => {
           
           const senderAccount = msg.sender;
           const receiverAccount = msg.receiver;
-          const proxy = Array.isArray(senderAccount?.proxies) ? senderAccount.proxies[0] : senderAccount?.proxies;
+          const senderProxy = Array.isArray(senderAccount?.proxies) ? senderAccount.proxies[0] : senderAccount?.proxies;
+          const receiverProxy = Array.isArray(receiverAccount?.proxies) ? receiverAccount.proxies[0] : receiverAccount?.proxies;
+          const warmupPair = msg.warmup_pairs;
 
           // Skip if sender already has a task in this batch (avoid parallel sends from same account)
           if (usedAccountIds.has(senderAccount?.id)) continue;
 
           // Check account is active/restricted and has active proxy (restricted accounts CAN do warmup)
           const isUsableStatus = senderAccount && (senderAccount.status === "active" || senderAccount.status === "restricted");
-          if (isUsableStatus && receiverAccount && proxy?.status === "active") {
-            const apiCred = senderAccount.telegram_api_credentials;
+          if (isUsableStatus && receiverAccount && senderProxy?.status === "active") {
+            const senderApiCred = senderAccount.telegram_api_credentials;
+            const receiverApiCred = receiverAccount.telegram_api_credentials;
+            
+            // Check if contacts have been exchanged for this pair
+            const contactsExchanged = warmupPair?.contacts_exchanged || false;
 
             // Mark as "sending" with claim info (task leasing)
             await supabase
@@ -383,6 +389,7 @@ serve(async (req) => {
               task_id: msg.id,
               pair_id: msg.pair_id,
               is_cycle_last: msg.is_cycle_last || false,
+              contacts_exchanged: contactsExchanged, // Include contacts_exchanged flag
               task_data: {
                 recipient_phone: receiverAccount.phone_number,
                 recipient_telegram_id: receiverAccount.telegram_id,
@@ -395,26 +402,43 @@ serve(async (req) => {
               account: {
                 id: senderAccount.id,
                 phone_number: senderAccount.phone_number,
+                first_name: senderAccount.first_name,
                 session_data: senderAccount.session_data,
                 device_model: senderAccount.device_model,
                 system_version: senderAccount.system_version,
                 app_version: senderAccount.app_version,
                 lang_code: senderAccount.lang_code,
                 system_lang_code: senderAccount.system_lang_code,
-                api_id: apiCred?.api_id || senderAccount.api_id,
-                api_hash: apiCred?.api_hash || senderAccount.api_hash,
-                proxy: proxy,
+                api_id: senderApiCred?.api_id || senderAccount.api_id,
+                api_hash: senderApiCred?.api_hash || senderAccount.api_hash,
+                proxy: senderProxy,
               },
+              proxy: senderProxy,
+              // Include partner account for contact exchange (only if not already exchanged)
+              partner_account: contactsExchanged ? null : {
+                id: receiverAccount.id,
+                phone_number: receiverAccount.phone_number,
+                first_name: receiverAccount.first_name,
+                session_data: receiverAccount.session_data,
+                device_model: receiverAccount.device_model,
+                system_version: receiverAccount.system_version,
+                app_version: receiverAccount.app_version,
+                lang_code: receiverAccount.lang_code,
+                system_lang_code: receiverAccount.system_lang_code,
+                api_id: receiverApiCred?.api_id || receiverAccount.api_id,
+                api_hash: receiverApiCred?.api_hash || receiverAccount.api_hash,
+              },
+              partner_proxy: contactsExchanged ? null : receiverProxy,
             });
 
             usedAccountIds.add(senderAccount.id);
-            console.log(`[get-batch-tasks] Added warmup task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number}`);
+            console.log(`[get-batch-tasks] Added warmup task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number} (contacts_exchanged: ${contactsExchanged})`);
           } else {
             // Account not usable, mark as failed
             const reason = !senderAccount ? "Sender account not found" :
                            (senderAccount.status !== "active" && senderAccount.status !== "restricted") ? `Sender status: ${senderAccount.status}` :
-                           !proxy ? "No proxy assigned" :
-                           proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
+                           !senderProxy ? "No proxy assigned" :
+                           senderProxy.status !== "active" ? `Proxy status: ${senderProxy.status}` :
                            "Unknown reason";
             
             await supabase
