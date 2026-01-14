@@ -488,10 +488,11 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     proxy_id = task_proxy.get("id") if task_proxy else account.get("proxy_id")
     
     if not proxy:
-        print(f"  [SKIP] {phone} - No proxy assigned (assign proxy in admin dashboard)")
+        print(f"  ⛔ [SKIP] {phone} - NO PROXY ASSIGNED (MANDATORY)")
+        print(f"          → Assign a proxy in the Admin Dashboard before running")
         return None
     
-    print(f"  [PROXY] Using assigned: {proxy[1]}:{proxy[2]}")
+    print(f"  ✓ [PROXY] Active: {proxy[1]}:{proxy[2]}")
     
     # ========== STEP 4: USE OR GENERATE FINGERPRINT (after proxy check) ==========
     # Fingerprint is generated/retrieved and saved to DB SYNCHRONOUSLY before connect
@@ -1554,7 +1555,13 @@ async def disconnect_batch_clients():
     
     async def disconnect_one(account_id: str, client: TelegramClient) -> bool:
         try:
+            # SAVE SESSION BEFORE DISCONNECT - preserves entity cache
             if client.is_connected():
+                try:
+                    phone = getattr(client, '_phone', account_id[:8])
+                    await save_session_to_db(account_id, phone)
+                except Exception:
+                    pass  # Non-critical
                 await asyncio.wait_for(client.disconnect(), timeout=5)
             return True
         except Exception as e:
@@ -3893,19 +3900,24 @@ async def process_single_warmup_task(task: dict) -> dict:
         # ========== CONTACT EXCHANGE (if needed and first task for this pair) ==========
         if pair_id and not contacts_exchanged and pair_id not in _contacts_exchanged_pairs and partner_account:
             partner_phone = partner_account.get("phone_number", "????")[-4:]
-            print(f"  [CONTACT EXCHANGE] Pair {pair_id[:8]}: {phone} <-> {partner_phone}")
             
-            # Connect partner account
-            partner_client = await get_or_create_client(partner_account, task_proxy=partner_proxy)
-            if partner_client:
-                success, error = await exchange_contacts_if_needed(client, partner_client, account, partner_account, pair_id)
-                if success:
-                    _contacts_exchanged_pairs.add(pair_id)
-                    print(f"    ✓ Contacts exchanged for pair {pair_id[:8]}")
-                else:
-                    print(f"    ⚠ Contact exchange failed: {error}")
+            # CRITICAL: Validate partner has proxy before attempting connection
+            if not partner_proxy or not partner_proxy.get("host"):
+                print(f"  ⚠ [CONTACT EXCHANGE] Partner {partner_phone} has NO PROXY - skipping exchange")
             else:
-                print(f"    ⚠ Could not connect partner account {partner_phone}")
+                print(f"  [CONTACT EXCHANGE] Pair {pair_id[:8]}: {phone} <-> {partner_phone}")
+                
+                # Connect partner account (will fail safely if no proxy/fingerprint)
+                partner_client = await get_or_create_client(partner_account, task_proxy=partner_proxy)
+                if partner_client:
+                    success, error = await exchange_contacts_if_needed(client, partner_client, account, partner_account, pair_id)
+                    if success:
+                        _contacts_exchanged_pairs.add(pair_id)
+                        print(f"    ✓ Contacts exchanged for pair {pair_id[:8]}")
+                    else:
+                        print(f"    ⚠ Contact exchange failed: {error}")
+                else:
+                    print(f"    ⚠ Could not connect partner {partner_phone} (check proxy/fingerprint)")
         
         # NO DELAY - Admin controls speed via dashboard
         
