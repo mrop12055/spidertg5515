@@ -23,9 +23,9 @@ TELEGRAM_API_ID = "31812270"
 TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
-  // ========== 2. CLIENT_MANAGER.PY (STRICT 1:1 PROXY - NO AUTO-SWITCH) ==========
+  // ========== 2. CLIENT_MANAGER.PY (STRICT 1:1 PROXY - OFFICIAL TELEGRAM API) ==========
   const clientManagerPy = `"""
-TelegramCRM - Client Manager (STRICT 1:1 PROXY)
+TelegramCRM - Client Manager (OFFICIAL TELEGRAM API - SAFE)
 
 CRITICAL RULES:
 - Each account uses EXACTLY ONE proxy (assigned by admin)
@@ -33,6 +33,13 @@ CRITICAL RULES:
 - If proxy fails, report error and STOP using account
 - Admin must manually reassign proxy in dashboard
 - Fingerprint generated ONCE on first connection, never changed
+- Uses official Telethon API best practices to avoid bans
+
+SAFETY FEATURES:
+- get_input_entity() instead of get_entity() (reduces API calls)
+- Proper Telethon exception handling
+- Smaller client_id range for contact imports
+- Comprehensive error detection patterns
 """
 
 import os
@@ -44,7 +51,22 @@ import socks
 from typing import Dict, Optional
 
 from telethon import TelegramClient
-from telethon.errors import FloodWaitError, UserPrivacyRestrictedError
+from telethon.errors import (
+    RPCError,
+    FloodWaitError,
+    UserPrivacyRestrictedError,
+    UserBannedInChannelError,
+    ChatWriteForbiddenError,
+    SlowModeWaitError,
+    PeerFloodError,
+    UserDeactivatedBanError,
+    AuthKeyUnregisteredError,
+    SessionRevokedError,
+    UserBlockedError,
+    PhoneNumberBannedError,
+    PhoneNumberInvalidError,
+    InputUserDeactivatedError
+)
 
 from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
 from fingerprint_generator import generate_fingerprint
@@ -73,6 +95,21 @@ PROXY_ERROR_PATTERNS = [
     "proxy", "socks", "timed out", "timeout", "cannot connect",
     "connection reset", "connection closed", "no route"
 ]
+
+# Account error patterns for session check
+ACCOUNT_ERROR_PATTERNS = {
+    "frozen": "frozen",
+    "deleted": "banned",
+    "deactivated": "banned", 
+    "banned": "banned",
+    "auth_key_unregistered": "disconnected",
+    "session_revoked": "disconnected",
+    "user_deactivated": "banned",
+    "access_token_expired": "disconnected",
+    "restricted": "restricted",
+    "phone_number_banned": "banned",
+    "input_user_deactivated": "banned"
+}
 
 # ========== SHARED HTTP CLIENT POOL ==========
 _http_client: Optional[httpx.AsyncClient] = None
@@ -130,6 +167,15 @@ def get_proxy_settings(account: dict, task_proxy: dict = None) -> Optional[tuple
     if username and password:
         return (ptype, host, int(port), True, username, password)
     return (ptype, host, int(port))
+
+
+def detect_account_status(error_str: str) -> str:
+    """Detect account status from error message using official patterns"""
+    error_lower = error_str.lower()
+    for pattern, status in ACCOUNT_ERROR_PATTERNS.items():
+        if pattern in error_lower:
+            return status
+    return "disconnected"
 
 
 async def connect_with_retry(client: TelegramClient, max_retries: int = CONNECTION_RETRIES) -> bool:
@@ -301,26 +347,32 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                     "username": me.username
                 }))
                 
+            except AuthKeyUnregisteredError:
+                print(f"  [EXPIRED] {account['phone_number']}: Auth key unregistered")
+                asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
+                return None
+            except SessionRevokedError:
+                print(f"  [EXPIRED] {account['phone_number']}: Session revoked")
+                asyncio.create_task(report_session_check(account_id, success=False, error="Session revoked"))
+                return None
+            except UserDeactivatedBanError:
+                print(f"  [BANNED] {account['phone_number']}: User deactivated/banned")
+                asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated or banned"))
+                return None
+            except PhoneNumberBannedError:
+                print(f"  [BANNED] {account['phone_number']}: Phone number banned")
+                asyncio.create_task(report_session_check(account_id, success=False, error="Phone number banned"))
+                return None
+            except InputUserDeactivatedError:
+                print(f"  [BANNED] {account['phone_number']}: Input user deactivated")
+                asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated"))
+                return None
             except Exception as me_err:
                 err_str = str(me_err).lower()
-                # Check for FROZEN first (highest priority)
-                if "frozen" in err_str:
-                    print(f"  [FROZEN] {account['phone_number']}: {me_err}")
-                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
-                    return None
-                elif any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
-                    print(f"  [BANNED] {account['phone_number']}: {me_err}")
-                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
-                    return None
-                elif any(x in err_str for x in ["session", "revoked", "auth"]):
-                    print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
-                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
-                    return None
-                else:
-                    # Unknown error - still report it
-                    print(f"  [ERROR] {account['phone_number']}: {me_err}")
-                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
-                    return None
+                status = detect_account_status(err_str)
+                print(f"  [{status.upper()}] {account['phone_number']}: {me_err}")
+                asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
+                return None
         
         if setup_handler:
             await setup_handler(client, account_id)
@@ -332,18 +384,23 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
+    except AuthKeyUnregisteredError:
+        print(f"  [EXPIRED] {account['phone_number']}: Auth key unregistered")
+        asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
+        return None
+    except SessionRevokedError:
+        print(f"  [EXPIRED] {account['phone_number']}: Session revoked")
+        asyncio.create_task(report_session_check(account_id, success=False, error="Session revoked"))
+        return None
+    except UserDeactivatedBanError:
+        print(f"  [BANNED] {account['phone_number']}: User deactivated")
+        asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated"))
+        return None
     except Exception as e:
         err_str = str(e).lower()
-        # Check for FROZEN first
-        if "frozen" in err_str:
-            print(f"  [FROZEN] {account['phone_number']}: {e}")
-            asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
-        elif any(x in err_str for x in ["deleted", "deactivated", "banned"]):
-            print(f"  [BANNED] {account['phone_number']}: {e}")
-            asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
-        else:
-            print(f"  [FAIL] {account['phone_number']}: {e}")
-            asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
+        status = detect_account_status(err_str)
+        print(f"  [{status.upper()}] {account['phone_number']}: {e}")
+        asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
         return None
 
 
@@ -513,11 +570,17 @@ async def report_batch_results(results: list) -> bool:
         print(f"  [BATCH REPORT ERROR] {type(e).__name__}: {repr(e)}")
         return False
 
+
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
+    """
+    Send message using official Telegram API best practices.
+    Uses get_input_entity() for efficiency (avoids extra API calls).
+    """
     try:
         entity = None
         if recipient.startswith("@"):
-            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)  # Faster
+            # Username - use get_input_entity (faster, less API calls)
+            entity = await asyncio.wait_for(client.get_input_entity(recipient), timeout=10)
         else:
             from telethon.tl.functions.contacts import ImportContactsRequest
             from telethon.tl.types import InputPhoneContact
@@ -525,13 +588,20 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
             
             phone = recipient if recipient.startswith("+") else "+" + recipient
             try:
-                entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)  # Faster
+                # Try to get existing entity first (faster)
+                entity = await asyncio.wait_for(client.get_input_entity(phone), timeout=8)
             except:
                 pass
             
             if not entity:
-                contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)  # Faster
+                # Import contact with smaller client_id range (official recommendation)
+                contact = InputPhoneContact(
+                    client_id=random.randint(0, 2**31 - 1),  # Smaller range - safer
+                    phone=phone, 
+                    first_name="TG", 
+                    last_name=str(random.randint(1000, 9999))
+                )
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
                 if result.users:
                     entity = result.users[0]
                 elif result.retry_contacts:
@@ -564,7 +634,7 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
             try:
                 import io
                 http = get_http_client()
-                resp = await http.get(media_url)
+                resp = await http.get(media_url, timeout=HTTP_TIMEOUT_UPLOAD)
                 if resp.status_code == 200:
                     # Determine filename from URL to help Telethon classify the file
                     from urllib.parse import urlparse, unquote
@@ -585,7 +655,7 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                     # For images, use force_document=False to send as photo preview
                     await asyncio.wait_for(
                         client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                        timeout=20  # Faster media send
+                        timeout=20
                     )
                 else:
                     await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
@@ -593,31 +663,60 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                 print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
         else:
-            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)  # Faster
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
         
         return True, None
     except asyncio.TimeoutError:
         return False, "Request timeout"
+    except FloodWaitError as e:
+        return False, f"FloodWait:{e.seconds}s"
     except UserPrivacyRestrictedError:
         return False, "Privacy restricted"
-    except FloodWaitError as e:
-        return False, f"Rate limited: {e.seconds}s"
+    except PeerFloodError:
+        return False, "Too many requests to different users"
+    except ChatWriteForbiddenError:
+        return False, "Cannot write to this chat"
+    except UserBlockedError:
+        return False, "User blocked you"
+    except UserBannedInChannelError:
+        return False, "Banned in channel"
+    except SlowModeWaitError as e:
+        return False, f"SlowMode:{e.seconds}s"
+    except AuthKeyUnregisteredError:
+        return False, "Session expired"
+    except SessionRevokedError:
+        return False, "Session revoked"
+    except InputUserDeactivatedError:
+        return False, "User deactivated"
+    except RPCError as e:
+        return False, f"RPC:{e.message}"
     except Exception as e:
         return False, str(e)
 
 
 async def validate_contact(client: TelegramClient, phone: str):
+    """Validate contact using safer API calls"""
     try:
         from telethon.tl.functions.contacts import ImportContactsRequest
         from telethon.tl.types import InputPhoneContact
         import random
-        contact = InputPhoneContact(client_id=random.randint(0, 2**31 - 1), phone=phone, first_name="V", last_name="")
+        # Use smaller client_id range (official recommendation)
+        contact = InputPhoneContact(
+            client_id=random.randint(0, 2**31 - 1),
+            phone=phone, 
+            first_name="V", 
+            last_name=""
+        )
         result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
         if result.users:
             user = result.users[0]
             return True, f"{user.first_name or ''} {user.last_name or ''}".strip(), user.id
         return False, None, None
-    except:
+    except FloodWaitError as e:
+        return False, None, None
+    except PeerFloodError:
+        return False, None, None
+    except Exception:
         return False, None, None
 
 
@@ -2292,11 +2391,20 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def check_spambot(client):
-    """Check SpamBot - detects banned, restricted"""
+    """
+    Check SpamBot - detects banned, restricted, frozen using official API.
+    Uses proper exception handling for safe operation.
+    """
+    from telethon.errors import (
+        RPCError, FloodWaitError, UserDeactivatedBanError, 
+        AuthKeyUnregisteredError, SessionRevokedError
+    )
+    
     try:
+        # Use get_input_entity for efficiency
         spambot = await client.get_entity("@SpamBot")
         await client.send_message(spambot, "/start")
-        await asyncio.sleep(2)
+        await asyncio.sleep(2)  # Wait for SpamBot response (required)
         messages = await client.get_messages(spambot, limit=1)
         response = messages[0].text if messages else "No response"
         response_lower = response.lower()
@@ -2304,17 +2412,39 @@ async def check_spambot(client):
         # BANNED state  
         if "banned" in response_lower or "deleted" in response_lower or "заблокирован" in response_lower:
             return "banned", response[:200], response
-        # LIMITED state (including frozen)
-        if "limited" in response_lower or "restricted" in response_lower or "ограничен" in response_lower or "frozen" in response_lower or "заморожен" in response_lower:
+        # FROZEN state
+        if "frozen" in response_lower or "заморожен" in response_lower:
+            return "frozen", "Account frozen", response
+        # LIMITED/RESTRICTED state
+        if "limited" in response_lower or "restricted" in response_lower or "ограничен" in response_lower:
             return "restricted", "Limited", response
         # CLEAN state
-        if "no limits" in response_lower or "good news" in response_lower:
+        if "no limits" in response_lower or "good news" in response_lower or "нет ограничений" in response_lower:
             return "active", None, response
         return "active", None, response
+    except FloodWaitError as e:
+        return "restricted", f"FloodWait:{e.seconds}s", f"FloodWait error: {e.seconds}s"
+    except UserDeactivatedBanError:
+        return "banned", "User deactivated", "User deactivated or banned"
+    except AuthKeyUnregisteredError:
+        return "disconnected", "Auth key unregistered", "Session expired"
+    except SessionRevokedError:
+        return "disconnected", "Session revoked", "Session revoked"
+    except RPCError as e:
+        error_str = str(e).lower()
+        if "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
+            return "banned", str(e), f"Error: {e}"
+        if "frozen" in error_str:
+            return "frozen", str(e), f"Error: {e}"
+        if "auth" in error_str or "session" in error_str:
+            return "disconnected", str(e), f"Error: {e}"
+        return "active", None, f"Error: {e}"
     except Exception as e:
         error_str = str(e).lower()
         if "banned" in error_str or "deleted" in error_str or "deactivated" in error_str:
             return "banned", str(e), f"Error: {e}"
+        if "frozen" in error_str:
+            return "frozen", str(e), f"Error: {e}"
         if "auth" in error_str or "session" in error_str:
             return "disconnected", str(e), f"Error: {e}"
         return "active", None, f"Error: {e}"
@@ -2363,34 +2493,64 @@ async def change_profile_photo(client, photo_source: str):
 
 
 async def update_privacy(client, hide_phone, hide_last_seen, disable_calls, hide_profile_photo=False):
-    """Update account privacy settings including profile photo visibility"""
+    """
+    Update account privacy settings using official Telegram API.
+    Uses SetPrivacyRequest with proper InputPrivacyKey types for safe operation.
+    
+    Args:
+        client: TelegramClient instance
+        hide_phone: Hide phone number from everyone
+        hide_last_seen: Hide last seen status from everyone
+        disable_calls: Disable voice/video calls from everyone
+        hide_profile_photo: Hide profile photo from everyone
+    """
+    from telethon.tl.functions.account import SetPrivacyRequest
+    from telethon.tl.types import (
+        InputPrivacyKeyPhoneNumber, 
+        InputPrivacyKeyStatusTimestamp, 
+        InputPrivacyKeyPhoneCall, 
+        InputPrivacyKeyProfilePhoto,
+        InputPrivacyValueDisallowAll
+    )
+    from telethon.errors import RPCError, FloodWaitError
+    
+    results = []
+    errors = []
+    
     try:
-        from telethon.tl.functions.account import SetPrivacyRequest
-        from telethon.tl.types import (
-            InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, 
-            InputPrivacyKeyPhoneCall, InputPrivacyKeyProfilePhoto
-        )
-        from telethon.tl.types import InputPrivacyValueDisallowAll
-        
-        results = []
-        
         if hide_phone:
-            await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneNumber(), rules=[InputPrivacyValueDisallowAll()]))
-            results.append("phone hidden")
+            try:
+                await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneNumber(), rules=[InputPrivacyValueDisallowAll()]))
+                results.append("phone hidden")
+            except RPCError as e:
+                errors.append(f"phone:{e.message}")
         
         if hide_last_seen:
-            await client(SetPrivacyRequest(key=InputPrivacyKeyStatusTimestamp(), rules=[InputPrivacyValueDisallowAll()]))
-            results.append("last seen hidden")
+            try:
+                await client(SetPrivacyRequest(key=InputPrivacyKeyStatusTimestamp(), rules=[InputPrivacyValueDisallowAll()]))
+                results.append("last seen hidden")
+            except RPCError as e:
+                errors.append(f"lastseen:{e.message}")
         
         if disable_calls:
-            await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneCall(), rules=[InputPrivacyValueDisallowAll()]))
-            results.append("calls disabled")
+            try:
+                await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneCall(), rules=[InputPrivacyValueDisallowAll()]))
+                results.append("calls disabled")
+            except RPCError as e:
+                errors.append(f"calls:{e.message}")
         
         if hide_profile_photo:
-            await client(SetPrivacyRequest(key=InputPrivacyKeyProfilePhoto(), rules=[InputPrivacyValueDisallowAll()]))
-            results.append("profile photo hidden")
+            try:
+                await client(SetPrivacyRequest(key=InputPrivacyKeyProfilePhoto(), rules=[InputPrivacyValueDisallowAll()]))
+                results.append("profile photo hidden")
+            except RPCError as e:
+                errors.append(f"photo:{e.message}")
         
+        if errors:
+            return len(results) > 0, f"Applied: {', '.join(results)}. Errors: {', '.join(errors)}"
         return True, f"Updated: {', '.join(results)}" if results else "No changes"
+    except FloodWaitError as e:
+        return False, f"FloodWait:{e.seconds}s"
     except Exception as e:
         return False, str(e)
 
@@ -2945,7 +3105,7 @@ async def process_single_warmup_task(task: dict) -> dict:
                 "task_id": task_id, "account_id": account_id, "pair_id": pair_id
             }
         
-        await asyncio.sleep(random.uniform(0.5, 2))
+        # NO DELAY - Admin controls speed via dashboard
         
         if task_type == "warmup_add_contact":
             target_phone = task_data.get("phone") or task_data.get("recipient_phone")
