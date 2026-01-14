@@ -47,8 +47,6 @@ serve(async (req) => {
       let livechatSettings = {
         sameAccountStaggerMin: 1,
         sameAccountStaggerMax: 2,
-        parallelAccountLimit: 0,  // 0 = unlimited
-        pollingInterval: 0.5,
         enableParallel: true,
       };
       
@@ -63,8 +61,6 @@ serve(async (req) => {
         livechatSettings = {
           sameAccountStaggerMin: (val.sameAccountStaggerMin as number) ?? 1,
           sameAccountStaggerMax: (val.sameAccountStaggerMax as number) ?? 2,
-          parallelAccountLimit: (val.parallelAccountLimit as number) ?? 0,
-          pollingInterval: (val.pollingInterval as number) ?? 0.5,
           enableParallel: (val.enableParallel as boolean) ?? true,
         };
       }
@@ -347,7 +343,7 @@ serve(async (req) => {
 
       return new Response(JSON.stringify({
         task: "wait",
-        seconds: livechatSettings.pollingInterval,
+        seconds: 0,  // Instant - no polling interval needed
         settings: livechatSettings,
         accounts: validAccounts,
       }), {
