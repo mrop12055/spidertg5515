@@ -32,10 +32,10 @@ serve(async (req) => {
 
     console.log(`Verifying ${account_ids.length} accounts...`);
 
-    // Fetch accounts with session data
+    // Fetch accounts with session data and ban_reason
     const { data: accounts, error: fetchError } = await supabase
       .from('telegram_accounts')
-      .select('id, phone_number, session_data, status')
+      .select('id, phone_number, session_data, status, ban_reason')
       .in('id', account_ids);
 
     if (fetchError) {
@@ -43,10 +43,10 @@ serve(async (req) => {
       throw fetchError;
     }
 
-    const results: { id: string; status: 'active' | 'disconnected' | 'banned'; reason: string }[] = [];
+    const results: { id: string; status: 'active' | 'disconnected' | 'banned' | 'frozen'; reason: string }[] = [];
 
     for (const account of accounts || []) {
-      let newStatus: 'active' | 'disconnected' | 'banned' = 'disconnected';
+      let newStatus: 'active' | 'disconnected' | 'banned' | 'frozen' = 'disconnected';
       let reason = 'No session data';
 
       if (account.session_data) {
@@ -86,6 +86,16 @@ serve(async (req) => {
           console.error(`Error validating session for ${account.phone_number}:`, e);
           newStatus = 'disconnected';
           reason = 'Failed to parse session';
+        }
+      }
+
+      // Check if account has a ban_reason that indicates frozen status
+      // This catches cases where session is valid but account is frozen
+      if (account.ban_reason) {
+        const banReasonLower = account.ban_reason.toLowerCase();
+        if (banReasonLower.includes('frozen')) {
+          newStatus = 'frozen';
+          reason = 'Account frozen (detected from ban_reason)';
         }
       }
 
