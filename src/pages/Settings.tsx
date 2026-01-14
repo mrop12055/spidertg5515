@@ -888,63 +888,6 @@ const Settings: React.FC = () => {
                   </p>
                 </div>
 
-                <Separator />
-
-                {/* Parallel Account Limit */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-base">Parallel Account Limit</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Max accounts processing simultaneously (0 = unlimited)
-                      </p>
-                    </div>
-                    <Badge variant="secondary" className="text-sm font-medium">
-                      {(dbSettings.livechat?.parallelAccountLimit ?? 0) === 0 ? 'Unlimited' : dbSettings.livechat?.parallelAccountLimit}
-                    </Badge>
-                  </div>
-                  <Slider
-                    value={[dbSettings.livechat?.parallelAccountLimit ?? 0]}
-                    onValueChange={([value]) => updateLivechatSettings({ parallelAccountLimit: value })}
-                    min={0}
-                    max={50}
-                    step={5}
-                    className="py-2"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>Unlimited</span>
-                    <span>50 accounts</span>
-                  </div>
-                </div>
-
-                <Separator />
-
-                {/* Polling Interval */}
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div className="space-y-0.5">
-                      <Label className="text-base">Polling Interval</Label>
-                      <p className="text-sm text-muted-foreground">
-                        How often runner checks for new messages
-                      </p>
-                    </div>
-                    <Badge variant="secondary" className="text-sm font-medium">
-                      {dbSettings.livechat?.pollingInterval ?? 0.5}s
-                    </Badge>
-                  </div>
-                  <Slider
-                    value={[dbSettings.livechat?.pollingInterval ?? 0.5]}
-                    onValueChange={([value]) => updateLivechatSettings({ pollingInterval: value })}
-                    min={0.1}
-                    max={5}
-                    step={0.1}
-                    className="py-2"
-                  />
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>0.1s (fast)</span>
-                    <span>5s (slow)</span>
-                  </div>
-                </div>
               </CardContent>
             </Card>
           </TabsContent>

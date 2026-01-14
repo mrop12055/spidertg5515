@@ -49,8 +49,6 @@ export interface CampaignSpeedSettings {
 export interface LivechatSettings {
   sameAccountStaggerMin: number;  // Min delay (seconds) between messages for SAME account
   sameAccountStaggerMax: number;  // Max delay (seconds)
-  parallelAccountLimit: number;   // Max accounts to process in parallel (0 = unlimited)
-  pollingInterval: number;        // Seconds between fetching new tasks
   enableParallel: boolean;        // Master toggle for parallel mode
 }
 
@@ -105,8 +103,6 @@ const defaultSettings: AllSettings = {
   livechat: {
     sameAccountStaggerMin: 1,
     sameAccountStaggerMax: 2,
-    parallelAccountLimit: 0,  // 0 = unlimited
-    pollingInterval: 0.5,     // Fast polling
     enableParallel: true,
   },
 };
