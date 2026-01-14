@@ -2362,33 +2362,82 @@ async def change_profile_photo(client, photo_source: str):
         return False, str(e)
 
 
-async def update_privacy(client, hide_phone, hide_last_seen, disable_calls):
+async def update_privacy(client, hide_phone, hide_last_seen, disable_calls, hide_profile_photo=False):
+    """Update account privacy settings including profile photo visibility"""
     try:
         from telethon.tl.functions.account import SetPrivacyRequest
-        from telethon.tl.types import InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, InputPrivacyKeyPhoneCall
+        from telethon.tl.types import (
+            InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, 
+            InputPrivacyKeyPhoneCall, InputPrivacyKeyProfilePhoto
+        )
         from telethon.tl.types import InputPrivacyValueDisallowAll
+        
+        results = []
+        
         if hide_phone:
             await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneNumber(), rules=[InputPrivacyValueDisallowAll()]))
+            results.append("phone hidden")
+        
         if hide_last_seen:
             await client(SetPrivacyRequest(key=InputPrivacyKeyStatusTimestamp(), rules=[InputPrivacyValueDisallowAll()]))
+            results.append("last seen hidden")
+        
         if disable_calls:
             await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneCall(), rules=[InputPrivacyValueDisallowAll()]))
-        return True, None
+            results.append("calls disabled")
+        
+        if hide_profile_photo:
+            await client(SetPrivacyRequest(key=InputPrivacyKeyProfilePhoto(), rules=[InputPrivacyValueDisallowAll()]))
+            results.append("profile photo hidden")
+        
+        return True, f"Updated: {', '.join(results)}" if results else "No changes"
     except Exception as e:
         return False, str(e)
 
 
 async def change_password(client, existing_pwd, new_pwd):
+    """
+    Set or change 2FA cloud password.
+    
+    Args:
+        client: TelegramClient instance
+        existing_pwd: Current password (empty string if no password set)
+        new_pwd: New password to set (min 6 characters)
+    """
     try:
         from telethon.tl.functions.account import UpdatePasswordSettingsRequest, GetPasswordRequest
-        from telethon.password import compute_check
-        pwd = await client(GetPasswordRequest())
-        check = compute_check(pwd, existing_pwd) if pwd.has_password and existing_pwd else None
+        from telethon.password import compute_check, compute_hash
         from telethon.tl.types.account import PasswordInputSettings
-        new_settings = PasswordInputSettings(new_algo=pwd.new_algo, new_password_hash=new_pwd.encode())
+        
+        # Get current password state
+        pwd = await client(GetPasswordRequest())
+        
+        # Compute check for existing password (if account has 2FA enabled)
+        if pwd.has_password:
+            if not existing_pwd:
+                return False, "Account has 2FA enabled - existing password required"
+            check = compute_check(pwd, existing_pwd)
+        else:
+            check = None
+        
+        # Compute new password hash using the account's algorithm
+        new_password_hash = compute_hash(pwd.new_algo, new_pwd)
+        
+        # Create new settings
+        new_settings = PasswordInputSettings(
+            new_algo=pwd.new_algo,
+            new_password_hash=new_password_hash,
+            hint=""  # Optional hint
+        )
+        
         await client(UpdatePasswordSettingsRequest(password=check, new_settings=new_settings))
-        return True, None
+        return True, "Password updated successfully"
     except Exception as e:
+        error_str = str(e).lower()
+        if "password" in error_str and "invalid" in error_str:
+            return False, "Invalid existing password"
+        elif "password" in error_str and "required" in error_str:
+            return False, "Existing password required"
         return False, str(e)
 
 
@@ -2464,7 +2513,13 @@ async def process_single_task(task):
             client = await get_or_create_client(account, task_proxy=task_proxy)
             if client:
                 print(f"  [PRIVACY] Updating for {phone}...")
-                success, error = await update_privacy(client, task_data.get("hidePhone", False), task_data.get("hideLastSeen", False), task_data.get("disableCalls", False))
+                success, error = await update_privacy(
+                    client, 
+                    task_data.get("hidePhone", False), 
+                    task_data.get("hideLastSeen", False), 
+                    task_data.get("disableCalls", False),
+                    task_data.get("hideProfilePhoto", False)
+                )
                 await report_result("privacy_settings", {"task_id": task_id, "account_id": account_id, "success": success, "error": error})
         
         elif task_type == "change_password":
