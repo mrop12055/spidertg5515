@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -20,7 +20,14 @@ import {
   CheckCircle,
   Download,
   FileJson,
-  FileSpreadsheet
+  FileSpreadsheet,
+  RefreshCw,
+  Server,
+  MessageSquare,
+  UserCheck,
+  Shield,
+  Zap,
+  Database
 } from 'lucide-react';
 import { useTelegram, AccountTaskLog } from '@/context/TelegramContext';
 import { cn } from '@/lib/utils';
@@ -28,6 +35,18 @@ import { format } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
+
+interface SystemLog {
+  id: string;
+  source: string;
+  type: string;
+  message: string;
+  status: 'success' | 'error' | 'info' | 'warning';
+  details?: string;
+  accountPhone?: string;
+  timestamp: Date;
+}
 
 const Logs: React.FC = () => {
   const { 
@@ -41,9 +60,234 @@ const Logs: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed'>('all');
   const [taskTypeFilter, setTaskTypeFilter] = useState<string>('all');
+  const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
+  const [isLoadingSystemLogs, setIsLoadingSystemLogs] = useState(false);
+  const [systemLogFilter, setSystemLogFilter] = useState<string>('all');
 
   // Get unique task types from history
   const uniqueTaskTypes = Array.from(new Set(accountTaskHistory.map(log => log.taskType)));
+  const uniqueSystemLogSources = Array.from(new Set(systemLogs.map(log => log.source)));
+
+  // Fetch system logs from all relevant tables
+  const fetchSystemLogs = useCallback(async () => {
+    setIsLoadingSystemLogs(true);
+    try {
+      const logs: SystemLog[] = [];
+
+      // Fetch from multiple tables in parallel
+      const [
+        vpsLogsResult,
+        accountCheckResult,
+        warmupMessagesResult,
+        blockTasksResult,
+        contactImportResult,
+        maturationResult,
+        warmupErrorsResult,
+        proxyErrorsResult
+      ] = await Promise.all([
+        // VPS Logs
+        supabase
+          .from('vps_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(200),
+        
+        // Account Check Tasks
+        supabase
+          .from('account_check_tasks')
+          .select('*, telegram_accounts(phone_number)')
+          .order('created_at', { ascending: false })
+          .limit(200),
+        
+        // Warmup Messages (recent completed/failed)
+        supabase
+          .from('warmup_messages')
+          .select('*, sender:telegram_accounts!warmup_messages_sender_account_id_fkey(phone_number)')
+          .in('status', ['sent', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(200),
+        
+        // Block Contact Tasks
+        supabase
+          .from('block_contact_tasks')
+          .select('*, telegram_accounts(phone_number)')
+          .in('status', ['completed', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(100),
+        
+        // Contact Import Tasks
+        supabase
+          .from('contact_import_tasks')
+          .select('*, telegram_accounts(phone_number)')
+          .in('status', ['completed', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(100),
+        
+        // Maturation Tasks
+        supabase
+          .from('maturation_tasks')
+          .select('*, telegram_accounts(phone_number)')
+          .in('status', ['completed', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(100),
+        
+        // Warmup Errors
+        supabase
+          .from('warmup_errors')
+          .select('*, telegram_accounts(phone_number)')
+          .order('created_at', { ascending: false })
+          .limit(100),
+        
+        // Proxy Errors
+        supabase
+          .from('proxy_errors')
+          .select('*, proxies(host, port)')
+          .order('created_at', { ascending: false })
+          .limit(100),
+      ]);
+
+      // Process VPS Logs
+      if (vpsLogsResult.data) {
+        vpsLogsResult.data.forEach(log => {
+          logs.push({
+            id: log.id,
+            source: 'VPS Runner',
+            type: log.log_level || 'info',
+            message: log.message,
+            status: log.log_level === 'error' ? 'error' : log.log_level === 'warning' ? 'warning' : 'info',
+            details: `Runner: ${log.runner_name}`,
+            timestamp: new Date(log.created_at),
+          });
+        });
+      }
+
+      // Process Account Check Tasks
+      if (accountCheckResult.data) {
+        accountCheckResult.data.forEach(task => {
+          logs.push({
+            id: task.id,
+            source: 'Account Check',
+            type: task.task_type,
+            message: `${task.task_type.replace(/_/g, ' ')} - ${task.status}`,
+            status: task.status === 'completed' ? 'success' : task.status === 'failed' ? 'error' : 'info',
+            details: task.result || undefined,
+            accountPhone: (task.telegram_accounts as any)?.phone_number,
+            timestamp: new Date(task.created_at || Date.now()),
+          });
+        });
+      }
+
+      // Process Warmup Messages
+      if (warmupMessagesResult.data) {
+        warmupMessagesResult.data.forEach(msg => {
+          logs.push({
+            id: msg.id,
+            source: 'Warmup Chat',
+            type: msg.message_type || 'message',
+            message: `Warmup message ${msg.status}`,
+            status: msg.status === 'sent' ? 'success' : 'error',
+            details: msg.error_message || msg.message_content?.substring(0, 50),
+            accountPhone: (msg.sender as any)?.phone_number,
+            timestamp: new Date(msg.sent_at || msg.created_at || Date.now()),
+          });
+        });
+      }
+
+      // Process Block Tasks
+      if (blockTasksResult.data) {
+        blockTasksResult.data.forEach(task => {
+          logs.push({
+            id: task.id,
+            source: 'Block Contact',
+            type: task.action,
+            message: `${task.action} contact: ${task.target_phone}`,
+            status: task.status === 'completed' ? 'success' : 'error',
+            details: task.result || undefined,
+            accountPhone: (task.telegram_accounts as any)?.phone_number,
+            timestamp: new Date(task.completed_at || task.created_at),
+          });
+        });
+      }
+
+      // Process Contact Import Tasks
+      if (contactImportResult.data) {
+        contactImportResult.data.forEach(task => {
+          const validCount = task.valid_numbers?.length || 0;
+          const invalidCount = task.invalid_numbers?.length || 0;
+          logs.push({
+            id: task.id,
+            source: 'Contact Import',
+            type: 'import',
+            message: `Imported ${validCount} valid, ${invalidCount} invalid numbers`,
+            status: task.status === 'completed' ? 'success' : 'error',
+            details: task.result || undefined,
+            accountPhone: (task.telegram_accounts as any)?.phone_number,
+            timestamp: new Date(task.completed_at || task.created_at),
+          });
+        });
+      }
+
+      // Process Maturation Tasks
+      if (maturationResult.data) {
+        maturationResult.data.forEach(task => {
+          logs.push({
+            id: task.id,
+            source: 'Maturation',
+            type: task.task_type,
+            message: task.description || `${task.task_type.replace(/_/g, ' ')}`,
+            status: task.status === 'completed' ? 'success' : task.status === 'failed' ? 'error' : 'info',
+            accountPhone: (task.telegram_accounts as any)?.phone_number,
+            timestamp: new Date(task.completed_at || task.created_at || Date.now()),
+          });
+        });
+      }
+
+      // Process Warmup Errors
+      if (warmupErrorsResult.data) {
+        warmupErrorsResult.data.forEach(err => {
+          logs.push({
+            id: err.id,
+            source: 'Warmup Error',
+            type: err.error_type || 'error',
+            message: err.error_message,
+            status: 'error',
+            accountPhone: (err.telegram_accounts as any)?.phone_number,
+            timestamp: new Date(err.created_at || Date.now()),
+          });
+        });
+      }
+
+      // Process Proxy Errors
+      if (proxyErrorsResult.data) {
+        proxyErrorsResult.data.forEach(err => {
+          const proxy = err.proxies as any;
+          logs.push({
+            id: err.id,
+            source: 'Proxy Error',
+            type: err.error_type || 'error',
+            message: err.error_message || 'Proxy connection failed',
+            status: 'error',
+            details: proxy ? `${proxy.host}:${proxy.port}` : undefined,
+            timestamp: new Date(err.created_at),
+          });
+        });
+      }
+
+      // Sort all logs by timestamp descending
+      logs.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+      setSystemLogs(logs);
+    } catch (error) {
+      console.error('Error fetching system logs:', error);
+      toast.error('Failed to fetch system logs');
+    } finally {
+      setIsLoadingSystemLogs(false);
+    }
+  }, []);
+
+  // Initial fetch
+  useEffect(() => {
+    fetchSystemLogs();
+  }, [fetchSystemLogs]);
 
   // Filter logs
   const filterLogs = (logs: AccountTaskLog[]) => {
@@ -60,14 +304,35 @@ const Logs: React.FC = () => {
     });
   };
 
+  const filterSystemLogs = (logs: SystemLog[]) => {
+    return logs.filter(log => {
+      const matchesSearch = !searchQuery || 
+        log.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        log.source.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (log.accountPhone && log.accountPhone.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (log.details && log.details.toLowerCase().includes(searchQuery.toLowerCase()));
+      
+      const matchesSource = systemLogFilter === 'all' || log.source === systemLogFilter;
+      
+      return matchesSearch && matchesSource;
+    });
+  };
+
   const filteredCurrentLogs = filterLogs(accountTasksProgress.logs);
   const filteredHistory = filterLogs(accountTaskHistory);
+  const filteredSystemLogs = filterSystemLogs(systemLogs);
 
   // Stats from history
   const historyStats = {
     total: accountTaskHistory.length,
     completed: accountTaskHistory.filter(l => l.status === 'completed').length,
     failed: accountTaskHistory.filter(l => l.status === 'failed').length,
+  };
+
+  const systemLogStats = {
+    total: systemLogs.length,
+    success: systemLogs.filter(l => l.status === 'success').length,
+    errors: systemLogs.filter(l => l.status === 'error').length,
   };
 
   const clearCurrentLogs = () => {
@@ -121,15 +386,75 @@ const Logs: React.FC = () => {
     toast.success('Exported to CSV');
   };
 
+  const exportSystemLogsToJSON = (logs: SystemLog[], filename: string) => {
+    const exportData = logs.map(log => ({
+      source: log.source,
+      type: log.type,
+      message: log.message,
+      status: log.status,
+      details: log.details || null,
+      accountPhone: log.accountPhone || null,
+      timestamp: log.timestamp.toISOString(),
+    }));
+    
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Exported to JSON');
+  };
+
+  const exportSystemLogsToCSV = (logs: SystemLog[], filename: string) => {
+    const headers = ['Source', 'Type', 'Message', 'Status', 'Details', 'Account Phone', 'Timestamp'];
+    const rows = logs.map(log => [
+      log.source,
+      log.type,
+      `"${log.message.replace(/"/g, '""')}"`,
+      log.status,
+      log.details ? `"${log.details.replace(/"/g, '""')}"` : '',
+      log.accountPhone || '',
+      format(log.timestamp, 'yyyy-MM-dd HH:mm:ss'),
+    ]);
+    
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${filename}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toast.success('Exported to CSV');
+  };
+
   const clearHistory = () => {
     setAccountTaskHistory([]);
+  };
+
+  const getSourceIcon = (source: string) => {
+    switch (source) {
+      case 'VPS Runner': return <Server className="w-3.5 h-3.5" />;
+      case 'Account Check': return <UserCheck className="w-3.5 h-3.5" />;
+      case 'Warmup Chat': return <MessageSquare className="w-3.5 h-3.5" />;
+      case 'Block Contact': return <Shield className="w-3.5 h-3.5" />;
+      case 'Contact Import': return <Database className="w-3.5 h-3.5" />;
+      case 'Maturation': return <Zap className="w-3.5 h-3.5" />;
+      default: return <FileText className="w-3.5 h-3.5" />;
+    }
   };
 
   return (
     <DashboardLayout>
       <PageHeader
         title="Task Logs"
-        description="Monitor account task progress and view history"
+        description="Monitor account task progress, system logs, and history"
         icon={ClipboardList}
       />
 
@@ -188,6 +513,13 @@ const Logs: React.FC = () => {
                 History
                 {accountTaskHistory.length > 0 && (
                   <Badge variant="secondary" className="ml-1">{accountTaskHistory.length}</Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="system" className="gap-2">
+                <Server className="w-4 h-4" />
+                System Logs
+                {systemLogs.length > 0 && (
+                  <Badge variant="secondary" className="ml-1">{systemLogs.length}</Badge>
                 )}
               </TabsTrigger>
             </TabsList>
@@ -373,6 +705,93 @@ const Logs: React.FC = () => {
               </CardContent>
             </Card>
           </TabsContent>
+
+          {/* System Logs Tab */}
+          <TabsContent value="system" className="mt-0">
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">System Logs</CardTitle>
+                    <CardDescription>
+                      {systemLogStats.total} total • {systemLogStats.success} success • {systemLogStats.errors} errors
+                    </CardDescription>
+                  </div>
+                  <div className="flex gap-2">
+                    <Select value={systemLogFilter} onValueChange={setSystemLogFilter}>
+                      <SelectTrigger className="w-40 h-9">
+                        <SelectValue placeholder="All Sources" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Sources</SelectItem>
+                        {uniqueSystemLogSources.map(source => (
+                          <SelectItem key={source} value={source}>{source}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={fetchSystemLogs}
+                      disabled={isLoadingSystemLogs}
+                    >
+                      <RefreshCw className={cn("w-4 h-4 mr-2", isLoadingSystemLogs && "animate-spin")} />
+                      Refresh
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          disabled={systemLogs.length === 0}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Export
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => exportSystemLogsToJSON(filteredSystemLogs, 'system-logs')}>
+                          <FileJson className="w-4 h-4 mr-2" />
+                          Export as JSON
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => exportSystemLogsToCSV(filteredSystemLogs, 'system-logs')}>
+                          <FileSpreadsheet className="w-4 h-4 mr-2" />
+                          Export as CSV
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoadingSystemLogs ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="w-8 h-8 animate-spin mb-3" />
+                    <p className="text-sm">Loading system logs...</p>
+                  </div>
+                ) : filteredSystemLogs.length > 0 ? (
+                  <ScrollArea className="h-[500px] pr-4">
+                    <div className="space-y-2">
+                      {filteredSystemLogs.map((log, index) => (
+                        <SystemLogEntry key={`${log.id}-${index}`} log={log} getSourceIcon={getSourceIcon} />
+                      ))}
+                    </div>
+                  </ScrollArea>
+                ) : systemLogs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Server className="w-8 h-8 mb-3 opacity-50" />
+                    <p className="text-sm">No system logs found</p>
+                    <p className="text-xs mt-1">Logs from all system functions will appear here</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Search className="w-8 h-8 mb-3 opacity-50" />
+                    <p className="text-sm">No logs match your filters</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
@@ -423,6 +842,74 @@ const LogEntry: React.FC<LogEntryProps> = ({ log, showTimestamp = false }) => {
       
       <Badge variant={isSuccess ? "default" : "destructive"} className="flex-shrink-0">
         {isSuccess ? 'Success' : 'Failed'}
+      </Badge>
+    </div>
+  );
+};
+
+interface SystemLogEntryProps {
+  log: SystemLog;
+  getSourceIcon: (source: string) => React.ReactNode;
+}
+
+const SystemLogEntry: React.FC<SystemLogEntryProps> = ({ log, getSourceIcon }) => {
+  const statusColors = {
+    success: 'bg-status-active/5 border-status-active/20 hover:bg-status-active/10',
+    error: 'bg-status-banned/5 border-status-banned/20 hover:bg-status-banned/10',
+    warning: 'bg-yellow-500/5 border-yellow-500/20 hover:bg-yellow-500/10',
+    info: 'bg-blue-500/5 border-blue-500/20 hover:bg-blue-500/10',
+  };
+
+  const iconColors = {
+    success: 'bg-status-active/20 text-status-active',
+    error: 'bg-status-banned/20 text-status-banned',
+    warning: 'bg-yellow-500/20 text-yellow-600',
+    info: 'bg-blue-500/20 text-blue-500',
+  };
+
+  const badgeVariants = {
+    success: 'default' as const,
+    error: 'destructive' as const,
+    warning: 'secondary' as const,
+    info: 'outline' as const,
+  };
+
+  return (
+    <div className={cn(
+      "flex items-start gap-3 p-3 rounded-lg border transition-colors",
+      statusColors[log.status]
+    )}>
+      <div className={cn(
+        "flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center",
+        iconColors[log.status]
+      )}>
+        {getSourceIcon(log.source)}
+      </div>
+      
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="outline" className="text-xs font-medium">
+            {log.source}
+          </Badge>
+          {log.accountPhone && (
+            <span className="font-medium text-sm">{log.accountPhone}</span>
+          )}
+          <span className="text-xs text-muted-foreground">
+            {format(log.timestamp, 'MMM d, HH:mm:ss')}
+          </span>
+        </div>
+        
+        <p className="text-sm mt-1">{log.message}</p>
+        
+        {log.details && (
+          <p className="text-xs text-muted-foreground mt-1 break-all">
+            {log.details}
+          </p>
+        )}
+      </div>
+      
+      <Badge variant={badgeVariants[log.status]} className="flex-shrink-0 capitalize">
+        {log.status}
       </Badge>
     </div>
   );
