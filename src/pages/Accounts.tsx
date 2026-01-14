@@ -1199,12 +1199,33 @@ const Accounts: React.FC = () => {
   };
 
   // Bulk proxy assignment - STRICT 1:1 only with random unassigned proxies
+  // NEVER changes existing proxy assignments - only assigns to accounts without a proxy
   const handleBulkProxyAssign = async () => {
     if (selectedIds.size === 0) return;
     
     setIsBulkProxyAssigning(true);
     try {
       const selectedAccountIds = Array.from(selectedIds);
+      
+      // Get selected accounts to check which ones already have proxies
+      const { data: selectedAccountsData } = await supabase
+        .from('telegram_accounts')
+        .select('id, proxy_id')
+        .in('id', selectedAccountIds);
+      
+      // Filter to only accounts WITHOUT a proxy (never change existing assignments)
+      const accountsWithoutProxy = (selectedAccountsData || [])
+        .filter(acc => !acc.proxy_id)
+        .map(acc => acc.id);
+      
+      const accountsWithProxy = selectedAccountIds.length - accountsWithoutProxy.length;
+      
+      if (accountsWithoutProxy.length === 0) {
+        toast.info(`All ${selectedAccountIds.length} selected accounts already have proxies assigned. No changes made.`);
+        setIsBulkProxyAssigning(false);
+        setIsBulkProxyOpen(false);
+        return;
+      }
       
       const activeProxies = proxies.filter(p => p.status === 'active');
       
@@ -1238,8 +1259,8 @@ const Accounts: React.FC = () => {
       let assignedCount = 0;
       let skippedCount = 0;
       
-      for (let i = 0; i < selectedAccountIds.length; i++) {
-        const accountId = selectedAccountIds[i];
+      for (let i = 0; i < accountsWithoutProxy.length; i++) {
+        const accountId = accountsWithoutProxy[i];
         
         if (i >= shuffled.length) {
           skippedCount++;
@@ -1248,7 +1269,7 @@ const Accounts: React.FC = () => {
         
         const proxy = shuffled[i];
         
-        // Update account's proxy_id
+        // Update account's proxy_id (NEVER touch fingerprint/device data)
         const { error: accError } = await supabase
           .from('telegram_accounts')
           .update({ proxy_id: proxy.id })
@@ -1265,10 +1286,18 @@ const Accounts: React.FC = () => {
         }
       }
       
+      let message = `Assigned proxies to ${assignedCount} account(s)`;
+      if (accountsWithProxy > 0) {
+        message += `. ${accountsWithProxy} already had proxies (unchanged).`;
+      }
       if (skippedCount > 0) {
-        toast.warning(`Assigned ${assignedCount} accounts. ${skippedCount} skipped (not enough unassigned proxies).`);
+        message += ` ${skippedCount} skipped (not enough unassigned proxies).`;
+      }
+      
+      if (skippedCount > 0) {
+        toast.warning(message);
       } else {
-        toast.success(`Assigned unique proxies to ${assignedCount} account(s) (strict 1:1)`);
+        toast.success(message);
       }
       
       setIsBulkProxyOpen(false);
@@ -3406,7 +3435,7 @@ const Accounts: React.FC = () => {
             <DialogHeader>
               <DialogTitle>Assign Proxy (1:1 Strict)</DialogTitle>
               <DialogDescription>
-                Randomly assign unassigned proxies to {selectedIds.size} account(s)
+                Randomly assign unassigned proxies to accounts without proxies
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 pt-4">
@@ -3414,12 +3443,34 @@ const Accounts: React.FC = () => {
                 const activeProxies = proxies.filter(p => p.status === 'active');
                 const usedProxyIds = new Set(accounts.filter(a => a.proxyId).map(a => a.proxyId));
                 const unassignedProxies = activeProxies.filter(p => !usedProxyIds.has(p.id));
-                const canAssign = Math.min(selectedIds.size, unassignedProxies.length);
-                const willSkip = selectedIds.size - canAssign;
+                
+                // Count selected accounts that already have proxies (will be unchanged)
+                const selectedAccountsList = Array.from(selectedIds);
+                const selectedWithProxy = selectedAccountsList.filter(id => {
+                  const acc = accounts.find(a => a.id === id);
+                  return acc?.proxyId;
+                }).length;
+                const selectedWithoutProxy = selectedAccountsList.length - selectedWithProxy;
+                
+                const canAssign = Math.min(selectedWithoutProxy, unassignedProxies.length);
+                const willSkipNoProxy = selectedWithoutProxy - canAssign;
                 
                 return (
                   <>
                     <div className="p-4 rounded-lg bg-muted/50 space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Selected accounts:</span>
+                        <span className="font-medium">{selectedIds.size}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Already have proxy (unchanged):</span>
+                        <span className="font-medium text-blue-600">{selectedWithProxy}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">Need proxy assignment:</span>
+                        <span className="font-medium">{selectedWithoutProxy}</span>
+                      </div>
+                      <Separator className="my-2" />
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-muted-foreground">Available unassigned proxies:</span>
                         <span className={cn("font-medium", unassignedProxies.length === 0 ? "text-destructive" : "text-green-600")}>
@@ -3427,29 +3478,31 @@ const Accounts: React.FC = () => {
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-muted-foreground">Accounts to assign:</span>
-                        <span className="font-medium">{selectedIds.size}</span>
-                      </div>
-                      <div className="flex items-center justify-between text-sm">
                         <span className="text-muted-foreground">Will be assigned:</span>
                         <span className="font-medium text-green-600">{canAssign}</span>
                       </div>
-                      {willSkip > 0 && (
+                      {willSkipNoProxy > 0 && (
                         <div className="flex items-center justify-between text-sm">
-                          <span className="text-muted-foreground">Will be skipped:</span>
-                          <span className="font-medium text-orange-600">{willSkip}</span>
+                          <span className="text-muted-foreground">Will skip (not enough proxies):</span>
+                          <span className="font-medium text-orange-600">{willSkipNoProxy}</span>
                         </div>
                       )}
                     </div>
                     
                     <div className="p-3 rounded-lg border border-primary/30 bg-primary/5 text-sm">
-                      <p className="font-medium text-primary mb-1">Strict 1:1 Policy</p>
+                      <p className="font-medium text-primary mb-1">Strict 1:1 Policy - No Changes to Existing</p>
                       <p className="text-muted-foreground">
-                        Each account gets a unique proxy. Proxies already assigned to other accounts will not be reused.
+                        Only accounts without a proxy will receive one. Existing proxy assignments and fingerprints are never changed.
                       </p>
                     </div>
                     
-                    {unassignedProxies.length === 0 && (
+                    {selectedWithoutProxy === 0 && (
+                      <div className="p-3 rounded-lg border border-blue-500/30 bg-blue-500/5 text-sm text-blue-600">
+                        All selected accounts already have proxies assigned. No changes will be made.
+                      </div>
+                    )}
+                    
+                    {selectedWithoutProxy > 0 && unassignedProxies.length === 0 && (
                       <div className="p-3 rounded-lg border border-destructive/30 bg-destructive/5 text-sm text-destructive">
                         No unassigned proxies available. Please add more proxies first.
                       </div>
@@ -3459,10 +3512,10 @@ const Accounts: React.FC = () => {
                       <Button variant="outline" onClick={() => setIsBulkProxyOpen(false)}>Cancel</Button>
                       <Button 
                         onClick={handleBulkProxyAssign} 
-                        disabled={unassignedProxies.length === 0 || isBulkProxyAssigning}
+                        disabled={selectedWithoutProxy === 0 || unassignedProxies.length === 0 || isBulkProxyAssigning}
                       >
                         {isBulkProxyAssigning ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Shuffle className="w-4 h-4 mr-2" />}
-                        Assign Random Proxies
+                        Assign to {canAssign} Account(s)
                       </Button>
                     </div>
                   </>
