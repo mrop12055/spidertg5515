@@ -597,48 +597,63 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         entity = None
         
         # ========== RESOLVE RECIPIENT ==========
-        if recipient.startswith("@"):
-            # Username - use get_input_entity (faster, cached, less API calls)
+        # Priority 1: Numeric Telegram ID (fastest - direct lookup)
+        if recipient and recipient.isdigit():
+            try:
+                entity = await asyncio.wait_for(client.get_input_entity(int(recipient)), timeout=10)
+            except (ValueError, KeyError):
+                pass  # Not in cache, will try other methods
+            except Exception as e:
+                print(f"    [WARN] Direct ID lookup failed for {recipient}: {e}")
+        
+        # Priority 2: Username starting with @
+        if not entity and recipient and recipient.startswith("@"):
             try:
                 entity = await asyncio.wait_for(client.get_input_entity(recipient), timeout=10)
             except UsernameNotOccupiedError:
                 return False, "Username does not exist"
             except UsernameInvalidError:
                 return False, "Invalid username format"
-        else:
+            except Exception as e:
+                print(f"    [WARN] Username lookup failed for {recipient}: {e}")
+        
+        # Priority 3: Phone number (requires contact import)
+        if not entity and recipient:
             from telethon.tl.functions.contacts import ImportContactsRequest
             from telethon.tl.types import InputPhoneContact
             import random
             
-            phone = recipient if recipient.startswith("+") else "+" + recipient
+            # Only treat as phone if it starts with + or looks like a phone number
+            phone = recipient if recipient.startswith("+") else ("+" + recipient if len(recipient) > 6 else None)
             
-            # Strategy 1: Try cached entity first (fastest - no API call)
-            try:
-                entity = await asyncio.wait_for(client.get_input_entity(phone), timeout=5)
-            except (ValueError, KeyError):
-                pass  # Not in cache, need to import
-            except Exception:
-                pass
-            
-            # Strategy 2: Import contact if not cached
-            if not entity:
-                # Use smaller client_id range (official Telegram recommendation: 32-bit signed int)
-                contact = InputPhoneContact(
-                    client_id=random.randint(0, 2**31 - 1),
-                    phone=phone, 
-                    first_name="User",  # Neutral name
-                    last_name=""
-                )
+            if phone:
+                # Strategy 1: Try cached entity first (fastest - no API call)
                 try:
-                    result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
-                    if result.users:
-                        entity = result.users[0]
-                    elif result.retry_contacts:
-                        return False, "Privacy restricted - cannot add contact"
-                except PhoneNumberInvalidError:
-                    return False, "Invalid phone number format"
-                except PhoneNumberBannedError:
-                    return False, "Phone number is banned"
+                    entity = await asyncio.wait_for(client.get_input_entity(phone), timeout=5)
+                except (ValueError, KeyError):
+                    pass  # Not in cache, need to import
+                except Exception:
+                    pass
+                
+                # Strategy 2: Import contact if not cached
+                if not entity:
+                    # Use smaller client_id range (official Telegram recommendation: 32-bit signed int)
+                    contact = InputPhoneContact(
+                        client_id=random.randint(0, 2**31 - 1),
+                        phone=phone, 
+                        first_name="User",  # Neutral name
+                        last_name=""
+                    )
+                    try:
+                        result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+                        if result.users:
+                            entity = result.users[0]
+                        elif result.retry_contacts:
+                            return False, "Privacy restricted - cannot add contact"
+                    except PhoneNumberInvalidError:
+                        return False, "Invalid phone number format"
+                    except PhoneNumberBannedError:
+                        return False, "Phone number is banned"
         
         if not entity:
             return False, "User not found on Telegram"
