@@ -103,13 +103,15 @@ serve(async (req) => {
           .in("id", accountIds)
           .in("status", ["active", "restricted", "cooldown", "frozen"]);
         
-        // Map accounts by ID for quick lookup
+        // Map accounts by ID for quick lookup - only include accounts with fingerprint and active proxy
         const accountsMap = new Map();
         for (const acc of (accountsData || [])) {
           const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
-          if (proxy?.status === "active") {
-            accountsMap.set(acc.id, acc);
-          }
+          // Skip accounts without active proxy
+          if (!proxy?.status || proxy.status !== "active") continue;
+          // Skip accounts without fingerprint
+          if (!acc.device_model || !acc.system_version) continue;
+          accountsMap.set(acc.id, acc);
         }
         
         // Group messages by account_id
@@ -198,7 +200,10 @@ serve(async (req) => {
           const validAccounts = (livechatAccounts || [])
             .map(acc => {
               const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
+              // Skip accounts without active proxy
               if (!proxy || proxy.status !== "active") return null;
+              // Skip accounts without fingerprint
+              if (!acc.device_model || !acc.system_version) return null;
               const apiCred = acc.telegram_api_credentials as any;
               return {
                 id: acc.id,
@@ -248,7 +253,8 @@ serve(async (req) => {
             .single();
 
           const proxy = Array.isArray(account?.proxies) ? account.proxies[0] : account?.proxies;
-          if (account && proxy?.status === "active") {
+          // Skip accounts without active proxy or fingerprint
+          if (account && proxy?.status === "active" && account.device_model && account.system_version) {
             await supabase
               .from("messages")
               .update({ status: "sending" })
@@ -312,7 +318,10 @@ serve(async (req) => {
       const validAccounts = (livechatAccounts || [])
         .map(acc => {
           const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
+          // Skip accounts without active proxy
           if (!proxy || proxy.status !== "active") return null;
+          // Skip accounts without fingerprint
+          if (!acc.device_model || !acc.system_version) return null;
           const apiCred = acc.telegram_api_credentials as any;
           return {
             id: acc.id,
