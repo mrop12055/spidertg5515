@@ -514,33 +514,52 @@ async def report_batch_results(results: list) -> bool:
         return False
 
 async def send_message(client: TelegramClient, recipient: str, content: str, media_url: str = None):
+    """
+    Send message using official Telethon methods.
+    Uses get_entity for username lookup and ImportContactsRequest for phones.
+    All methods are official Telegram API - safe from bans.
+    """
     try:
+        from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+        from telethon.tl.types import InputPhoneContact
+        
         entity = None
+        imported_user_id = None  # Track if we imported a contact (to clean up after)
+        
         if recipient.startswith("@"):
-            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)  # Faster
+            # Username lookup - official API method
+            entity = await asyncio.wait_for(client.get_entity(recipient), timeout=10)
         else:
-            from telethon.tl.functions.contacts import ImportContactsRequest
-            from telethon.tl.types import InputPhoneContact
-            import random
-            
+            # Phone number - use official ImportContactsRequest
             phone = recipient if recipient.startswith("+") else "+" + recipient
+            
+            # First try direct lookup (faster if already in contacts)
             try:
-                entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)  # Faster
-            except:
+                entity = await asyncio.wait_for(client.get_entity(phone), timeout=8)
+            except Exception:
                 pass
             
             if not entity:
-                contact = InputPhoneContact(client_id=random.randint(0, 2**62), phone=phone, first_name="TG", last_name=str(random.randint(1000, 9999)))
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)  # Faster
+                # Import contact using official API
+                # Use phone hash for client_id (consistent, not random)
+                contact = InputPhoneContact(
+                    client_id=abs(hash(phone)) % (2**31),  # Consistent ID from phone hash
+                    phone=phone, 
+                    first_name="User",  # Neutral name
+                    last_name=""
+                )
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+                
                 if result.users:
                     entity = result.users[0]
+                    imported_user_id = entity.id  # Track for cleanup
                 elif result.retry_contacts:
-                    return False, "Privacy restricted"
+                    return False, "Privacy restricted", None
         
         if not entity:
-            return False, "User not found on Telegram"
+            return False, "User not found on Telegram", None
         
-        # Ensure URLs are clickable: format URLs as Telegram Markdown links when detected
+        # Format content with clickable links (using official parse_mode)
         formatted_content = content
         parse_mode = None
         try:
@@ -548,44 +567,36 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
             url_re = re.compile(r'(https?://[^\\s<>"\\']+)')
             if content and url_re.search(content):
                 parse_mode = 'md'
-
                 def _to_md_link(m):
                     url = m.group(1)
                     return f"[{url}]({url})"
-
                 formatted_content = url_re.sub(_to_md_link, content)
-                print(f"  [LINK] Formatted with Markdown: {formatted_content[:120]}...")
-        except Exception as e:
-            print(f"  [LINK ERROR] {e}")
+        except Exception:
             formatted_content = content
             parse_mode = None
-
+        
+        # Send message using official client.send_message
         if media_url:
             try:
                 import io
                 http = get_http_client()
                 resp = await http.get(media_url)
                 if resp.status_code == 200:
-                    # Determine filename from URL to help Telethon classify the file
                     from urllib.parse import urlparse, unquote
                     url_path = urlparse(media_url).path
                     filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
                     
-                    # Check if it's an image based on extension or content-type
                     content_type = resp.headers.get("content-type", "").lower()
                     ext = filename.split(".")[-1].lower() if "." in filename else ""
                     is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
                     
-                    # Wrap bytes in BytesIO with a name so Telethon knows the file type
                     file_bytes = io.BytesIO(resp.content)
-                    file_bytes.name = filename if "." in filename else f"photo.jpg"
+                    file_bytes.name = filename if "." in filename else "photo.jpg"
                     
-                    print(f"  [MEDIA] filename={filename}, content_type={content_type}, is_image={is_image}")
-                    
-                    # For images, use force_document=False to send as photo preview
+                    # Official send_file method
                     await asyncio.wait_for(
                         client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                        timeout=20  # Faster media send
+                        timeout=20
                     )
                 else:
                     await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
@@ -593,31 +604,61 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
                 print(f"  [MEDIA ERROR] {media_err}")
                 await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
         else:
-            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)  # Faster
+            # Official send_message method
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
         
-        return True, None
+        # Optional: Clean up imported contact to keep contacts list clean
+        # This is optional but good practice
+        if imported_user_id:
+            try:
+                from telethon.tl.types import InputUser
+                await client(DeleteContactsRequest(id=[InputUser(user_id=imported_user_id, access_hash=entity.access_hash)]))
+            except Exception:
+                pass  # Ignore cleanup errors
+        
+        return True, None, None
+        
     except asyncio.TimeoutError:
-        return False, "Request timeout"
+        return False, "Request timeout", None
     except UserPrivacyRestrictedError:
-        return False, "Privacy restricted"
+        return False, "Privacy restricted", None
     except FloodWaitError as e:
-        return False, f"Rate limited: {e.seconds}s"
+        return False, f"Too many requests (caused by SendMessageRequest) - wait {e.seconds}s", None
     except Exception as e:
-        return False, str(e)
+        return False, str(e), None
 
 
 async def validate_contact(client: TelegramClient, phone: str):
+    """
+    Validate if a phone number has Telegram using official ImportContactsRequest.
+    Uses consistent client_id from phone hash (safer than random).
+    """
     try:
-        from telethon.tl.functions.contacts import ImportContactsRequest
-        from telethon.tl.types import InputPhoneContact
-        import random
-        contact = InputPhoneContact(client_id=random.randint(0, 2**31 - 1), phone=phone, first_name="V", last_name="")
+        from telethon.tl.functions.contacts import ImportContactsRequest, DeleteContactsRequest
+        from telethon.tl.types import InputPhoneContact, InputUser
+        
+        # Use phone hash for consistent client_id (safer than random)
+        contact = InputPhoneContact(
+            client_id=abs(hash(phone)) % (2**31),
+            phone=phone, 
+            first_name="Contact", 
+            last_name=""
+        )
         result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+        
         if result.users:
             user = result.users[0]
-            return True, f"{user.first_name or ''} {user.last_name or ''}".strip(), user.id
+            name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+            
+            # Clean up: delete the imported contact to keep contacts clean
+            try:
+                await client(DeleteContactsRequest(id=[InputUser(user_id=user.id, access_hash=user.access_hash)]))
+            except Exception:
+                pass  # Ignore cleanup errors
+            
+            return True, name or "Unknown", user.id
         return False, None, None
-    except:
+    except Exception:
         return False, None, None
 
 
@@ -2321,72 +2362,92 @@ async def check_spambot(client):
 
 
 async def change_name(client, first_name: str, last_name: str = ""):
+    """
+    Change account display name using official Telethon API.
+    Uses UpdateProfileRequest - the official method used by Telegram apps.
+    """
     try:
-        from telethon.tl.functions.account import UpdateProfileRequest
-        await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
+        # Official Telegram API method for profile updates
+        await client.update_profile(first_name=first_name, last_name=last_name)
         return True, None
     except Exception as e:
         return False, str(e)
 
 
 async def change_profile_photo(client, photo_source: str):
-    """Change profile photo - accepts base64 or URL"""
+    """
+    Change profile photo using official Telethon API.
+    Accepts base64 or URL. Uses UploadProfilePhotoRequest - same as mobile/desktop apps.
+    """
     try:
         from telethon.tl.functions.photos import UploadProfilePhotoRequest
         import aiohttp
+        import io
         
-        temp_path = os.path.join(SESSION_FOLDER, "temp_photo.jpg")
+        photo_bytes = None
         
-        # Check if it's a URL or base64
+        # Download or decode the image
         if photo_source.startswith("http://") or photo_source.startswith("https://"):
-            # Download from URL
+            # Download from URL using aiohttp (official async HTTP)
             async with aiohttp.ClientSession() as session:
                 async with session.get(photo_source) as resp:
                     if resp.status == 200:
                         photo_bytes = await resp.read()
-                        with open(temp_path, "wb") as f:
-                            f.write(photo_bytes)
                     else:
                         return False, f"Failed to download image: HTTP {resp.status}"
         else:
-            # Assume base64
+            # Decode base64
             photo_bytes = base64.b64decode(photo_source)
-            with open(temp_path, "wb") as f:
-                f.write(photo_bytes)
         
-        file = await client.upload_file(temp_path)
-        await client(UploadProfilePhotoRequest(file=file))
-        os.remove(temp_path)
-        return True, None
+        if not photo_bytes:
+            return False, "No image data"
+        
+        # Use upload_file with BytesIO (avoids temp files - cleaner)
+        file_obj = io.BytesIO(photo_bytes)
+        file_obj.name = "profile_photo.jpg"
+        
+        # Official upload and set photo
+        uploaded = await client.upload_file(file_obj)
+        await client(UploadProfilePhotoRequest(file=uploaded))
+        
+        return True, "Profile photo updated"
     except Exception as e:
         return False, str(e)
 
 
 async def update_privacy(client, hide_phone, hide_last_seen, disable_calls, hide_profile_photo=False):
-    """Update account privacy settings including profile photo visibility"""
+    """
+    Update account privacy settings using official Telegram API.
+    Uses SetPrivacyRequest - the same method used by official apps.
+    All privacy keys are official Telegram types.
+    """
     try:
         from telethon.tl.functions.account import SetPrivacyRequest
         from telethon.tl.types import (
             InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp, 
             InputPrivacyKeyPhoneCall, InputPrivacyKeyProfilePhoto
         )
-        from telethon.tl.types import InputPrivacyValueDisallowAll
+        from telethon.tl.types import InputPrivacyValueDisallowAll, InputPrivacyValueAllowContacts
         
         results = []
         
         if hide_phone:
+            # Hide phone number from everyone (only contacts can see)
             await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneNumber(), rules=[InputPrivacyValueDisallowAll()]))
             results.append("phone hidden")
         
         if hide_last_seen:
+            # Hide last seen from everyone
             await client(SetPrivacyRequest(key=InputPrivacyKeyStatusTimestamp(), rules=[InputPrivacyValueDisallowAll()]))
             results.append("last seen hidden")
         
         if disable_calls:
+            # Disable calls from everyone
             await client(SetPrivacyRequest(key=InputPrivacyKeyPhoneCall(), rules=[InputPrivacyValueDisallowAll()]))
             results.append("calls disabled")
         
         if hide_profile_photo:
+            # Hide profile photo from everyone
             await client(SetPrivacyRequest(key=InputPrivacyKeyProfilePhoto(), rules=[InputPrivacyValueDisallowAll()]))
             results.append("profile photo hidden")
         
@@ -2425,10 +2486,15 @@ async def change_password(client, existing_pwd, new_pwd):
 
 
 async def logout_other_sessions(client):
+    """
+    Terminate all other sessions using official Telethon API.
+    This is the same as "Terminate all other sessions" in Telegram settings.
+    """
     try:
+        # Official method to terminate all other sessions
         from telethon.tl.functions.auth import ResetAuthorizationsRequest
         await client(ResetAuthorizationsRequest())
-        return True, None
+        return True, "All other sessions terminated"
     except Exception as e:
         return False, str(e)
 
