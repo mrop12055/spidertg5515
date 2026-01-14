@@ -41,7 +41,8 @@ import { CountdownTimer } from '@/components/ui/countdown-timer';
 // Status options for stat cards (merged categories)
 const statCardOptions: { value: string; label: string; color: string; icon: React.ReactNode }[] = [
   { value: 'active', label: 'Active', color: 'bg-status-active/15 text-status-active border-status-active/30', icon: <Wifi className="w-3 h-3" /> },
-  { value: 'restricted', label: 'Restricted', color: 'bg-status-restricted/15 text-status-restricted border-status-restricted/30', icon: <AlertTriangle className="w-3 h-3" /> },
+  { value: 'used', label: 'Used', color: 'bg-status-restricted/15 text-status-restricted border-status-restricted/30', icon: <AlertTriangle className="w-3 h-3" /> },
+  { value: 'frozen', label: 'Frozen', color: 'bg-blue-500/15 text-blue-500 border-blue-500/30', icon: <Lock className="w-3 h-3" /> },
   { value: 'inactive', label: 'Inactive', color: 'bg-status-disconnected/15 text-status-disconnected border-status-disconnected/30', icon: <WifiOff className="w-3 h-3" /> },
 ];
 
@@ -146,7 +147,7 @@ const Accounts: React.FC = () => {
   const [isBulkProxyAssigning, setIsBulkProxyAssigning] = useState(false);
   
   // Active tab for account sections
-  const [activeTab, setActiveTab] = useState<'active' | 'restricted' | 'inactive'>('active');
+  const [activeTab, setActiveTab] = useState<'active' | 'used' | 'frozen' | 'inactive'>('active');
   
   // Tags state
   const [availableTags, setAvailableTags] = useState<string[]>([]);
@@ -1756,16 +1757,18 @@ const Accounts: React.FC = () => {
     active: filteredAccounts.filter(a => 
       a.status === 'active' && !isTemporarilyRestricted(a)
     ),
-    // Restricted: includes status restricted/cooldown AND temporarily restricted
-    restricted: filteredAccounts.filter(a => 
+    // Used: includes status restricted/cooldown AND temporarily restricted
+    used: filteredAccounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' || 
       (a.status === 'active' && isTemporarilyRestricted(a)) // Active but has countdown timer
     ),
+    // Frozen: accounts with frozen status
+    frozen: filteredAccounts.filter(a => a.status === 'frozen'),
+    // Inactive: banned or disconnected
     inactive: filteredAccounts.filter(a => 
       a.status === 'banned' || 
-      a.status === 'disconnected' ||
-      a.status === 'frozen'
+      a.status === 'disconnected'
     ),
   };
 
@@ -2955,14 +2958,18 @@ const Accounts: React.FC = () => {
 
         {/* Account Tabs */}
         <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="active" className="gap-1.5">
               <Wifi className="w-3.5 h-3.5" />
               Active ({accountsByStatus.active.length})
             </TabsTrigger>
-            <TabsTrigger value="restricted" className="gap-1.5">
+            <TabsTrigger value="used" className="gap-1.5">
               <AlertTriangle className="w-3.5 h-3.5" />
-              Restricted ({accountsByStatus.restricted.length})
+              Used ({accountsByStatus.used.length})
+            </TabsTrigger>
+            <TabsTrigger value="frozen" className="gap-1.5">
+              <Lock className="w-3.5 h-3.5" />
+              Frozen ({accountsByStatus.frozen.length})
             </TabsTrigger>
             <TabsTrigger value="inactive" className="gap-1.5">
               <WifiOff className="w-3.5 h-3.5" />
@@ -2970,13 +2977,16 @@ const Accounts: React.FC = () => {
             </TabsTrigger>
           </TabsList>
 
-          {(['active', 'restricted', 'inactive'] as const).map(status => (
+          {(['active', 'used', 'frozen', 'inactive'] as const).map(status => (
             <TabsContent key={status} value={status} className="mt-4">
               {accountsByStatus[status].length === 0 ? (
                 <Card>
                   <CardContent className="py-12 text-center">
                     <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                      {status === 'inactive' ? <WifiOff className="w-6 h-6" /> : statusOptions.find(o => o.value === status)?.icon}
+                      {status === 'inactive' ? <WifiOff className="w-6 h-6" /> : 
+                       status === 'frozen' ? <Lock className="w-6 h-6" /> :
+                       status === 'used' ? <AlertTriangle className="w-6 h-6" /> :
+                       <Wifi className="w-6 h-6" />}
                     </div>
                     <p className="text-muted-foreground">No {status} accounts</p>
                   </CardContent>
