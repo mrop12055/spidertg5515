@@ -171,12 +171,12 @@ const Login = () => {
               <div className="text-center mb-10">
                 <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 border border-primary/20 mb-4 animate-fade-in">
                   <Zap className="w-3.5 h-3.5 text-primary animate-pulse" />
-                  <span className="text-xs font-medium text-primary tracking-wide">ENTERPRISE SECURITY</span>
+                  <span className="text-xs font-medium text-primary tracking-wide">SECURE ACCESS</span>
                 </div>
                 
                 <h1 className="text-3xl sm:text-4xl font-bold tracking-tight mb-3">
                   <span className="bg-gradient-to-r from-foreground via-primary via-cyan-400 to-foreground bg-[length:200%_auto] bg-clip-text text-transparent animate-gradient-x">
-                    Admin Portal
+                    SPIDER545415
                   </span>
                 </h1>
                 
@@ -283,7 +283,7 @@ const Login = () => {
         {/* Bottom Branding */}
         <div className="text-center mt-8 space-y-2">
           <p className="text-xs text-muted-foreground/60 tracking-widest">
-            ENTERPRISE SECURITY SYSTEM
+            SPIDER545415 SECURITY SYSTEM
           </p>
           <p className="text-[10px] text-muted-foreground/40">
             v2.0 • AES-256 Encryption • Multi-Factor Authentication
