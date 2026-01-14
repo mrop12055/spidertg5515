@@ -14,7 +14,8 @@ import {
   Globe,
   Database,
   Flame,
-  Package
+  Package,
+  ClipboardList
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -39,6 +40,7 @@ const navItems: NavItem[] = [
   { icon: Flame, label: 'Warmup', path: '/warmup' },
   { icon: Users, label: 'Seats', path: '/seats' },
   { icon: Package, label: 'Material', path: '/material' },
+  { icon: ClipboardList, label: 'Logs', path: '/logs' },
   { icon: Database, label: 'Database', path: '/database' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: Settings, label: 'Settings', path: '/settings' },

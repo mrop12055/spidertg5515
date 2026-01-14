@@ -19,7 +19,7 @@ import {
   Eye, EyeOff, Image, UserCircle, Users, Wifi, WifiOff, AlertTriangle,
   Clock, MessageSquare, ChevronDown, ChevronRight, Calendar, Lock, 
   LogOut, PhoneOff, Settings, FolderPlus, Layers, Smartphone, 
-  Flame, Bot, MapPin, Key, Tag, X, History, ClipboardList, Shuffle,
+  Flame, Bot, MapPin, Key, Tag, X, Shuffle,
   CheckCircle2, AlertCircle
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -82,7 +82,7 @@ const Accounts: React.FC = () => {
   const { 
     accounts, proxies, refreshData, isLoading, 
     accountTasksProgress, setAccountTasksProgress, isAccountTaskRunning, setIsAccountTaskRunning, 
-    showAccountTaskLogs, setShowAccountTaskLogs, accountTaskHistory, setAccountTaskHistory
+    setShowAccountTaskLogs, accountTaskHistory, setAccountTaskHistory
   } = useTelegram();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -977,7 +977,7 @@ const Accounts: React.FC = () => {
       if (error) throw error;
       
       startAccountTaskTracking('Change Name', selectedAccountIds.length);
-      toast.info(`Queued name change for ${selectedAccountIds.length} account(s). Check logs panel for progress.`);
+      toast.info(`Queued name change for ${selectedAccountIds.length} account(s). View progress in Logs.`);
       setBulkNames('');
       setSelectedNameTagId('');
       setMaterialNames([]);
@@ -1032,7 +1032,7 @@ const Accounts: React.FC = () => {
       if (error) throw error;
       
       startAccountTaskTracking('Change Photo', selectedAccountIds.length);
-      toast.info(`Queued profile picture change for ${selectedAccountIds.length} account(s). Check logs panel for progress.`);
+      toast.info(`Queued profile picture change for ${selectedAccountIds.length} account(s). View progress in Logs.`);
       setSelectedPicTagId('');
       setMaterialPictures([]);
       setSelectedMaterialPics(new Set());
@@ -1062,7 +1062,7 @@ const Accounts: React.FC = () => {
       if (error) throw error;
       
       startAccountTaskTracking('Privacy Settings', selectedIds.size);
-      toast.info(`Queued privacy settings for ${selectedIds.size} account(s). Check logs panel for progress.`);
+      toast.info(`Queued privacy settings for ${selectedIds.size} account(s). View progress in Logs.`);
       setIsPrivacyDialogOpen(false);
     } catch (error) {
       console.error('Error queuing privacy settings:', error);
@@ -1102,7 +1102,7 @@ const Accounts: React.FC = () => {
       if (error) throw error;
       
       startAccountTaskTracking('Change Password', selectedIds.size);
-      toast.info(`Queued password change for ${selectedIds.size} account(s). Check logs panel for progress.`);
+      toast.info(`Queued password change for ${selectedIds.size} account(s). View progress in Logs.`);
       setIsPasswordDialogOpen(false);
       setExistingPassword('');
       setNewPassword('');
@@ -1131,7 +1131,7 @@ const Accounts: React.FC = () => {
       if (error) throw error;
       
       startAccountTaskTracking('Logout Sessions', selectedIds.size);
-      toast.info(`Queued logout for ${selectedIds.size} account(s). Check logs panel for progress.`);
+      toast.info(`Queued logout for ${selectedIds.size} account(s). View progress in Logs.`);
     } catch (error) {
       console.error('Error queuing logout:', error);
       toast.error('Failed to queue logout');
@@ -1600,7 +1600,7 @@ const Accounts: React.FC = () => {
       setIsAccountTaskRunning(true);
       setShowAccountTaskLogs(true);
       
-      toast.success(`Queued profile picture removal for ${selectedIds.size} account(s)`);
+      toast.success(`Queued profile picture removal for ${selectedIds.size} account(s). View progress in Logs.`);
       setSelectedIds(new Set());
     } catch (error) {
       console.error('Error removing profile pictures:', error);
@@ -2616,11 +2616,6 @@ const Accounts: React.FC = () => {
                     Remove Proxy
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setShowAccountTaskLogs(!showAccountTaskLogs)}>
-                    <ClipboardList className="w-4 h-4 mr-2" />
-                    {showAccountTaskLogs ? 'Hide' : 'Show'} Task Logs
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={handleBulkDelete} className="text-destructive">
                     <Trash2 className="w-4 h-4 mr-2" />
                     Delete Selected
@@ -2659,151 +2654,6 @@ const Accounts: React.FC = () => {
         )}
 
 
-        {/* Account Tasks Progress & Logs */}
-        {(showAccountTaskLogs || isAccountTaskRunning) && (
-          <Card className="border-blue-500/30 bg-blue-500/5">
-            <CardHeader className="pb-2 pt-3 px-4">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm font-medium flex items-center gap-2">
-                  {isAccountTaskRunning && <Loader2 className="w-4 h-4 animate-spin" />}
-                  <ClipboardList className="w-4 h-4" />
-                  {accountTasksProgress.taskType || 'Account Tasks'}
-                </CardTitle>
-                <div className="flex items-center gap-2">
-                  {isAccountTaskRunning && (
-                    <span className="text-xs text-muted-foreground">
-                      {accountTasksProgress.completed + accountTasksProgress.failed}/{accountTasksProgress.total}
-                    </span>
-                  )}
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    onClick={() => {
-                      setShowAccountTaskLogs(false);
-                      if (!isAccountTaskRunning) {
-                        setAccountTasksProgress({ total: 0, completed: 0, failed: 0, taskType: '', logs: [] });
-                      }
-                    }}
-                    className="h-6 w-6 p-0"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </Button>
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="px-4 pb-3 pt-0">
-              {isAccountTaskRunning && (
-                <Progress 
-                  value={accountTasksProgress.total > 0 ? ((accountTasksProgress.completed + accountTasksProgress.failed) / accountTasksProgress.total) * 100 : 0} 
-                  className="h-2 mb-3" 
-                />
-              )}
-              
-              {/* Stats Grid */}
-              {(isAccountTaskRunning || accountTasksProgress.completed > 0 || accountTasksProgress.failed > 0) && (
-                <div className="grid grid-cols-2 gap-3 mb-3">
-                  <div className="flex items-center gap-2 p-2 rounded-md bg-status-active/10 border border-status-active/20">
-                    <CheckCircle className="w-4 h-4 text-status-active" />
-                    <div>
-                      <div className="text-lg font-bold text-status-active">{accountTasksProgress.completed}</div>
-                      <div className="text-xs text-muted-foreground">Success</div>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2 p-2 rounded-md bg-status-banned/10 border border-status-banned/20">
-                    <XCircle className="w-4 h-4 text-status-banned" />
-                    <div>
-                      <div className="text-lg font-bold text-status-banned">{accountTasksProgress.failed}</div>
-                      <div className="text-xs text-muted-foreground">Failed</div>
-                    </div>
-                  </div>
-                </div>
-              )}
-              
-              {/* Current Session Logs */}
-              {accountTasksProgress.logs.length > 0 ? (
-                <Collapsible defaultOpen>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground hover:text-foreground">
-                      <span className="flex items-center gap-1.5">
-                        <FileText className="w-3.5 h-3.5" />
-                        Recent Logs ({accountTasksProgress.logs.length})
-                      </span>
-                      <ChevronDown className="w-3.5 h-3.5" />
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <div className="mt-2 max-h-40 overflow-y-auto rounded-md bg-muted/50 p-2 space-y-1">
-                      {accountTasksProgress.logs.map((log) => (
-                        <div key={log.id} className={cn(
-                          "text-xs font-mono break-all flex items-center gap-2",
-                          log.status === 'completed' ? "text-status-active" : "text-destructive/80"
-                        )}>
-                          {log.status === 'completed' ? <Check className="w-3 h-3 flex-shrink-0" /> : <XCircle className="w-3 h-3 flex-shrink-0" />}
-                          <span className="text-muted-foreground">{log.accountPhone}</span>
-                          <span>{log.taskType.replace('_', ' ')}</span>
-                          {log.result && log.status === 'failed' && (
-                            <span className="text-destructive/60 truncate">- {log.result}</span>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              ) : isAccountTaskRunning ? (
-                <div className="text-xs text-muted-foreground text-center py-2">
-                  <Loader2 className="w-4 h-4 animate-spin inline mr-2" />
-                  Waiting for Python runner to process tasks...
-                </div>
-              ) : (
-                <div className="text-xs text-muted-foreground text-center py-2">
-                  No logs yet. Run an account task to see results here.
-                </div>
-              )}
-              
-              {/* History */}
-              {accountTaskHistory.length > 0 && (
-                <Collapsible>
-                  <CollapsibleTrigger asChild>
-                    <Button variant="ghost" size="sm" className="w-full justify-between text-xs text-muted-foreground hover:text-foreground mt-1">
-                      <span className="flex items-center gap-1.5">
-                        <History className="w-3.5 h-3.5" />
-                        History ({accountTaskHistory.length})
-                      </span>
-                      <ChevronDown className="w-3.5 h-3.5" />
-                    </Button>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <div className="mt-2 max-h-48 overflow-y-auto rounded-md bg-muted/30 p-2 space-y-1">
-                      {accountTaskHistory.slice(0, 50).map((log, i) => (
-                        <div key={`${log.id}-${i}`} className={cn(
-                          "text-xs font-mono break-all flex items-center gap-2",
-                          log.status === 'completed' ? "text-status-active/70" : "text-destructive/60"
-                        )}>
-                          {log.status === 'completed' ? <Check className="w-3 h-3 flex-shrink-0" /> : <XCircle className="w-3 h-3 flex-shrink-0" />}
-                          <span className="text-muted-foreground/70 text-[10px]">
-                            {log.timestamp.toLocaleTimeString()}
-                          </span>
-                          <span className="text-muted-foreground">{log.accountPhone}</span>
-                          <span>{log.taskType.replace('_', ' ')}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {accountTaskHistory.length > 0 && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        onClick={() => setAccountTaskHistory([])}
-                        className="w-full text-xs text-muted-foreground hover:text-destructive mt-1"
-                      >
-                        Clear History
-                      </Button>
-                    )}
-                  </CollapsibleContent>
-                </Collapsible>
-              )}
-            </CardContent>
-          </Card>
-        )}
 
 
         <div className="flex gap-3 flex-wrap">
