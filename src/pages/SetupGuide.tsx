@@ -3496,6 +3496,18 @@ aiohttp>=3.9.0
               </ul>
             </div>
 
+            <div className="text-left bg-green-500/10 border border-green-500/30 rounded-lg p-4 space-y-2">
+              <p className="font-medium text-green-700 dark:text-green-400">🛡️ Safety Features (Official Telegram API):</p>
+              <ul className="list-disc list-inside text-sm text-green-600 dark:text-green-500 space-y-1">
+                <li><strong>get_input_entity()</strong> - Reduces API calls, uses cached lookups</li>
+                <li><strong>Official Telethon exceptions</strong> - FloodWait, PeerFlood, UserPrivacyRestricted, etc.</li>
+                <li><strong>Proper client_id range</strong> - Uses 32-bit signed int (0 to 2³¹-1) for contacts</li>
+                <li><strong>Auto-detection</strong> - Frozen, banned, deactivated, session expired states</li>
+                <li><strong>Privacy API</strong> - Uses InputPrivacyKey* with SetPrivacyRequest</li>
+                <li><strong>No Python delays</strong> - Speed controlled by admin dashboard</li>
+              </ul>
+            </div>
+
             <div className="text-left bg-muted rounded-lg p-4 space-y-3">
               <p className="font-medium">🚀 How to use:</p>
               <ol className="list-decimal list-inside space-y-2 text-sm text-muted-foreground">
