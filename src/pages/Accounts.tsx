@@ -162,6 +162,7 @@ const Accounts: React.FC = () => {
   const [tagFilter, setTagFilter] = useState<string>('all');
   const [proxyFilter, setProxyFilter] = useState<string>('all'); // 'all' | 'with_proxy' | 'without_proxy'
   const [profileFilter, setProfileFilter] = useState<string>('all'); // 'all' | 'synced' | 'not_synced'
+  const [avatarFilter, setAvatarFilter] = useState<string>('all'); // 'all' | 'with_avatar' | 'without_avatar'
   const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [selectedTagsForBulk, setSelectedTagsForBulk] = useState<string[]>([]);
@@ -1759,7 +1760,13 @@ const Accounts: React.FC = () => {
       (proxyErrorFilter === 'with_error' && hasProxyError) ||
       (proxyErrorFilter === 'no_error' && !hasProxyError);
     
-    return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile && matchesProxyError;
+    // Avatar filter - check if account has profile picture
+    const matchesAvatar = 
+      avatarFilter === 'all' || 
+      (avatarFilter === 'with_avatar' && acc.avatar) ||
+      (avatarFilter === 'without_avatar' && !acc.avatar);
+    
+    return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile && matchesProxyError && matchesAvatar;
   });
 
   // Split accounts by status
@@ -2708,9 +2715,9 @@ const Accounts: React.FC = () => {
               <Button variant="outline" size="sm" className="h-9 gap-2">
                 <Filter className="w-4 h-4" />
                 Filters
-                {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all') && (
+                {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all' || avatarFilter !== 'all') && (
                   <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                    {[tagFilter !== 'all', proxyFilter !== 'all', profileFilter !== 'all', proxyErrorFilter !== 'all'].filter(Boolean).length}
+                    {[tagFilter !== 'all', proxyFilter !== 'all', profileFilter !== 'all', proxyErrorFilter !== 'all', avatarFilter !== 'all'].filter(Boolean).length}
                   </Badge>
                 )}
                 <ChevronDown className="w-3 h-3" />
@@ -2803,6 +2810,34 @@ const Accounts: React.FC = () => {
                 </Select>
               </div>
               
+              {/* Profile Picture Filter */}
+              <div className="space-y-2 mb-4">
+                <Label className="text-xs text-muted-foreground flex items-center gap-2">
+                  <UserCircle className="w-3.5 h-3.5" />
+                  Profile Picture
+                </Label>
+                <Select value={avatarFilter} onValueChange={setAvatarFilter}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder="All Accounts" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Accounts</SelectItem>
+                    <SelectItem value="with_avatar">
+                      <span className="flex items-center gap-2">
+                        <CheckCircle2 className="w-3 h-3 text-green-500" />
+                        With Picture
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="without_avatar">
+                      <span className="flex items-center gap-2">
+                        <X className="w-3 h-3 text-red-500" />
+                        Without Picture
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
               {/* Proxy Error Filter */}
               <div className="space-y-2 mb-3">
                 <Label className="text-xs text-muted-foreground flex items-center gap-2">
@@ -2832,7 +2867,7 @@ const Accounts: React.FC = () => {
               </div>
               
               {/* Clear Filters */}
-              {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all') && (
+              {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all' || avatarFilter !== 'all') && (
                 <>
                   <DropdownMenuSeparator className="my-2" />
                   <Button 
@@ -2844,6 +2879,7 @@ const Accounts: React.FC = () => {
                       setProxyFilter('all');
                       setProfileFilter('all');
                       setProxyErrorFilter('all');
+                      setAvatarFilter('all');
                     }}
                   >
                     <X className="w-3 h-3 mr-1" />
