@@ -598,11 +598,16 @@ async def send_message(client: TelegramClient, recipient: str, content: str, med
         
         # ========== RESOLVE RECIPIENT ==========
         # Priority 1: Numeric Telegram ID (fastest - direct lookup)
+        # IMPORTANT: get_input_entity(int_id) may fail if the entity is not cached.
+        # We therefore fall back to get_entity(int_id) which performs a server fetch.
         if recipient and recipient.isdigit():
             try:
                 entity = await asyncio.wait_for(client.get_input_entity(int(recipient)), timeout=10)
             except (ValueError, KeyError):
-                pass  # Not in cache, will try other methods
+                try:
+                    entity = await asyncio.wait_for(client.get_entity(int(recipient)), timeout=10)
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"    [WARN] Direct ID lookup failed for {recipient}: {e}")
         
