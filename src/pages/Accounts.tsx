@@ -126,7 +126,7 @@ const Accounts: React.FC = () => {
   const [groups, setGroups] = useState<AccountGroup[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
   
-  // Privacy settings dialog
+  // Privacy settings dialog - matches official Telegram API options
   const [isPrivacyDialogOpen, setIsPrivacyDialogOpen] = useState(false);
   const [privacySettings, setPrivacySettings] = useState({
     hidePhone: false,
@@ -134,6 +134,14 @@ const Accounts: React.FC = () => {
     disableCalls: false,
     hideProfilePhoto: false,
   });
+  
+  // Privacy preset options for quick selection
+  const privacyPresets = {
+    maximum: { hidePhone: true, hideLastSeen: true, disableCalls: true, hideProfilePhoto: true },
+    moderate: { hidePhone: true, hideLastSeen: true, disableCalls: false, hideProfilePhoto: false },
+    minimal: { hidePhone: true, hideLastSeen: false, disableCalls: false, hideProfilePhoto: false },
+    none: { hidePhone: false, hideLastSeen: false, disableCalls: false, hideProfilePhoto: false },
+  };
   
   // Password dialog
   const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false);
@@ -2097,11 +2105,35 @@ const Accounts: React.FC = () => {
                 />
               </div>
             )}
-            {/* Ban Reason */}
-            {account.status === 'banned' && account.banReason && (
-              <span className="text-[10px] text-status-banned truncate max-w-[150px]" title={account.banReason}>
-                {account.banReason.slice(0, 30)}...
-              </span>
+            {/* Ban/Error Reason with specific type detection */}
+            {(account.status === 'banned' || account.status === 'disconnected' || account.status === 'frozen') && account.banReason && (
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className={cn(
+                      "text-[10px] truncate max-w-[150px] px-1.5 py-0.5 rounded",
+                      account.status === 'banned' && "text-status-banned bg-status-banned/10",
+                      account.status === 'frozen' && "text-blue-500 bg-blue-500/10",
+                      account.status === 'disconnected' && "text-status-disconnected bg-status-disconnected/10",
+                    )}>
+                      {/* Show specific error type based on patterns from Python code */}
+                      {account.banReason.toLowerCase().includes('floodwait') ? '⏱️ FloodWait' :
+                       account.banReason.toLowerCase().includes('peerflood') ? '🌊 PeerFlood' :
+                       account.banReason.toLowerCase().includes('authkey') ? '🔑 AuthKey Expired' :
+                       account.banReason.toLowerCase().includes('session') ? '📱 Session Issue' :
+                       account.banReason.toLowerCase().includes('frozen') ? '🧊 Frozen' :
+                       account.banReason.toLowerCase().includes('deactivated') ? '☠️ Deactivated' :
+                       account.banReason.toLowerCase().includes('privacy') ? '🔒 Privacy Block' :
+                       account.banReason.toLowerCase().includes('timeout') ? '⏰ Timeout' :
+                       account.banReason.slice(0, 25)}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <p className="font-medium">Error Details</p>
+                    <p className="text-xs break-words">{account.banReason}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
             {/* Account Tags */}
             {(account.tags || []).slice(0, 3).map(tag => (
@@ -3311,23 +3343,66 @@ const Accounts: React.FC = () => {
           </DialogContent>
         </Dialog>
 
-        {/* Privacy Settings Dialog */}
+        {/* Privacy Settings Dialog - Updated with presets */}
         <Dialog open={isPrivacyDialogOpen} onOpenChange={setIsPrivacyDialogOpen}>
-          <DialogContent>
+          <DialogContent className="max-w-md">
             <DialogHeader>
               <DialogTitle>Privacy Settings</DialogTitle>
               <DialogDescription>
-                Configure privacy settings for {selectedIds.size} account(s). This will queue tasks for Python.
+                Configure privacy for {selectedIds.size} account(s). Uses official Telegram API.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 pt-4">
+              {/* Quick Presets */}
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Quick Presets</Label>
+                <div className="grid grid-cols-4 gap-2">
+                  <Button 
+                    variant={JSON.stringify(privacySettings) === JSON.stringify(privacyPresets.maximum) ? "default" : "outline"} 
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setPrivacySettings(privacyPresets.maximum)}
+                  >
+                    <Shield className="w-3 h-3 mr-1" />
+                    Max
+                  </Button>
+                  <Button 
+                    variant={JSON.stringify(privacySettings) === JSON.stringify(privacyPresets.moderate) ? "default" : "outline"} 
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setPrivacySettings(privacyPresets.moderate)}
+                  >
+                    Moderate
+                  </Button>
+                  <Button 
+                    variant={JSON.stringify(privacySettings) === JSON.stringify(privacyPresets.minimal) ? "default" : "outline"} 
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setPrivacySettings(privacyPresets.minimal)}
+                  >
+                    Minimal
+                  </Button>
+                  <Button 
+                    variant={JSON.stringify(privacySettings) === JSON.stringify(privacyPresets.none) ? "default" : "outline"} 
+                    size="sm"
+                    className="text-xs"
+                    onClick={() => setPrivacySettings(privacyPresets.none)}
+                  >
+                    None
+                  </Button>
+                </div>
+              </div>
+              
+              <Separator />
+              
+              {/* Individual Settings */}
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3 rounded-lg border">
                   <div className="flex items-center gap-3">
                     <Phone className="w-4 h-4 text-muted-foreground" />
                     <div>
                       <p className="font-medium text-sm">Hide Phone Number</p>
-                      <p className="text-xs text-muted-foreground">Only contacts can see your number</p>
+                      <p className="text-xs text-muted-foreground">Nobody can see your number</p>
                     </div>
                   </div>
                   <Switch
@@ -3379,9 +3454,16 @@ const Accounts: React.FC = () => {
                 </div>
               </div>
               
+              <div className="text-xs text-muted-foreground bg-muted/50 p-3 rounded-lg">
+                <span className="font-medium">⚠️ Official API:</span> Uses SetPrivacyRequest with InputPrivacyValueDisallowAll for each setting. Safe for account health.
+              </div>
+              
               <div className="flex justify-end gap-2">
                 <Button variant="outline" onClick={() => setIsPrivacyDialogOpen(false)}>Cancel</Button>
-                <Button onClick={handleApplyPrivacySettings}>Apply Settings</Button>
+                <Button onClick={handleApplyPrivacySettings}>
+                  <Shield className="w-4 h-4 mr-2" />
+                  Apply Settings
+                </Button>
               </div>
             </div>
           </DialogContent>
