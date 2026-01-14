@@ -1492,11 +1492,12 @@ serve(async (req) => {
     }
 
     // RUNNER: warmup - Only warmup tasks (from warmup_schedule table)
+    // CRITICAL: All warmup tasks MUST include proxy data and only use accounts with active proxies
     if (runner === "warmup") {
       // Priority 1: Check for bidirectional interaction tasks
       const { data: interactionTasks } = await supabase
         .from("interaction_scheduler")
-        .select("*, sender:telegram_accounts!sender_account_id(*, telegram_api_credentials(*)), receiver:telegram_accounts!receiver_account_id(*)")
+        .select("*, sender:telegram_accounts!sender_account_id(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)), receiver:telegram_accounts!receiver_account_id(phone_number, telegram_id, username)")
         .eq("status", "pending")
         .lte("scheduled_at", new Date().toISOString())
         .order("scheduled_at", { ascending: true })
@@ -1506,8 +1507,10 @@ serve(async (req) => {
         const task = interactionTasks[0] as any;
         const senderAccount = task.sender;
         const receiverAccount = task.receiver;
+        const proxy = Array.isArray(senderAccount?.proxies) ? senderAccount.proxies[0] : senderAccount?.proxies;
         
-        if (senderAccount && senderAccount.status === "active" && receiverAccount) {
+        // CRITICAL: Check both account status AND proxy status
+        if (senderAccount && senderAccount.status === "active" && receiverAccount && proxy?.status === "active") {
           const apiCred = senderAccount.telegram_api_credentials;
           
           // Mark as in_progress
@@ -1522,6 +1525,8 @@ serve(async (req) => {
             task_id: task.id,
             task_data: {
               recipient_phone: receiverAccount.phone_number,
+              recipient_telegram_id: receiverAccount.telegram_id,
+              recipient_username: receiverAccount.username,
               message: task.message_content,
             },
             account: {
@@ -1535,17 +1540,39 @@ serve(async (req) => {
               system_lang_code: senderAccount.system_lang_code,
               api_id: apiCred?.api_id || senderAccount.api_id,
               api_hash: apiCred?.api_hash || senderAccount.api_hash,
+              proxy_id: senderAccount.proxy_id,
+            },
+            proxy: {
+              id: proxy.id,
+              host: proxy.host,
+              port: proxy.port,
+              username: proxy.username,
+              password: proxy.password,
+              proxy_type: proxy.proxy_type,
+              type: proxy.proxy_type,
             },
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
+        } else if (senderAccount && receiverAccount) {
+          // Account or proxy not usable - fail the task with reason
+          const reason = !proxy ? "No proxy assigned" :
+                         proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
+                         `Sender status: ${senderAccount.status}`;
+          
+          await supabase
+            .from("interaction_scheduler")
+            .update({ status: "failed", result: reason })
+            .eq("id", task.id);
+          
+          console.log(`[get-next-task] Interaction task skipped: ${reason}`);
         }
       }
 
       // Priority 2: Check warmup_schedule table for channel/content tasks
       const { data: warmupTasks } = await supabase
         .from("warmup_schedule")
-        .select("*, telegram_accounts(*, telegram_api_credentials(*))")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status))")
         .eq("status", "pending")
         .lte("scheduled_at", new Date().toISOString())
         .order("priority", { ascending: false })
@@ -1555,8 +1582,10 @@ serve(async (req) => {
       if (warmupTasks && warmupTasks.length > 0) {
         const task = warmupTasks[0] as any;
         const accountData = task.telegram_accounts;
+        const proxy = Array.isArray(accountData?.proxies) ? accountData.proxies[0] : accountData?.proxies;
         
-        if (accountData && accountData.status === "active") {
+        // CRITICAL: Check both account status AND proxy status
+        if (accountData && accountData.status === "active" && proxy?.status === "active") {
           const apiCred = accountData.telegram_api_credentials;
           
           // Mark as in_progress
@@ -1583,17 +1612,39 @@ serve(async (req) => {
               system_lang_code: accountData.system_lang_code,
               api_id: apiCred?.api_id || accountData.api_id,
               api_hash: apiCred?.api_hash || accountData.api_hash,
+              proxy_id: accountData.proxy_id,
+            },
+            proxy: {
+              id: proxy.id,
+              host: proxy.host,
+              port: proxy.port,
+              username: proxy.username,
+              password: proxy.password,
+              proxy_type: proxy.proxy_type,
+              type: proxy.proxy_type,
             },
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
+        } else if (accountData) {
+          // Account or proxy not usable - fail the task with reason
+          const reason = !proxy ? "No proxy assigned" :
+                         proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
+                         `Account status: ${accountData.status}`;
+          
+          await supabase
+            .from("warmup_schedule")
+            .update({ status: "failed" })
+            .eq("id", task.id);
+          
+          console.log(`[get-next-task] Warmup schedule task skipped: ${reason}`);
         }
       }
 
       // Fallback: Check old maturation_tasks table for backwards compatibility
       const { data: oldWarmupTasks } = await supabase
         .from("maturation_tasks")
-        .select("*, telegram_accounts(*, telegram_api_credentials(*))")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status))")
         .eq("status", "pending")
         .lte("scheduled_at", new Date().toISOString())
         .limit(1);
@@ -1601,8 +1652,10 @@ serve(async (req) => {
       if (oldWarmupTasks && oldWarmupTasks.length > 0) {
         const task = oldWarmupTasks[0] as any;
         const accountData = task.telegram_accounts;
+        const proxy = Array.isArray(accountData?.proxies) ? accountData.proxies[0] : accountData?.proxies;
         
-        if (accountData && accountData.status === "active") {
+        // CRITICAL: Check both account status AND proxy status
+        if (accountData && accountData.status === "active" && proxy?.status === "active") {
           const apiCred = accountData.telegram_api_credentials;
           console.log(`[get-next-task] Legacy warmup task ${task.task_type} for ${task.account_id}`);
           return new Response(JSON.stringify({
@@ -1619,10 +1672,32 @@ serve(async (req) => {
               system_lang_code: accountData.system_lang_code,
               api_id: apiCred?.api_id || accountData.api_id,
               api_hash: apiCred?.api_hash || accountData.api_hash,
+              proxy_id: accountData.proxy_id,
+            },
+            proxy: {
+              id: proxy.id,
+              host: proxy.host,
+              port: proxy.port,
+              username: proxy.username,
+              password: proxy.password,
+              proxy_type: proxy.proxy_type,
+              type: proxy.proxy_type,
             },
           }), {
             headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
+        } else if (accountData) {
+          // Account or proxy not usable - fail the task
+          const reason = !proxy ? "No proxy assigned" :
+                         proxy.status !== "active" ? `Proxy status: ${proxy.status}` :
+                         `Account status: ${accountData.status}`;
+          
+          await supabase
+            .from("maturation_tasks")
+            .update({ status: "failed" })
+            .eq("id", task.id);
+          
+          console.log(`[get-next-task] Legacy warmup task skipped: ${reason}`);
         }
       }
 
@@ -1641,10 +1716,11 @@ serve(async (req) => {
     }
 
     // RUNNER: account - Only account management tasks
+    // CRITICAL: All account tasks MUST include proxy data and only use accounts with active proxies
     if (runner === "account") {
       const { data: checkTasks } = await supabase
         .from("account_check_tasks")
-        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(*))")
+        .select("*, telegram_accounts(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status))")
         .eq("status", "pending")
         .in("task_type", ["spambot_check", "change_name", "privacy_settings", "change_password", "logout_sessions", "change_photo", "sync_profile", "verify_session"])
         .limit(1);
@@ -1656,6 +1732,21 @@ serve(async (req) => {
 
         if (accountData) {
           const apiCred = accountData.telegram_api_credentials;
+          const proxyData = Array.isArray(accountData.proxies) ? accountData.proxies[0] : accountData.proxies;
+          
+          // CRITICAL: Check proxy BEFORE processing any task
+          if (!proxyData || proxyData.status !== 'active') {
+            console.log(`[get-next-task] Account task ${task.id} skipped: ${accountData.phone_number} - ${!proxyData ? 'no proxy' : `proxy status: ${proxyData.status}`}`);
+            // Skip but don't fail - admin needs to assign proxy first
+            // Return wait response so runner polls again
+            return new Response(JSON.stringify({
+              task: "wait",
+              seconds: 15,
+              reason: `Account ${accountData.phone_number} has no active proxy - assign proxy in admin dashboard`,
+            }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
           
           if (taskType === "spambot_check") {
             const lastCheck = accountData.last_spambot_check;
@@ -1686,6 +1777,16 @@ serve(async (req) => {
                     system_lang_code: accountData.system_lang_code,
                     api_id: apiCred?.api_id || accountData.api_id,
                     api_hash: apiCred?.api_hash || accountData.api_hash,
+                    proxy_id: accountData.proxy_id,
+                  },
+                  proxy: {
+                    id: proxyData.id,
+                    host: proxyData.host,
+                    port: proxyData.port,
+                    username: proxyData.username,
+                    password: proxyData.password,
+                    proxy_type: proxyData.proxy_type,
+                    type: proxyData.proxy_type,
                   },
                 }), {
                   headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -1707,14 +1808,22 @@ serve(async (req) => {
                   system_lang_code: accountData.system_lang_code,
                   api_id: apiCred?.api_id || accountData.api_id,
                   api_hash: apiCred?.api_hash || accountData.api_hash,
+                  proxy_id: accountData.proxy_id,
+                },
+                proxy: {
+                  id: proxyData.id,
+                  host: proxyData.host,
+                  port: proxyData.port,
+                  username: proxyData.username,
+                  password: proxyData.password,
+                  proxy_type: proxyData.proxy_type,
+                  type: proxyData.proxy_type,
                 },
               }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
               });
             }
           } else {
-            const proxyData = accountData.proxies;
-
             // Mark task as in_progress to avoid being served repeatedly while runner is working
             await supabase
               .from("account_check_tasks")
@@ -1741,17 +1850,15 @@ serve(async (req) => {
                   api_hash: apiCred?.api_hash || accountData.api_hash,
                   proxy_id: accountData.proxy_id,
                 },
-                proxy: proxyData
-                  ? {
-                      host: proxyData.host,
-                      port: proxyData.port,
-                      username: proxyData.username,
-                      password: proxyData.password,
-                      // Backwards compatible: python expects proxy_type, older code may use type
-                      proxy_type: proxyData.proxy_type,
-                      type: proxyData.proxy_type,
-                    }
-                  : null,
+                proxy: {
+                  id: proxyData.id,
+                  host: proxyData.host,
+                  port: proxyData.port,
+                  username: proxyData.username,
+                  password: proxyData.password,
+                  proxy_type: proxyData.proxy_type,
+                  type: proxyData.proxy_type,
+                },
               }),
               {
                 headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -1386,6 +1386,14 @@ serve(async (req) => {
 
           const apiCred = accountData.telegram_api_credentials;
           const proxyData = accountData.proxies;
+          
+          // CRITICAL: Skip tasks for accounts without active proxy
+          if (!proxyData || proxyData.status !== 'active') {
+            console.log(`[get-batch-tasks] SKIP account task ${task.id}: ${accountData.phone_number} - ${!proxyData ? 'no proxy' : `proxy status: ${proxyData.status}`}`);
+            // Don't fail the task - just skip it. Admin needs to assign proxy first.
+            // The task will be picked up again once proxy is assigned.
+            continue;
+          }
 
           claimIds.push(task.id);
           tasks.push({
@@ -1405,16 +1413,15 @@ serve(async (req) => {
               api_hash: apiCred?.api_hash || accountData.api_hash,
               proxy_id: accountData.proxy_id,
             },
-            proxy: proxyData
-              ? {
-                  host: proxyData.host,
-                  port: proxyData.port,
-                  username: proxyData.username,
-                  password: proxyData.password,
-                  proxy_type: proxyData.proxy_type,
-                  type: proxyData.proxy_type,
-                }
-              : null,
+            proxy: {
+              id: proxyData.id,
+              host: proxyData.host,
+              port: proxyData.port,
+              username: proxyData.username,
+              password: proxyData.password,
+              proxy_type: proxyData.proxy_type,
+              type: proxyData.proxy_type,
+            },
           });
         }
 
