@@ -1488,7 +1488,7 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def connect_account_with_fingerprint(account: dict, setup_handler=None) -> tuple:
+async def connect_account_with_fingerprint(account: dict, setup_handler=None, task_proxy: dict = None) -> tuple:
     """
     Connect account using STRICT 1:1 proxy policy.
     
@@ -1497,6 +1497,11 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     2. Use assigned proxy ONLY - no switching
     3. If proxy fails, report error and return None
     4. Admin must fix proxy in dashboard
+    
+    Args:
+        account: Account data with session, fingerprint, proxy info
+        setup_handler: Optional handler to setup after connection
+        task_proxy: Proxy from task (overrides account.proxy)
     
     Returns: (client, error_str or None)
     """
@@ -1531,11 +1536,14 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
     else:
         print(f"  [{phone}] Using DB fingerprint: {device_model} ({system_version})")
     
-    # Check proxy - MANDATORY
-    proxy = account.get("proxy")
+    # Check proxy - MANDATORY (task_proxy overrides account.proxy)
+    proxy = task_proxy or account.get("proxy")
     if not proxy:
         print(f"  [{phone}] NO PROXY ASSIGNED - skipping (assign proxy in admin dashboard)")
         return None, "No proxy assigned"
+    
+    # Store proxy in account for get_or_create_client
+    account["proxy"] = proxy
     
     proxy_id = proxy.get("id") if proxy else None
     print(f"  [{phone}] Using assigned proxy: {proxy.get('host')}:{proxy.get('port')}")
@@ -1545,7 +1553,7 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None) ->
         client = await get_or_create_client(
             account, 
             setup_handler=setup_handler, 
-            task_proxy=account.get("proxy"),
+            task_proxy=proxy,
             long_lived=True  # Stable settings for live chat
         )
         if client:
@@ -2213,7 +2221,7 @@ async def main_loop():
                             return None, None, "No ID", phone, False
                         try:
                             client, error = await asyncio.wait_for(
-                                connect_account_with_fingerprint(acc, setup_handler=setup_message_handler),
+                                connect_account_with_fingerprint(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")),
                                 timeout=CONNECT_TIMEOUT_SECONDS
                             )
                             if client:
@@ -2379,8 +2387,9 @@ async def main_loop():
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
                 account = task.get("account", {})
+                proxy = task.get("proxy")
                 
-                client, error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler)
+                client, error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler, task_proxy=proxy)
                 
                 if client and recipient:
                     print(f"  [REPLY] To {recipient}...")
