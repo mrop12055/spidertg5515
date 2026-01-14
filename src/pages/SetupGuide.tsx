@@ -2613,6 +2613,40 @@ async def main_loop():
     await shutdown_all()
 
 
+def save_all_sessions_sync():
+    """
+    Synchronous wrapper to save all sessions - for use in signal handlers.
+    Creates a new event loop to run the async save operation.
+    """
+    import asyncio
+    from client_manager import active_clients, save_session_to_db
+    
+    if not active_clients:
+        return
+    
+    print("\\n  [SHUTDOWN] Saving sessions before exit...")
+    
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        async def save_all():
+            for account_id, client in list(active_clients.items()):
+                try:
+                    phone = getattr(client.session, 'filename', account_id)
+                    if phone:
+                        phone = os.path.basename(phone).replace('.session', '')
+                        await save_session_to_db(account_id, phone)
+                except Exception as e:
+                    print(f"    [WARN] Could not save session for {account_id[:8]}: {e}")
+        
+        loop.run_until_complete(save_all())
+        loop.close()
+        print("  [OK] Sessions saved.")
+    except Exception as e:
+        print(f"  [WARN] Session save on exit failed: {e}")
+
+
 if __name__ == "__main__":
     print("\\nInstall: pip install telethon httpx\\n")
     
@@ -2624,6 +2658,8 @@ if __name__ == "__main__":
             asyncio.run(main_loop())
         except KeyboardInterrupt:
             print("\\n⏹ Stopping...")
+            # Save sessions on graceful shutdown
+            save_all_sessions_sync()
             break
         except Exception as e:
             error_str = str(e).lower()
@@ -2631,13 +2667,18 @@ if __name__ == "__main__":
             if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
                 print(f"\\n📶 Network error (connection dropped): {e}")
                 print("  Clearing stale connections and waiting 20 seconds...")
+                # Save sessions before network recovery restart
+                save_all_sessions_sync()
                 # Reset HTTP client to clear stale connections
                 reset_http_client()
                 time.sleep(20)
             else:
                 print(f"\\n⚠ LiveChat crashed: {e}")
-                print("  Restarting in 5 seconds...")
+                print("  Saving sessions before restart...")
+                # Save sessions before crash recovery restart
+                save_all_sessions_sync()
                 reset_http_client()
+                print("  Restarting in 5 seconds...")
                 time.sleep(5)
     
     print("Goodbye!")
