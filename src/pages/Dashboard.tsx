@@ -48,20 +48,16 @@ const Dashboard: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      // Fetch account stats directly from database
-      const { data: accountStats } = await supabase
-        .from('telegram_accounts')
-        .select('status');
-      
-      const totalAccounts = accountStats?.length || 0;
-      const activeAccounts = accountStats?.filter(a => a.status === 'active').length || 0;
-
-      // Fetch proxy stats
-      const { data: proxyStats } = await supabase
-        .from('proxies')
-        .select('status');
-      
-      const activeProxies = proxyStats?.filter(p => p.status === 'active').length || 0;
+      // Fetch account stats using COUNT to bypass 1000 row limit
+      const [
+        { count: totalAccounts },
+        { count: activeAccounts },
+        { count: activeProxies }
+      ] = await Promise.all([
+        supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }),
+        supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }).eq('status', 'active'),
+        supabase.from('proxies').select('id', { count: 'exact', head: true }).eq('status', 'active')
+      ]);
 
       // Fetch message stats - today
       const today = new Date();
@@ -86,9 +82,9 @@ const Dashboard: React.FC = () => {
         .eq('direction', 'incoming');
 
       setStats({
-        totalAccounts,
-        activeAccounts,
-        activeProxies,
+        totalAccounts: totalAccounts || 0,
+        activeAccounts: activeAccounts || 0,
+        activeProxies: activeProxies || 0,
         messagesToday: messagesToday || 0,
         messagesLifetime: messagesLifetime || 0,
         repliesLifetime: repliesLifetime || 0,
