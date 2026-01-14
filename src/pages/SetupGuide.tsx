@@ -2310,6 +2310,71 @@ async def main_loop():
                 
                 last_sync_retry = time.time()
             
+            elif task_type == "send_parallel":
+                # ========== PARALLEL SENDING: All accounts process simultaneously ==========
+                batches = task.get("batches", [])
+                settings = task.get("settings", {})
+                stagger_min = settings.get("sameAccountStaggerMin", 1)
+                stagger_max = settings.get("sameAccountStaggerMax", 2)
+                
+                if batches:
+                    print(f"  [PARALLEL] Processing {len(batches)} account batches ({sum(len(b.get('messages', [])) for b in batches)} messages)...")
+                    
+                    async def process_account_batch(batch):
+                        """Process all messages for one account with stagger between messages"""
+                        account = batch.get("account", {})
+                        proxy = batch.get("proxy")
+                        messages = batch.get("messages", [])
+                        acc_id = account.get("id")
+                        phone = account.get("phone_number", acc_id[:8] if acc_id else "?")
+                        
+                        # Reuse existing connection or connect once
+                        client = active_clients.get(acc_id)
+                        if not client or not client.is_connected():
+                            client, error = await connect_account_with_fingerprint(
+                                account, setup_handler=setup_message_handler, task_proxy=proxy
+                            )
+                            if error:
+                                print(f"    [{phone}] Connection failed: {error}")
+                                # Report all messages as failed
+                                for msg in messages:
+                                    if not error.startswith("NETWORK_ERROR:"):
+                                        await report_result("send", {
+                                            "message_id": msg.get("id"),
+                                            "success": False,
+                                            "error": error,
+                                            "account_id": acc_id
+                                        })
+                                return
+                        
+                        # Send messages with stagger between same-account messages
+                        for i, msg in enumerate(messages):
+                            if i > 0 and stagger_max > 0:
+                                delay = random.uniform(stagger_min, stagger_max)
+                                await asyncio.sleep(delay)
+                            
+                            recipient = msg.get("recipient") or msg.get("recipient_telegram_id") or msg.get("recipient_phone")
+                            success, send_error = await send_message(
+                                client, recipient, msg.get("content", ""), msg.get("media_url")
+                            )
+                            
+                            if not is_network_error(str(send_error)):
+                                await report_result("send", {
+                                    "message_id": msg.get("id"),
+                                    "success": success,
+                                    "error": send_error,
+                                    "account_id": acc_id
+                                })
+                        
+                        print(f"    [{phone}] Sent {len(messages)} messages")
+                    
+                    # Process ALL account batches in PARALLEL
+                    await asyncio.gather(
+                        *[process_account_batch(b) for b in batches],
+                        return_exceptions=True
+                    )
+                    print(f"  [DONE] Parallel batch complete")
+            
             elif task_type == "send":
                 msg = task.get("message", {})
                 recipient = task.get("recipient")
