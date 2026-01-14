@@ -332,7 +332,8 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         
         print(f"  [CONNECT] {account['phone_number']}...")
         if not await connect_with_retry(client):
-            # PROXY FAILED - Report error to admin, DO NOT switch proxy
+            # PROXY FAILED - Report ONLY proxy error, NOT session status
+            # We can't know session status if we can't connect via proxy
             print(f"  [PROXY ERROR] Connection failed for {phone} - update proxy in admin dashboard")
             asyncio.create_task(report_result("proxy_error", {
                 "account_id": account_id,
@@ -341,7 +342,25 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             }))
             return None
         
-        if not await client.is_user_authorized():
+        # Connected via proxy - NOW we can check session status
+        try:
+            is_authorized = await asyncio.wait_for(client.is_user_authorized(), timeout=10)
+        except Exception as auth_err:
+            # Authorization check failed - could be proxy or session issue
+            err_str = str(auth_err).lower()
+            if any(p in err_str for p in PROXY_ERROR_PATTERNS):
+                print(f"  [PROXY ERROR] Auth check failed for {phone}: {auth_err}")
+                asyncio.create_task(report_result("proxy_error", {
+                    "account_id": account_id,
+                    "proxy_id": proxy_id,
+                    "reason": f"Auth check failed: {str(auth_err)[:100]}"
+                }))
+            else:
+                print(f"  [SESSION ERROR] Auth check failed for {phone}: {auth_err}")
+                asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": str(auth_err)}))
+            return None
+        
+        if not is_authorized:
             asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"}))
             return None
         

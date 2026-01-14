@@ -1177,13 +1177,17 @@ serve(async (req) => {
       case "proxy_error": {
         // Proxy connection failed - mark proxy as error but DO NOT change account proxy assignment
         // STRICT 1:1 POLICY: Admin must manually fix proxy in dashboard
+        // IMPORTANT: Do NOT set ban_reason - we can't know session status if proxy fails
         const { account_id, reason, proxy_id } = result;
 
-        // Only update disabled_reason - DO NOT change proxy_id or any other account settings
+        // Only update disabled_reason - DO NOT change proxy_id, status, or ban_reason
+        // We can't determine if session is valid when proxy fails
         await supabase
           .from("telegram_accounts")
           .update({ 
-            disabled_reason: `Proxy error: ${reason || "Connection failed"}`
+            disabled_reason: `Proxy error: ${reason || "Connection failed"}`,
+            // Clear ban_reason since we can't verify session status with broken proxy
+            ban_reason: null
             // NOTE: We do NOT change status, proxy_id, or any fingerprint data
           })
           .eq("id", account_id);
