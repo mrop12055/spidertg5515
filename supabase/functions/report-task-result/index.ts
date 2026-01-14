@@ -361,11 +361,12 @@ serve(async (req) => {
             'not available for frozen',
           ];
           
-          // "Too many requests" - IMMEDIATE restriction with NO RETRIES
-          // This is a sender-side rate limit - account goes to restricted immediately
+          // "Too many requests (caused by SendMessageRequest)" - IMMEDIATE 12h cooldown with NO RETRIES
+          // This is a sender-side rate limit when sending new messages - account goes to cooldown immediately
+          // IMPORTANT: Only match this SPECIFIC error - other "Too many requests" errors have different causes
           // Only applies to NEW campaign messages, NOT to replies in existing conversations
-          const tooManyRequestsErrors = [
-            'too many requests',
+          const tooManyRequestsSendMessage = [
+            'too many requests (caused by sendmessagerequest)',
           ];
           
           // Errors that should just SKIP the recipient (don't affect account status)
@@ -389,8 +390,8 @@ serve(async (req) => {
           
           const errorLower = (error || '').toLowerCase();
           
-          // Check for "Too many requests" FIRST - this is IMMEDIATE restriction, no retries
-          const isTooManyRequests = tooManyRequestsErrors.some(r => errorLower.includes(r));
+          // Check for "Too many requests (caused by SendMessageRequest)" FIRST - this is IMMEDIATE 12h cooldown, no retries
+          const isTooManyRequests = tooManyRequestsSendMessage.some((r: string) => errorLower.includes(r));
           
           // Check for FROZEN account errors - these are permanent, not temporary
           const isFrozenAccount = frozenAccountErrors.some(r => errorLower.includes(r));
