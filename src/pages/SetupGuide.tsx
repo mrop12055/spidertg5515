@@ -797,11 +797,67 @@ async def cleanup_stale_clients():
     return len(stale)
 
 
-async def disconnect_client(account_id: str, phone: str = None):
-    """Disconnect and remove client from cache to free session file for other runners."""
+async def save_session_to_db(account_id: str, phone_number: str):
+    """
+    Save updated session file back to database to preserve entity cache.
+    
+    CRITICAL: This must be called BEFORE disconnecting to ensure:
+    1. Entity cache (access_hash values) is preserved across runs
+    2. Reduced API calls on next connection (entities already cached)
+    3. Consistent identity - Telegram sees same session history
+    
+    The session file contains SQLite database with:
+    - Authentication state
+    - Entity cache (access_hash for contacts/users)
+    - Update state (pts, qts, date)
+    """
+    session_path = os.path.join(SESSION_FOLDER, phone_number.replace("+", ""))
+    session_file = session_path + ".session"
+    
+    try:
+        if not os.path.exists(session_file):
+            print(f"  [SESSION] No session file to save for {phone_number[-4:]}")
+            return False
+        
+        with open(session_file, "rb") as f:
+            session_bytes = f.read()
+        
+        # Validate SQLite header (must be valid session)
+        if len(session_bytes) < 16 or session_bytes[:16] != b'SQLite format 3\\x00':
+            print(f"  [SESSION] Invalid session format for {phone_number[-4:]}")
+            return False
+        
+        session_base64 = base64.b64encode(session_bytes).decode('utf-8')
+        
+        # Report updated session to backend
+        await report_result("session_updated", {
+            "account_id": account_id,
+            "session_data": session_base64
+        })
+        
+        print(f"  [SESSION] Saved session cache for {phone_number[-4:]} ({len(session_bytes)} bytes)")
+        return True
+        
+    except Exception as e:
+        print(f"  [SESSION WARN] Failed to save session for {phone_number[-4:]}: {e}")
+        return False
+
+
+async def disconnect_client(account_id: str, phone: str = None, save_session: bool = True):
+    """
+    Disconnect and remove client from cache.
+    
+    IMPORTANT: By default, saves session to DB before disconnecting to preserve entity cache.
+    Set save_session=False for quick disconnects (e.g., error cases where session is invalid).
+    """
     if account_id in active_clients:
         try:
             client = active_clients[account_id]
+            
+            # SAVE SESSION FIRST - preserve entity cache before disconnecting
+            if save_session and phone:
+                await save_session_to_db(account_id, phone)
+            
             await client.disconnect()
             del active_clients[account_id]
             if phone:
@@ -817,8 +873,28 @@ def reset_http_client():
     _http_client = None
 
 
-async def shutdown_all():
-    print("\\n[SHUTDOWN] Disconnecting...")
+async def shutdown_all(save_sessions: bool = True):
+    """
+    Graceful shutdown - saves session cache for ALL connected clients before disconnecting.
+    
+    CRITICAL: Always call this before exiting to preserve entity cache.
+    Set save_sessions=False only for emergency shutdowns.
+    """
+    print("\\n[SHUTDOWN] Saving sessions and disconnecting...")
+    
+    # First, save all sessions (preserve entity cache)
+    if save_sessions:
+        for account_id, client in list(active_clients.items()):
+            try:
+                # Get phone number from client if possible
+                phone = getattr(client.session, 'filename', account_id)
+                if phone:
+                    phone = os.path.basename(phone).replace('.session', '')
+                    await save_session_to_db(account_id, phone)
+            except Exception as e:
+                print(f"  [WARN] Could not save session for {account_id[:8]}: {e}")
+    
+    # Then disconnect all clients
     for account_id, client in list(active_clients.items()):
         try:
             await asyncio.wait_for(client.disconnect(), timeout=5)
@@ -832,7 +908,7 @@ async def shutdown_all():
         await _http_client.aclose()
         _http_client = None
     
-    print("[OK] Done.")
+    print("[OK] Sessions saved and clients disconnected.")
 `;
 
   // ========== 3. FINGERPRINT_GENERATOR.PY ==========
@@ -1108,10 +1184,14 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
         return results
         
     finally:
-        # CRITICAL: Disconnect after ALL messages for this account are done
+        # CRITICAL: Save session and disconnect after ALL messages for this account are done
+        # This preserves entity cache (access_hash values) for faster future sends
         if client:
             try:
                 if client.is_connected():
+                    # SAVE SESSION FIRST - preserve entity cache before disconnecting
+                    account_phone = account.get("phone_number", account_id)
+                    await save_session_to_db(account_id, account_phone)
                     await asyncio.wait_for(client.disconnect(), timeout=3)
             except Exception:
                 pass  # Ignore disconnect errors
@@ -2532,7 +2612,8 @@ import httpx
 
 from client_manager import (
     get_or_create_client, report_result, shutdown_all, disconnect_client,
-    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL, active_clients
+    validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL, active_clients,
+    save_session_to_db
 )
 
 RUNNING = True
@@ -2907,9 +2988,10 @@ async def process_single_task(task):
         await report_task_failure(task_type, task_id, account_id, str(e))
     
     finally:
-        # ALWAYS disconnect after task to free session file for LiveChat runner
+        # ALWAYS save session and disconnect after task to free session file for LiveChat runner
+        # save_session=True preserves entity cache for future connections
         if account_id:
-            await disconnect_client(account_id, phone)
+            await disconnect_client(account_id, phone, save_session=True)
 
 
 TASK_TIMEOUT_SECONDS = 120
@@ -3112,7 +3194,7 @@ import signal
 import random
 
 from client_manager import (
-    get_or_create_client, get_batch_tasks, report_result, shutdown_all
+    get_or_create_client, get_batch_tasks, report_result, shutdown_all, save_session_to_db
 )
 
 # ========== GLOBAL STATE ==========
@@ -3409,6 +3491,15 @@ async def process_single_warmup_task(task: dict) -> dict:
     except Exception as e:
         print(f"  [ERROR] [{phone}] {str(e)[:50]}")
         return {"success": False, "error": str(e), "task_id": task_id, "account_id": account_id, "pair_id": pair_id}
+    
+    finally:
+        # SAVE SESSION CACHE after warmup task - preserves entity cache for future tasks
+        if client and account_id:
+            try:
+                account_phone = account.get("phone_number", account_id)
+                await save_session_to_db(account_id, account_phone)
+            except Exception:
+                pass  # Non-critical - don't fail the task if session save fails
 
 
 async def main_loop():

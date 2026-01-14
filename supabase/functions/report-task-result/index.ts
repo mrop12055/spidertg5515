@@ -1477,6 +1477,56 @@ serve(async (req) => {
         break;
       }
 
+      case "session_updated": {
+        // CRITICAL: Persist updated session file (with entity cache) back to database
+        // This preserves:
+        // 1. Entity cache (access_hash values for contacts/users) - reduces API calls
+        // 2. Authentication state - maintains session continuity
+        // 3. Update state (pts, qts) - proper event ordering
+        const { account_id, session_data } = result;
+
+        if (!account_id || !session_data) {
+          console.log(`[report-task-result] session_updated: Missing account_id or session_data`);
+          break;
+        }
+
+        // Validate session is proper base64 SQLite format
+        try {
+          // Decode and check SQLite header
+          const sessionBytes = Uint8Array.from(atob(session_data), c => c.charCodeAt(0));
+          
+          if (sessionBytes.length < 16) {
+            console.log(`[report-task-result] session_updated: Session too small (${sessionBytes.length} bytes)`);
+            break;
+          }
+
+          // Check SQLite magic header: "SQLite format 3\0"
+          const sqliteHeader = new TextDecoder().decode(sessionBytes.slice(0, 15));
+          if (sqliteHeader !== 'SQLite format 3') {
+            console.log(`[report-task-result] session_updated: Invalid SQLite header for ${account_id}`);
+            break;
+          }
+
+          // Update session_data and last_active
+          const { error: updateError } = await supabase
+            .from("telegram_accounts")
+            .update({
+              session_data: session_data,
+              last_active: new Date().toISOString(),
+            })
+            .eq("id", account_id);
+
+          if (updateError) {
+            console.error(`[report-task-result] session_updated: Update failed for ${account_id}:`, updateError);
+          } else {
+            console.log(`[report-task-result] Session cache saved for ${account_id} (${sessionBytes.length} bytes)`);
+          }
+        } catch (e) {
+          console.error(`[report-task-result] session_updated: Validation failed for ${account_id}:`, e);
+        }
+        break;
+      }
+
       case "warmup": {
         const { task_id, task_type: warmupType, account_id, success, error, channel } = result;
 
