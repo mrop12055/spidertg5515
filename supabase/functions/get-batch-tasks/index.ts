@@ -53,6 +53,16 @@ serve(async (req) => {
     // Campaign speed settings (server-controlled)
     let campaignPollingInterval = 3;
     let campaignMessagesPerAccountPerDay = 25;
+    
+    // Livechat settings (server-controlled)
+    let livechatSettings = {
+      sameAccountStaggerMin: 1,
+      sameAccountStaggerMax: 2,
+      parallelAccountLimit: 0,
+      pollingInterval: 0.5,
+      enableParallel: true,
+    };
+    
     if (settingsData) {
       for (const setting of settingsData) {
         const value = setting.value as Record<string, unknown>;
@@ -69,6 +79,15 @@ serve(async (req) => {
           campaignPollingInterval = (value.pollingInterval as number) ?? campaignPollingInterval;
           campaignBatchSize = (value.batchSize as number) ?? campaignBatchSize;
           campaignMessagesPerAccountPerDay = (value.messagesPerAccountPerDay as number) ?? campaignMessagesPerAccountPerDay;
+        } else if (setting.key === "livechat" && value) {
+          // Livechat settings for parallel processing
+          livechatSettings = {
+            sameAccountStaggerMin: (value.sameAccountStaggerMin as number) ?? 1,
+            sameAccountStaggerMax: (value.sameAccountStaggerMax as number) ?? 2,
+            parallelAccountLimit: (value.parallelAccountLimit as number) ?? 0,
+            pollingInterval: (value.pollingInterval as number) ?? 0.5,
+            enableParallel: (value.enableParallel as boolean) ?? true,
+          };
         }
       }
     }
@@ -1159,16 +1178,14 @@ serve(async (req) => {
       });
     }
 
-    // LIVECHAT RUNNER: Get pending outgoing messages
+    // LIVECHAT RUNNER: Get pending outgoing messages (PARALLEL MODE)
     if (runner === "livechat") {
-      const actualBatchSize = Math.min(batch_size || 50, usableAccounts.length);
-      
       const { data: pendingMessages } = await supabase
         .from("messages")
         .select(`
           *,
           conversations!inner(
-            id, account_id, recipient_phone, recipient_name, recipient_telegram_id
+            id, account_id, recipient_phone, recipient_name, recipient_telegram_id, recipient_username
           )
         `)
         .eq("status", "pending")
@@ -1176,71 +1193,121 @@ serve(async (req) => {
         .is("campaign_recipient_id", null)
         .order("priority", { ascending: false })
         .order("created_at", { ascending: true })
-        .limit(actualBatchSize * 2);
+        .limit(100);
 
-      if (pendingMessages && pendingMessages.length > 0) {
+      if (pendingMessages && pendingMessages.length > 0 && livechatSettings.enableParallel) {
+        // Group messages by account_id (no usedAccountIds limitation)
+        const messagesByAccount = new Map<string, typeof pendingMessages>();
         for (const msg of pendingMessages) {
-          if (tasks.length >= actualBatchSize) break;
-
           const conv = msg.conversations;
+          const accountId = conv.account_id;
           
           // Find the account for this conversation
-          const account = usableAccounts.find((a: any) => 
-            a.id === conv.account_id && !usedAccountIds.has(a.id)
-          );
-
+          const account = usableAccounts.find((a: any) => a.id === accountId);
           if (!account) continue;
-
-          // Mark message as sending
+          
+          if (!messagesByAccount.has(accountId)) {
+            messagesByAccount.set(accountId, []);
+          }
+          messagesByAccount.get(accountId)!.push(msg);
+        }
+        
+        if (messagesByAccount.size > 0) {
+          // Mark all messages as sending
+          const allMsgIds = [...messagesByAccount.values()].flat().map(m => m.id);
           await supabase
             .from("messages")
             .update({ status: "sending" })
-            .eq("id", msg.id);
-
-          const apiCred = account.telegram_api_credentials;
-
-          tasks.push({
-            task: "send",
-            message: {
-              id: msg.id,
-              content: msg.content,
-              media_url: msg.media_url,
-            },
-            recipient: conv.recipient_telegram_id?.toString() || conv.recipient_phone,
-            recipient_name: conv.recipient_name,
-            recipient_telegram_id: conv.recipient_telegram_id,
-            account: {
-              id: account.id,
-              phone_number: account.phone_number,
-              session_data: account.session_data,
-              device_model: account.device_model,
-              system_version: account.system_version,
-              app_version: account.app_version,
-              lang_code: account.lang_code,
-              system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
-              proxy_id: account.proxy_id,
-            },
-            proxy: account.proxies
-              ? {
-                  host: account.proxies.host,
-                  port: account.proxies.port,
-                  username: account.proxies.username,
-                  password: account.proxies.password,
-                  proxy_type: account.proxies.proxy_type,
-                  type: account.proxies.proxy_type,
-                }
-              : null,
-            mode: "livechat",
+            .in("id", allMsgIds);
+          
+          // Build batches - one per account with ALL its messages
+          const batches: Array<Record<string, unknown>> = [];
+          
+          for (const [accountId, msgs] of messagesByAccount) {
+            const account = usableAccounts.find((a: any) => a.id === accountId);
+            if (!account) continue;
+            
+            const apiCred = account.telegram_api_credentials;
+            
+            batches.push({
+              account: {
+                id: account.id,
+                phone_number: account.phone_number,
+                session_data: account.session_data,
+                device_model: account.device_model,
+                system_version: account.system_version,
+                app_version: account.app_version,
+                lang_code: account.lang_code,
+                system_lang_code: account.system_lang_code,
+                api_id: apiCred?.api_id || account.api_id,
+                api_hash: apiCred?.api_hash || account.api_hash,
+                proxy_id: account.proxy_id,
+              },
+              proxy: account.proxies ? {
+                id: account.proxies.id,
+                host: account.proxies.host,
+                port: account.proxies.port,
+                username: account.proxies.username,
+                password: account.proxies.password,
+                proxy_type: account.proxies.proxy_type,
+                type: account.proxies.proxy_type,
+              } : null,
+              messages: msgs.map(msg => {
+                const conv = msg.conversations;
+                return {
+                  id: msg.id,
+                  content: msg.content,
+                  media_url: msg.media_url,
+                  recipient: conv.recipient_telegram_id?.toString() || conv.recipient_username || conv.recipient_phone,
+                  recipient_telegram_id: conv.recipient_telegram_id,
+                  recipient_username: conv.recipient_username,
+                  recipient_phone: conv.recipient_phone,
+                  recipient_name: conv.recipient_name,
+                };
+              }),
+            });
+          }
+          
+          console.log(`[get-batch-tasks] PARALLEL livechat: ${allMsgIds.length} messages across ${batches.length} accounts`);
+          
+          // Return accounts for connection
+          const accountsForConnection = usableAccounts.map((a: any) => ({
+            id: a.id,
+            phone_number: a.phone_number,
+            session_data: a.session_data,
+            device_model: a.device_model,
+            system_version: a.system_version,
+            app_version: a.app_version,
+            lang_code: a.lang_code,
+            system_lang_code: a.system_lang_code,
+            api_id: a.telegram_api_credentials?.api_id || a.api_id,
+            api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
+            proxy_id: a.proxy_id,
+            proxy: a.proxies ? {
+              id: a.proxies.id,
+              host: a.proxies.host,
+              port: a.proxies.port,
+              username: a.proxies.username,
+              password: a.proxies.password,
+              proxy_type: a.proxies.proxy_type,
+              type: a.proxies.proxy_type,
+            } : null,
+          }));
+          
+          return new Response(JSON.stringify({
+            task: "send_parallel",
+            settings: livechatSettings,
+            batches,
+            accounts: accountsForConnection,
+            delay_after: livechatSettings.pollingInterval,
+            accounts_available: usableAccounts.length,
+          }), {
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
           });
-
-          usedAccountIds.add(account.id);
         }
       }
       
-      // For livechat, also return accounts for initial connection
-      // This helps the runner connect accounts that need message handlers
+      // Fallback: Return accounts for listening (no pending messages or parallel disabled)
       const accountsForConnection = usableAccounts.map((a: any) => ({
         id: a.id,
         phone_number: a.phone_number,
@@ -1264,9 +1331,10 @@ serve(async (req) => {
       }));
       
       return new Response(JSON.stringify({
-        tasks,
+        tasks: [],
+        settings: livechatSettings,
         accounts: accountsForConnection,
-        delay_after: 1, // 1-second polling for livechat
+        delay_after: livechatSettings.pollingInterval,
         accounts_available: usableAccounts.length,
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },

@@ -46,6 +46,14 @@ export interface CampaignSpeedSettings {
   messagesPerAccountPerDay: number;
 }
 
+export interface LivechatSettings {
+  sameAccountStaggerMin: number;  // Min delay (seconds) between messages for SAME account
+  sameAccountStaggerMax: number;  // Max delay (seconds)
+  parallelAccountLimit: number;   // Max accounts to process in parallel (0 = unlimited)
+  pollingInterval: number;        // Seconds between fetching new tasks
+  enableParallel: boolean;        // Master toggle for parallel mode
+}
+
 export interface AllSettings {
   message_timing: MessageTimingSettings;
   scheduler: SchedulerSettings;
@@ -54,6 +62,7 @@ export interface AllSettings {
   cleanup: CleanupSettings;
   warmup_batch_size: WarmupBatchSettings;
   campaign_speed: CampaignSpeedSettings;
+  livechat: LivechatSettings;
 }
 
 const defaultSettings: AllSettings = {
@@ -92,6 +101,13 @@ const defaultSettings: AllSettings = {
     pollingInterval: 3,
     batchSize: 100,
     messagesPerAccountPerDay: 10,
+  },
+  livechat: {
+    sameAccountStaggerMin: 1,
+    sameAccountStaggerMax: 2,
+    parallelAccountLimit: 0,  // 0 = unlimited
+    pollingInterval: 0.5,     // Fast polling
+    enableParallel: true,
   },
 };
 

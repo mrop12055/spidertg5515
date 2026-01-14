@@ -29,7 +29,8 @@ import {
   Save,
   Settings as SettingsIcon,
   Upload,
-  RefreshCw
+  RefreshCw,
+  MessageSquare
 } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
@@ -416,6 +417,11 @@ const Settings: React.FC = () => {
     updateDbSettings('cleanup', updates);
   };
 
+  // Helper to update livechat settings
+  const updateLivechatSettings = (updates: Partial<typeof dbSettings.livechat>) => {
+    updateDbSettings('livechat', updates);
+  };
+
   // Update local UI settings
   const updateLocalSettings = (updates: Partial<typeof localSettings>) => {
     const newSettings = { ...localSettings, ...updates };
@@ -473,10 +479,14 @@ const Settings: React.FC = () => {
         )}
 
         <Tabs defaultValue="api" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3 h-11">
+          <TabsList className="grid w-full grid-cols-4 h-11">
             <TabsTrigger value="api" className="gap-2">
               <Key className="w-4 h-4" />
               API Credentials
+            </TabsTrigger>
+            <TabsTrigger value="livechat" className="gap-2">
+              <MessageSquare className="w-4 h-4" />
+              Livechat
             </TabsTrigger>
             <TabsTrigger value="cleanup" className="gap-2">
               <Calendar className="w-4 h-4" />
@@ -801,6 +811,143 @@ const Settings: React.FC = () => {
           </CardContent>
         </Card>
       </TabsContent>
+
+          {/* Livechat Tab */}
+          <TabsContent value="livechat" className="mt-0">
+            <Card>
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg">Livechat Settings</CardTitle>
+                <CardDescription>
+                  Configure parallel message sending and stagger delays for livechat
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Enable Parallel Mode */}
+                <div className="flex items-center justify-between py-2">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Parallel Message Sending</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Send messages to multiple recipients simultaneously across all accounts
+                    </p>
+                  </div>
+                  <Switch
+                    checked={dbSettings.livechat?.enableParallel ?? true}
+                    onCheckedChange={(checked) => updateLivechatSettings({ enableParallel: checked })}
+                  />
+                </div>
+
+                <Separator />
+
+                {/* Same Account Stagger */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label className="text-base">Same Account Stagger</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Delay between messages when same account sends to multiple recipients
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="text-sm font-medium">
+                      {dbSettings.livechat?.sameAccountStaggerMin ?? 1} - {dbSettings.livechat?.sameAccountStaggerMax ?? 2}s
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Min Delay (seconds)</Label>
+                      <Slider
+                        value={[dbSettings.livechat?.sameAccountStaggerMin ?? 1]}
+                        onValueChange={([value]) => updateLivechatSettings({ sameAccountStaggerMin: value })}
+                        min={0}
+                        max={5}
+                        step={0.5}
+                        className="py-2"
+                      />
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>0s</span>
+                        <span>5s</span>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label className="text-xs text-muted-foreground">Max Delay (seconds)</Label>
+                      <Slider
+                        value={[dbSettings.livechat?.sameAccountStaggerMax ?? 2]}
+                        onValueChange={([value]) => updateLivechatSettings({ sameAccountStaggerMax: value })}
+                        min={0}
+                        max={10}
+                        step={0.5}
+                        className="py-2"
+                      />
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>0s</span>
+                        <span>10s</span>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground bg-muted/50 p-2 rounded">
+                    💡 If Account A has 3 messages to send, it will wait {dbSettings.livechat?.sameAccountStaggerMin ?? 1}-{dbSettings.livechat?.sameAccountStaggerMax ?? 2}s between each
+                  </p>
+                </div>
+
+                <Separator />
+
+                {/* Parallel Account Limit */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label className="text-base">Parallel Account Limit</Label>
+                      <p className="text-sm text-muted-foreground">
+                        Max accounts processing simultaneously (0 = unlimited)
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="text-sm font-medium">
+                      {(dbSettings.livechat?.parallelAccountLimit ?? 0) === 0 ? 'Unlimited' : dbSettings.livechat?.parallelAccountLimit}
+                    </Badge>
+                  </div>
+                  <Slider
+                    value={[dbSettings.livechat?.parallelAccountLimit ?? 0]}
+                    onValueChange={([value]) => updateLivechatSettings({ parallelAccountLimit: value })}
+                    min={0}
+                    max={50}
+                    step={5}
+                    className="py-2"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>Unlimited</span>
+                    <span>50 accounts</span>
+                  </div>
+                </div>
+
+                <Separator />
+
+                {/* Polling Interval */}
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label className="text-base">Polling Interval</Label>
+                      <p className="text-sm text-muted-foreground">
+                        How often runner checks for new messages
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="text-sm font-medium">
+                      {dbSettings.livechat?.pollingInterval ?? 0.5}s
+                    </Badge>
+                  </div>
+                  <Slider
+                    value={[dbSettings.livechat?.pollingInterval ?? 0.5]}
+                    onValueChange={([value]) => updateLivechatSettings({ pollingInterval: value })}
+                    min={0.1}
+                    max={5}
+                    step={0.1}
+                    className="py-2"
+                  />
+                  <div className="flex justify-between text-xs text-muted-foreground">
+                    <span>0.1s (fast)</span>
+                    <span>5s (slow)</span>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
       {/* Cleanup Tab */}
       <TabsContent value="cleanup" className="mt-0">
