@@ -398,6 +398,14 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         if not no_cache:
             active_clients[account_id] = client
         
+        # ========== REPORT PROXY SUCCESS ==========
+        # Connection succeeded - mark proxy as active
+        if proxy_id:
+            asyncio.create_task(report_result("proxy_success", {
+                "account_id": account_id,
+                "proxy_id": proxy_id
+            }))
+        
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
     except AuthKeyUnregisteredError:

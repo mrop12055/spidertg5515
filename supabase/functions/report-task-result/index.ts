@@ -1233,6 +1233,76 @@ serve(async (req) => {
         break;
       }
 
+      case "proxy_success":
+      case "connection_success": {
+        // Account connected successfully via proxy - mark proxy as active and clear any errors
+        const { account_id, proxy_id, response_time } = result;
+
+        // Clear disabled_reason since connection worked
+        if (account_id) {
+          await supabase
+            .from("telegram_accounts")
+            .update({ 
+              disabled_reason: null,
+              last_active: new Date().toISOString()
+            })
+            .eq("id", account_id);
+        }
+
+        // Mark proxy as active since connection succeeded
+        if (proxy_id) {
+          // Try as UUID first
+          if (proxy_id.includes("-")) {
+            await supabase
+              .from("proxies")
+              .update({ 
+                status: "active",
+                last_checked: new Date().toISOString(),
+                response_time: response_time || null
+              })
+              .eq("id", proxy_id);
+            console.log(`[report-task-result] Marked proxy ${proxy_id} as ACTIVE (connection succeeded)`);
+          } else {
+            // Try as host:port format
+            const [host, portStr] = proxy_id.split(":");
+            if (host && portStr) {
+              await supabase
+                .from("proxies")
+                .update({ 
+                  status: "active",
+                  last_checked: new Date().toISOString(),
+                  response_time: response_time || null
+                })
+                .eq("host", host)
+                .eq("port", parseInt(portStr));
+              console.log(`[report-task-result] Marked proxy ${host}:${portStr} as ACTIVE (connection succeeded)`);
+            }
+          }
+        } else if (account_id) {
+          // If no proxy_id provided, lookup from account
+          const { data: accountData } = await supabase
+            .from("telegram_accounts")
+            .select("proxy_id")
+            .eq("id", account_id)
+            .single();
+
+          if (accountData?.proxy_id) {
+            await supabase
+              .from("proxies")
+              .update({ 
+                status: "active",
+                last_checked: new Date().toISOString(),
+                response_time: response_time || null
+              })
+              .eq("id", accountData.proxy_id);
+            console.log(`[report-task-result] Marked proxy ${accountData.proxy_id} as ACTIVE (via account lookup)`);
+          }
+        }
+
+        console.log(`[report-task-result] Account ${account_id} connected successfully via proxy`);
+        break;
+      }
+
       case "account_banned": {
         const { account_id, reason } = result;
 
