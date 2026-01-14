@@ -1243,7 +1243,6 @@ import traceback
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
     send_message, shutdown_all, disconnect_batch, report_batch_results,
-    retry_proxy_error_accounts,
     active_clients, reset_http_client
 )
 
@@ -1582,16 +1581,8 @@ async def main_loop():
     sent_cache = load_sent_cache()
     if sent_cache:
         print(f"  📋 Loaded {len(sent_cache)} pending reports from cache")
-
-    last_proxy_retry = time.time()
-    
     while RUNNING:
         try:
-            # ========== RETRY PROXY ERROR ACCOUNTS (every 30s) ==========
-            if time.time() - last_proxy_retry >= 30:
-                await retry_proxy_error_accounts()
-                last_proxy_retry = time.time()
-            
             batch_start = time.time()
             batch_result = await get_batch_tasks(runner="campaign")
             tasks = batch_result.get("tasks", [])
@@ -2930,7 +2921,6 @@ import httpx
 from client_manager import (
     get_or_create_client, report_result, shutdown_all, disconnect_client,
     validate_contact, SESSION_FOLDER, SUPABASE_KEY, BACKEND_URL, active_clients,
-    retry_proxy_error_accounts,
     save_session_to_db
 )
 
@@ -3443,11 +3433,6 @@ async def main_loop():
                 asyncio.create_task(send_heartbeat())
                 last_heartbeat = now
             
-            # ========== RETRY PROXY ERROR ACCOUNTS (every 30s) ==========
-            if now - last_proxy_retry >= 30:
-                await retry_proxy_error_accounts()
-                last_proxy_retry = now
-            
             # Get batch of tasks from edge function
             print(f"\\n[POLL #{poll_count}] Checking for account tasks...")
             batch = await get_batch_tasks(runner="account", batch_size=20)
@@ -3529,8 +3514,7 @@ import random
 import time
 
 from client_manager import (
-    get_or_create_client, get_batch_tasks, report_result, shutdown_all, save_session_to_db,
-    retry_proxy_error_accounts
+    get_or_create_client, get_batch_tasks, report_result, shutdown_all, save_session_to_db
 )
 
 # ========== GLOBAL STATE ==========
@@ -3972,15 +3956,9 @@ async def main_loop():
     print("\\n✓ Starting warmup runner...\\n")
     
     consecutive_empty = 0
-    last_proxy_retry = time.time()
     
     while RUNNING:
         try:
-            # ========== RETRY PROXY ERROR ACCOUNTS (every 30s) ==========
-            if time.time() - last_proxy_retry >= 30:
-                await retry_proxy_error_accounts()
-                last_proxy_retry = time.time()
-            
             batch_result = await get_batch_tasks(runner="warmup_chat", batch_size=100)
             tasks = batch_result.get("tasks", [])
             delay_after = batch_result.get("delay_after", POLL_INTERVAL)
