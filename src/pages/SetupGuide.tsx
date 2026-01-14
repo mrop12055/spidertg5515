@@ -283,23 +283,43 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"}))
             return None
         
+        # ========== GET ME & REPORT STATUS ==========
         me = None
         if not skip_avatar:
             try:
                 me = await asyncio.wait_for(client.get_me(), timeout=5)
                 if not me:
                     print(f"  [BANNED] Account deleted: {account['phone_number']}")
-                    asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": "Account deleted"}))
+                    asyncio.create_task(report_session_check(account_id, success=False, error="Account deleted - get_me returned None"))
                     return None
+                
+                # SUCCESS - Report active status with telegram data
+                asyncio.create_task(report_session_check(account_id, success=True, telegram_data={
+                    "id": me.id,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                    "username": me.username
+                }))
+                
             except Exception as me_err:
                 err_str = str(me_err).lower()
-                if any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
+                # Check for FROZEN first (highest priority)
+                if "frozen" in err_str:
+                    print(f"  [FROZEN] {account['phone_number']}: {me_err}")
+                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
+                    return None
+                elif any(x in err_str for x in ["deleted", "deactivated", "banned", "user_deactivated"]):
                     print(f"  [BANNED] {account['phone_number']}: {me_err}")
-                    asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": str(me_err)}))
+                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
                     return None
                 elif any(x in err_str for x in ["session", "revoked", "auth"]):
                     print(f"  [EXPIRED] {account['phone_number']}: {me_err}")
-                    asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": str(me_err)}))
+                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
+                    return None
+                else:
+                    # Unknown error - still report it
+                    print(f"  [ERROR] {account['phone_number']}: {me_err}")
+                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
                     return None
         
         if setup_handler:
@@ -309,17 +329,21 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         # Only cache if caching is enabled
         if not no_cache:
             active_clients[account_id] = client
-        asyncio.create_task(report_result("account_connected", {"account_id": account_id, "skip_profile_update": True}))
         
         print(f"  [OK] Connected: {account['phone_number']}")
         return client
     except Exception as e:
         err_str = str(e).lower()
-        if any(x in err_str for x in ["deleted", "deactivated", "banned"]):
+        # Check for FROZEN first
+        if "frozen" in err_str:
+            print(f"  [FROZEN] {account['phone_number']}: {e}")
+            asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
+        elif any(x in err_str for x in ["deleted", "deactivated", "banned"]):
             print(f"  [BANNED] {account['phone_number']}: {e}")
-            asyncio.create_task(report_result("account_banned", {"account_id": account_id, "reason": str(e)}))
+            asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
         else:
             print(f"  [FAIL] {account['phone_number']}: {e}")
+            asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
         return None
 
 
@@ -433,6 +457,42 @@ async def report_result(task_type: str, result: dict):
             print(f"  [REPORT ERROR] {task_type}: status={resp.status_code}, body={resp.text[:200]}")
     except Exception as e:
         print(f"  [REPORT EXC] {task_type}: {type(e).__name__}: {repr(e)}")
+
+
+async def report_session_check(account_id: str, success: bool, error: str = None, telegram_data: dict = None):
+    """
+    Report session connection result - handles FROZEN, BANNED, DISCONNECTED detection.
+    
+    Args:
+        account_id: The account UUID
+        success: True if get_me() succeeded
+        error: Error message if failed (for auto-detection of frozen/banned/etc)
+        telegram_data: Dict with id, first_name, last_name, username from get_me()
+    """
+    try:
+        http = get_http_client()
+        payload = {
+            "account_id": account_id,
+            "success": success,
+        }
+        if error:
+            payload["error"] = error
+        if telegram_data:
+            payload["telegram_data"] = telegram_data
+            
+        resp = await http.post(
+            f"{BACKEND_URL}/report-session-check",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json=payload,
+            timeout=HTTP_TIMEOUT_REPORT,
+        )
+        if resp.status_code >= 300:
+            print(f"  [SESSION CHECK ERROR] {account_id}: status={resp.status_code}, body={resp.text[:200]}")
+        else:
+            result = resp.json()
+            print(f"  [SESSION CHECK] {account_id} -> {result.get('new_status', 'unknown')}")
+    except Exception as e:
+        print(f"  [SESSION CHECK EXC] {account_id}: {type(e).__name__}: {repr(e)}")
 
 
 async def report_batch_results(results: list) -> bool:
