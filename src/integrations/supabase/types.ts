@@ -1590,12 +1590,14 @@ export type Database = {
           cycles_completed_today: number | null
           failed_reason: string | null
           id: string
+          last_category_used: string | null
           last_cycle_date: string | null
           last_message_at: string | null
           last_template_id: string | null
           messages_exchanged: number | null
           session_id: string
           status: string | null
+          used_categories: string[] | null
         }
         Insert: {
           account_a_id: string
@@ -1605,12 +1607,14 @@ export type Database = {
           cycles_completed_today?: number | null
           failed_reason?: string | null
           id?: string
+          last_category_used?: string | null
           last_cycle_date?: string | null
           last_message_at?: string | null
           last_template_id?: string | null
           messages_exchanged?: number | null
           session_id: string
           status?: string | null
+          used_categories?: string[] | null
         }
         Update: {
           account_a_id?: string
@@ -1620,12 +1624,14 @@ export type Database = {
           cycles_completed_today?: number | null
           failed_reason?: string | null
           id?: string
+          last_category_used?: string | null
           last_cycle_date?: string | null
           last_message_at?: string | null
           last_template_id?: string | null
           messages_exchanged?: number | null
           session_id?: string
           status?: string | null
+          used_categories?: string[] | null
         }
         Relationships: [
           {
