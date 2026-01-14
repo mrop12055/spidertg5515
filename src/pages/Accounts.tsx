@@ -2557,10 +2557,6 @@ const Accounts: React.FC = () => {
               </Button>
               
               
-              <Button variant="outline" size="sm" onClick={handleSpamBotCheck} disabled={isSpamBotChecking || selectedIds.size === 0} className="gap-1.5">
-                <Shield className="w-3.5 h-3.5" />
-                SpamBot
-              </Button>
               
               <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting || selectedIds.size === 0} className="gap-1.5">
                 {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
@@ -2596,6 +2592,11 @@ const Accounts: React.FC = () => {
                   <DropdownMenuItem onClick={handleLogoutOtherSessions}>
                     <LogOut className="w-4 h-4 mr-2" />
                     Logout Other Sessions
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleSpamBotCheck} disabled={isSpamBotChecking}>
+                    <Bot className="w-4 h-4 mr-2" />
+                    SpamBot Check
+                    {isSpamBotChecking && <Loader2 className="w-3 h-3 ml-auto animate-spin" />}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
