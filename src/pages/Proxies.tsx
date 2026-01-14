@@ -90,6 +90,7 @@ const Proxies: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [countryFilter, setCountryFilter] = useState<string>('all');
+  const [usageFilter, setUsageFilter] = useState<string>('all'); // 'all' | 'assigned' | 'unassigned' | 'with_errors'
   const [slowFilter, setSlowFilter] = useState<boolean>(false); // Filter for slow proxies (>300ms)
   const [showCredentials, setShowCredentials] = useState<Set<string>>(new Set());
   
@@ -586,7 +587,16 @@ const Proxies: React.FC = () => {
     const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
     const matchesCountry = countryFilter === 'all' || proxyCountry === countryFilter;
     const matchesSlow = !slowFilter || (p.responseTime && p.responseTime > 300);
-    return matchesSearch && matchesStatus && matchesCountry && matchesSlow;
+    
+    // Usage filter
+    const isAssigned = accounts.some(a => a.proxyId === p.id);
+    const hasErrors = proxyErrors.has(p.id);
+    const matchesUsage = usageFilter === 'all' || 
+      (usageFilter === 'assigned' && isAssigned) ||
+      (usageFilter === 'unassigned' && !isAssigned) ||
+      (usageFilter === 'with_errors' && hasErrors);
+    
+    return matchesSearch && matchesStatus && matchesCountry && matchesSlow && matchesUsage;
   });
 
   const toggleSelect = (id: string) => {
@@ -976,20 +986,64 @@ const Proxies: React.FC = () => {
             </SelectContent>
           </Select>
         )}
+        <Select value={usageFilter} onValueChange={setUsageFilter}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder="Usage" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Proxies</SelectItem>
+            <SelectItem value="assigned">Assigned</SelectItem>
+            <SelectItem value="unassigned">Unassigned</SelectItem>
+            <SelectItem value="with_errors">With Errors</SelectItem>
+          </SelectContent>
+        </Select>
         <Button variant="outline" onClick={() => refreshData()} className="gap-2">
           <RefreshCw className="w-4 h-4" />
           Refresh
         </Button>
       </div>
 
+      {/* Error Alert Banner - Show at top if there are errors */}
+      {(() => {
+        const totalErrors = Array.from(proxyErrors.values()).reduce((sum, count) => sum + count, 0);
+        const proxiesWithErrors = proxyErrors.size;
+        if (totalErrors === 0) return null;
+        
+        return (
+          <Card className="mb-6 border-destructive/50 bg-destructive/5">
+            <CardContent className="p-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-xl bg-destructive/20 flex items-center justify-center">
+                  <AlertTriangle className="w-6 h-6 text-destructive" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-medium text-destructive">Proxy Errors Detected Today</p>
+                  <p className="text-sm text-muted-foreground">
+                    {totalErrors} error{totalErrors !== 1 ? 's' : ''} across {proxiesWithErrors} prox{proxiesWithErrors !== 1 ? 'ies' : 'y'}
+                  </p>
+                </div>
+                <Button 
+                  variant="outline" 
+                  size="sm"
+                  className="border-destructive/50 text-destructive hover:bg-destructive/10"
+                  onClick={() => setUsageFilter('with_errors')}
+                >
+                  View Affected Proxies
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        );
+      })()}
+
       {/* Stats - Clickable to filter */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
         <Card 
           className={cn(
             "cursor-pointer transition-all hover:border-primary/50",
-            statusFilter === 'all' && "ring-2 ring-primary"
+            statusFilter === 'all' && usageFilter === 'all' && "ring-2 ring-primary"
           )}
-          onClick={() => setStatusFilter('all')}
+          onClick={() => { setStatusFilter('all'); setUsageFilter('all'); }}
         >
           <CardContent className="p-4 flex items-center gap-4">
             <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
@@ -997,7 +1051,7 @@ const Proxies: React.FC = () => {
             </div>
             <div>
               <p className="text-2xl font-bold">{proxies.length}</p>
-              <p className="text-sm text-muted-foreground">Total Proxies</p>
+              <p className="text-sm text-muted-foreground">Total</p>
             </div>
           </CardContent>
         </Card>
@@ -1037,18 +1091,52 @@ const Proxies: React.FC = () => {
         </Card>
         <Card 
           className={cn(
-            "cursor-pointer transition-all hover:border-muted-foreground/50",
-            statusFilter === 'inactive' && "ring-2 ring-muted-foreground"
+            "cursor-pointer transition-all hover:border-blue-500/50",
+            usageFilter === 'assigned' && "ring-2 ring-blue-500"
           )}
-          onClick={() => setStatusFilter(statusFilter === 'inactive' ? 'all' : 'inactive')}
+          onClick={() => setUsageFilter(usageFilter === 'assigned' ? 'all' : 'assigned')}
         >
           <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-muted flex items-center justify-center">
-              <User className="w-6 h-6 text-muted-foreground" />
+            <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
+              <User className="w-6 h-6 text-blue-500" />
             </div>
             <div>
-              <p className="text-2xl font-bold">{proxies.filter(p => p.status === 'inactive').length}</p>
-              <p className="text-sm text-muted-foreground">Inactive</p>
+              <p className="text-2xl font-bold">{proxies.filter(p => accounts.some(a => a.proxyId === p.id)).length}</p>
+              <p className="text-sm text-muted-foreground">Assigned</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card 
+          className={cn(
+            "cursor-pointer transition-all hover:border-yellow-500/50",
+            usageFilter === 'unassigned' && "ring-2 ring-yellow-500"
+          )}
+          onClick={() => setUsageFilter(usageFilter === 'unassigned' ? 'all' : 'unassigned')}
+        >
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-yellow-500/10 flex items-center justify-center">
+              <User className="w-6 h-6 text-yellow-600" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{unassignedProxiesCount}</p>
+              <p className="text-sm text-muted-foreground">Unassigned</p>
+            </div>
+          </CardContent>
+        </Card>
+        <Card 
+          className={cn(
+            "cursor-pointer transition-all hover:border-orange-500/50",
+            usageFilter === 'with_errors' && "ring-2 ring-orange-500"
+          )}
+          onClick={() => setUsageFilter(usageFilter === 'with_errors' ? 'all' : 'with_errors')}
+        >
+          <CardContent className="p-4 flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center">
+              <AlertTriangle className="w-6 h-6 text-orange-500" />
+            </div>
+            <div>
+              <p className="text-2xl font-bold">{proxyErrors.size}</p>
+              <p className="text-sm text-muted-foreground">With Errors</p>
             </div>
           </CardContent>
         </Card>
@@ -1065,32 +1153,7 @@ const Proxies: React.FC = () => {
             </div>
             <div>
               <p className="text-2xl font-bold">{proxies.filter(p => p.responseTime && p.responseTime > 300).length}</p>
-              <p className="text-sm text-muted-foreground">Slow (&gt;300ms)</p>
-            </div>
-          </CardContent>
-        </Card>
-        {/* Unassigned Proxies - Strict 1:1 */}
-        <Card 
-          className="cursor-pointer transition-all hover:border-yellow-500/50"
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-yellow-500/10 flex items-center justify-center">
-              <User className="w-6 h-6 text-yellow-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{unassignedProxiesCount}</p>
-              <p className="text-sm text-muted-foreground">Unassigned</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
-              <MapPin className="w-6 h-6 text-blue-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{uniqueCountries.length}</p>
-              <p className="text-sm text-muted-foreground">Countries</p>
+              <p className="text-sm text-muted-foreground">Slow</p>
             </div>
           </CardContent>
         </Card>
