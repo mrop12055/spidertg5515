@@ -31,8 +31,42 @@ serve(async (req) => {
     let newStatus: string;
     let banReason: string | null = null;
 
-    if (success && telegram_data) {
-      // ========== SUCCESS: Account is active ==========
+    // ========== FROZEN CHECK FIRST (applies to ALL messages - success or error) ==========
+    // Check both error message and any raw message for "frozen" keyword
+    const allMessages = `${error || ""} ${JSON.stringify(telegram_data || {})}`.toLowerCase();
+    const frozenInAnyMessage = allMessages.includes("frozen");
+
+    if (frozenInAnyMessage) {
+      // Account is FROZEN - mark it regardless of success/error
+      newStatus = "frozen";
+      banReason = `Frozen account detected in message: ${error || "success response contained frozen"}`;
+      
+      const updateData: any = {
+        status: "frozen",
+        ban_reason: banReason,
+        last_active: new Date().toISOString(),
+      };
+
+      // Still store telegram user data if provided
+      if (telegram_data?.id) updateData.telegram_id = telegram_data.id;
+      if (telegram_data?.first_name) updateData.first_name = telegram_data.first_name;
+      if (telegram_data?.last_name) updateData.last_name = telegram_data.last_name;
+      if (telegram_data?.username) updateData.username = telegram_data.username;
+
+      const { error: updateError } = await supabase
+        .from("telegram_accounts")
+        .update(updateData)
+        .eq("id", account_id);
+
+      if (updateError) {
+        console.error(`[report-session-check] Failed to update account ${account_id}:`, updateError);
+        throw updateError;
+      }
+
+      console.log(`[report-session-check] Account ${account_id} marked FROZEN (detected in message)`);
+
+    } else if (success && telegram_data) {
+      // ========== SUCCESS: Account is active (no frozen detected) ==========
       newStatus = "active";
       
       // Update account with Telegram data from get_me()
@@ -64,14 +98,7 @@ serve(async (req) => {
       // ========== ERROR: Determine status based on error type ==========
       const errorLower = (error || "").toLowerCase();
 
-      // FROZEN account detection - multiple patterns
-      const frozenPatterns = [
-        "frozen",
-        "frozen account",
-        "not available for frozen",
-        "account is frozen",
-      ];
-      const isFrozen = frozenPatterns.some(p => errorLower.includes(p));
+      // Note: Frozen already handled above, so skip frozen patterns here
 
       // BANNED/DEACTIVATED account detection
       const bannedPatterns = [
@@ -107,14 +134,10 @@ serve(async (req) => {
         "flood",
         "too many",
       ];
-      const isRestricted = !isFrozen && !isBanned && restrictedPatterns.some(p => errorLower.includes(p));
+      const isRestricted = !isBanned && restrictedPatterns.some(p => errorLower.includes(p));
 
-      // Determine status
-      if (isFrozen) {
-        newStatus = "frozen";
-        banReason = `Frozen account detected: ${error}`;
-        console.log(`[report-session-check] Account ${account_id} detected as FROZEN`);
-      } else if (isBanned) {
+      // Determine status (frozen already handled above)
+      if (isBanned) {
         newStatus = "banned";
         banReason = `Account banned/deleted: ${error}`;
         console.log(`[report-session-check] Account ${account_id} detected as BANNED`);
