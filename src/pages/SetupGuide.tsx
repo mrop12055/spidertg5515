@@ -27,13 +27,22 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (OFFICIAL TELEGRAM API - SAFE)
 
+BUILD: 2026-01-14-proxy-fingerprint-sync
+
 CRITICAL RULES:
+- NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
+- Proxy checked FIRST (before fingerprint generation)
+- Fingerprint generated if missing, saved to DB SYNCHRONOUSLY
 - Each account uses EXACTLY ONE proxy (assigned by admin)
 - NO automatic proxy switching - ever
 - If proxy fails, report error and STOP using account
 - Admin must manually reassign proxy in dashboard
-- Fingerprint generated ONCE on first connection, never changed
-- Uses official Telethon API best practices to avoid bans
+
+ORDER OF OPERATIONS:
+1. PROXY FIRST - check assigned proxy is valid (MANDATORY)
+2. FINGERPRINT - generate if missing, save to DB SYNCHRONOUSLY before connect
+3. CONNECT - using both proxy and fingerprint
+4. PERFORM ACTION - after successful connection
 
 SAFETY FEATURES:
 - get_input_entity() instead of get_entity() (reduces API calls)
@@ -406,17 +415,17 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = 3) -> bo
 
 
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,
-                                skip_avatar: bool = False, require_proxy: bool = True, 
-                                no_cache: bool = False, long_lived: bool = False) -> Optional[TelegramClient]:
+                                skip_avatar: bool = False, no_cache: bool = False, 
+                                long_lived: bool = False) -> Optional[TelegramClient]:
     """
     Get or create a Telegram client for an account.
     
     ORDER OF OPERATIONS (CRITICAL):
     1. Check existing client cache
     2. Check session data exists
-    3. FINGERPRINT FIRST - generate if missing, save to DB immediately
-    4. THEN PROXY - check and validate assigned proxy
-    5. THEN CONNECT - using both fingerprint and proxy
+    3. PROXY FIRST - check assigned proxy is valid (MANDATORY - no accounts run without proxy)
+    4. FINGERPRINT - generate if missing, save to DB SYNCHRONOUSLY
+    5. CONNECT - using both proxy and fingerprint
     6. PERFORM ACTION - after successful connection
     
     STRICT 1:1 PROXY POLICY:
@@ -425,12 +434,16 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     - If proxy fails, report error and return None
     - Admin must fix proxy assignment in dashboard
     
+    FINGERPRINT POLICY:
+    - Fingerprint generated ONCE on first connection
+    - Saved to database SYNCHRONOUSLY before any connection attempt
+    - Never changed after initial generation
+    
     Args:
         account: Account data with session, fingerprint, proxy info
         setup_handler: Optional handler to setup after connection
         task_proxy: Proxy from task (overrides account.proxy)
         skip_avatar: If True, skip profile sync
-        require_proxy: If True (default), skip account if no proxy assigned
         no_cache: If True, skip client caching
         long_lived: If True, use settings optimized for long-lived connections
     """
@@ -469,15 +482,26 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         print(f"  [SKIP] {phone} - No session data")
         return None
     
-    # ========== STEP 3: USE OR GENERATE FINGERPRINT (FIRST - before proxy) ==========
-    # Fingerprint is generated/retrieved FIRST and saved to DB immediately
+    # ========== STEP 3: CHECK PROXY FIRST (MANDATORY) ==========
+    # CRITICAL: Check proxy BEFORE fingerprint generation to avoid wasting fingerprints
+    proxy = get_proxy_settings(account, task_proxy=task_proxy)
+    proxy_id = task_proxy.get("id") if task_proxy else account.get("proxy_id")
+    
+    if not proxy:
+        print(f"  [SKIP] {phone} - No proxy assigned (assign proxy in admin dashboard)")
+        return None
+    
+    print(f"  [PROXY] Using assigned: {proxy[1]}:{proxy[2]}")
+    
+    # ========== STEP 4: USE OR GENERATE FINGERPRINT (after proxy check) ==========
+    # Fingerprint is generated/retrieved and saved to DB SYNCHRONOUSLY before connect
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     app_version = account.get("app_version") or "10.14.2"
     lang_code = account.get("lang_code") or "en"
     system_lang_code = account.get("system_lang_code") or "en-US"
     
-    # If fingerprint is missing, generate ONCE and save to DB IMMEDIATELY
+    # If fingerprint is missing, generate ONCE and save to DB SYNCHRONOUSLY before proceeding
     if not device_model or not system_version:
         fp = generate_fingerprint()
         device_model = fp["device_model"]
@@ -486,28 +510,21 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         lang_code = fp["lang_code"]
         system_lang_code = fp["system_lang_code"]
         print(f"  [FP] Generated NEW fingerprint (saving to DB): {device_model} ({system_version})")
-        # Save fingerprint to database immediately - NEVER CHANGE AGAIN
-        asyncio.create_task(report_result("fingerprint_generated", {
-            "account_id": account_id,
-            "device_model": device_model,
-            "system_version": system_version,
-            "app_version": app_version,
-            "lang_code": lang_code,
-            "system_lang_code": system_lang_code
-        }))
+        # Save fingerprint to database SYNCHRONOUSLY - wait for confirmation before proceeding
+        try:
+            await report_result("fingerprint_generated", {
+                "account_id": account_id,
+                "device_model": device_model,
+                "system_version": system_version,
+                "app_version": app_version,
+                "lang_code": lang_code,
+                "system_lang_code": system_lang_code
+            })
+            print(f"  [FP] Fingerprint saved to database for {phone}")
+        except Exception as fp_err:
+            print(f"  [FP WARN] Could not save fingerprint to DB: {fp_err}")
     else:
         print(f"  [FP] Using existing: {device_model} ({system_version})")
-    
-    # ========== STEP 4: CHECK PROXY (MANDATORY - after fingerprint) ==========
-    proxy = get_proxy_settings(account, task_proxy=task_proxy)
-    proxy_id = task_proxy.get("id") if task_proxy else account.get("proxy_id")
-    
-    if require_proxy and not proxy:
-        print(f"  [SKIP] {phone} - No proxy assigned (assign proxy in admin dashboard)")
-        return None
-    
-    if proxy:
-        print(f"  [PROXY] Using assigned: {proxy[1]}:{proxy[2]}")
     
     # ========== STEP 5: DECODE SESSION FILE ==========
     session_path = decode_session_file(account["phone_number"], session_data)
@@ -1215,13 +1232,15 @@ def generate_fingerprint():
 """
 TelegramCRM - Campaign Runner (Admin-Controlled Speed)
 =======================================================
-BUILD: 2026-01-14-fingerprint-first
+BUILD: 2026-01-14-proxy-fingerprint-sync
 
 ORDER OF OPERATIONS (CRITICAL):
-1. FINGERPRINT FIRST - generate if missing, save to DB immediately
-2. THEN PROXY - check assigned proxy is valid and active
-3. THEN CONNECT - using both fingerprint and proxy
+1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
+2. FINGERPRINT - generate if missing, save to DB SYNCHRONOUSLY
+3. CONNECT - using both proxy and fingerprint
 4. PERFORM ACTION - send campaign messages
+
+NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
 
 SPEED CONTROL via Admin Dashboard:
 - staggerMin/staggerMax: delay between messages (0 = instant ultra-fast)
@@ -1232,7 +1251,7 @@ Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
 """
 
-BUILD_VERSION = "2026-01-11-no-cache-fix"
+BUILD_VERSION = "2026-01-14-proxy-fingerprint-sync"
 
 import asyncio
 import signal
@@ -1725,24 +1744,21 @@ if __name__ == "__main__":
 LiveChat Runner - Handles incoming messages and live chat replies
 RUNS FOREVER with crash recovery, memory cleanup, and heartbeat logging
 
-BUILD: 2026-01-14-fingerprint-first
+BUILD: 2026-01-14-proxy-fingerprint-sync
 
 ORDER OF OPERATIONS (CRITICAL):
-1. FINGERPRINT FIRST - generate if missing, save to DB immediately
-2. THEN PROXY - check assigned proxy is valid and active
-3. THEN CONNECT - using both fingerprint and proxy
+1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
+2. FINGERPRINT - generate if missing, save to DB SYNCHRONOUSLY
+3. CONNECT - using both proxy and fingerprint
 4. PERFORM ACTION - after successful connection
+
+NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
 
 STRICT 1:1 PROXY POLICY:
 - Each account uses EXACTLY ONE proxy (assigned by admin)
 - NO automatic proxy switching - ever
 - If proxy fails, report error and SKIP account
 - Admin must manually reassign proxy in dashboard
-
-FINGERPRINT POLICY:
-- Fingerprint generated ONCE on first connection
-- Saved to database IMMEDIATELY before any proxy/connection attempt
-- Never changed after initial generation
 
 Features:
 - MISSED MESSAGE RECOVERY: Syncs messages received while offline on startup
@@ -1854,17 +1870,20 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 async def connect_account_with_fingerprint(account: dict, setup_handler=None, task_proxy: dict = None) -> tuple:
     """
-    Connect account using CORRECT ORDER: Fingerprint FIRST → Proxy → Connect
+    Connect account using CORRECT ORDER: Proxy FIRST → Fingerprint → Connect
     
-    ORDER OF OPERATIONS:
-    1. FINGERPRINT FIRST - generate if missing, save to DB immediately
-    2. THEN CHECK PROXY - mandatory for connection
-    3. THEN CONNECT - using both fingerprint and proxy
+    ORDER OF OPERATIONS (CRITICAL):
+    1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
+    2. FINGERPRINT - generate if missing, save to DB SYNCHRONOUSLY
+    3. CONNECT - using both proxy and fingerprint
     4. PERFORM ACTION - after successful connection
     
+    NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
+    
     RULES:
-    - Fingerprint is ALWAYS generated/retrieved first and saved to DB
-    - Proxy is required for connection but fingerprint is saved regardless
+    - Proxy is checked FIRST - no connection attempt without valid proxy
+    - Fingerprint is only generated AFTER proxy is validated
+    - Fingerprint is saved to DB SYNCHRONOUSLY before any connection
     - Use assigned proxy ONLY - no switching
     - If proxy fails, report error and return None
     - Admin must fix proxy in dashboard
@@ -1879,14 +1898,37 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
     account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
     
-    # ===== STEP 1: FINGERPRINT FIRST - Generate/retrieve and save to DB =====
+    # ===== STEP 1: CHECK PROXY FIRST (MANDATORY) =====
+    # Check proxy BEFORE fingerprint generation to avoid wasting fingerprints
+    proxy = task_proxy or account.get("proxy")
+    if not proxy:
+        print(f"  [{phone}] STEP 1: NO PROXY ASSIGNED - skipping connection (assign proxy in admin dashboard)")
+        return None, "No proxy assigned"
+    
+    # Validate proxy has required fields
+    if not proxy.get("host") or not proxy.get("port"):
+        print(f"  [{phone}] STEP 1: INVALID PROXY - missing host/port (fix proxy in admin dashboard)")
+        return None, "Invalid proxy configuration"
+    
+    # Check proxy status if available
+    proxy_status = proxy.get("status")
+    if proxy_status and proxy_status != "active":
+        print(f"  [{phone}] STEP 1: PROXY NOT ACTIVE (status: {proxy_status}) - update proxy in admin dashboard")
+        return None, f"Proxy not active (status: {proxy_status})"
+    
+    # Store proxy in account for get_or_create_client
+    account["proxy"] = proxy
+    proxy_id = proxy.get("id")
+    print(f"  [{phone}] STEP 1: Proxy validated: {proxy.get('host')}:{proxy.get('port')}")
+    
+    # ===== STEP 2: FINGERPRINT - Generate/retrieve and save to DB SYNCHRONOUSLY =====
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     fingerprint_exists = bool(device_model and system_version)
     
-    # If no fingerprint in DB, generate ONCE and save IMMEDIATELY
+    # If no fingerprint in DB, generate ONCE and save SYNCHRONOUSLY before proceeding
     if not fingerprint_exists:
-        print(f"  [{phone}] STEP 1: Generating fingerprint (saving to DB)...")
+        print(f"  [{phone}] STEP 2: Generating fingerprint (saving to DB)...")
         fp = generate_fingerprint()
         account["device_model"] = fp["device_model"]
         account["system_version"] = fp["system_version"]
@@ -1894,46 +1936,27 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
         account["lang_code"] = fp["lang_code"]
         account["system_lang_code"] = fp["system_lang_code"]
         
-        # Save fingerprint to database IMMEDIATELY - NEVER CHANGE AFTER THIS
-        await report_result("fingerprint_generated", {
-            "account_id": account_id,
-            "device_model": fp["device_model"],
-            "system_version": fp["system_version"],
-            "app_version": fp["app_version"],
-            "lang_code": fp["lang_code"],
-            "system_lang_code": fp["system_lang_code"]
-        })
-        print(f"  [{phone}] Fingerprint saved: {fp['device_model']} ({fp['system_version']})")
+        # Save fingerprint to database SYNCHRONOUSLY - wait for confirmation before proceeding
+        try:
+            await report_result("fingerprint_generated", {
+                "account_id": account_id,
+                "device_model": fp["device_model"],
+                "system_version": fp["system_version"],
+                "app_version": fp["app_version"],
+                "lang_code": fp["lang_code"],
+                "system_lang_code": fp["system_lang_code"]
+            })
+            print(f"  [{phone}] STEP 2: Fingerprint saved to database: {fp['device_model']} ({fp['system_version']})")
+        except Exception as fp_err:
+            print(f"  [{phone}] STEP 2 WARN: Could not save fingerprint to DB: {fp_err}")
     else:
-        print(f"  [{phone}] STEP 1: Using existing fingerprint: {device_model} ({system_version})")
+        print(f"  [{phone}] STEP 2: Using existing fingerprint: {device_model} ({system_version})")
     
-    # ===== STEP 2: CHECK PROXY - MANDATORY for connection =====
-    proxy = task_proxy or account.get("proxy")
-    if not proxy:
-        print(f"  [{phone}] STEP 2: NO PROXY ASSIGNED - skipping connection (assign proxy in admin dashboard)")
-        return None, "No proxy assigned"
-    
-    # Validate proxy has required fields
-    if not proxy.get("host") or not proxy.get("port"):
-        print(f"  [{phone}] STEP 2: INVALID PROXY - missing host/port (fix proxy in admin dashboard)")
-        return None, "Invalid proxy configuration"
-    
-    # Check proxy status if available
-    proxy_status = proxy.get("status")
-    if proxy_status and proxy_status != "active":
-        print(f"  [{phone}] STEP 2: PROXY NOT ACTIVE (status: {proxy_status}) - update proxy in admin dashboard")
-        return None, f"Proxy not active (status: {proxy_status})"
-    
-    # Store proxy in account for get_or_create_client
-    account["proxy"] = proxy
-    proxy_id = proxy.get("id")
-    print(f"  [{phone}] STEP 2: Proxy validated: {proxy.get('host')}:{proxy.get('port')}")
-    
-    # ===== STEP 3: CONNECT - Using fingerprint + proxy =====
-    # Fingerprint is already saved to DB in Step 1
-    # Proxy is validated in Step 2
+    # ===== STEP 3: CONNECT - Using proxy + fingerprint =====
+    # Proxy is validated in Step 1
+    # Fingerprint is already saved to DB in Step 2
     # Now connect with both - SINGLE attempt, no switching
-    print(f"  [{phone}] STEP 3: Connecting with fingerprint + proxy...")
+    print(f"  [{phone}] STEP 3: Connecting with proxy + fingerprint...")
     try:
         client = await get_or_create_client(
             account, 
@@ -2904,13 +2927,15 @@ if __name__ == "__main__":
 """
 Account Runner - Handles SpamBot, name, photo, privacy, password, contact import
 
-BUILD: 2026-01-14-fingerprint-first
+BUILD: 2026-01-14-proxy-fingerprint-sync
 
 ORDER OF OPERATIONS (CRITICAL):
-1. FINGERPRINT FIRST - generate if missing, save to DB immediately
-2. THEN PROXY - check assigned proxy is valid and active
-3. THEN CONNECT - using both fingerprint and proxy
+1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
+2. FINGERPRINT - generate if missing, save to DB SYNCHRONOUSLY
+3. CONNECT - using both proxy and fingerprint
 4. PERFORM ACTION - execute account management task
+
+NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
 """
 import asyncio
 import signal
@@ -3493,13 +3518,15 @@ if __name__ == "__main__":
 """
 TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)
 ===================================================
-BUILD: 2026-01-14-fingerprint-first
+BUILD: 2026-01-14-proxy-fingerprint-sync
 
 ORDER OF OPERATIONS (CRITICAL):
-1. FINGERPRINT FIRST - generate if missing, save to DB immediately
-2. THEN PROXY - check assigned proxy is valid and active
-3. THEN CONNECT - using both fingerprint and proxy
+1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
+2. FINGERPRINT - generate if missing, save to DB SYNCHRONOUSLY
+3. CONNECT - using both proxy and fingerprint
 4. PERFORM ACTION - execute warmup task
+
+NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
 
 Handles warmup tasks with PARALLEL execution.
 Polls server every 7 seconds. RUNS FOREVER with auto-restart.
