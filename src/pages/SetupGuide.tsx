@@ -1493,10 +1493,11 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
     Connect account using STRICT 1:1 proxy policy.
     
     RULES:
-    1. Use fingerprint from DB if exists, generate ONCE if not
-    2. Use assigned proxy ONLY - no switching
-    3. If proxy fails, report error and return None
-    4. Admin must fix proxy in dashboard
+    1. CHECK PROXY FIRST - mandatory before any connection or fingerprint generation
+    2. Use fingerprint from DB if exists, generate ONCE if not (only after proxy verified)
+    3. Use assigned proxy ONLY - no switching
+    4. If proxy fails, report error and return None
+    5. Admin must fix proxy in dashboard
     
     Args:
         account: Account data with session, fingerprint, proxy info
@@ -1508,7 +1509,30 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
     account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
     
-    # Check fingerprint from database
+    # ===== STEP 1: CHECK PROXY FIRST - MANDATORY =====
+    # Must check proxy BEFORE fingerprint generation to avoid generating fingerprints for unusable accounts
+    proxy = task_proxy or account.get("proxy")
+    if not proxy:
+        print(f"  [{phone}] NO PROXY ASSIGNED - skipping (assign proxy in admin dashboard)")
+        return None, "No proxy assigned"
+    
+    # Validate proxy has required fields
+    if not proxy.get("host") or not proxy.get("port"):
+        print(f"  [{phone}] INVALID PROXY - missing host/port (fix proxy in admin dashboard)")
+        return None, "Invalid proxy configuration"
+    
+    # Check proxy status if available
+    proxy_status = proxy.get("status")
+    if proxy_status and proxy_status != "active":
+        print(f"  [{phone}] PROXY NOT ACTIVE (status: {proxy_status}) - update proxy in admin dashboard")
+        return None, f"Proxy not active (status: {proxy_status})"
+    
+    # Store proxy in account for get_or_create_client
+    account["proxy"] = proxy
+    proxy_id = proxy.get("id")
+    print(f"  [{phone}] Using assigned proxy: {proxy.get('host')}:{proxy.get('port')}")
+    
+    # ===== STEP 2: CHECK/GENERATE FINGERPRINT (only after proxy verified) =====
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     fingerprint_exists = bool(device_model and system_version)
@@ -1536,18 +1560,7 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
     else:
         print(f"  [{phone}] Using DB fingerprint: {device_model} ({system_version})")
     
-    # Check proxy - MANDATORY (task_proxy overrides account.proxy)
-    proxy = task_proxy or account.get("proxy")
-    if not proxy:
-        print(f"  [{phone}] NO PROXY ASSIGNED - skipping (assign proxy in admin dashboard)")
-        return None, "No proxy assigned"
-    
-    # Store proxy in account for get_or_create_client
-    account["proxy"] = proxy
-    
-    proxy_id = proxy.get("id") if proxy else None
-    print(f"  [{phone}] Using assigned proxy: {proxy.get('host')}:{proxy.get('port')}")
-    
+    # ===== STEP 3: CONNECT WITH PROXY =====
     # SINGLE connection attempt - no proxy switching
     try:
         client = await get_or_create_client(
