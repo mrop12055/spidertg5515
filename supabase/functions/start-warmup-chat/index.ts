@@ -130,47 +130,59 @@ serve(async (req) => {
         throw new Error("No message templates found");
       }
 
-      // Get last used template for this pair (to avoid repetition)
+      // Get all unique categories from templates
+      const allCategories = [...new Set(templates.map(t => t.category))];
+      
+      // For new pairs, check if there was a previous pair between these accounts
       const { data: existingPairData } = await supabase
         .from("warmup_pairs")
-        .select("last_template_id")
+        .select("used_categories, last_category_used")
         .or(`and(account_a_id.eq.${accounts[0].id},account_b_id.eq.${accounts[1].id}),and(account_a_id.eq.${accounts[1].id},account_b_id.eq.${accounts[0].id})`)
-        .not("last_template_id", "is", null)
         .order("created_at", { ascending: false })
         .limit(1);
 
-      const lastUsedTemplateId = existingPairData?.[0]?.last_template_id;
-      console.log(`Last used template for this pair: ${lastUsedTemplateId || 'none'}`);
+      const usedCategories = existingPairData?.[0]?.used_categories || [];
+      const lastCategoryUsed = existingPairData?.[0]?.last_category_used;
+      console.log(`Last used category for this pair: ${lastCategoryUsed || 'none'}, used count: ${usedCategories.length}`);
 
-      // Filter out the last used template and shuffle remaining
-      const availableTemplates = lastUsedTemplateId 
-        ? templates.filter(t => t.id !== lastUsedTemplateId)
-        : templates;
+      // Filter out recently used categories (keep last 5 in rotation exclusion)
+      let availableCategories = allCategories.filter(cat => !usedCategories.includes(cat));
       
-      // If we filtered out the last template and have none left, use all templates
-      const templatesToUse = availableTemplates.length > 0 ? availableTemplates : templates;
-      const shuffledTemplates = [...templatesToUse].sort(() => Math.random() - 0.5);
+      // If all categories used, reset but still exclude the very last one
+      if (availableCategories.length === 0) {
+        availableCategories = allCategories.filter(cat => cat !== lastCategoryUsed);
+      }
       
-      // Pick a "cycle template" (first template after shuffle) to track
-      const cycleTemplateId = shuffledTemplates[0]?.id;
+      // Randomly select a category
+      const shuffledCategories = [...availableCategories].sort(() => Math.random() - 0.5);
+      const selectedCategory = shuffledCategories[0] || allCategories[0];
+      console.log(`Selected category: ${selectedCategory}`);
       
+      // Get all templates for the selected category in order
+      const categoryTemplates = templates
+        .filter(t => t.category === selectedCategory)
+        .sort((a, b) => a.sequence_order - b.sequence_order);
+      
+      // Random number of messages between min and max (but don't exceed category size)
+      const maxMessages = Math.min(categoryTemplates.length, messagesPerPairMax);
+      const minMessages = Math.min(messagesPerPairMin, maxMessages);
       const messageCount = Math.floor(
-        Math.random() * (messagesPerPairMax - messagesPerPairMin + 1) + messagesPerPairMin
+        Math.random() * (maxMessages - minMessages + 1) + minMessages
       );
       
-      // Pick random templates and alternate sender positions
-      const selectedTemplates = shuffledTemplates.slice(0, messageCount).map((t, i) => ({
-        ...t,
-        sender_position: i % 2 === 0 ? "A" : "B" // Alternate A and B
-      }));
+      // Take messages in sequence from the script (natural conversation flow)
+      const selectedTemplates = categoryTemplates.slice(0, messageCount);
       
-      // Update pair with the template we're using
-      if (cycleTemplateId) {
-        await supabase
-          .from("warmup_pairs")
-          .update({ last_template_id: cycleTemplateId })
-          .eq("id", createdPair.id);
-      }
+      // Update pair with the category we're using
+      const newUsedCategories = [...usedCategories, selectedCategory].slice(-5);
+      await supabase
+        .from("warmup_pairs")
+        .update({ 
+          last_category_used: selectedCategory,
+          used_categories: newUsedCategories,
+          last_template_id: selectedTemplates[0]?.id 
+        })
+        .eq("id", createdPair.id);
 
       // Schedule tasks
       const now = new Date();
@@ -508,48 +520,61 @@ serve(async (req) => {
         console.log(`Pair ${pair.id}: skipping contact exchange (already done in previous session)`);
       }
 
-      // Get last used template for this specific pair (to avoid repetition)
-      const pairKey1 = `${pair.account_a_id}-${pair.account_b_id}`;
-      const pairKey2 = `${pair.account_b_id}-${pair.account_a_id}`;
-      const { data: pairHistory } = await supabase
+      // Get all unique categories from templates
+      const allCategories = [...new Set(templates.map(t => t.category))];
+      
+      // Get used categories for this pair to avoid repetition
+      const { data: pairData } = await supabase
         .from("warmup_pairs")
-        .select("last_template_id")
-        .or(`and(account_a_id.eq.${pair.account_a_id},account_b_id.eq.${pair.account_b_id}),and(account_a_id.eq.${pair.account_b_id},account_b_id.eq.${pair.account_a_id})`)
-        .not("last_template_id", "is", null)
-        .order("created_at", { ascending: false })
-        .limit(1);
+        .select("used_categories, last_category_used")
+        .eq("id", pair.id)
+        .maybeSingle();
 
-      const lastUsedTemplateId = pairHistory?.[0]?.last_template_id;
+      const usedCategories = pairData?.used_categories || [];
+      const lastCategoryUsed = pairData?.last_category_used;
       
-      // Filter out the last used template and shuffle remaining
-      const availableTemplates = lastUsedTemplateId 
-        ? templates.filter(t => t.id !== lastUsedTemplateId)
-        : templates;
+      // Filter out recently used categories (keep last 5 in rotation exclusion)
+      let availableCategories = allCategories.filter(cat => !usedCategories.includes(cat));
       
-      const templatesToUse = availableTemplates.length > 0 ? availableTemplates : templates;
-      const shuffledTemplates = [...templatesToUse].sort(() => Math.random() - 0.5);
-      
-      // Pick a "cycle template" (first template after shuffle) to track
-      const cycleTemplateId = shuffledTemplates[0]?.id;
-      
-      // Random number of messages between min and max
-      const messageCount = Math.floor(
-        Math.random() * (messagesPerPairMax - messagesPerPairMin + 1) + messagesPerPairMin
-      );
-      
-      // Pick random templates and alternate sender positions
-      const selectedTemplates = shuffledTemplates.slice(0, messageCount).map((t, i) => ({
-        ...t,
-        sender_position: i % 2 === 0 ? "A" : "B" // Alternate A and B
-      }));
-      
-      // Update pair with the template we're using
-      if (cycleTemplateId) {
+      // If all categories used, reset but still exclude the very last one
+      if (availableCategories.length === 0) {
+        availableCategories = allCategories.filter(cat => cat !== lastCategoryUsed);
+        // Reset the used_categories array since we're starting fresh
         await supabase
           .from("warmup_pairs")
-          .update({ last_template_id: cycleTemplateId })
+          .update({ used_categories: [] })
           .eq("id", pair.id);
       }
+      
+      // Randomly select a category
+      const shuffledCategories = [...availableCategories].sort(() => Math.random() - 0.5);
+      const selectedCategory = shuffledCategories[0] || allCategories[0];
+      
+      // Get all templates for the selected category
+      const categoryTemplates = templates
+        .filter(t => t.category === selectedCategory)
+        .sort((a, b) => a.sequence_order - b.sequence_order);
+      
+      // Random number of messages between min and max (but don't exceed category size)
+      const maxMessages = Math.min(categoryTemplates.length, messagesPerPairMax);
+      const minMessages = Math.min(messagesPerPairMin, maxMessages);
+      const messageCount = Math.floor(
+        Math.random() * (maxMessages - minMessages + 1) + minMessages
+      );
+      
+      // Take messages in sequence from the script (natural conversation flow)
+      const selectedTemplates = categoryTemplates.slice(0, messageCount);
+      
+      // Update pair with the category we're using (add to history)
+      const newUsedCategories = [...usedCategories, selectedCategory].slice(-5); // Keep last 5
+      await supabase
+        .from("warmup_pairs")
+        .update({ 
+          last_category_used: selectedCategory,
+          used_categories: newUsedCategories,
+          last_template_id: selectedTemplates[0]?.id 
+        })
+        .eq("id", pair.id);
 
       // Schedule chat messages with human-like timing
       for (let i = 0; i < selectedTemplates.length; i++) {
