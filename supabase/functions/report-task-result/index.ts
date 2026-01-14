@@ -2029,6 +2029,22 @@ serve(async (req) => {
         break;
       }
 
+      case "warmup_contacts_exchanged": {
+        // Mark that both accounts in a warmup pair have exchanged contacts
+        // This is called BEFORE the first chat message when contacts_exchanged was false
+        const { pair_id } = result;
+        
+        if (pair_id) {
+          await supabase
+            .from("warmup_pairs")
+            .update({ contacts_exchanged: true })
+            .eq("id", pair_id);
+          
+          console.log(`[report-task-result] Marked pair ${pair_id} as contacts_exchanged=true (upfront exchange)`);
+        }
+        break;
+      }
+
       default:
         console.log(`[report-task-result] Unknown task type: ${task_type}`);
     }
