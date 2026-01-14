@@ -344,24 +344,37 @@ serve(async (req) => {
     });
     console.log(`[process-account-upload] Found ${existingFingerprints.size} existing fingerprints`);
 
+    // Fetch available unassigned proxies for auto-assignment (1:1 policy)
+    const { data: availableProxies } = await supabase
+      .from('proxies')
+      .select('id')
+      .eq('status', 'active')
+      .is('assigned_account_id', null)
+      .order('created_at', { ascending: true });
+    
+    const proxyQueue = [...(availableProxies || [])];
+    console.log(`[process-account-upload] Found ${proxyQueue.length} available proxies for auto-assignment`);
+
     const results = {
       successful: 0,
       failed: 0,
       errors: [] as string[],
       accounts: [] as any[],
-      account_ids: [] as string[]
+      account_ids: [] as string[],
+      proxies_assigned: 0,
+      proxies_unavailable: 0
     };
 
     // Fetch all existing accounts in one query for faster lookup
     const phoneNumbers = accounts.map(a => a.phone_number).filter(Boolean);
     const { data: existingAccountsList } = await supabase
       .from('telegram_accounts')
-      .select('id, phone_number, device_model, status')
+      .select('id, phone_number, device_model, status, proxy_id')
       .in('phone_number', phoneNumbers);
     
-    const existingAccountsMap = new Map<string, { id: string; device_model: string | null; status: string }>();
+    const existingAccountsMap = new Map<string, { id: string; device_model: string | null; status: string; proxy_id: string | null }>();
     existingAccountsList?.forEach(acc => {
-      existingAccountsMap.set(acc.phone_number, { id: acc.id, device_model: acc.device_model, status: acc.status || 'disconnected' });
+      existingAccountsMap.set(acc.phone_number, { id: acc.id, device_model: acc.device_model, status: acc.status || 'disconnected', proxy_id: acc.proxy_id });
     });
 
     console.log(`[process-account-upload] Found ${existingAccountsMap.size} existing accounts out of ${accounts.length}`);
@@ -369,6 +382,7 @@ serve(async (req) => {
     // Prepare batch data
     const accountsToInsert: any[] = [];
     const accountsToUpdate: { id: string; data: any }[] = [];
+    const proxyAssignments: { accountId: string; proxyId: string }[] = [];
 
     for (const account of accounts) {
       try {
@@ -444,12 +458,23 @@ serve(async (req) => {
           })
         };
 
+        // Auto-assign proxy for NEW accounts only (if available)
+        let assignedProxyId: string | null = null;
+        if (!existing && proxyQueue.length > 0) {
+          const nextProxy = proxyQueue.shift()!;
+          assignedProxyId = nextProxy.id;
+          results.proxies_assigned++;
+        } else if (!existing && proxyQueue.length === 0) {
+          results.proxies_unavailable++;
+        }
+
         if (existing) {
           accountsToUpdate.push({ id: existing.id, data: accountData });
         } else {
           accountsToInsert.push({
             phone_number: account.phone_number,
             ...accountData,
+            proxy_id: assignedProxyId, // Auto-assigned proxy (null if none available)
             device_model: fingerprint.device_model,
             system_version: fingerprint.system_version,
             app_version: fingerprint.app_version,
@@ -461,6 +486,11 @@ serve(async (req) => {
             messages_sent_today: 0,
             tags: tags.length > 0 ? tags : [],
           });
+          
+          // Track proxy assignment for bulk update after insert
+          if (assignedProxyId) {
+            proxyAssignments.push({ accountId: account.phone_number, proxyId: assignedProxyId });
+          }
         }
       } catch (err) {
         const error = err as Error;
@@ -501,6 +531,17 @@ serve(async (req) => {
         results.successful += insertedBatch.length;
         insertedBatch.forEach(acc => results.account_ids.push(acc.id));
         console.log(`[process-account-upload] Batch inserted ${insertedBatch.length} accounts`);
+        
+        // Update proxy assignments with actual account IDs
+        for (const inserted of insertedBatch) {
+          const assignment = proxyAssignments.find(a => a.accountId === inserted.phone_number);
+          if (assignment) {
+            await supabase
+              .from('proxies')
+              .update({ assigned_account_id: inserted.id })
+              .eq('id', assignment.proxyId);
+          }
+        }
       }
     }
 
@@ -525,7 +566,7 @@ serve(async (req) => {
       await Promise.all(updatePromises.slice(i, i + BATCH_SIZE));
     }
 
-    console.log(`[process-account-upload] Completed: ${results.successful} successful, ${results.failed} failed`);
+    console.log(`[process-account-upload] Completed: ${results.successful} successful, ${results.failed} failed, ${results.proxies_assigned} proxies assigned, ${results.proxies_unavailable} accounts without proxy`);
 
     return new Response(
       JSON.stringify(results),
