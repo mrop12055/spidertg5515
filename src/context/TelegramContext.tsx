@@ -206,22 +206,22 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       };
 
       const [accountsResult, proxiesResult, campaignsResult, conversationsResult, messagesResult] = await Promise.all([
-        // Fetch accounts - PARALLEL PAGED (supports 20K+ accounts, ~10 parallel requests)
+        // Fetch accounts - PARALLEL PAGED (UNLIMITED - supports 100K+ accounts)
         fetchPagedParallel(
           'telegram_accounts',
           'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id',
           'created_at',
           undefined,
-          25000 // Max 25K accounts
+          100000 // Max 100K accounts
         ),
 
-        // Fetch proxies - PARALLEL PAGED (supports 10K+ proxies)
+        // Fetch proxies - PARALLEL PAGED (UNLIMITED - supports 100K+ proxies)
         fetchPagedParallel(
           'proxies',
           'id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country',
           'created_at',
           undefined,
-          15000 // Max 15K proxies
+          100000 // Max 100K proxies
         ),
 
         // Fetch campaigns (usually small, no paging needed)
@@ -230,22 +230,22 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           .select('*, campaign_accounts(account_id)')
           .order('created_at', { ascending: false }),
 
-        // Fetch conversations - PARALLEL PAGED with filters
+        // Fetch conversations - PARALLEL PAGED with filters (UNLIMITED)
         fetchPagedParallel(
           'conversations',
           'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id',
           'created_at',
           (q: any) => q.eq('first_message_sent', true).not('last_message_at', 'is', null),
-          50000 // Max 50K conversations
+          100000 // Max 100K conversations
         ),
 
-        // Fetch messages - LIMIT to last 5 days for performance (admin doesn't need all history)
+        // Fetch messages - LIMIT to last 7 days for performance (admin doesn't need all history)
         supabase
           .from('messages')
           .select('*, conversations(recipient_phone)')
-          .gte('created_at', new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString())
+          .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
           .order('created_at', { ascending: false })
-          .limit(5000),
+          .limit(10000),
       ]);
 
       // Process accounts
