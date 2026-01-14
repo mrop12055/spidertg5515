@@ -2791,11 +2791,15 @@ async def change_name(client, first_name: str, last_name: str = ""):
 
 async def change_profile_photo(client, photo_source: str):
     """Change profile photo - accepts base64 or URL"""
+    import uuid
+    temp_path = None
     try:
         from telethon.tl.functions.photos import UploadProfilePhotoRequest
         import aiohttp
         
-        temp_path = os.path.join(SESSION_FOLDER, "temp_photo.jpg")
+        # Use unique temp file per task to avoid race conditions in parallel execution
+        unique_id = str(uuid.uuid4())[:8]
+        temp_path = os.path.join(SESSION_FOLDER, f"temp_photo_{unique_id}.jpg")
         
         # Check if it's a URL or base64
         if photo_source.startswith("http://") or photo_source.startswith("https://"):
@@ -2816,10 +2820,16 @@ async def change_profile_photo(client, photo_source: str):
         
         file = await client.upload_file(temp_path)
         await client(UploadProfilePhotoRequest(file=file))
-        os.remove(temp_path)
         return True, None
     except Exception as e:
         return False, str(e)
+    finally:
+        # Always clean up temp file
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
 
 
 async def update_privacy(client, hide_phone, hide_last_seen, disable_calls, hide_profile_photo=False):
