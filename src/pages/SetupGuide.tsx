@@ -274,7 +274,30 @@ async def retry_proxy_error_accounts():
                 if client:
                     remove_from_proxy_retry_queue(account_id)
                     reconnected += 1
-                    print(f"    [{phone}] ✓ Reconnected successfully!")
+                    
+                    # CRITICAL: Update database to clear disabled_reason so UI updates
+                    try:
+                        update_resp = await http.patch(
+                            f"{SUPABASE_URL}/rest/v1/telegram_accounts?id=eq.{account_id}",
+                            json={
+                                "disabled_reason": None,
+                                "auto_disabled": False,
+                                "last_active": datetime.now().isoformat()
+                            },
+                            headers={
+                                "apikey": SUPABASE_KEY,
+                                "Authorization": f"Bearer {SUPABASE_KEY}",
+                                "Content-Type": "application/json",
+                                "Prefer": "return=minimal"
+                            },
+                            timeout=10
+                        )
+                        if update_resp.status_code in [200, 204]:
+                            print(f"    [{phone}] ✓ Reconnected and updated in database!")
+                        else:
+                            print(f"    [{phone}] ✓ Reconnected (db update failed: {update_resp.status_code})")
+                    except Exception as db_err:
+                        print(f"    [{phone}] ✓ Reconnected (db update error: {db_err})")
                 else:
                     print(f"    [{phone}] ✗ Still failing")
                     
