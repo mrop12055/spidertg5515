@@ -217,14 +217,8 @@ serve(async (req) => {
     }
 
 
-    // CRITICAL SAFETY CHECK: Only use accounts that have BOTH fingerprint AND active proxy
+    // CRITICAL SAFETY CHECK: Only use accounts that have an ACTIVE proxy assigned
     const accountsWithActiveProxy = activeAccounts.filter((a: any) => {
-      // Check fingerprint first (device_model is required)
-      if (!a.device_model || !a.system_version) {
-        console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - NO FINGERPRINT (device_model or system_version missing)`);
-        return false;
-      }
-      // Check proxy assignment
       if (!a.proxy_id) {
         console.log(`[get-batch-tasks] SKIPPING account ${a.phone_number} - NO PROXY ASSIGNED`);
         return false;
