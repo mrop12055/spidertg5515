@@ -132,6 +132,7 @@ const Accounts: React.FC = () => {
     hidePhone: false,
     hideLastSeen: false,
     disableCalls: false,
+    hideProfilePhoto: false,
   });
   
   // Password dialog
@@ -3360,6 +3361,20 @@ const Accounts: React.FC = () => {
                   <Switch
                     checked={privacySettings.disableCalls}
                     onCheckedChange={(c) => setPrivacySettings(p => ({ ...p, disableCalls: c }))}
+                  />
+                </div>
+                
+                <div className="flex items-center justify-between p-3 rounded-lg border">
+                  <div className="flex items-center gap-3">
+                    <EyeOff className="w-4 h-4 text-muted-foreground" />
+                    <div>
+                      <p className="font-medium text-sm">Hide Profile Picture</p>
+                      <p className="text-xs text-muted-foreground">Nobody can see your profile photo</p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={privacySettings.hideProfilePhoto}
+                    onCheckedChange={(c) => setPrivacySettings(p => ({ ...p, hideProfilePhoto: c }))}
                   />
                 </div>
               </div>
