@@ -103,7 +103,7 @@ export const useDatabase = () => {
         supabase.from('proxies').select('*').order('created_at', { ascending: false }),
         supabase.from('conversations').select('*').order('updated_at', { ascending: false }),
         // Keep UI responsive: load the most recent messages only (older messages can be paginated later)
-        supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(2000),
+        supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(10000),
         supabase.from('campaigns').select('*').order('created_at', { ascending: false }),
       ]);
 

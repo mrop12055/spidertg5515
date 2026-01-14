@@ -106,9 +106,9 @@ const Material: React.FC = () => {
     setIsLoading(true);
     try {
       // Limit queries to prevent slow loading with large datasets
-      const LIMIT = 500;
+      const LIMIT = 10000; // Increased to support large material libraries
       const [tagsRes, dataRes, picturesRes, namesRes] = await Promise.all([
-        supabase.from('material_tags').select('*').order('created_at', { ascending: false }).limit(100),
+        supabase.from('material_tags').select('*').order('created_at', { ascending: false }).limit(1000),
         supabase.from('material_data').select('*').order('created_at', { ascending: false }).limit(LIMIT),
         supabase.from('material_pictures').select('*').order('created_at', { ascending: false }).limit(LIMIT),
         supabase.from('material_names').select('*').order('created_at', { ascending: false }).limit(LIMIT),

@@ -413,7 +413,7 @@ const Accounts: React.FC = () => {
     const fetchUniqueConversations = async () => {
       const counts = new Map<string, { total: number; withReplies: number }>();
       const PAGE_SIZE = 1000;
-      const MAX_PAGES = 50; // Up to 50K conversations
+      const MAX_PAGES = 100; // Up to 100K conversations
       
       try {
         // First page to check if we need more
