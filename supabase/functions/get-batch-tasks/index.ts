@@ -333,7 +333,8 @@ serve(async (req) => {
         }
       }
 
-      // Get pending warmup messages that are due, one per SENDER ACCOUNT to avoid conflicts
+      // Get pending warmup messages that are due - NO per-sender limit
+      // Python runner will group by account and process sequentially within each account
       const { data: warmupMessages } = await supabase
         .from("warmup_messages")
         .select(`
@@ -345,10 +346,13 @@ serve(async (req) => {
         .eq("status", "pending")
         .lte("scheduled_at", new Date().toISOString())
         .order("scheduled_at", { ascending: true })
-        .limit(actualBatchSize * 3); // Fetch extra to find unique senders
+        .limit(actualBatchSize * 5); // Fetch extra to have more tasks
 
       if (warmupMessages && warmupMessages.length > 0) {
         console.log(`[get-batch-tasks] Found ${warmupMessages.length} pending warmup messages`);
+        
+        // Track tasks per sender to log distribution
+        const tasksPerSender = new Map<string, number>();
         
         for (const msg of warmupMessages as any[]) {
           if (tasks.length >= actualBatchSize) break;
@@ -358,9 +362,6 @@ serve(async (req) => {
           const senderProxy = Array.isArray(senderAccount?.proxies) ? senderAccount.proxies[0] : senderAccount?.proxies;
           const receiverProxy = Array.isArray(receiverAccount?.proxies) ? receiverAccount.proxies[0] : receiverAccount?.proxies;
           const warmupPair = msg.warmup_pairs;
-
-          // Skip if sender already has a task in this batch (avoid parallel sends from same account)
-          if (usedAccountIds.has(senderAccount?.id)) continue;
 
           // Check account is active/restricted and has active proxy (restricted accounts CAN do warmup)
           const isUsableStatus = senderAccount && (senderAccount.status === "active" || senderAccount.status === "restricted");
@@ -431,7 +432,8 @@ serve(async (req) => {
               partner_proxy: contactsExchanged ? null : receiverProxy,
             });
 
-            usedAccountIds.add(senderAccount.id);
+            // Track for logging
+            tasksPerSender.set(senderAccount.id, (tasksPerSender.get(senderAccount.id) || 0) + 1);
             console.log(`[get-batch-tasks] Added warmup task: ${senderAccount.phone_number} -> ${receiverAccount.phone_number} (contacts_exchanged: ${contactsExchanged})`);
           } else {
             // Account not usable, mark as failed
@@ -464,6 +466,9 @@ serve(async (req) => {
             console.log(`[get-batch-tasks] Warmup task skipped: ${reason}`);
           }
         }
+        
+        // Log task distribution
+        console.log(`[get-batch-tasks] Task distribution: ${JSON.stringify(Object.fromEntries(tasksPerSender))}`);
       }
       
       // Return warmup batch result

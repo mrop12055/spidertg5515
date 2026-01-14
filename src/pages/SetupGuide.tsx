@@ -3742,7 +3742,7 @@ async def main_loop():
     
     while RUNNING:
         try:
-            batch_result = await get_batch_tasks(runner="warmup_chat", batch_size=50)
+            batch_result = await get_batch_tasks(runner="warmup_chat", batch_size=100)
             tasks = batch_result.get("tasks", [])
             delay_after = batch_result.get("delay_after", POLL_INTERVAL)
             
@@ -3757,27 +3757,56 @@ async def main_loop():
                 continue
             
             consecutive_empty = 0
-            print(f"\\n  [BATCH] Processing {len(tasks)} warmup tasks in PARALLEL...")
             
-            results = await asyncio.gather(
-                *[process_single_warmup_task(task) for task in tasks],
+            # ========== GROUP TASKS BY ACCOUNT ID ==========
+            # Each account processes its tasks sequentially (one connection)
+            # Different accounts run in parallel
+            from collections import defaultdict
+            tasks_by_account = defaultdict(list)
+            for task in tasks:
+                account_id = task.get("account", {}).get("id")
+                if account_id:
+                    tasks_by_account[account_id].append(task)
+            
+            print(f"\\n  [BATCH] Processing {len(tasks)} warmup tasks across {len(tasks_by_account)} accounts in PARALLEL...")
+            
+            async def process_account_tasks(account_id: str, account_tasks: list) -> list:
+                """Process all tasks for a single account SEQUENTIALLY"""
+                results = []
+                for task in account_tasks:
+                    try:
+                        result = await process_single_warmup_task(task)
+                        results.append(result)
+                    except Exception as e:
+                        results.append({"success": False, "error": str(e), "task_id": task.get("task_id")})
+                return results
+            
+            # Run all accounts in parallel, each account processes its tasks sequentially
+            all_results = await asyncio.gather(
+                *[process_account_tasks(acc_id, acc_tasks) for acc_id, acc_tasks in tasks_by_account.items()],
                 return_exceptions=True
             )
             
+            # Flatten results and report
             success_count = 0
-            for result in results:
-                if isinstance(result, Exception):
-                    print(f"  ⚠ Task exception: {result}")
+            for account_results in all_results:
+                if isinstance(account_results, Exception):
+                    print(f"  ⚠ Account exception: {account_results}")
                     continue
-                if result.get("success"):
-                    success_count += 1
-                if result.get("task_subtype") == "add_contact" or result.get("pair_id"):
-                    await report_result("warmup_chat", result)
-                else:
-                    await report_result("warmup", result)
+                for result in account_results:
+                    if isinstance(result, Exception):
+                        print(f"  ⚠ Task exception: {result}")
+                        continue
+                    if result.get("success"):
+                        success_count += 1
+                    if result.get("task_subtype") == "add_contact" or result.get("pair_id"):
+                        await report_result("warmup_chat", result)
+                    else:
+                        await report_result("warmup", result)
             
-            fail_count = len(results) - success_count
-            print(f"  [RESULT] Batch complete: {success_count} success, {fail_count} failed")
+            total_processed = sum(len(r) for r in all_results if not isinstance(r, Exception))
+            fail_count = total_processed - success_count
+            print(f"  [RESULT] Batch complete: {success_count} success, {fail_count} failed ({len(tasks_by_account)} accounts)")
             
             if RUNNING and delay_after > 0:
                 print(f"  [WAIT] Waiting {delay_after}s before next batch...")
