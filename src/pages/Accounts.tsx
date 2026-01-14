@@ -358,6 +358,15 @@ const Accounts: React.FC = () => {
  
        const elapsedMs = Date.now() - startMs;
        const processed = (accountTasksProgress.completed || 0) + (accountTasksProgress.failed || 0);
+
+       // If no pending/in_progress tasks remain and some were processed, we're done!
+       // This catches cases where realtime subscription missed some updates
+       if ((count ?? 0) === 0 && processed > 0) {
+         setIsAccountTaskRunning(false);
+         toast.success(`${accountTasksProgress.taskType} complete: ${accountTasksProgress.completed} success, ${accountTasksProgress.failed} failed`);
+         refreshData();
+         return;
+       }
  
        // If nothing exists shortly after starting, the queue insert likely failed (offline / permissions / backend issue)
        if ((count ?? 0) === 0 && processed === 0 && elapsedMs > 8000) {
