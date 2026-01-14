@@ -2795,6 +2795,13 @@ async def main_loop():
                                     "account_id": acc_id
                                 })
                         
+                        # SAVE SESSION after batch - preserves entity cache
+                        if acc_id:
+                            try:
+                                await save_session_to_db(acc_id, phone)
+                            except Exception:
+                                pass  # Non-critical
+                        
                         print(f"    [{phone}] Sent {len(messages)} messages")
                     
                     # Process ALL account batches in PARALLEL
@@ -4029,12 +4036,17 @@ async def main_loop():
             async def process_account_tasks(account_id: str, account_tasks: list) -> list:
                 """Process all tasks for a single account SEQUENTIALLY"""
                 results = []
-                for task in account_tasks:
-                    try:
-                        result = await process_single_warmup_task(task)
-                        results.append(result)
-                    except Exception as e:
-                        results.append({"success": False, "error": str(e), "task_id": task.get("task_id")})
+                phone = account_tasks[0].get("account", {}).get("phone_number", "????")[-4:] if account_tasks else "????"
+                try:
+                    for task in account_tasks:
+                        try:
+                            result = await process_single_warmup_task(task)
+                            results.append(result)
+                        except Exception as e:
+                            results.append({"success": False, "error": str(e), "task_id": task.get("task_id")})
+                finally:
+                    # DISCONNECT + SAVE SESSION after all tasks for this account
+                    await disconnect_client(account_id, phone, save_session=True)
                 return results
             
             # Run all accounts in parallel, each account processes its tasks sequentially
