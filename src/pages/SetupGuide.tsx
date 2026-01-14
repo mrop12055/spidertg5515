@@ -2397,7 +2397,7 @@ async def update_privacy(client, hide_phone, hide_last_seen, disable_calls, hide
 
 async def change_password(client, existing_pwd, new_pwd):
     """
-    Set or change 2FA cloud password.
+    Set or change 2FA cloud password using Telethon's built-in edit_2fa method.
     
     Args:
         client: TelegramClient instance
@@ -2405,39 +2405,22 @@ async def change_password(client, existing_pwd, new_pwd):
         new_pwd: New password to set (min 6 characters)
     """
     try:
-        from telethon.tl.functions.account import UpdatePasswordSettingsRequest, GetPasswordRequest
-        from telethon.password import compute_check, compute_hash
-        from telethon.tl.types.account import PasswordInputSettings
-        
-        # Get current password state
-        pwd = await client(GetPasswordRequest())
-        
-        # Compute check for existing password (if account has 2FA enabled)
-        if pwd.has_password:
-            if not existing_pwd:
-                return False, "Account has 2FA enabled - existing password required"
-            check = compute_check(pwd, existing_pwd)
+        if existing_pwd:
+            # Change existing password
+            await client.edit_2fa(current_password=existing_pwd, new_password=new_pwd)
         else:
-            check = None
+            # Enable new 2FA password (no existing password)
+            await client.edit_2fa(new_password=new_pwd)
         
-        # Compute new password hash using the account's algorithm
-        new_password_hash = compute_hash(pwd.new_algo, new_pwd)
-        
-        # Create new settings
-        new_settings = PasswordInputSettings(
-            new_algo=pwd.new_algo,
-            new_password_hash=new_password_hash,
-            hint=""  # Optional hint
-        )
-        
-        await client(UpdatePasswordSettingsRequest(password=check, new_settings=new_settings))
-        return True, "Password updated successfully"
+        return True, "2FA password updated successfully"
     except Exception as e:
         error_str = str(e).lower()
         if "password" in error_str and "invalid" in error_str:
             return False, "Invalid existing password"
         elif "password" in error_str and "required" in error_str:
-            return False, "Existing password required"
+            return False, "Existing password required - account already has 2FA"
+        elif "srp" in error_str or "check" in error_str:
+            return False, "Invalid existing password"
         return False, str(e)
 
 
