@@ -1140,45 +1140,61 @@ serve(async (req) => {
       }
 
       case "proxy_error": {
-        // Proxy connection failed - mark account with proxy error and optionally update proxy status
+        // Proxy connection failed - mark proxy as error but DO NOT change account proxy assignment
+        // STRICT 1:1 POLICY: Admin must manually fix proxy in dashboard
         const { account_id, reason, proxy_id } = result;
 
-        // Update account with proxy error status - use 'disconnected' but with clear proxy error reason
+        // Only update disabled_reason - DO NOT change proxy_id or any other account settings
         await supabase
           .from("telegram_accounts")
           .update({ 
-            status: "disconnected",
-            disabled_reason: `Proxy error: ${reason || "Connection failed"}`,
-            geo_mismatch: true  // Flag as having connection issues
+            disabled_reason: `Proxy error: ${reason || "Connection failed"}`
+            // NOTE: We do NOT change status, proxy_id, or any fingerprint data
           })
           .eq("id", account_id);
 
-        // If we have the proxy_id (host:port), try to find and mark the proxy as having issues
+        // If we have the proxy_id (as UUID), mark it as error
         if (proxy_id) {
-          const [host, portStr] = proxy_id.split(":");
-          if (host && portStr) {
+          // Try as UUID first
+          if (proxy_id.includes("-")) {
             await supabase
               .from("proxies")
               .update({ 
                 status: "error",
                 last_checked: new Date().toISOString()
               })
-              .eq("host", host)
-              .eq("port", parseInt(portStr));
-            console.log(`[report-task-result] Marked proxy ${proxy_id} as error`);
+              .eq("id", proxy_id);
+            console.log(`[report-task-result] Marked proxy ${proxy_id} as error (by UUID)`);
+          } else {
+            // Try as host:port format
+            const [host, portStr] = proxy_id.split(":");
+            if (host && portStr) {
+              await supabase
+                .from("proxies")
+                .update({ 
+                  status: "error",
+                  last_checked: new Date().toISOString()
+                })
+                .eq("host", host)
+                .eq("port", parseInt(portStr));
+              console.log(`[report-task-result] Marked proxy ${proxy_id} as error (by host:port)`);
+            }
           }
         }
 
-        // Log to warmup_errors if this came from warmup context
-        await supabase
-          .from("warmup_errors")
-          .insert({
-            account_id: account_id,
-            error_message: `Proxy error: ${reason || "Connection failed"}`,
-            error_type: "proxy_error"
-          });
+        // Log to proxy_errors table
+        if (proxy_id && proxy_id.includes("-")) {
+          await supabase
+            .from("proxy_errors")
+            .insert({
+              proxy_id: proxy_id,
+              error_message: `Proxy error: ${reason || "Connection failed"}`,
+              error_type: "proxy_connection_failed"
+            });
+        }
 
         console.log(`[report-task-result] Account ${account_id} PROXY ERROR: ${reason}`);
+        console.log(`[report-task-result] NOTE: Proxy assignment unchanged - admin must fix in dashboard`);
         break;
       }
 
@@ -1429,8 +1445,23 @@ serve(async (req) => {
         break;
       }
       case "fingerprint_generated": {
+        // ONLY save fingerprint if account doesn't already have one
+        // NEVER overwrite existing fingerprints
         const { account_id, device_model, system_version, app_version, lang_code, system_lang_code } = result;
 
+        // Check if account already has fingerprint data
+        const { data: existing } = await supabase
+          .from("telegram_accounts")
+          .select("device_model, system_version")
+          .eq("id", account_id)
+          .single();
+
+        if (existing?.device_model && existing?.system_version) {
+          console.log(`[report-task-result] Fingerprint already exists for ${account_id}, SKIPPING update`);
+          break;
+        }
+
+        // Only update if no fingerprint exists
         await supabase
           .from("telegram_accounts")
           .update({
