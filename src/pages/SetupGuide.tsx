@@ -76,7 +76,7 @@ from telethon.errors import (
 )
 
 from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
-from fingerprint_generator import generate_fingerprint
+
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
@@ -469,34 +469,21 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         print(f"  [SKIP] {phone} - No session data")
         return None
     
-    # ========== STEP 3: USE OR GENERATE FINGERPRINT (FIRST - before proxy) ==========
-    # Fingerprint is generated/retrieved FIRST and saved to DB immediately
+    # ========== STEP 3: CHECK FINGERPRINT (MANDATORY - before proxy) ==========
+    # Fingerprint MUST exist in database - accounts without fingerprint should be skipped
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     app_version = account.get("app_version") or "10.14.2"
     lang_code = account.get("lang_code") or "en"
     system_lang_code = account.get("system_lang_code") or "en-US"
     
-    # If fingerprint is missing, generate ONCE and save to DB IMMEDIATELY
+    # CRITICAL: Skip accounts without fingerprint - they need to be processed first by upload
     if not device_model or not system_version:
-        fp = generate_fingerprint()
-        device_model = fp["device_model"]
-        system_version = fp["system_version"]
-        app_version = fp["app_version"]
-        lang_code = fp["lang_code"]
-        system_lang_code = fp["system_lang_code"]
-        print(f"  [FP] Generated NEW fingerprint (saving to DB): {device_model} ({system_version})")
-        # Save fingerprint to database immediately - NEVER CHANGE AGAIN
-        asyncio.create_task(report_result("fingerprint_generated", {
-            "account_id": account_id,
-            "device_model": device_model,
-            "system_version": system_version,
-            "app_version": app_version,
-            "lang_code": lang_code,
-            "system_lang_code": system_lang_code
-        }))
-    else:
-        print(f"  [FP] Using existing: {device_model} ({system_version})")
+        print(f"  [SKIP] {phone} - No fingerprint (device_model or system_version missing)")
+        print(f"         Re-upload this account or wait for system to assign fingerprint")
+        return None
+    
+    print(f"  [FP] Using fingerprint: {device_model} ({system_version})")
     
     # ========== STEP 4: CHECK PROXY (MANDATORY - after fingerprint) ==========
     proxy = get_proxy_settings(account, task_proxy=task_proxy)
@@ -1764,7 +1751,7 @@ from client_manager import (
     retry_proxy_error_accounts,
     HTTP_TIMEOUT_UPLOAD
 )
-from fingerprint_generator import generate_fingerprint
+from config import SUPABASE_URL, SUPABASE_KEY
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
 
@@ -1879,33 +1866,17 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
     account_id = account.get("id")
     phone = account.get("phone_number", "???")[-4:]
     
-    # ===== STEP 1: FINGERPRINT FIRST - Generate/retrieve and save to DB =====
+    # ===== STEP 1: CHECK FINGERPRINT - MANDATORY (no generation) =====
     device_model = account.get("device_model")
     system_version = account.get("system_version")
     fingerprint_exists = bool(device_model and system_version)
     
-    # If no fingerprint in DB, generate ONCE and save IMMEDIATELY
+    # CRITICAL: Skip accounts without fingerprint - they need to be uploaded properly first
     if not fingerprint_exists:
-        print(f"  [{phone}] STEP 1: Generating fingerprint (saving to DB)...")
-        fp = generate_fingerprint()
-        account["device_model"] = fp["device_model"]
-        account["system_version"] = fp["system_version"]
-        account["app_version"] = fp["app_version"]
-        account["lang_code"] = fp["lang_code"]
-        account["system_lang_code"] = fp["system_lang_code"]
-        
-        # Save fingerprint to database IMMEDIATELY - NEVER CHANGE AFTER THIS
-        await report_result("fingerprint_generated", {
-            "account_id": account_id,
-            "device_model": fp["device_model"],
-            "system_version": fp["system_version"],
-            "app_version": fp["app_version"],
-            "lang_code": fp["lang_code"],
-            "system_lang_code": fp["system_lang_code"]
-        })
-        print(f"  [{phone}] Fingerprint saved: {fp['device_model']} ({fp['system_version']})")
-    else:
-        print(f"  [{phone}] STEP 1: Using existing fingerprint: {device_model} ({system_version})")
+        print(f"  [{phone}] STEP 1: NO FINGERPRINT - skipping (re-upload account or wait for system)")
+        return None, "No fingerprint (device_model or system_version missing)"
+    
+    print(f"  [{phone}] STEP 1: Using fingerprint: {device_model} ({system_version})")
     
     # ===== STEP 2: CHECK PROXY - MANDATORY for connection =====
     proxy = task_proxy or account.get("proxy")
