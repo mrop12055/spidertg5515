@@ -125,17 +125,24 @@ const Proxies: React.FC = () => {
   // Today's errors per proxy
   const [proxyErrors, setProxyErrors] = useState<Map<string, number>>(new Map());
   
-  // Fetch proxy errors for today
+  // Fetch proxy errors for today (ONLY for proxies currently in error)
   useEffect(() => {
     const fetchProxyErrors = async () => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      
+
+      const errorProxyIds = proxies.filter(p => p.status === 'error').map(p => p.id);
+      if (errorProxyIds.length === 0) {
+        setProxyErrors(new Map());
+        return;
+      }
+
       const { data, error } = await supabase
         .from('proxy_errors')
         .select('proxy_id')
+        .in('proxy_id', errorProxyIds)
         .gte('created_at', today.toISOString());
-      
+
       if (!error && data) {
         const errorCounts = new Map<string, number>();
         data.forEach(row => {
@@ -145,7 +152,7 @@ const Proxies: React.FC = () => {
         setProxyErrors(errorCounts);
       }
     };
-    
+
     fetchProxyErrors();
   }, [proxies]);
 

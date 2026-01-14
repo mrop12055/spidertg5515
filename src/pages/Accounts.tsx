@@ -526,8 +526,9 @@ const Accounts: React.FC = () => {
           }
         });
         
-        // Then add actual error messages where available
+        // Then add actual error messages where available (ONLY for proxies currently marked as error)
         (errors || []).forEach(err => {
+          if (!errorProxyIds.has(err.proxy_id)) return; // proxy is active again -> don't show old errors
           if (!errorMap.has(err.proxy_id)) {
             errorMap.set(err.proxy_id, {
               error_type: err.error_type || 'unknown',
