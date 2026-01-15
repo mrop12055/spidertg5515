@@ -1407,10 +1407,9 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
     client = None
     try:
         # Open session ONCE for all tasks for this account
-        # IMPORTANT: no_cache=False prevents frequent reopen of the same .session sqlite file
-        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=False)
-        
-        if not client:
+        # IMPORTANT: Use no_cache=True because this runner restarts via asyncio.run(...)
+        # and cached Telethon clients cannot be reused across event loops.
+        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
             # Return error for all tasks if connection failed
             print(f"    ✗ [{account_phone}] No client (for {len(tasks)} tasks)")
             for task in tasks:
@@ -1614,7 +1613,7 @@ async def disconnect_batch_clients():
     count = len(active_clients)
     print(f"  🔌 Disconnecting {count} clients after batch...")
     
-    async def disconnect_one(account_id: str, client: TelegramClient) -> bool:
+    async def disconnect_one(account_id: str, client) -> bool:
         try:
             # SAVE SESSION BEFORE DISCONNECT - preserves entity cache
             if client.is_connected():
@@ -1798,6 +1797,14 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"\n⚠ Runner crashed: {e}")
             print("  Restarting in 5 seconds...")
+            
+            # CRITICAL: Clear cached clients before a new asyncio event loop starts.
+            # Otherwise Telethon throws: "The asyncio event loop must not change after connection".
+            try:
+                active_clients.clear()
+            except Exception:
+                pass
+            
             # Reset HTTP client to avoid "Event loop is closed" error on restart
             reset_http_client()
             import time
