@@ -391,11 +391,13 @@ serve(async (req) => {
           
           // Errors that should RESTRICT account (12h cooldown for new messages, but can still chat)
           // IMPORTANT: Do NOT include 'restricted' alone - it matches "Privacy restricted" which is a RECIPIENT error!
+          // PeerFlood = too many messages to new users - account needs 12h cooldown but can still chat with existing contacts
           const temporaryRestrictionErrors = [
             'flood',
             'spam',
             'user_is_blocked',
             'floodwaiterror',    // Telegram flood wait error
+            'peerflood',         // Too many messages to new users - 12h cooldown
             'account restricted' // Only match if it says "account restricted" not "privacy restricted"
           ];
           

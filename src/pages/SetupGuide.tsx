@@ -1456,9 +1456,10 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                     success, error, meta = False, f"Unexpected return: {type(send_res)}", None
                 
                 # Check if this is a sender-side issue (should retry with different account)
+                # PeerFlood = too many messages to new users, sender needs 12h cooldown but can chat with existing contacts
                 is_sender_error = error and any(x in error.lower() for x in [
                     "privacyrestricted", "privacy restricted", "userprivacyrestricted",
-                    "too many requests", "sendmessagerequest"
+                    "too many requests", "sendmessagerequest", "peerflood"
                 ])
                 
                 # Get API credential ID
