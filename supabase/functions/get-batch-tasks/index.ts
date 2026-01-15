@@ -1222,7 +1222,10 @@ serve(async (req) => {
 
       if (pendingMessages && pendingMessages.length > 0 && livechatSettings.enableParallel) {
         // Group messages by account_id (no usedAccountIds limitation)
+        // LIMIT messages per account to prevent SQLite "database is locked" errors
+        const MAX_MESSAGES_PER_ACCOUNT = 3;  // Prevents overwhelming a single session file
         const messagesByAccount = new Map<string, typeof pendingMessages>();
+        
         for (const msg of pendingMessages) {
           const conv = msg.conversations;
           const accountId = conv.account_id;
@@ -1234,7 +1237,14 @@ serve(async (req) => {
           if (!messagesByAccount.has(accountId)) {
             messagesByAccount.set(accountId, []);
           }
-          messagesByAccount.get(accountId)!.push(msg);
+          
+          // Skip if this account already has max messages queued
+          const accountMsgs = messagesByAccount.get(accountId)!;
+          if (accountMsgs.length >= MAX_MESSAGES_PER_ACCOUNT) {
+            continue;  // Will be picked up in next poll
+          }
+          
+          accountMsgs.push(msg);
         }
         
         if (messagesByAccount.size > 0) {
