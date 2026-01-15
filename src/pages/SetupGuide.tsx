@@ -59,6 +59,9 @@ import httpx
 import socks
 from typing import Dict, Optional
 
+# ========== PER-ACCOUNT CONNECTION LOCKS (prevents SQLite "database is locked") ==========
+_connection_locks: Dict[str, asyncio.Lock] = {}
+
 from telethon import TelegramClient
 from telethon.errors import (
     RPCError,
@@ -439,6 +442,11 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     - Saved to database SYNCHRONOUSLY before any connection attempt
     - Never changed after initial generation
     
+    SQLITE LOCK PREVENTION:
+    - Per-account asyncio.Lock prevents concurrent connection attempts
+    - Proper disconnect before reconnect releases SQLite file
+    - Retry logic for "database is locked" errors
+    
     Args:
         account: Account data with session, fingerprint, proxy info
         setup_handler: Optional handler to setup after connection
@@ -450,6 +458,23 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
     
+    # ========== ACQUIRE PER-ACCOUNT LOCK (prevents SQLite "database is locked") ==========
+    if account_id not in _connection_locks:
+        _connection_locks[account_id] = asyncio.Lock()
+    
+    async with _connection_locks[account_id]:
+        return await _get_or_create_client_internal(
+            account, setup_handler, task_proxy, skip_avatar, no_cache, long_lived
+        )
+
+
+async def _get_or_create_client_internal(account: dict, setup_handler=None, task_proxy: dict = None,
+                                          skip_avatar: bool = False, no_cache: bool = False, 
+                                          long_lived: bool = False) -> Optional[TelegramClient]:
+    """Internal implementation of get_or_create_client (called within lock)."""
+    account_id = account["id"]
+    phone = account.get("phone_number", account_id[:8])
+    
     # ========== STEP 1: CHECK / CLEAR EXISTING CLIENT ==========
     if no_cache and account_id in active_clients:
         try:
@@ -457,7 +482,9 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
             try:
                 if old_client.is_connected():
                     print(f"  [NO_CACHE] Disconnecting cached client for {phone}")
-                    await asyncio.wait_for(old_client.disconnect(), timeout=3)
+                    await asyncio.wait_for(old_client.disconnect(), timeout=5)
+                # Small delay to ensure SQLite file is fully released
+                await asyncio.sleep(0.2)
             except Exception:
                 pass
         except Exception:
@@ -473,6 +500,16 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
                     await setup_handler(client, account_id)
                     setattr(client, "_handler", True)
                 return client
+            else:
+                # Client exists but disconnected - clean it up FULLY before reconnecting
+                print(f"  [CLEANUP] Removing disconnected client for {phone}")
+                old_client = active_clients.pop(account_id)
+                try:
+                    await asyncio.wait_for(old_client.disconnect(), timeout=3)
+                except Exception:
+                    pass
+                # Delay to release SQLite file
+                await asyncio.sleep(0.2)
         except Exception:
             del active_clients[account_id]
 
@@ -536,20 +573,41 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         api_id = account.get("api_id") or TELEGRAM_API_ID
         api_hash = account.get("api_hash") or TELEGRAM_API_HASH
         
-        client = TelegramClient(
-            session_path, int(api_id), api_hash,
-            device_model=device_model,
-            system_version=system_version,
-            app_version=app_version,
-            lang_code=lang_code,
-            system_lang_code=system_lang_code,
-            proxy=proxy,
-            timeout=CONNECTION_TIMEOUT,
-            connection_retries=3 if long_lived else 0,
-            retry_delay=2 if long_lived else 0,
-            auto_reconnect=long_lived,
-            request_retries=3 if long_lived else 1
-        )
+        # ========== CREATE CLIENT WITH SQLITE LOCK RETRY ==========
+        client = None
+        max_db_retries = 3
+        last_db_error = None
+        
+        for db_attempt in range(max_db_retries):
+            try:
+                client = TelegramClient(
+                    session_path, int(api_id), api_hash,
+                    device_model=device_model,
+                    system_version=system_version,
+                    app_version=app_version,
+                    lang_code=lang_code,
+                    system_lang_code=system_lang_code,
+                    proxy=proxy,
+                    timeout=CONNECTION_TIMEOUT,
+                    connection_retries=3 if long_lived else 0,
+                    retry_delay=2 if long_lived else 0,
+                    auto_reconnect=long_lived,
+                    request_retries=3 if long_lived else 1
+                )
+                break  # Success - exit retry loop
+            except Exception as db_err:
+                last_db_error = db_err
+                err_str = str(db_err).lower()
+                if "database is locked" in err_str and db_attempt < max_db_retries - 1:
+                    wait_time = 0.5 * (db_attempt + 1)  # 0.5s, 1s, 1.5s
+                    print(f"  [DB LOCK] Session file locked for {phone}, retry {db_attempt + 1}/{max_db_retries} in {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                else:
+                    raise  # Re-raise non-lock errors or final attempt
+        
+        if client is None:
+            print(f"  [DB ERROR] Could not create client for {phone}: {last_db_error}")
+            return None
         
         print(f"  [CONNECT] {account['phone_number']} (with 3 retries)...")
         if not await connect_with_retry(client, max_retries=3):
@@ -2491,12 +2549,25 @@ async def setup_message_handler(client, account_id: str):
                 print(f"  [WARN] Handler error: {e}")
 
 
+# ========== FLAG TO PAUSE keep_clients_alive DURING BATCH PROCESSING ==========
+_processing_batch = False
+
+
 async def keep_clients_alive():
-    """Background task that keeps all clients receiving updates - with network error handling"""
+    """
+    Background task that keeps all clients receiving updates - with network error handling.
+    
+    PAUSES during batch processing to prevent SQLite lock conflicts.
+    """
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 10
     
     while RUNNING:
+        # ========== PAUSE DURING BATCH PROCESSING ==========
+        if _processing_batch:
+            await asyncio.sleep(0.5)
+            continue
+        
         try:
             # Balanced loop - fast but not aggressive
             await asyncio.sleep(0.1)  # 10 checks per second (less aggressive)
@@ -2750,7 +2821,10 @@ async def main_loop():
                     print(f"  [PARALLEL] Processing {len(batches)} account batches ({sum(len(b.get('messages', [])) for b in batches)} messages)...")
                     
                     async def process_account_batch(batch):
-                        """Process all messages for one account with stagger between messages"""
+                        """Process all messages for one account with stagger between messages.
+                        
+                        NOTE: _processing_batch flag is set by caller to pause keep_clients_alive.
+                        """
                         account = batch.get("account", {})
                         proxy = batch.get("proxy")
                         messages = batch.get("messages", [])
@@ -2805,10 +2879,16 @@ async def main_loop():
                         print(f"    [{phone}] Sent {len(messages)} messages")
                     
                     # Process ALL account batches in PARALLEL
-                    await asyncio.gather(
-                        *[process_account_batch(b) for b in batches],
-                        return_exceptions=True
-                    )
+                    # Set flag to pause keep_clients_alive during batch processing
+                    global _processing_batch
+                    _processing_batch = True
+                    try:
+                        await asyncio.gather(
+                            *[process_account_batch(b) for b in batches],
+                            return_exceptions=True
+                        )
+                    finally:
+                        _processing_batch = False
                     print(f"  [DONE] Parallel batch complete")
             
             elif task_type == "send":
