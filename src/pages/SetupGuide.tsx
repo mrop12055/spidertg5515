@@ -1380,9 +1380,9 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 # NOTE: pre_connect_batch was REMOVED - it caused "asyncio event loop must not change" errors
-# because Telethon clients bind to the event loop where they were connected, and parallel
-# asyncio.gather tasks may run in different loop contexts. Instead, each task now creates
-# its own fresh client with no_cache=True.
+# because Telethon clients bind to the event loop where they were connected.
+# We now reuse per-account cached clients within the SAME loop to avoid SQLite locks,
+# and the client_manager enforces a per-account connection lock for safety.
 
 
 async def process_account_tasks(account_id: str, tasks: list, stagger_min: float, stagger_max: float) -> list:
@@ -1407,7 +1407,8 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
     client = None
     try:
         # Open session ONCE for all tasks for this account
-        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
+        # IMPORTANT: no_cache=False prevents frequent reopen of the same .session sqlite file
+        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=False)
         
         if not client:
             # Return error for all tasks if connection failed
@@ -1531,7 +1532,9 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                     # SAVE SESSION FIRST - preserve entity cache before disconnecting
                     account_phone = account.get("phone_number", account_id)
                     await save_session_to_db(account_id, account_phone)
-                    await asyncio.wait_for(client.disconnect(), timeout=3)
+                    await asyncio.wait_for(client.disconnect(), timeout=10)
+                    # Give SQLite a moment to release the session file
+                    await asyncio.sleep(0.2)
             except Exception:
                 pass  # Ignore disconnect errors
 
