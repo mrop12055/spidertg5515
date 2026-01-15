@@ -1321,7 +1321,7 @@ import traceback
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
     send_message, shutdown_all, disconnect_batch, report_batch_results,
-    active_clients, reset_http_client
+    active_clients, reset_http_client, save_session_to_db
 )
 
 # ========== GLOBAL STATE ==========
@@ -1410,6 +1410,8 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
         # IMPORTANT: Use no_cache=True because this runner restarts via asyncio.run(...)
         # and cached Telethon clients cannot be reused across event loops.
         client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
+
+        if not client:
             # Return error for all tasks if connection failed
             print(f"    ✗ [{account_phone}] No client (for {len(tasks)} tasks)")
             for task in tasks:
@@ -1422,9 +1424,7 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                     "account_id": account_id,
                 })
             return results
-        
-        print(f"  📨 [{account_phone}] Sending {len(tasks)} messages...")
-        
+
         # Send ALL messages for this account using the same connection
         for idx, task in enumerate(tasks):
             msg = task.get("message", {})
