@@ -12,6 +12,9 @@ const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 // STRICT LIMIT: Maximum 1 account per API credential
 const MAX_ACCOUNTS_PER_API = 1;
 
+// Batch size for parallel operations (50 at a time)
+const BATCH_SIZE = 50;
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -20,7 +23,7 @@ serve(async (req) => {
   try {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('[redistribute-api-credentials] Starting 1:1 redistribution (max 1 account per API)...');
+    console.log('[redistribute-api-credentials] Starting 1:1 redistribution with PARALLEL processing...');
 
     // Fetch all active API credentials
     const { data: apiCredentials, error: credError } = await supabase
@@ -119,38 +122,65 @@ serve(async (req) => {
       }
     }
 
-    console.log(`[redistribute-api-credentials] Assignments: ${assignments.length} accounts to APIs, ${unassignedAccounts.length} unassigned (exceeded API count)`);
+    console.log(`[redistribute-api-credentials] Assignments planned: ${assignments.length} accounts to APIs, ${unassignedAccounts.length} unassigned`);
 
-    // STEP 1: First, unassign ALL accounts (clean slate)
+    // STEP 1: First, unassign ALL accounts (clean slate) - single efficient query
+    console.log('[redistribute-api-credentials] Step 1: Unassigning all accounts...');
     await supabase
       .from('telegram_accounts')
       .update({ api_credential_id: null })
       .in('status', ['active', 'restricted', 'cooldown']);
 
-    // STEP 2: Assign accounts to APIs (1:1)
-    for (const assignment of assignments) {
-      await supabase
-        .from('telegram_accounts')
-        .update({ api_credential_id: assignment.apiId })
-        .eq('id', assignment.accountId);
+    // STEP 2: Assign accounts to APIs in PARALLEL BATCHES
+    console.log(`[redistribute-api-credentials] Step 2: Assigning ${assignments.length} accounts in parallel batches of ${BATCH_SIZE}...`);
+    
+    for (let i = 0; i < assignments.length; i += BATCH_SIZE) {
+      const batch = assignments.slice(i, i + BATCH_SIZE);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(assignments.length / BATCH_SIZE);
+      
+      console.log(`[redistribute-api-credentials] Processing assignment batch ${batchNum}/${totalBatches} (${batch.length} accounts)`);
+      
+      // Process entire batch in parallel
+      await Promise.all(
+        batch.map(assignment => 
+          supabase
+            .from('telegram_accounts')
+            .update({ api_credential_id: assignment.apiId })
+            .eq('id', assignment.accountId)
+        )
+      );
     }
 
-    console.log(`[redistribute-api-credentials] Completed ${assignments.length} account assignments`);
+    console.log(`[redistribute-api-credentials] Completed all account assignments`);
 
-    // STEP 3: Update credential counts based on ACTUAL assigned accounts
-    for (const cred of apiCredentials) {
-      const { count } = await supabase
-        .from('telegram_accounts')
-        .select('*', { count: 'exact', head: true })
-        .eq('api_credential_id', cred.id);
+    // STEP 3: Update credential counts in PARALLEL BATCHES
+    console.log(`[redistribute-api-credentials] Step 3: Updating ${apiCredentials.length} API credential counts in parallel...`);
+    
+    for (let i = 0; i < apiCredentials.length; i += BATCH_SIZE) {
+      const batch = apiCredentials.slice(i, i + BATCH_SIZE);
+      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
+      const totalBatches = Math.ceil(apiCredentials.length / BATCH_SIZE);
       
-      await supabase
-        .from('telegram_api_credentials')
-        .update({ accounts_count: count || 0 })
-        .eq('id', cred.id);
+      console.log(`[redistribute-api-credentials] Processing count update batch ${batchNum}/${totalBatches} (${batch.length} APIs)`);
+      
+      // Get counts and update in parallel
+      await Promise.all(
+        batch.map(async (cred) => {
+          const { count } = await supabase
+            .from('telegram_accounts')
+            .select('*', { count: 'exact', head: true })
+            .eq('api_credential_id', cred.id);
+          
+          await supabase
+            .from('telegram_api_credentials')
+            .update({ accounts_count: count || 0 })
+            .eq('id', cred.id);
+        })
+      );
     }
     
-    console.log(`[redistribute-api-credentials] Updated all credential counts (should be 0 or 1)`);
+    console.log(`[redistribute-api-credentials] Updated all credential counts`);
 
     // Fetch final distribution
     const { data: finalDist } = await supabase
