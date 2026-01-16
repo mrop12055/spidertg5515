@@ -9,6 +9,9 @@ const corsHeaders = {
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 
+// STRICT LIMIT: Maximum 1 account per API credential
+const MAX_ACCOUNTS_PER_API = 1;
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -17,9 +20,9 @@ serve(async (req) => {
   try {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('[redistribute-api-credentials] Starting redistribution based on least 24h usage...');
+    console.log('[redistribute-api-credentials] Starting 1:1 redistribution (max 1 account per API)...');
 
-    // Fetch all API credentials
+    // Fetch all active API credentials
     const { data: apiCredentials, error: credError } = await supabase
       .from('telegram_api_credentials')
       .select('*')
@@ -34,7 +37,28 @@ serve(async (req) => {
 
     console.log(`[redistribute-api-credentials] Found ${apiCredentials.length} API credentials`);
 
-    // Get 24h usage for each API from campaign_recipients
+    // Fetch ALL active accounts with valid sessions
+    const { data: allAccounts, error: accError } = await supabase
+      .from('telegram_accounts')
+      .select('id, phone_number, status, session_data, api_credential_id')
+      .in('status', ['active', 'restricted', 'cooldown'])
+      .not('session_data', 'is', null)
+      .order('created_at', { ascending: true }); // Oldest accounts get priority
+
+    if (accError) {
+      throw accError;
+    }
+
+    if (!allAccounts || allAccounts.length === 0) {
+      return new Response(
+        JSON.stringify({ message: 'No accounts found to redistribute', assigned: 0 }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log(`[redistribute-api-credentials] Found ${allAccounts.length} accounts with valid sessions`);
+
+    // Get 24h usage for each API to prioritize low-usage APIs
     const yesterday = new Date();
     yesterday.setHours(yesterday.getHours() - 24);
     
@@ -54,116 +78,66 @@ serve(async (req) => {
       }
     });
 
-    console.log('[redistribute-api-credentials] 24h API usage:', Object.fromEntries(apiUsage24h));
-
-    // Fetch ALL active accounts for redistribution (not just unassigned)
-    // Exclude accounts with expired/null sessions
-    const { data: allAccounts, error: accError } = await supabase
-      .from('telegram_accounts')
-      .select('id, device_model, status, session_data')
-      .in('status', ['active', 'restricted', 'cooldown'])
-      .not('session_data', 'is', null);
-
-    if (accError) {
-      throw accError;
-    }
-
-    if (!allAccounts || allAccounts.length === 0) {
-      return new Response(
-        JSON.stringify({ message: 'No accounts found to redistribute', assigned: 0 }),
-        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.log(`[redistribute-api-credentials] Found ${allAccounts.length} accounts with valid sessions to redistribute`);
-
-    const API_DAILY_LIMIT = 80; // Max messages per API per 24 hours
-    
-    // Calculate remaining capacity for each API (limit - usage)
-    // APIs with more remaining capacity should get MORE accounts
-    const apiCapacity = apiCredentials.map(cred => {
-      const usage = apiUsage24h.get(cred.id) || 0;
-      const remaining = Math.max(0, API_DAILY_LIMIT - usage);
-      return { id: cred.id, name: cred.name, usage, remaining };
+    // Sort APIs by 24h usage (lowest first - these get accounts first)
+    const sortedApis = [...apiCredentials].sort((a, b) => {
+      const usageA = apiUsage24h.get(a.id) || 0;
+      const usageB = apiUsage24h.get(b.id) || 0;
+      return usageA - usageB; // Lowest usage first
     });
 
-    // Sort by remaining capacity DESC (most capacity first)
-    apiCapacity.sort((a, b) => b.remaining - a.remaining);
-    
-    console.log('[redistribute-api-credentials] API capacity (remaining):', 
-      apiCapacity.map(c => `${c.name}: ${c.remaining} remaining (${c.usage} used)`));
+    console.log('[redistribute-api-credentials] APIs sorted by 24h usage:', 
+      sortedApis.map(api => `${api.name}: ${apiUsage24h.get(api.id) || 0} used`));
 
-    // Calculate total remaining capacity
-    const totalCapacity = apiCapacity.reduce((sum, c) => sum + c.remaining, 0);
-    
-    // Reset assignment counts for fresh redistribution
-    const assignmentCounts = new Map<string, number>();
-    apiCredentials.forEach(c => assignmentCounts.set(c.id, 0));
+    // Track which APIs have been assigned (1:1 limit)
+    const assignedApis = new Set<string>();
+    const assignments: { accountId: string; apiId: string }[] = [];
+    const unassignedAccounts: string[] = [];
 
-    const assignments: { id: string; api_credential_id: string }[] = [];
-
-    // Distribute accounts proportionally based on remaining capacity
-    // APIs with more remaining capacity get more accounts
+    // Assign 1 account per API (round-robin with 1:1 limit)
     for (let i = 0; i < allAccounts.length; i++) {
       const account = allAccounts[i];
       
-      // Find the API with the highest remaining capacity that hasn't been over-assigned
-      // Weighted: pick API with best (remaining capacity / assigned ratio)
-      let bestApi = apiCapacity[0];
-      let bestScore = -1;
+      // Find the first available API that hasn't been assigned yet
+      let assignedApi: typeof sortedApis[0] | null = null;
       
-      for (const api of apiCapacity) {
-        const assigned = assignmentCounts.get(api.id) || 0;
-        // Score = remaining capacity - already assigned accounts (prefer APIs with more room)
-        const score = api.remaining - assigned;
-        if (score > bestScore) {
-          bestScore = score;
-          bestApi = api;
+      for (const api of sortedApis) {
+        if (!assignedApis.has(api.id)) {
+          assignedApi = api;
+          assignedApis.add(api.id);
+          break;
         }
       }
 
-      assignmentCounts.set(bestApi.id, (assignmentCounts.get(bestApi.id) || 0) + 1);
-      
-      assignments.push({
-        id: account.id,
-        api_credential_id: bestApi.id
-      });
+      if (assignedApi) {
+        assignments.push({
+          accountId: account.id,
+          apiId: assignedApi.id
+        });
+      } else {
+        // No more APIs available - account goes unassigned
+        unassignedAccounts.push(account.id);
+      }
     }
 
-    // Group assignments by API credential for batch updates
-    const assignmentsByApi = new Map<string, string[]>();
+    console.log(`[redistribute-api-credentials] Assignments: ${assignments.length} accounts to APIs, ${unassignedAccounts.length} unassigned (exceeded API count)`);
+
+    // STEP 1: First, unassign ALL accounts (clean slate)
+    await supabase
+      .from('telegram_accounts')
+      .update({ api_credential_id: null })
+      .in('status', ['active', 'restricted', 'cooldown']);
+
+    // STEP 2: Assign accounts to APIs (1:1)
     for (const assignment of assignments) {
-      const existing = assignmentsByApi.get(assignment.api_credential_id) || [];
-      existing.push(assignment.id);
-      assignmentsByApi.set(assignment.api_credential_id, existing);
+      await supabase
+        .from('telegram_accounts')
+        .update({ api_credential_id: assignment.apiId })
+        .eq('id', assignment.accountId);
     }
 
-    console.log(`[redistribute-api-credentials] Grouped into ${assignmentsByApi.size} API batches`);
+    console.log(`[redistribute-api-credentials] Completed ${assignments.length} account assignments`);
 
-    // Build all update functions
-    // deno-lint-ignore no-explicit-any
-    const updateFns: (() => PromiseLike<any>)[] = [];
-    
-    // Batch update accounts by API (one query per API instead of one per account)
-    for (const [apiId, accountIds] of assignmentsByApi) {
-      updateFns.push(() =>
-        supabase
-          .from('telegram_accounts')
-          .update({ api_credential_id: apiId })
-          .in('id', accountIds)
-      );
-    }
-    
-    // Execute account updates in parallel batches of 20
-    const BATCH_SIZE = 20;
-    for (let i = 0; i < updateFns.length; i += BATCH_SIZE) {
-      const batch = updateFns.slice(i, i + BATCH_SIZE);
-      await Promise.all(batch.map(fn => fn()));
-    }
-    
-    console.log(`[redistribute-api-credentials] Completed ${updateFns.length} account batch updates`);
-
-    // Now update credential counts based on ACTUAL assigned accounts (query DB for accuracy)
+    // STEP 3: Update credential counts based on ACTUAL assigned accounts
     for (const cred of apiCredentials) {
       const { count } = await supabase
         .from('telegram_accounts')
@@ -176,21 +150,29 @@ serve(async (req) => {
         .eq('id', cred.id);
     }
     
-    console.log(`[redistribute-api-credentials] Updated all credential counts from actual assignments`);
-    const successCount = assignments.length;
-
-    console.log(`[redistribute-api-credentials] Assigned ${successCount} accounts across ${apiCredentials.length} APIs`);
+    console.log(`[redistribute-api-credentials] Updated all credential counts (should be 0 or 1)`);
 
     // Fetch final distribution
     const { data: finalDist } = await supabase
       .from('telegram_api_credentials')
       .select('name, client_type, accounts_count')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .order('accounts_count', { ascending: false });
+
+    // Warn if there are unassigned accounts
+    if (unassignedAccounts.length > 0) {
+      console.warn(`[redistribute-api-credentials] WARNING: ${unassignedAccounts.length} accounts are UNASSIGNED because there aren't enough APIs. Need ${unassignedAccounts.length} more API credentials!`);
+    }
 
     return new Response(
       JSON.stringify({ 
         success: true,
-        assigned: successCount,
+        assigned: assignments.length,
+        unassigned: unassignedAccounts.length,
+        maxPerApi: MAX_ACCOUNTS_PER_API,
+        message: unassignedAccounts.length > 0 
+          ? `⚠️ ${unassignedAccounts.length} accounts have NO API assigned. Add ${unassignedAccounts.length} more API credentials!`
+          : `All ${assignments.length} accounts assigned (1:1 limit enforced)`,
         distribution: finalDist
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
