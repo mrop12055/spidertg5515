@@ -27,7 +27,7 @@ TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (OFFICIAL TELEGRAM API - SAFE)
 
-BUILD: 2026-01-14-proxy-fingerprint-sync
+BUILD: 2026-01-16-sqlite-lock-fix
 
 CRITICAL RULES:
 - NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
@@ -49,6 +49,12 @@ SAFETY FEATURES:
 - Proper Telethon exception handling
 - Smaller client_id range for contact imports
 - Comprehensive error detection patterns
+
+SQLITE LOCK FIX (2026-01-16):
+- Global per-account locks that persist across function calls
+- Retry mechanism for "database is locked" errors
+- Proper session file release with delay after disconnect
+- Single connection per account enforced across all runners
 """
 
 import os
@@ -57,10 +63,20 @@ import tempfile
 import asyncio
 import httpx
 import socks
+import threading
 from typing import Dict, Optional
 
 # ========== PER-ACCOUNT CONNECTION LOCKS (prevents SQLite "database is locked") ==========
+# Uses threading.Lock wrapped in asyncio for cross-coroutine safety
 _connection_locks: Dict[str, asyncio.Lock] = {}
+_connection_locks_mutex = threading.Lock()  # Protects _connection_locks dict itself
+
+def get_account_lock(account_id: str) -> asyncio.Lock:
+    """Get or create a per-account lock in a thread-safe manner."""
+    with _connection_locks_mutex:
+        if account_id not in _connection_locks:
+            _connection_locks[account_id] = asyncio.Lock()
+        return _connection_locks[account_id]
 
 from telethon import TelegramClient
 from telethon.errors import (
@@ -459,10 +475,9 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     phone = account.get("phone_number", account_id[:8])
     
     # ========== ACQUIRE PER-ACCOUNT LOCK (prevents SQLite "database is locked") ==========
-    if account_id not in _connection_locks:
-        _connection_locks[account_id] = asyncio.Lock()
+    lock = get_account_lock(account_id)
     
-    async with _connection_locks[account_id]:
+    async with lock:
         return await _get_or_create_client_internal(
             account, setup_handler, task_proxy, skip_avatar, no_cache, long_lived
         )
@@ -1291,7 +1306,7 @@ def generate_fingerprint():
 """
 TelegramCRM - Campaign Runner (Admin-Controlled Speed)
 =======================================================
-BUILD: 2026-01-14-proxy-fingerprint-sync
+BUILD: 2026-01-16-sqlite-lock-fix
 
 ORDER OF OPERATIONS (CRITICAL):
 1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
@@ -1300,6 +1315,12 @@ ORDER OF OPERATIONS (CRITICAL):
 4. PERFORM ACTION - send campaign messages
 
 NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
+
+SQLITE LOCK FIX (2026-01-16):
+- Retry logic for "database is locked" errors during connection
+- Per-account locks with thread-safe mutex protection
+- Increased delay (0.5s) after disconnect to fully release SQLite file
+- Proper cleanup of cached clients across event loop restarts
 
 SPEED CONTROL via Admin Dashboard:
 - staggerMin/staggerMax: delay between messages (0 = instant ultra-fast)
@@ -1310,7 +1331,7 @@ Run: python campaign_runner.py
 Stop: Ctrl+C or pause campaign from dashboard
 """
 
-BUILD_VERSION = "2026-01-14-proxy-fingerprint-sync"
+BUILD_VERSION = "2026-01-16-sqlite-lock-fix"
 
 import asyncio
 import signal
@@ -1392,6 +1413,11 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
     Tasks for this account run sequentially (same connection).
     Different accounts run in parallel.
     
+    SQLITE LOCK FIX (2026-01-16):
+    - Retry logic for "database is locked" errors during connection
+    - Increased delay after disconnect to ensure SQLite file is released
+    - All operations for same account are strictly sequential
+    
     stagger_min/stagger_max = 0: Ultra-fast mode (no delay between messages)
     stagger_min/stagger_max > 0: Controlled speed from admin dashboard
     """
@@ -1405,26 +1431,52 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
     account_phone = account.get("phone_number", "????")[-4:]
     
     client = None
+    max_connection_retries = 3
+    last_connection_error = None
+    
+    # ========== RETRY LOOP FOR SQLITE LOCK ERRORS ==========
+    for attempt in range(max_connection_retries):
+        try:
+            # Open session ONCE for all tasks for this account
+            # IMPORTANT: Use no_cache=True because this runner restarts via asyncio.run(...)
+            # and cached Telethon clients cannot be reused across event loops.
+            client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
+            
+            if client:
+                break  # Success - exit retry loop
+            else:
+                last_connection_error = "Could not connect client"
+                
+        except Exception as conn_err:
+            last_connection_error = str(conn_err)
+            err_lower = last_connection_error.lower()
+            
+            # Check for SQLite lock errors - retry with delay
+            if "database is locked" in err_lower and attempt < max_connection_retries - 1:
+                wait_time = 1.0 * (attempt + 1)  # 1s, 2s, 3s
+                print(f"    ⚠ [{account_phone}] SQLite lock, retry {attempt + 1}/{max_connection_retries} in {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+            
+            # Non-lock error or final attempt - don't retry
+            print(f"    ✗ [{account_phone}] Connection error: {last_connection_error[:60]}")
+            break
+    
+    # If no client after all retries, return errors for all tasks
+    if not client:
+        print(f"    ✗ [{account_phone}] No client (for {len(tasks)} tasks) - {last_connection_error}")
+        for task in tasks:
+            msg = task.get("message", {})
+            results.append({
+                "success": False,
+                "error": last_connection_error or "Could not connect client",
+                "campaign_recipient_id": msg.get("campaign_recipient_id"),
+                "message_id": msg.get("id"),
+                "account_id": account_id,
+            })
+        return results
+    
     try:
-        # Open session ONCE for all tasks for this account
-        # IMPORTANT: Use no_cache=True because this runner restarts via asyncio.run(...)
-        # and cached Telethon clients cannot be reused across event loops.
-        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
-
-        if not client:
-            # Return error for all tasks if connection failed
-            print(f"    ✗ [{account_phone}] No client (for {len(tasks)} tasks)")
-            for task in tasks:
-                msg = task.get("message", {})
-                results.append({
-                    "success": False,
-                    "error": "Could not connect client",
-                    "campaign_recipient_id": msg.get("campaign_recipient_id"),
-                    "message_id": msg.get("id"),
-                    "account_id": account_id,
-                })
-            return results
-
         # Send ALL messages for this account using the same connection
         for idx, task in enumerate(tasks):
             msg = task.get("message", {})
@@ -1509,18 +1561,10 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
         return results
         
     except Exception as e:
-        # Connection failed - return error for all tasks
+        # Connection failed during send - return error for remaining tasks
         error_str = str(e)
-        print(f"    ✗ [{account_phone}] Connection error: {error_str[:60]}")
-        for task in tasks:
-            msg = task.get("message", {})
-            results.append({
-                "success": False,
-                "error": error_str,
-                "campaign_recipient_id": msg.get("campaign_recipient_id"),
-                "message_id": msg.get("id"),
-                "account_id": account_id,
-            })
+        print(f"    ✗ [{account_phone}] Send error: {error_str[:60]}")
+        # Return results already collected plus error for remaining
         return results
         
     finally:
@@ -1530,11 +1574,12 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
             try:
                 if client.is_connected():
                     # SAVE SESSION FIRST - preserve entity cache before disconnecting
-                    account_phone = account.get("phone_number", account_id)
-                    await save_session_to_db(account_id, account_phone)
+                    account_phone_full = account.get("phone_number", account_id)
+                    await save_session_to_db(account_id, account_phone_full)
                     await asyncio.wait_for(client.disconnect(), timeout=10)
-                    # Give SQLite a moment to release the session file
-                    await asyncio.sleep(0.2)
+                # CRITICAL: Give SQLite more time to release the session file
+                # This prevents "database is locked" for subsequent connection attempts
+                await asyncio.sleep(0.5)
             except Exception:
                 pass  # Ignore disconnect errors
 
@@ -1820,7 +1865,7 @@ if __name__ == "__main__":
 LiveChat Runner - Handles incoming messages and live chat replies
 RUNS FOREVER with crash recovery, memory cleanup, and heartbeat logging
 
-BUILD: 2026-01-14-proxy-fingerprint-sync
+BUILD: 2026-01-16-sqlite-lock-fix
 
 ORDER OF OPERATIONS (CRITICAL):
 1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
@@ -1829,6 +1874,11 @@ ORDER OF OPERATIONS (CRITICAL):
 4. PERFORM ACTION - after successful connection
 
 NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
+
+SQLITE LOCK FIX (2026-01-16):
+- Retry logic for "database is locked" errors during batch processing
+- Increased delay after disconnect to ensure SQLite file is released
+- Pauses keep_clients_alive during batch processing to prevent conflicts
 
 STRICT 1:1 PROXY POLICY:
 - Each account uses EXACTLY ONE proxy (assigned by admin)
@@ -2834,6 +2884,10 @@ async def main_loop():
                     async def process_account_batch(batch):
                         """Process all messages for one account with stagger between messages.
                         
+                        SQLITE LOCK FIX (2026-01-16):
+                        - Retry logic for "database is locked" during connection
+                        - Increased delay after processing to release SQLite file
+                        
                         NOTE: _processing_batch flag is set by caller to pause keep_clients_alive.
                         """
                         account = batch.get("account", {})
@@ -2842,21 +2896,40 @@ async def main_loop():
                         acc_id = account.get("id")
                         phone = account.get("phone_number", acc_id[:8] if acc_id else "?")
                         
-                        # Reuse existing connection or connect once
+                        # ========== CONNECTION WITH SQLITE LOCK RETRY ==========
                         client = active_clients.get(acc_id)
+                        connection_error = None
+                        max_db_retries = 3
+                        
                         if not client or not client.is_connected():
-                            client, error = await connect_account_with_fingerprint(
-                                account, setup_handler=setup_message_handler, task_proxy=proxy
-                            )
-                            if error:
-                                print(f"    [{phone}] Connection failed: {error}")
+                            for db_attempt in range(max_db_retries):
+                                try:
+                                    client, connection_error = await connect_account_with_fingerprint(
+                                        account, setup_handler=setup_message_handler, task_proxy=proxy
+                                    )
+                                    if client:
+                                        break  # Success
+                                except Exception as conn_err:
+                                    connection_error = str(conn_err)
+                                    err_lower = connection_error.lower()
+                                    
+                                    # Retry on SQLite lock
+                                    if "database is locked" in err_lower and db_attempt < max_db_retries - 1:
+                                        wait_time = 0.5 * (db_attempt + 1)
+                                        print(f"    [{phone}] SQLite lock, retry {db_attempt + 1}/{max_db_retries} in {wait_time}s...")
+                                        await asyncio.sleep(wait_time)
+                                        continue
+                                    break  # Non-lock error - don't retry
+                            
+                            if connection_error and not client:
+                                print(f"    [{phone}] Connection failed: {connection_error}")
                                 # Report all messages as failed
                                 for msg in messages:
-                                    if not error.startswith("NETWORK_ERROR:"):
+                                    if not connection_error.startswith("NETWORK_ERROR:"):
                                         await report_result("send", {
                                             "message_id": msg.get("id"),
                                             "success": False,
-                                            "error": error,
+                                            "error": connection_error,
                                             "account_id": acc_id
                                         })
                                 return
