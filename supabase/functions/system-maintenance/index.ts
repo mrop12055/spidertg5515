@@ -17,6 +17,7 @@ Deno.serve(async (req) => {
 
     console.log('[system-maintenance] Starting automated maintenance...');
     const stats = {
+      daily_counts_reset: 0,
       stuck_messages_reset: 0,
       stale_account_tasks_cancelled: 0,
       stale_block_tasks_cancelled: 0,
@@ -26,6 +27,28 @@ Deno.serve(async (req) => {
       old_conversations_deleted: 0,
       old_messages_deleted: 0,
     };
+
+    // 0. Reset daily message counts for accounts whose last send was yesterday or earlier
+    // This ensures "messages_sent_today" reflects only today's activity
+    const todayStart = new Date();
+    todayStart.setUTCHours(0, 0, 0, 0);
+    const todayStartIso = todayStart.toISOString();
+    
+    const { data: resetAccounts, error: resetError } = await supabase
+      .from('telegram_accounts')
+      .update({ messages_sent_today: 0 })
+      .gt('messages_sent_today', 0)
+      .or(`last_campaign_send_at.is.null,last_campaign_send_at.lt.${todayStartIso}`)
+      .select('id');
+    
+    if (resetError) {
+      console.error('[system-maintenance] Error resetting daily counts:', resetError);
+    } else {
+      stats.daily_counts_reset = resetAccounts?.length || 0;
+      if (stats.daily_counts_reset > 0) {
+        console.log(`[system-maintenance] Reset daily message counts for ${stats.daily_counts_reset} accounts`);
+      }
+    }
 
     // 1. Reset stuck "sending" messages older than 2 minutes back to "pending"
     const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString();
@@ -241,6 +264,7 @@ Deno.serve(async (req) => {
 
     // Log summary
     const totalCleaned = 
+      stats.daily_counts_reset +
       stats.stuck_messages_reset +
       stats.stale_account_tasks_cancelled +
       stats.stale_block_tasks_cancelled +
