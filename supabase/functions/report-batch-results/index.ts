@@ -337,11 +337,14 @@ serve(async (req) => {
 
       // ========== PARALLEL PROCESS FAILURES ==========
       if (failedResults.length > 0) {
-        // DETECT "Too many requests" from error text - IMMEDIATE restriction, no retries
+        // DETECT rate limit errors from error text - IMMEDIATE restriction, no retries
+        // Includes: "Too many requests", "RPC:FLOOD", "FLOOD" - these are sender issues, not recipient issues
         // This is handled SEPARATELY from flags sent by Python runner
         const tooManyRequestsResults = failedResults.filter((r) => {
           const errorLower = (r.error || '').toLowerCase();
-          return errorLower.includes('too many requests');
+          return errorLower.includes('too many requests') || 
+                 errorLower.includes('rpc:flood') || 
+                 errorLower.includes('flood');
         });
         
         // DETECT FROZEN ACCOUNT errors - account is frozen by Telegram, set to FROZEN status permanently
