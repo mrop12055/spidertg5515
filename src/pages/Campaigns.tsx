@@ -753,108 +753,137 @@ const Campaigns: React.FC = () => {
     setIsStarting(null);
   };
 
+  // Helper function to fetch all recipients with pagination (bypasses 1000 row limit)
+  const fetchAllRecipientsPaginated = async (campaignId: string) => {
+    const PAGE_SIZE = 1000;
+    let allData: any[] = [];
+    let offset = 0;
+    let hasMore = true;
+    
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('campaign_recipients')
+        .select('*')
+        .eq('campaign_id', campaignId)
+        .range(offset, offset + PAGE_SIZE - 1);
+      
+      if (error) throw error;
+      
+      allData = [...allData, ...(data || [])];
+      hasMore = (data?.length || 0) === PAGE_SIZE;
+      offset += PAGE_SIZE;
+    }
+    
+    return allData;
+  };
+
   const handleExportReport = async (campaign: Campaign) => {
     const report = campaignReports.get(campaign.id);
     if (!report) return;
     
-    // Fetch detailed recipients
-    const { data: recipients, error } = await supabase
-      .from('campaign_recipients')
-      .select('*')
-      .eq('campaign_id', campaign.id);
+    toast.info('Fetching all recipients...');
     
-    if (error) {
-      toast.error('Failed to fetch report data');
-      return;
-    }
-
-    // Fetch failed reasons from messages
-    const failedRecipientIds = recipients?.filter(r => r.status === 'failed').map(r => r.id) || [];
-    let failedReasons = new Map<string, string>();
-    
-    if (failedRecipientIds.length > 0) {
-      const { data: failedMessages } = await supabase
-        .from('messages')
-        .select('failed_reason, campaign_recipient_id')
-        .eq('direction', 'outgoing')
-        .in('status', ['failed', 'cancelled'])
-        .in('campaign_recipient_id', failedRecipientIds);
+    try {
+      // Fetch ALL recipients with pagination (no 1000 limit)
+      const recipients = await fetchAllRecipientsPaginated(campaign.id);
       
-      (failedMessages || []).forEach((m: any) => {
-        if (m.campaign_recipient_id && m.failed_reason) {
-          failedReasons.set(m.campaign_recipient_id, m.failed_reason);
+      // Fetch failed reasons from messages (also paginated, chunked to avoid URL limits)
+      const failedRecipientIds = recipients?.filter(r => r.status === 'failed').map(r => r.id) || [];
+      let failedReasons = new Map<string, string>();
+      
+      if (failedRecipientIds.length > 0) {
+        // Chunk IDs to avoid URL length limits (max ~200 per query)
+        const CHUNK_SIZE = 200;
+        for (let i = 0; i < failedRecipientIds.length; i += CHUNK_SIZE) {
+          const chunk = failedRecipientIds.slice(i, i + CHUNK_SIZE);
+          
+          const { data: failedMessages } = await supabase
+            .from('messages')
+            .select('failed_reason, campaign_recipient_id')
+            .eq('direction', 'outgoing')
+            .in('status', ['failed', 'cancelled'])
+            .in('campaign_recipient_id', chunk);
+          
+          (failedMessages || []).forEach((m: any) => {
+            if (m.campaign_recipient_id && m.failed_reason) {
+              failedReasons.set(m.campaign_recipient_id, m.failed_reason);
+            }
+          });
         }
+      }
+
+      // Get sender account details
+      const accountIds = [...new Set(recipients?.map(r => r.sent_by_account_id).filter(Boolean) || [])];
+      const accountsMap = new Map<string, { phone: string; name: string }>();
+      accounts.forEach(a => {
+        accountsMap.set(a.id, { phone: a.phoneNumber, name: a.firstName || '' });
       });
+
+      // Filter recipients by status
+      const allRecipients = recipients || [];
+      const successfulRecipients = allRecipients.filter((r: any) => r.status === 'sent');
+      const failedRecipientsList = allRecipients.filter((r: any) => r.status === 'failed');
+      const pendingRecipients = allRecipients.filter((r: any) => r.status === 'pending');
+
+      // Helper to remove + from phone numbers
+      const cleanPhone = (phone: string | null) => (phone || '').replace(/^\+/, '');
+
+      // Prepare data for each sheet
+      const allData = allRecipients.map((r: any) => ({
+        'Phone Number': cleanPhone(r.phone_number),
+        'Name': r.name || '',
+        'Status': r.status === 'sent' ? 'Successful' : r.status === 'failed' ? 'Failed' : 'Pending',
+        'Error Reason': r.status === 'failed' ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error') : ''
+      }));
+
+      const successfulData = successfulRecipients.map((r: any) => ({
+        'Phone Number': cleanPhone(r.phone_number),
+        'Name': r.name || ''
+      }));
+
+      const failedData = failedRecipientsList.map((r: any) => ({
+        'Phone Number': cleanPhone(r.phone_number),
+        'Name': r.name || '',
+        'Error Reason': failedReasons.get(r.id) || r.failed_reason || 'Unknown error'
+      }));
+
+      const pendingData = pendingRecipients.map((r: any) => ({
+        'Phone Number': cleanPhone(r.phone_number),
+        'Name': r.name || ''
+      }));
+
+      // Create workbook with multiple sheets
+      const workbook = XLSX.utils.book_new();
+      
+      const allSheet = XLSX.utils.json_to_sheet(allData);
+      const successSheet = XLSX.utils.json_to_sheet(successfulData);
+      const failedSheet = XLSX.utils.json_to_sheet(failedData);
+      const pendingSheet = XLSX.utils.json_to_sheet(pendingData);
+
+      // Set column widths for better readability
+      const setColumnWidths = (sheet: XLSX.WorkSheet, widths: number[]) => {
+        sheet['!cols'] = widths.map(w => ({ wch: w }));
+      };
+      
+      setColumnWidths(allSheet, [18, 20, 12, 40]);
+      setColumnWidths(successSheet, [18, 20]);
+      setColumnWidths(failedSheet, [18, 20, 40]);
+      setColumnWidths(pendingSheet, [18, 20]);
+
+      XLSX.utils.book_append_sheet(workbook, allSheet, 'All');
+      XLSX.utils.book_append_sheet(workbook, successSheet, 'Successful');
+      XLSX.utils.book_append_sheet(workbook, failedSheet, 'Failed');
+      XLSX.utils.book_append_sheet(workbook, pendingSheet, 'Pending');
+
+      // Generate and download Excel file
+      const campaignNameClean = campaign.name.replace(/[^a-zA-Z0-9]/g, '_');
+      XLSX.writeFile(workbook, `Campaign_${campaignNameClean}_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
+      
+      toast.success(`Exported ${allRecipients.length} recipients (${successfulRecipients.length} success, ${failedRecipientsList.length} failed, ${pendingRecipients.length} pending)`);
+    } catch (error) {
+      console.error('Export error:', error);
+      toast.error('Failed to export report data');
     }
-
-    // Get sender account details
-    const accountIds = [...new Set(recipients?.map(r => r.sent_by_account_id).filter(Boolean) || [])];
-    const accountsMap = new Map<string, { phone: string; name: string }>();
-    accounts.forEach(a => {
-      accountsMap.set(a.id, { phone: a.phoneNumber, name: a.firstName || '' });
-    });
-
-    // Filter recipients by status
-    const allRecipients = recipients || [];
-    const successfulRecipients = allRecipients.filter((r: any) => r.status === 'sent');
-    const failedRecipientsList = allRecipients.filter((r: any) => r.status === 'failed');
-    const pendingRecipients = allRecipients.filter((r: any) => r.status === 'pending');
-
-    // Helper to remove + from phone numbers
-    const cleanPhone = (phone: string | null) => (phone || '').replace(/^\+/, '');
-
-    // Prepare data for each sheet
-    const allData = allRecipients.map((r: any) => ({
-      'Phone Number': cleanPhone(r.phone_number),
-      'Name': r.name || '',
-      'Status': r.status === 'sent' ? 'Successful' : r.status === 'failed' ? 'Failed' : 'Pending',
-      'Error Reason': r.status === 'failed' ? (failedReasons.get(r.id) || r.failed_reason || 'Unknown error') : ''
-    }));
-
-    const successfulData = successfulRecipients.map((r: any) => ({
-      'Phone Number': cleanPhone(r.phone_number),
-      'Name': r.name || ''
-    }));
-
-    const failedData = failedRecipientsList.map((r: any) => ({
-      'Phone Number': cleanPhone(r.phone_number),
-      'Name': r.name || '',
-      'Error Reason': failedReasons.get(r.id) || r.failed_reason || 'Unknown error'
-    }));
-
-    const pendingData = pendingRecipients.map((r: any) => ({
-      'Phone Number': cleanPhone(r.phone_number),
-      'Name': r.name || ''
-    }));
-
-    // Create workbook with multiple sheets
-    const workbook = XLSX.utils.book_new();
-    
-    const allSheet = XLSX.utils.json_to_sheet(allData);
-    const successSheet = XLSX.utils.json_to_sheet(successfulData);
-    const failedSheet = XLSX.utils.json_to_sheet(failedData);
-    const pendingSheet = XLSX.utils.json_to_sheet(pendingData);
-
-    // Set column widths for better readability
-    const setColumnWidths = (sheet: XLSX.WorkSheet, widths: number[]) => {
-      sheet['!cols'] = widths.map(w => ({ wch: w }));
-    };
-    
-    setColumnWidths(allSheet, [18, 20, 12, 40]);
-    setColumnWidths(successSheet, [18, 20]);
-    setColumnWidths(failedSheet, [18, 20, 40]);
-    setColumnWidths(pendingSheet, [18, 20]);
-
-    XLSX.utils.book_append_sheet(workbook, allSheet, 'All');
-    XLSX.utils.book_append_sheet(workbook, successSheet, 'Successful');
-    XLSX.utils.book_append_sheet(workbook, failedSheet, 'Failed');
-    XLSX.utils.book_append_sheet(workbook, pendingSheet, 'Pending');
-
-    // Generate and download Excel file
-    const campaignNameClean = campaign.name.replace(/[^a-zA-Z0-9]/g, '_');
-    XLSX.writeFile(workbook, `Campaign_${campaignNameClean}_${format(new Date(), 'yyyyMMdd_HHmmss')}.xlsx`);
-    
-    toast.success(`Exported ${allRecipients.length} recipients (${successfulRecipients.length} success, ${failedRecipientsList.length} failed, ${pendingRecipients.length} pending)`);
   };
 
   const getStatusColor = (status: Campaign['status']) => {
