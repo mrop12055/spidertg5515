@@ -118,11 +118,11 @@ CONNECTION_TIMEOUT = 10      # Telegram connection timeout
 CONNECTION_RETRIES = 1       # Fail fast - no proxy switching
 RETRY_DELAY = 0              # No retry delay
 
-# HTTP Timeouts - split by purpose
-HTTP_TIMEOUT_DISPATCH = 30   # Task fetching (get-next-task, get-batch-tasks)
-HTTP_TIMEOUT_REPORT = 10     # Reporting (report-task-result, report-batch-results)
-HTTP_TIMEOUT_UPLOAD = 30     # Media uploads (photos, videos)
-HTTP_TIMEOUT_DEFAULT = 10    # Other REST calls
+# HTTP Timeouts - split by purpose (increased for high-load 300+ clients)
+HTTP_TIMEOUT_DISPATCH = 45   # Task fetching (get-next-task, get-batch-tasks)
+HTTP_TIMEOUT_REPORT = 30     # Reporting (report-task-result, report-batch-results) - was 10, increased for 300+ clients
+HTTP_TIMEOUT_UPLOAD = 60     # Media uploads (photos, videos) - was 30, increased for DatabaseTimeout
+HTTP_TIMEOUT_DEFAULT = 20    # Other REST calls
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
