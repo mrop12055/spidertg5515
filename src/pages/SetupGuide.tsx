@@ -119,8 +119,7 @@ CONNECTION_RETRIES = 1       # Fail fast - no proxy switching
 RETRY_DELAY = 0              # No retry delay
 
 # HTTP Timeouts - split by purpose (increased for high-load 300+ clients)
-HTTP_TIMEOUT_DISPATCH = 45   # Task fetching (get-next-task, get-batch-tasks) - general
-HTTP_TIMEOUT_LIVECHAT_POLL = 15  # LiveChat polling - SHORT timeout for fast retry (fail fast, retry fast)
+HTTP_TIMEOUT_DISPATCH = 45   # Task fetching (get-next-task, get-batch-tasks)
 HTTP_TIMEOUT_REPORT = 30     # Reporting (report-task-result, report-batch-results) - was 10, increased for 300+ clients
 HTTP_TIMEOUT_UPLOAD = 60     # Media uploads (photos, videos) - was 30, increased for DatabaseTimeout
 HTTP_TIMEOUT_DEFAULT = 20    # Other REST calls
@@ -1905,7 +1904,7 @@ from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
     retry_proxy_error_accounts,
-    HTTP_TIMEOUT_UPLOAD, HTTP_TIMEOUT_LIVECHAT_POLL
+    HTTP_TIMEOUT_UPLOAD
 )
 from fingerprint_generator import generate_fingerprint
 from config import SUPABASE_URL, SUPABASE_KEY
@@ -1915,8 +1914,6 @@ from urllib.parse import urlparse
 _u = urlparse(SUPABASE_URL)
 SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
-# LiveChat uses the backend functions endpoint
-BACKEND_URL = f"{SUPABASE_URL_BASE}/functions/v1"
 RUNNING = True
 CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
 HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
@@ -2691,69 +2688,13 @@ async def keep_clients_alive():
                 await asyncio.sleep(0.5)
 
 
-# ========== DEDICATED LIVECHAT POLLING (FAST TIMEOUT) ==========
-# Separate from regular get_next_task to use short timeout for fast retry on failures
-_livechat_http_timeout = HTTP_TIMEOUT_LIVECHAT_POLL  # Start with default, can be updated by server
-
-async def get_livechat_task() -> dict:
-    """
-    Get next task with dedicated SHORT timeout for livechat polling.
-    
-    KEY OPTIMIZATION:
-    - Uses 15s timeout instead of 45s (fail fast, retry fast)
-    - On timeout, returns immediately for fast retry (100ms)
-    - Server response includes httpTimeoutSeconds to dynamically adjust
-    - Reduces 60-120s delays to under 5 seconds
-    """
-    global _livechat_http_timeout
-    http = get_http_client()
-    
-    try:
-        response = await http.post(
-            f"{BACKEND_URL}/get-next-task",
-            json={"runner": "livechat"},
-            headers={"Authorization": f"Bearer {SUPABASE_KEY}"},
-            timeout=_livechat_http_timeout  # Use short timeout (default 15s)
-        )
-        
-        if response.status_code == 200:
-            task = response.json()
-            
-            # Update timeout from server settings if provided (for future requests)
-            settings = task.get("settings", {})
-            if "httpTimeoutSeconds" in settings:
-                new_timeout = settings["httpTimeoutSeconds"]
-                if new_timeout != _livechat_http_timeout:
-                    print(f"  [POLL] Updated HTTP timeout: {_livechat_http_timeout}s -> {new_timeout}s")
-                    _livechat_http_timeout = new_timeout
-            
-            return task
-        else:
-            print(f"  [POLL] Server error {response.status_code}")
-            return {"task": "wait", "seconds": 1}
-            
-    except httpx.ReadTimeout:
-        # FAST RETRY on timeout - this is the key optimization!
-        # Instead of waiting 45s+ for timeout, we fail in 15s and retry in 100ms
-        print(f"  [POLL] Timeout ({_livechat_http_timeout}s) - fast retry")
-        return {"task": "wait", "seconds": 0.1}  # Retry in 100ms
-        
-    except httpx.ConnectError as e:
-        print(f"  [POLL] Connection error: {str(e)[:40]} - retry in 2s")
-        return {"task": "wait", "seconds": 2}
-        
-    except Exception as e:
-        print(f"  [POLL] Unexpected error: {str(e)[:40]} - retry in 1s")
-        return {"task": "wait", "seconds": 1}
-
-
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (FAST POLLING BUILD)")
-    print("  BUILD: 2026-01-17-fast-poll")
+    print("  LiveChat Runner (1-HOUR SYNC WINDOW)")
+    print("  BUILD: 2026-01-11-1hour-sync")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⚡ Uses 15s timeout for fast retry")
-    print("  🔄 500ms polling interval (configurable)")
+    print("  ⏰ Only syncs messages from last 1 hour")
+    print("  🔄 Skips older messages to prevent duplicates")
     print("  📨 Tracks last synced IDs per sender")
     print("=" * 50)
     print("=" * 50)
@@ -2810,8 +2751,7 @@ async def main_loop():
                 gc.collect()
                 last_cleanup = time.time()
             
-            # Use dedicated short timeout for livechat polling (fail fast, retry fast)
-            task = await get_livechat_task()
+            task = await get_next_task(runner="livechat")
             task_type = task.get("task", "wait")
             
             
