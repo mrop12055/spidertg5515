@@ -50,6 +50,8 @@ export interface LivechatSettings {
   sameAccountStaggerMin: number;  // Min delay (seconds) between messages for SAME account
   sameAccountStaggerMax: number;  // Max delay (seconds)
   enableParallel: boolean;        // Master toggle for parallel mode
+  pollingIntervalMs: number;      // How often to poll for new messages (default: 500ms)
+  httpTimeoutSeconds: number;     // Timeout for get_next_task calls (default: 15s - fail fast)
 }
 
 export interface AllSettings {
@@ -104,6 +106,8 @@ const defaultSettings: AllSettings = {
     sameAccountStaggerMin: 1,
     sameAccountStaggerMax: 2,
     enableParallel: true,
+    pollingIntervalMs: 500,       // 500ms polling for fast response
+    httpTimeoutSeconds: 15,       // 15s timeout - fail fast, retry fast
   },
 };
 

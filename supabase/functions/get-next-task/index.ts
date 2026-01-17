@@ -48,6 +48,8 @@ serve(async (req) => {
         sameAccountStaggerMin: 1,
         sameAccountStaggerMax: 2,
         enableParallel: true,
+        pollingIntervalMs: 500,       // 500ms polling for fast response
+        httpTimeoutSeconds: 15,       // 15s timeout - fail fast, retry fast
       };
       
       const { data: livechatSettingsData } = await supabase
@@ -62,6 +64,8 @@ serve(async (req) => {
           sameAccountStaggerMin: (val.sameAccountStaggerMin as number) ?? 1,
           sameAccountStaggerMax: (val.sameAccountStaggerMax as number) ?? 2,
           enableParallel: (val.enableParallel as boolean) ?? true,
+          pollingIntervalMs: (val.pollingIntervalMs as number) ?? 500,
+          httpTimeoutSeconds: (val.httpTimeoutSeconds as number) ?? 15,
         };
       }
       
@@ -339,11 +343,11 @@ serve(async (req) => {
         })
         .filter(Boolean);
 
-      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening`);
+      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening (poll=${livechatSettings.pollingIntervalMs}ms, timeout=${livechatSettings.httpTimeoutSeconds}s)`);
 
       return new Response(JSON.stringify({
         task: "wait",
-        seconds: 0,  // Instant - no polling interval needed
+        seconds: livechatSettings.pollingIntervalMs / 1000,  // Convert ms to seconds for polling interval
         settings: livechatSettings,
         accounts: validAccounts,
       }), {
