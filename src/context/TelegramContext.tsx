@@ -574,17 +574,24 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                   conv.id === c.id
                     ? {
                         ...conv,
-                        unreadCount: c.unread_count || 0,
+                        unreadCount: c.unread_count ?? conv.unreadCount,
                         updatedAt: new Date(c.updated_at || c.last_message_at || conv.updatedAt),
+                        lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : conv.lastMessageAt,
+                        lastMessageContent: c.last_message_content ?? conv.lastMessageContent,
                         recipientName: c.recipient_name || conv.recipientName,
                         recipientUsername: c.recipient_username || conv.recipientUsername,
                         isActive: c.is_active ?? conv.isActive,
                         blockedByRecipient: c.blocked_by_recipient ?? conv.blockedByRecipient,
                         firstMessageSent: c.first_message_sent ?? conv.firstMessageSent,
+                        hasReply: c.has_reply ?? conv.hasReply,
                       }
                     : conv
                 )
-                .sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime())
+                .sort((a, b) => {
+                  const aTime = a.lastMessageAt?.getTime() || a.updatedAt.getTime();
+                  const bTime = b.lastMessageAt?.getTime() || b.updatedAt.getTime();
+                  return bTime - aTime;
+                })
             );
           } else if (payload.eventType === 'DELETE') {
             const oldRow = payload.old as any;
