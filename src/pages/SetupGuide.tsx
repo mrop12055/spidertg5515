@@ -1915,6 +1915,8 @@ from urllib.parse import urlparse
 _u = urlparse(SUPABASE_URL)
 SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
+# LiveChat uses the backend functions endpoint
+BACKEND_URL = f"{SUPABASE_URL_BASE}/functions/v1"
 RUNNING = True
 CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
 HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
