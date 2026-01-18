@@ -2338,12 +2338,12 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                 sender_key = f"{account_id}_{sender_id}"
                 last_synced_id = last_synced_msg_ids.get(sender_key, 0)
                 
-                # Fetch unread messages (limit to last 1 hour)
+                # Fetch unread messages (limit to last 48 hours)
                 messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 50))
                 
-                # Calculate 1 hour ago cutoff
+                # Calculate 48 hours ago cutoff (was 1 hour)
                 from datetime import datetime, timezone, timedelta
-                one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+                cutoff_time = datetime.now(timezone.utc) - timedelta(hours=48)
                 
                 max_msg_id = last_synced_id
                 for msg in reversed(messages):  # Process oldest first
@@ -2352,12 +2352,15 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                     if not msg.text and not msg.photo:  # Skip non-text/photo
                         continue
                     
-                    # SKIP if message is older than 1 hour
-                    if msg.date and msg.date < one_hour_ago:
+                    # SKIP if we've already processed this message ID (prevents duplicates)
+                    if msg.id <= last_synced_id:
                         skipped_count += 1
                         continue
                     
-                    # SKIP if we've already processed this message ID
+                    # SKIP if message is older than 48 hours
+                    if msg.date and msg.date < cutoff_time:
+                        skipped_count += 1
+                        continue
                     if msg.id <= last_synced_id:
                         skipped_count += 1
                         continue
