@@ -159,7 +159,7 @@ serve(async (req) => {
               .in("id", campaignIds.length > 0 ? campaignIds : ["__none__"]),
             supabase
               .from("telegram_accounts")
-              .select("id, messages_sent_today")
+              .select("id, messages_sent_today, last_campaign_send_at")
               .in("id", accountIds.length > 0 ? accountIds : ["__none__"]),
           ]);
 
@@ -179,7 +179,16 @@ serve(async (req) => {
 
         const existingRecipientIds = new Set(existingMessages.map((m) => m.campaign_recipient_id));
         const campaignSentCounts = new Map(campaigns.map((c) => [c.id, c.sent_count || 0]));
-        const accountMsgCounts = new Map(accounts.map((a) => [a.id, a.messages_sent_today || 0]));
+        
+        // Reset counter if last_campaign_send_at was before today (fixes accumulation bug)
+        const todayStart = new Date();
+        todayStart.setUTCHours(0, 0, 0, 0);
+        const todayStartIso = todayStart.toISOString();
+        const accountMsgCounts = new Map(accounts.map((a) => {
+          const lastSend = a.last_campaign_send_at;
+          const needsReset = !lastSend || lastSend < todayStartIso;
+          return [a.id, needsReset ? 0 : (a.messages_sent_today || 0)];
+        }));
 
         // Determine new conversations needed
         const newConversations: any[] = [];
