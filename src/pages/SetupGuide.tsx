@@ -2773,45 +2773,96 @@ async def main_loop():
     accounts = await fetch_active_accounts()
     
     if accounts:
-        print(f"[STARTUP] ⚡ Starting PARALLEL connection of {len(accounts)} accounts...")
-        start_time = time.time()
+        # ===== PRE-CONNECTION VALIDATION =====
+        print(f"[PRE-CHECK] Validating {len(accounts)} accounts for proxy & fingerprint...")
+        accounts_with_proxy = 0
+        accounts_with_fingerprint = 0
+        accounts_needing_fingerprint = 0
+        accounts_skipped = 0
         
-        # Create all connection tasks at once - NO AWAIT inside loop
-        connection_tasks = []
+        valid_accounts = []
         for acc in accounts:
-            acc_id = acc.get("id")
             phone = acc.get("phone_number", "???")[-4:]
+            proxy_data = acc.get("proxy")
             
-            async def connect_one(a_id, a_phone, a_acc):
-                try:
-                    client, error = await asyncio.wait_for(
-                        connect_account_with_fingerprint(a_acc, setup_handler=setup_message_handler, task_proxy=a_acc.get("proxy")),
-                        timeout=CONNECT_TIMEOUT_SECONDS
-                    )
-                    return a_id, client, error, a_phone
-                except asyncio.TimeoutError:
-                    return a_id, None, "TIMEOUT", a_phone
-                except Exception as e:
-                    return a_id, None, str(e), a_phone
-            
-            # Add task to list (not awaited yet)
-            connection_tasks.append(connect_one(acc_id, phone, acc))
-        
-        # Execute ALL connections in parallel at the same time
-        print(f"[STARTUP] ⏳ Awaiting {len(connection_tasks)} parallel connections...")
-        results = await asyncio.gather(*connection_tasks, return_exceptions=True)
-        
-        elapsed = time.time() - start_time
-        success_count = 0
-        for result in results:
-            if isinstance(result, Exception):
+            # Double-check proxy exists (should always pass due to DB filter)
+            if not proxy_data or not proxy_data.get("host"):
+                print(f"  ⛔ [{phone}] SKIP - No proxy assigned")
+                accounts_skipped += 1
                 continue
-            acc_id, client, error, phone = result
-            if client:
-                connected_ids.add(acc_id)
-                success_count += 1
+            
+            accounts_with_proxy += 1
+            
+            # Check fingerprint status
+            if acc.get("device_model") and acc.get("system_version"):
+                accounts_with_fingerprint += 1
+            else:
+                accounts_needing_fingerprint += 1
+            
+            valid_accounts.append(acc)
         
-        print(f"[STARTUP] ✓ Connected {success_count}/{len(accounts)} accounts in {elapsed:.1f}s (PARALLEL)")
+        print(f"[PRE-CHECK] ✓ {len(valid_accounts)} accounts validated:")
+        print(f"            └─ {accounts_with_proxy} with proxy ✓")
+        print(f"            └─ {accounts_with_fingerprint} with fingerprint ✓")
+        if accounts_needing_fingerprint > 0:
+            print(f"            └─ {accounts_needing_fingerprint} need fingerprint (will auto-generate)")
+        if accounts_skipped > 0:
+            print(f"            └─ ⛔ {accounts_skipped} skipped (no proxy)")
+        
+        # Use only validated accounts
+        accounts = valid_accounts
+        
+        if not accounts:
+            print("[STARTUP] ⚠ No valid accounts to connect!")
+        else:
+            print(f"[STARTUP] ⚡ Starting PARALLEL connection of {len(accounts)} accounts...")
+            start_time = time.time()
+            
+            # Create all connection tasks at once - NO AWAIT inside loop
+            connection_tasks = []
+            for acc in accounts:
+                acc_id = acc.get("id")
+                phone = acc.get("phone_number", "???")[-4:]
+                
+                async def connect_one(a_id, a_phone, a_acc):
+                    try:
+                        client, error = await asyncio.wait_for(
+                            connect_account_with_fingerprint(a_acc, setup_handler=setup_message_handler, task_proxy=a_acc.get("proxy")),
+                            timeout=CONNECT_TIMEOUT_SECONDS
+                        )
+                        return a_id, client, error, a_phone
+                    except asyncio.TimeoutError:
+                        return a_id, None, "TIMEOUT", a_phone
+                    except Exception as e:
+                        return a_id, None, str(e), a_phone
+                
+                # Add task to list (not awaited yet)
+                connection_tasks.append(connect_one(acc_id, phone, acc))
+            
+            # Execute ALL connections in parallel at the same time
+            print(f"[STARTUP] ⏳ Awaiting {len(connection_tasks)} parallel connections...")
+            results = await asyncio.gather(*connection_tasks, return_exceptions=True)
+            
+            elapsed = time.time() - start_time
+            success_count = 0
+            fail_count = 0
+            for result in results:
+                if isinstance(result, Exception):
+                    print(f"  ⚠ Connection exception: {str(result)[:50]}")
+                    fail_count += 1
+                    continue
+                acc_id, client, error, phone = result
+                if client:
+                    connected_ids.add(acc_id)
+                    success_count += 1
+                else:
+                    fail_count += 1
+                    if error:
+                        print(f"  ⚠ [{phone}] Failed: {str(error)[:60]}")
+            
+            print(f"[STARTUP] ✓ Connected {success_count}/{len(accounts)} accounts in {elapsed:.1f}s (PARALLEL)")
+            if fail_count > 0:
+                print(f"[STARTUP] ⚠ {fail_count} accounts failed to connect")
     
     # ========== PHASE 2: FETCH UNREAD MESSAGES IN PARALLEL ==========
     if connected_ids:
