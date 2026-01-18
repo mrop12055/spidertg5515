@@ -732,7 +732,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                 "proxy_id": proxy_id
             }))
         
-        print(f"  [OK] Connected: {account['phone_number']}")
+        print(f"  ✓ [OK] Connected: {account['phone_number']}")
         return client
     except AuthKeyUnregisteredError:
         print(f"  [EXPIRED] {account['phone_number']}: Auth key unregistered")
@@ -2034,30 +2034,31 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
     Returns: (client, error_str or None)
     """
     account_id = account.get("id")
-    phone = account.get("phone_number", "???")[-4:]
+    phone_full = account.get("phone_number", "???")
+    phone = phone_full[-4:]
     
     # ===== STEP 1: CHECK PROXY FIRST (MANDATORY) =====
     # Check proxy BEFORE fingerprint generation to avoid wasting fingerprints
     proxy = task_proxy or account.get("proxy")
     if not proxy:
-        print(f"  [{phone}] STEP 1: NO PROXY ASSIGNED - skipping connection (assign proxy in admin dashboard)")
+        print(f"  ⛔ [{phone}] SKIP - No proxy assigned")
         return None, "No proxy assigned"
     
     # Validate proxy has required fields
     if not proxy.get("host") or not proxy.get("port"):
-        print(f"  [{phone}] STEP 1: INVALID PROXY - missing host/port (fix proxy in admin dashboard)")
+        print(f"  ⛔ [{phone}] SKIP - Invalid proxy (missing host/port)")
         return None, "Invalid proxy configuration"
     
     # Check proxy status if available
     proxy_status = proxy.get("status")
     if proxy_status and proxy_status != "active":
-        print(f"  [{phone}] STEP 1: PROXY NOT ACTIVE (status: {proxy_status}) - update proxy in admin dashboard")
+        print(f"  ⛔ [{phone}] SKIP - Proxy not active (status: {proxy_status})")
         return None, f"Proxy not active (status: {proxy_status})"
     
     # Store proxy in account for get_or_create_client
     account["proxy"] = proxy
     proxy_id = proxy.get("id")
-    print(f"  [{phone}] STEP 1: Proxy validated: {proxy.get('host')}:{proxy.get('port')}")
+    print(f"  ✓ [PROXY] Active: {proxy.get('host')}:{proxy.get('port')}")
     
     # ===== STEP 2: FINGERPRINT - Generate/retrieve and save to DB SYNCHRONOUSLY =====
     device_model = account.get("device_model")
@@ -2066,7 +2067,6 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
     
     # If no fingerprint in DB, generate ONCE and save SYNCHRONOUSLY before proceeding
     if not fingerprint_exists:
-        print(f"  [{phone}] STEP 2: Generating fingerprint (saving to DB)...")
         fp = generate_fingerprint()
         account["device_model"] = fp["device_model"]
         account["system_version"] = fp["system_version"]
@@ -2084,17 +2084,14 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
                 "lang_code": fp["lang_code"],
                 "system_lang_code": fp["system_lang_code"]
             })
-            print(f"  [{phone}] STEP 2: Fingerprint saved to database: {fp['device_model']} ({fp['system_version']})")
+            print(f"  ✓ [FP] Generated: {fp['device_model']} ({fp['system_version']})")
         except Exception as fp_err:
-            print(f"  [{phone}] STEP 2 WARN: Could not save fingerprint to DB: {fp_err}")
+            print(f"  ⚠ [FP] Save failed: {fp_err}")
     else:
-        print(f"  [{phone}] STEP 2: Using existing fingerprint: {device_model} ({system_version})")
+        print(f"  ✓ [FP] Using: {device_model} ({system_version})")
     
     # ===== STEP 3: CONNECT - Using proxy + fingerprint =====
-    # Proxy is validated in Step 1
-    # Fingerprint is already saved to DB in Step 2
-    # Now connect with both - SINGLE attempt, no switching
-    print(f"  [{phone}] STEP 3: Connecting with proxy + fingerprint...")
+    print(f"  [CONNECT] {phone_full} (with 3 retries)...")
     try:
         client = await get_or_create_client(
             account, 
@@ -2106,7 +2103,7 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
             return client, None
         else:
             # Connection failed - report proxy error
-            print(f"  [{phone}] PROXY FAILED - update proxy in admin dashboard")
+            print(f"  ⛔ [{phone}] PROXY FAILED")
             await report_result("proxy_error", {
                 "account_id": account_id,
                 "proxy_id": proxy_id,
@@ -2118,11 +2115,11 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
         
         # Check if this is a LOCAL network error
         if is_network_error(error_str) or "winerror 64" in error_str:
-            print(f"  [{phone}] NETWORK ERROR (local connection issue): {str(e)[:50]}")
+            print(f"  ⚠ [{phone}] NETWORK ERROR: {str(e)[:40]}")
             return None, f"NETWORK_ERROR:{e}"
         
         # Proxy failed - report to admin
-        print(f"  [{phone}] PROXY ERROR: {str(e)[:50]} - update proxy in admin dashboard")
+        print(f"  ⛔ [{phone}] PROXY ERROR: {str(e)[:40]}")
         await report_result("proxy_error", {
             "account_id": account_id,
             "proxy_id": proxy_id,
@@ -2778,41 +2775,20 @@ async def main_loop():
     accounts = await fetch_active_accounts()
     
     if accounts:
-        # ===== PRE-CONNECTION VALIDATION =====
-        print(f"[PRE-CHECK] Validating {len(accounts)} accounts for proxy & fingerprint...")
-        accounts_with_proxy = 0
-        accounts_with_fingerprint = 0
-        accounts_needing_fingerprint = 0
-        accounts_skipped = 0
-        
+        # ===== QUICK VALIDATION (silent unless issues) =====
         valid_accounts = []
+        skipped = 0
         for acc in accounts:
-            phone = acc.get("phone_number", "???")[-4:]
             proxy_data = acc.get("proxy")
-            
-            # Double-check proxy exists (should always pass due to DB filter)
             if not proxy_data or not proxy_data.get("host"):
+                phone = acc.get("phone_number", "???")[-4:]
                 print(f"  ⛔ [{phone}] SKIP - No proxy assigned")
-                accounts_skipped += 1
+                skipped += 1
                 continue
-            
-            accounts_with_proxy += 1
-            
-            # Check fingerprint status
-            if acc.get("device_model") and acc.get("system_version"):
-                accounts_with_fingerprint += 1
-            else:
-                accounts_needing_fingerprint += 1
-            
             valid_accounts.append(acc)
         
-        print(f"[PRE-CHECK] ✓ {len(valid_accounts)} accounts validated:")
-        print(f"            └─ {accounts_with_proxy} with proxy ✓")
-        print(f"            └─ {accounts_with_fingerprint} with fingerprint ✓")
-        if accounts_needing_fingerprint > 0:
-            print(f"            └─ {accounts_needing_fingerprint} need fingerprint (will auto-generate)")
-        if accounts_skipped > 0:
-            print(f"            └─ ⛔ {accounts_skipped} skipped (no proxy)")
+        if skipped > 0:
+            print(f"[STARTUP] ⚠ Skipped {skipped} accounts without proxy")
         
         # Use only validated accounts
         accounts = valid_accounts
@@ -2820,7 +2796,7 @@ async def main_loop():
         if not accounts:
             print("[STARTUP] ⚠ No valid accounts to connect!")
         else:
-            print(f"[STARTUP] ⚡ Starting PARALLEL connection of {len(accounts)} accounts...")
+            print(f"[STARTUP] Connecting {len(accounts)} accounts in PARALLEL...")
             start_time = time.time()
             
             # Create all connection tasks at once - NO AWAIT inside loop
@@ -2845,7 +2821,6 @@ async def main_loop():
                 connection_tasks.append(connect_one(acc_id, phone, acc))
             
             # Execute ALL connections in parallel at the same time
-            print(f"[STARTUP] ⏳ Awaiting {len(connection_tasks)} parallel connections...")
             results = await asyncio.gather(*connection_tasks, return_exceptions=True)
             
             elapsed = time.time() - start_time
@@ -2853,7 +2828,6 @@ async def main_loop():
             fail_count = 0
             for result in results:
                 if isinstance(result, Exception):
-                    print(f"  ⚠ Connection exception: {str(result)[:50]}")
                     fail_count += 1
                     continue
                 acc_id, client, error, phone = result
@@ -2862,18 +2836,11 @@ async def main_loop():
                     success_count += 1
                 else:
                     fail_count += 1
-                    if error:
-                        print(f"  ⚠ [{phone}] Failed: {str(error)[:60]}")
             
-            print(f"[STARTUP] ✓ Connected {success_count}/{len(accounts)} accounts in {elapsed:.1f}s (PARALLEL)")
-            if fail_count > 0:
-                print(f"[STARTUP] ⚠ {fail_count} accounts failed to connect")
+            print(f"[STARTUP] ✓ Connected {success_count}/{len(accounts)} in {elapsed:.1f}s")
     
-    # ========== PHASE 2: FETCH UNREAD MESSAGES IN PARALLEL ==========
+    # ========== PHASE 2: SYNC MESSAGES IN PARALLEL ==========
     if connected_ids:
-        print(f"[STARTUP] ⚡ Syncing unread messages for {len(connected_ids)} accounts in PARALLEL...")
-        start_time = time.time()
-        
         # Build account lookup
         account_map = {acc.get("id"): acc for acc in accounts}
         
@@ -2889,9 +2856,6 @@ async def main_loop():
         # Execute ALL syncs in parallel
         if sync_tasks:
             await asyncio.gather(*sync_tasks, return_exceptions=True)
-        
-        elapsed = time.time() - start_time
-        print(f"[STARTUP] ✓ Synced {len(sync_tasks)} accounts in {elapsed:.1f}s (PARALLEL)")
     
     # ========== PHASE 3: START BACKGROUND TASK ==========
     asyncio.create_task(keep_clients_alive())
