@@ -2941,12 +2941,8 @@ async def main_loop():
                                         })
                                 return
                         
-                        # Send messages with stagger between same-account messages
-                        for i, msg in enumerate(messages):
-                            if i > 0 and stagger_max > 0:
-                                delay = random.uniform(stagger_min, stagger_max)
-                                await asyncio.sleep(delay)
-                            
+                        # Send ALL messages for this account in PARALLEL (no stagger)
+                        async def send_single_message(msg):
                             recipient = msg.get("recipient") or msg.get("recipient_telegram_id") or msg.get("recipient_phone")
                             success, send_error = await send_message(
                                 client, recipient, msg.get("content", ""), msg.get("media_url")
@@ -2959,6 +2955,12 @@ async def main_loop():
                                     "error": send_error,
                                     "account_id": acc_id
                                 })
+                            return success, send_error
+                        
+                        await asyncio.gather(
+                            *[send_single_message(msg) for msg in messages],
+                            return_exceptions=True
+                        )
                         
                         # SAVE SESSION after batch - preserves entity cache
                         if acc_id:
