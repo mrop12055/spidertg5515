@@ -2768,49 +2768,74 @@ async def main_loop():
     last_proxy_retry = time.time()
     iteration_count = 0
     
-    # ========== PHASE 1: CONNECT ALL ACCOUNTS FIRST ==========
+    # ========== PHASE 1: CONNECT ALL ACCOUNTS IN PARALLEL ==========
     print("[STARTUP] Fetching all active accounts with proxy...")
     accounts = await fetch_active_accounts()
     
     if accounts:
-        print(f"[STARTUP] Connecting {len(accounts)} accounts with proxy+fingerprint...")
+        print(f"[STARTUP] ⚡ Starting PARALLEL connection of {len(accounts)} accounts...")
+        start_time = time.time()
         
-        async def connect_one(acc):
+        # Create all connection tasks at once - NO AWAIT inside loop
+        connection_tasks = []
+        for acc in accounts:
             acc_id = acc.get("id")
             phone = acc.get("phone_number", "???")[-4:]
-            try:
-                client, error = await asyncio.wait_for(
-                    connect_account_with_fingerprint(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")),
-                    timeout=CONNECT_TIMEOUT_SECONDS
-                )
-                return acc_id, client, error, phone
-            except asyncio.TimeoutError:
-                return acc_id, None, "TIMEOUT", phone
-            except Exception as e:
-                return acc_id, None, str(e), phone
+            
+            async def connect_one(a_id, a_phone, a_acc):
+                try:
+                    client, error = await asyncio.wait_for(
+                        connect_account_with_fingerprint(a_acc, setup_handler=setup_message_handler, task_proxy=a_acc.get("proxy")),
+                        timeout=CONNECT_TIMEOUT_SECONDS
+                    )
+                    return a_id, client, error, a_phone
+                except asyncio.TimeoutError:
+                    return a_id, None, "TIMEOUT", a_phone
+                except Exception as e:
+                    return a_id, None, str(e), a_phone
+            
+            # Add task to list (not awaited yet)
+            connection_tasks.append(connect_one(acc_id, phone, acc))
         
-        results = await asyncio.gather(*[connect_one(acc) for acc in accounts], return_exceptions=True)
+        # Execute ALL connections in parallel at the same time
+        print(f"[STARTUP] ⏳ Awaiting {len(connection_tasks)} parallel connections...")
+        results = await asyncio.gather(*connection_tasks, return_exceptions=True)
         
+        elapsed = time.time() - start_time
+        success_count = 0
         for result in results:
             if isinstance(result, Exception):
                 continue
             acc_id, client, error, phone = result
             if client:
                 connected_ids.add(acc_id)
+                success_count += 1
         
-        print(f"[STARTUP] Connected {len(connected_ids)}/{len(accounts)} accounts")
+        print(f"[STARTUP] ✓ Connected {success_count}/{len(accounts)} accounts in {elapsed:.1f}s (PARALLEL)")
     
-    # ========== PHASE 2: FETCH UNREAD MESSAGES (48h) ==========
-    print("[STARTUP] Syncing missed messages (48h window, skipping already fetched)...")
-    for acc_id in list(connected_ids):
-        client = active_clients.get(acc_id)
-        if client:
-            phone = "????"
-            for acc in accounts:
-                if acc.get("id") == acc_id:
-                    phone = acc.get("phone_number", "????")[-4:]
-                    break
-            await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
+    # ========== PHASE 2: FETCH UNREAD MESSAGES IN PARALLEL ==========
+    if connected_ids:
+        print(f"[STARTUP] ⚡ Syncing unread messages for {len(connected_ids)} accounts in PARALLEL...")
+        start_time = time.time()
+        
+        # Build account lookup
+        account_map = {acc.get("id"): acc for acc in accounts}
+        
+        # Create sync tasks for all connected accounts
+        sync_tasks = []
+        for acc_id in list(connected_ids):
+            client = active_clients.get(acc_id)
+            if client:
+                acc = account_map.get(acc_id, {})
+                phone = acc.get("phone_number", "????")[-4:]
+                sync_tasks.append(sync_missed_messages(client, acc_id, phone, last_synced_msg_ids))
+        
+        # Execute ALL syncs in parallel
+        if sync_tasks:
+            await asyncio.gather(*sync_tasks, return_exceptions=True)
+        
+        elapsed = time.time() - start_time
+        print(f"[STARTUP] ✓ Synced {len(sync_tasks)} accounts in {elapsed:.1f}s (PARALLEL)")
     
     # ========== PHASE 3: START BACKGROUND TASK ==========
     asyncio.create_task(keep_clients_alive())
