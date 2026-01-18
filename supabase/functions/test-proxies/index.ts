@@ -35,7 +35,7 @@ async function testProxyConnection(proxy: {
   proxy_type: string;
 }): Promise<{ success: boolean; responseTime: number; ip?: string; country?: string; error?: string }> {
   const startTime = Date.now();
-  const CONNECTION_TIMEOUT_MS = 15000; // 15 second timeout per proxy (was 10s)
+  const CONNECTION_TIMEOUT_MS = 10000; // 10 second timeout per proxy
   
   try {
     // Try a simple TCP connection with timeout to verify the proxy is reachable

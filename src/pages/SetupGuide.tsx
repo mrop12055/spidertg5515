@@ -114,22 +114,15 @@ PROXY_RETRY_DELAY = 30  # Retry proxy error accounts after 30 seconds
 PROXY_MAX_RETRIES = 3   # Max retry attempts before giving up (per session)
 
 # ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 15      # Telegram connection timeout (was 10, increased for slow proxies)
+CONNECTION_TIMEOUT = 10      # Telegram connection timeout
 CONNECTION_RETRIES = 1       # Fail fast - no proxy switching
 RETRY_DELAY = 0              # No retry delay
 
 # HTTP Timeouts - split by purpose (increased for high-load 300+ clients)
-HTTP_TIMEOUT_DISPATCH = 60   # Task fetching (get-next-task, get-batch-tasks) - was 45
-HTTP_TIMEOUT_REPORT = 45     # Reporting (report-task-result, report-batch-results) - was 30
-HTTP_TIMEOUT_UPLOAD = 90     # Media uploads (photos, videos) - was 60
-HTTP_TIMEOUT_DEFAULT = 30    # Other REST calls - was 20
-
-# Telegram operation-specific timeouts
-SEND_FILE_TIMEOUT = 45       # send_file operations (was 30)
-SEND_MESSAGE_TIMEOUT = 20    # send_message operations (was 10)
-DIALOG_FETCH_TIMEOUT = 45    # get_dialogs operations (was 30)
-AUTH_CHECK_TIMEOUT = 15      # is_user_authorized check
-GET_ME_TIMEOUT = 10          # client.get_me() timeout
+HTTP_TIMEOUT_DISPATCH = 45   # Task fetching (get-next-task, get-batch-tasks)
+HTTP_TIMEOUT_REPORT = 30     # Reporting (report-task-result, report-batch-results) - was 10, increased for 300+ clients
+HTTP_TIMEOUT_UPLOAD = 60     # Media uploads (photos, videos) - was 30, increased for DatabaseTimeout
+HTTP_TIMEOUT_DEFAULT = 20    # Other REST calls
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
@@ -1040,18 +1033,18 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                     
                     await asyncio.wait_for(
                         client.send_file(entity, file_bytes, caption=formatted_content, force_document=not is_image, parse_mode=parse_mode),
-                        timeout=SEND_FILE_TIMEOUT
+                        timeout=30
                     )
                 else:
-                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=SEND_MESSAGE_TIMEOUT)
+                    await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
             except MediaEmptyError:
                 # Media download failed, send text only
-                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=SEND_MESSAGE_TIMEOUT)
+                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
             except Exception as media_err:
                 print(f"  [MEDIA ERROR] {media_err}")
-                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=SEND_MESSAGE_TIMEOUT)
+                await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
         else:
-            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=SEND_MESSAGE_TIMEOUT)
+            await asyncio.wait_for(client.send_message(entity, formatted_content, link_preview=True, parse_mode=parse_mode), timeout=10)
         
         return True, None
         
@@ -2320,7 +2313,7 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
         fetched_count = 0
         skipped_count = 0
         
-        dialogs = await asyncio.wait_for(client.get_dialogs(limit=max_dialogs), timeout=DIALOG_FETCH_TIMEOUT)
+        dialogs = await asyncio.wait_for(client.get_dialogs(limit=max_dialogs), timeout=30)
         
         for dialog in dialogs:
             try:
@@ -2941,8 +2934,12 @@ async def main_loop():
                                         })
                                 return
                         
-                        # Send ALL messages for this account in PARALLEL (no stagger)
-                        async def send_single_message(msg):
+                        # Send messages with stagger between same-account messages
+                        for i, msg in enumerate(messages):
+                            if i > 0 and stagger_max > 0:
+                                delay = random.uniform(stagger_min, stagger_max)
+                                await asyncio.sleep(delay)
+                            
                             recipient = msg.get("recipient") or msg.get("recipient_telegram_id") or msg.get("recipient_phone")
                             success, send_error = await send_message(
                                 client, recipient, msg.get("content", ""), msg.get("media_url")
@@ -2955,12 +2952,6 @@ async def main_loop():
                                     "error": send_error,
                                     "account_id": acc_id
                                 })
-                            return success, send_error
-                        
-                        await asyncio.gather(
-                            *[send_single_message(msg) for msg in messages],
-                            return_exceptions=True
-                        )
                         
                         # SAVE SESSION after batch - preserves entity cache
                         if acc_id:
