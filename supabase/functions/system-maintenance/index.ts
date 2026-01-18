@@ -28,17 +28,12 @@ Deno.serve(async (req) => {
       old_messages_deleted: 0,
     };
 
-    // 0. Reset daily message counts for accounts whose last send was yesterday or earlier
-    // This ensures "messages_sent_today" reflects only today's activity
-    const todayStart = new Date();
-    todayStart.setUTCHours(0, 0, 0, 0);
-    const todayStartIso = todayStart.toISOString();
-    
+    // 0. Reset daily message counts for ALL accounts with messages_sent_today > 0
+    // Called by cron at midnight UTC to ensure fresh start each day
     const { data: resetAccounts, error: resetError } = await supabase
       .from('telegram_accounts')
       .update({ messages_sent_today: 0 })
       .gt('messages_sent_today', 0)
-      .or(`last_campaign_send_at.is.null,last_campaign_send_at.lt.${todayStartIso}`)
       .select('id');
     
     if (resetError) {
