@@ -2884,15 +2884,12 @@ async def main_loop():
             elif task_type == "send_parallel":
                 # ========== PARALLEL SENDING: All accounts process simultaneously ==========
                 batches = task.get("batches", [])
-                settings = task.get("settings", {})
-                stagger_min = settings.get("sameAccountStaggerMin", 1)
-                stagger_max = settings.get("sameAccountStaggerMax", 2)
                 
                 if batches:
                     print(f"  [PARALLEL] Processing {len(batches)} account batches ({sum(len(b.get('messages', [])) for b in batches)} messages)...")
                     
                     async def process_account_batch(batch):
-                        """Process all messages for one account with stagger between messages.
+                        """Process all messages for one account.
                         
                         SQLITE LOCK FIX (2026-01-16):
                         - Retry logic for "database is locked" during connection
@@ -2944,12 +2941,8 @@ async def main_loop():
                                         })
                                 return
                         
-                        # Send messages with stagger between same-account messages
-                        for i, msg in enumerate(messages):
-                            if i > 0 and stagger_max > 0:
-                                delay = random.uniform(stagger_min, stagger_max)
-                                await asyncio.sleep(delay)
-                            
+                        # Send messages for this account
+                        for msg in messages:
                             recipient = msg.get("recipient") or msg.get("recipient_telegram_id") or msg.get("recipient_phone")
                             success, send_error = await send_message(
                                 client, recipient, msg.get("content", ""), msg.get("media_url")
