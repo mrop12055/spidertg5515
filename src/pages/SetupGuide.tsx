@@ -123,6 +123,7 @@ HTTP_TIMEOUT_DISPATCH = 60   # Task fetching (get-next-task, get-batch-tasks) - 
 HTTP_TIMEOUT_REPORT = 45     # Reporting (report-task-result, report-batch-results) - was 30
 HTTP_TIMEOUT_UPLOAD = 90     # Media uploads (photos, videos) - was 60
 HTTP_TIMEOUT_DEFAULT = 30    # Other REST calls - was 20
+HTTP_CONNECT_TIMEOUT = 30    # TCP connection establishment timeout
 
 # Telegram operation-specific timeouts
 SEND_FILE_TIMEOUT = 45       # send_file operations (was 30)
@@ -162,11 +163,16 @@ _http_client: Optional[httpx.AsyncClient] = None
 
 
 def get_http_client() -> httpx.AsyncClient:
-    """Get shared HTTP client with connection pooling - no default timeout (set per-request)"""
+    """Get shared HTTP client with connection pooling and granular timeouts"""
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
-            timeout=HTTP_TIMEOUT_DEFAULT,
+            timeout=httpx.Timeout(
+                connect=HTTP_CONNECT_TIMEOUT,  # 30s for TCP connection establishment
+                read=HTTP_TIMEOUT_DEFAULT,      # 30s for reading response
+                write=HTTP_TIMEOUT_DEFAULT,     # 30s for writing request
+                pool=HTTP_CONNECT_TIMEOUT       # 30s for acquiring connection from pool
+            ),
             limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)
         )
     return _http_client
