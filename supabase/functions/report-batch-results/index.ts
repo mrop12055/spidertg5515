@@ -339,6 +339,24 @@ serve(async (req) => {
         }
 
         await Promise.all(finalPromises);
+        
+        // Track lifetime success counts for health monitoring (call RPC for each account)
+        const successAccountCounts = new Map<string, number>();
+        for (const r of successResults) {
+          if (r.account_id) {
+            successAccountCounts.set(r.account_id, (successAccountCounts.get(r.account_id) || 0) + 1);
+          }
+        }
+        const successRpcPromises: Promise<any>[] = [];
+        for (const [accountId, count] of successAccountCounts) {
+          for (let i = 0; i < count; i++) {
+            successRpcPromises.push(asPromise(supabase.rpc('increment_account_success', { acc_id: accountId })));
+          }
+        }
+        if (successRpcPromises.length > 0) {
+          await Promise.all(successRpcPromises);
+        }
+        
         console.log(
           `[report-batch-results] Success: ${successResults.length} (${newConversations.length} new convs)`
         );
@@ -636,6 +654,24 @@ serve(async (req) => {
         }
 
         await Promise.all(failPromises);
+        
+        // Track lifetime failure counts for health monitoring (permanent failures only)
+        const failureAccountCounts = new Map<string, number>();
+        for (const r of permanent) {
+          if (r.account_id) {
+            failureAccountCounts.set(r.account_id, (failureAccountCounts.get(r.account_id) || 0) + 1);
+          }
+        }
+        const failureRpcPromises: Promise<any>[] = [];
+        for (const [accountId, count] of failureAccountCounts) {
+          for (let i = 0; i < count; i++) {
+            failureRpcPromises.push(asPromise(supabase.rpc('increment_account_failure', { acc_id: accountId })));
+          }
+        }
+        if (failureRpcPromises.length > 0) {
+          await Promise.all(failureRpcPromises);
+        }
+        
         console.log(`[report-batch-results] Failed: ${failedResults.length} (${tooManyRequestsResults.length} rate-limited, ${permanent.length} permanent, ${retryWithDifferentApi.length} API-retry, ${retryWithDifferentAccount.length} account-retry)`);
       }
 
