@@ -1927,6 +1927,11 @@ HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
 CONNECT_TIMEOUT_SECONDS = 30  # Timeout for stable connections
 RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
 
+# HTTP Timeouts - used by fetch_active_accounts and other REST calls
+HTTP_TIMEOUT_DEFAULT = 30    # Default for REST API calls
+HTTP_TIMEOUT_DISPATCH = 60   # Task fetching
+HTTP_TIMEOUT_REPORT = 45     # Reporting results
+
 # ========== NETWORK ERROR HANDLING ==========
 _network_error_count = 0
 _last_network_error_time = 0
