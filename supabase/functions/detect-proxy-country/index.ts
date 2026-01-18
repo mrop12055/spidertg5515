@@ -81,9 +81,9 @@ serve(async (req) => {
           continue;
         }
 
-        // Query ip-api.com for geolocation
+        // Query ip-api.com for geolocation (10s timeout, was 5s)
         const geoResponse = await fetch(`http://ip-api.com/json/${ipToCheck}?fields=status,country,countryCode`, {
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(10000),
         });
 
         if (geoResponse.ok) {

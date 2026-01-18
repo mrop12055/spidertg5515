@@ -65,15 +65,15 @@ serve(async (req) => {
         };
       }
       
-      // Recovery: Reset stuck "sending" messages older than 30 seconds back to pending
-      const thirtySecondsAgo = new Date(Date.now() - 30 * 1000).toISOString();
+      // Recovery: Reset stuck "sending" messages older than 60 seconds back to pending (was 30s)
+      const sixtySecondsAgo = new Date(Date.now() - 60 * 1000).toISOString();
       await supabase
         .from("messages")
         .update({ status: "pending" })
         .eq("status", "sending")
         .eq("direction", "outgoing")
         .is("campaign_recipient_id", null)
-        .lt("created_at", thirtySecondsAgo);
+        .lt("created_at", sixtySecondsAgo);
 
       // Fetch ALL pending livechat messages (up to 100 for parallel processing)
       const { data: pendingMessages } = await supabase
