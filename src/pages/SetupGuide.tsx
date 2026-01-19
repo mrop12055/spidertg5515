@@ -71,12 +71,32 @@ from typing import Dict, Optional
 _connection_locks: Dict[str, asyncio.Lock] = {}
 _connection_locks_mutex = threading.Lock()  # Protects _connection_locks dict itself
 
+# ========== CLEANUP-IN-PROGRESS TRACKING (prevents reconnect during cleanup) ==========
+# When an account is being cleaned up, block new connection attempts
+_cleanup_in_progress: set = set()
+_cleanup_mutex = threading.Lock()
+
 def get_account_lock(account_id: str) -> asyncio.Lock:
     """Get or create a per-account lock in a thread-safe manner."""
     with _connection_locks_mutex:
         if account_id not in _connection_locks:
             _connection_locks[account_id] = asyncio.Lock()
         return _connection_locks[account_id]
+
+def is_cleanup_in_progress(account_id: str) -> bool:
+    """Check if cleanup is in progress for this account."""
+    with _cleanup_mutex:
+        return account_id in _cleanup_in_progress
+
+def mark_cleanup_start(account_id: str):
+    """Mark that cleanup has started for this account."""
+    with _cleanup_mutex:
+        _cleanup_in_progress.add(account_id)
+
+def mark_cleanup_done(account_id: str):
+    """Mark that cleanup is done for this account."""
+    with _cleanup_mutex:
+        _cleanup_in_progress.discard(account_id)
 
 from telethon import TelegramClient
 from telethon.errors import (
@@ -474,10 +494,19 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
     
+    # ========== CHECK IF CLEANUP IS IN PROGRESS (prevents double session open) ==========
+    if is_cleanup_in_progress(account_id):
+        print(f"  [WAIT] Cleanup in progress for {phone}, skipping connection attempt")
+        return None, "CLEANUP_IN_PROGRESS"
+    
     # ========== ACQUIRE PER-ACCOUNT LOCK (prevents SQLite "database is locked") ==========
     lock = get_account_lock(account_id)
     
     async with lock:
+        # Double-check cleanup status inside lock
+        if is_cleanup_in_progress(account_id):
+            print(f"  [WAIT] Cleanup started for {phone}, aborting")
+            return None, "CLEANUP_IN_PROGRESS"
         return await _get_or_create_client_internal(
             account, setup_handler, task_proxy, skip_avatar, no_cache, long_lived
         )
@@ -2662,14 +2691,35 @@ async def keep_clients_alive():
                     else:
                         disconnected_ids.append(acc_id)
             
-            # Clean up disconnected clients
+            # Clean up disconnected clients WITH PROPER LOCK ACQUISITION
+            # This prevents "database is locked" by ensuring exclusive access to session file
             for acc_id in disconnected_ids:
                 if acc_id in active_clients:
                     try:
-                        del active_clients[acc_id]
-                        print(f"  [CLEANUP] Removed disconnected client {acc_id[:8]}")
-                    except:
-                        pass
+                        # Mark cleanup in progress BEFORE acquiring lock
+                        mark_cleanup_start(acc_id)
+                        
+                        # Get the lock for this account
+                        lock = get_account_lock(acc_id)
+                        
+                        async with lock:
+                            if acc_id in active_clients:
+                                old_client = active_clients.pop(acc_id)
+                                try:
+                                    # Try to properly disconnect to release SQLite file
+                                    if old_client.is_connected():
+                                        await asyncio.wait_for(old_client.disconnect(), timeout=5)
+                                    # Extra delay for SQLite file release
+                                    await asyncio.sleep(0.5)
+                                except Exception:
+                                    pass
+                                print(f"  [CLEANUP] Safely disconnected client {acc_id[:8]}")
+                        
+                        # Mark cleanup done AFTER releasing lock
+                        mark_cleanup_done(acc_id)
+                    except Exception as cleanup_err:
+                        mark_cleanup_done(acc_id)  # Always clear the flag
+                        print(f"  [CLEANUP ERROR] {acc_id[:8]}: {cleanup_err}")
             
             # Reset error counter on successful iteration
             if not disconnected_ids:
@@ -2690,13 +2740,12 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-19-24hour-sync")
+    print("  LiveChat Runner (SAFE RECONNECT)")
+    print("  BUILD: 2026-01-19-safe-reconnect")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⏰ Only syncs messages from last 24 hours")
-    print("  🔄 Skips older messages to prevent duplicates")
-    print("  📨 Tracks last synced IDs per sender")
-    print("=" * 50)
+    print("  ⏰ 24-hour sync window")
+    print("  🔒 Safe cleanup with per-account locks")
+    print("  🚫 Prevents duplicate session opens")
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
@@ -2757,11 +2806,12 @@ async def main_loop():
             
             if task_type == "wait":
                 accounts = task.get("accounts", [])
-                # Only connect NEW accounts (skip already connected and recently failed)
+                # Only connect NEW accounts (skip already connected, recently failed, or cleanup in progress)
                 new_accounts = [
                     acc for acc in accounts 
                     if acc.get("id") not in connected_ids 
                     and acc.get("id") not in failed_proxy_accounts
+                    and not is_cleanup_in_progress(acc.get("id", ""))
                 ]
                 
                 if new_accounts:
@@ -2814,6 +2864,8 @@ async def main_loop():
                         elif error:
                             if error.startswith("NETWORK_ERROR:"):
                                 pass  # Will retry next iteration
+                            elif error == "CLEANUP_IN_PROGRESS":
+                                pass  # Cleanup in progress, will retry next iteration automatically
                             elif error == "TIMEOUT" or error == "All proxies failed":
                                 timeout_count += 1
                                 # NO cooldown - will retry next iteration with different proxy
