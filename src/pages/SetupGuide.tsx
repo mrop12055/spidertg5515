@@ -2176,7 +2176,7 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                 sender_key = f"{account_id}_{sender_id}"
                 last_synced_id = last_synced_msg_ids.get(sender_key, 0)
                 
-                # Fetch unread messages from this dialog (limit to last 1 hour)
+                # Fetch unread messages from this dialog (limit to last 24 hours)
                 messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 100))
                 
                 # Calculate 24 hour ago cutoff for missed message recovery
