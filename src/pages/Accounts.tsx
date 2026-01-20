@@ -163,6 +163,7 @@ const Accounts: React.FC = () => {
   const [proxyFilter, setProxyFilter] = useState<string>('all'); // 'all' | 'with_proxy' | 'without_proxy'
   const [profileFilter, setProfileFilter] = useState<string>('all'); // 'all' | 'synced' | 'not_synced'
   const [avatarFilter, setAvatarFilter] = useState<string>('all'); // 'all' | 'with_avatar' | 'without_avatar'
+  const [messagesTodayFilter, setMessagesTodayFilter] = useState<string>('all'); // 'all' | 'zero_messages' | 'has_messages'
   const [isTagDialogOpen, setIsTagDialogOpen] = useState(false);
   const [newTagName, setNewTagName] = useState('');
   const [selectedTagsForBulk, setSelectedTagsForBulk] = useState<string[]>([]);
@@ -1776,7 +1777,13 @@ const Accounts: React.FC = () => {
       (avatarFilter === 'with_avatar' && acc.avatar) ||
       (avatarFilter === 'without_avatar' && !acc.avatar);
     
-    return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile && matchesProxyError && matchesAvatar;
+    // Messages sent today filter
+    const matchesMessagesToday = 
+      messagesTodayFilter === 'all' ||
+      (messagesTodayFilter === 'zero_messages' && (acc.messagesSentToday === 0 || acc.messagesSentToday === null)) ||
+      (messagesTodayFilter === 'has_messages' && (acc.messagesSentToday || 0) > 0);
+    
+    return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile && matchesProxyError && matchesAvatar && matchesMessagesToday;
   });
 
   // Split accounts by status
@@ -2849,7 +2856,7 @@ const Accounts: React.FC = () => {
               </div>
               
               {/* Proxy Error Filter */}
-              <div className="space-y-2 mb-3">
+              <div className="space-y-2 mb-4">
                 <Label className="text-xs text-muted-foreground flex items-center gap-2">
                   <AlertTriangle className="w-3.5 h-3.5" />
                   Proxy Status
@@ -2876,8 +2883,36 @@ const Accounts: React.FC = () => {
                 </Select>
               </div>
               
+              {/* Messages Sent Today Filter */}
+              <div className="space-y-2 mb-3">
+                <Label className="text-xs text-muted-foreground flex items-center gap-2">
+                  <MessageSquare className="w-3.5 h-3.5" />
+                  Messages Today
+                </Label>
+                <Select value={messagesTodayFilter} onValueChange={setMessagesTodayFilter}>
+                  <SelectTrigger className="h-8">
+                    <SelectValue placeholder="All Accounts" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Accounts</SelectItem>
+                    <SelectItem value="zero_messages">
+                      <span className="flex items-center gap-2 text-muted-foreground">
+                        <MessageSquare className="w-3 h-3" />
+                        0 Messages Today
+                      </span>
+                    </SelectItem>
+                    <SelectItem value="has_messages">
+                      <span className="flex items-center gap-2 text-status-active">
+                        <MessageSquare className="w-3 h-3" />
+                        Has Messages Today
+                      </span>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              
               {/* Clear Filters */}
-              {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all' || avatarFilter !== 'all') && (
+              {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all' || avatarFilter !== 'all' || messagesTodayFilter !== 'all') && (
                 <>
                   <DropdownMenuSeparator className="my-2" />
                   <Button 
@@ -2890,6 +2925,7 @@ const Accounts: React.FC = () => {
                       setProfileFilter('all');
                       setProxyErrorFilter('all');
                       setAvatarFilter('all');
+                      setMessagesTodayFilter('all');
                     }}
                   >
                     <X className="w-3 h-3 mr-1" />
