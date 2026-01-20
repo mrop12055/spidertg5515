@@ -2179,9 +2179,9 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                 # Fetch unread messages from this dialog (limit to last 1 hour)
                 messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 100))
                 
-                # Calculate 1 hour ago cutoff
+                # Calculate 24 hour ago cutoff for missed message recovery
                 from datetime import datetime, timezone, timedelta
-                one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+                twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
                 
                 max_msg_id = last_synced_id
                 for msg in reversed(messages):  # Process oldest first
@@ -2190,8 +2190,8 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                     if not msg.text and not msg.photo and not msg.video and not msg.document:
                         continue
                     
-                    # SKIP if message is older than 1 hour
-                    if msg.date and msg.date < one_hour_ago:
+                    # SKIP if message is older than 24 hours
+                    if msg.date and msg.date < twenty_four_hours_ago:
                         skipped_count += 1
                         continue
                     
@@ -2331,12 +2331,12 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                 sender_key = f"{account_id}_{sender_id}"
                 last_synced_id = last_synced_msg_ids.get(sender_key, 0)
                 
-                # Fetch unread messages (limit to last 1 hour)
+                # Fetch unread messages (limit to last 24 hours)
                 messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 50))
                 
-                # Calculate 1 hour ago cutoff
+                # Calculate 24 hour ago cutoff for missed message recovery
                 from datetime import datetime, timezone, timedelta
-                one_hour_ago = datetime.now(timezone.utc) - timedelta(hours=1)
+                twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
                 
                 max_msg_id = last_synced_id
                 for msg in reversed(messages):  # Process oldest first
@@ -2345,8 +2345,8 @@ async def fetch_recent_dialog_messages(client, account_id: str, phone: str, max_
                     if not msg.text and not msg.photo:  # Skip non-text/photo
                         continue
                     
-                    # SKIP if message is older than 1 hour
-                    if msg.date and msg.date < one_hour_ago:
+                    # SKIP if message is older than 24 hours
+                    if msg.date and msg.date < twenty_four_hours_ago:
                         skipped_count += 1
                         continue
                     
