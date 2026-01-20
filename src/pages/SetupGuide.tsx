@@ -2690,10 +2690,10 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (1-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-11-1hour-sync")
+    print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
+    print("  BUILD: 2026-01-20-24h-sync")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⏰ Only syncs messages from last 1 hour")
+    print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Skips older messages to prevent duplicates")
     print("  📨 Tracks last synced IDs per sender")
     print("=" * 50)
