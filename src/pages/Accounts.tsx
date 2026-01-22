@@ -1694,6 +1694,41 @@ const Accounts: React.FC = () => {
     }
   };
 
+  // Bulk status change
+  const handleBulkStatusChange = async (newStatus: AccountStatus) => {
+    if (selectedIds.size === 0) {
+      toast.error('No accounts selected');
+      return;
+    }
+
+    try {
+      const ids = Array.from(selectedIds);
+      
+      const { error } = await supabase
+        .from('telegram_accounts')
+        .update({ 
+          status: newStatus,
+          // Clear restriction fields when setting to active
+          ...(newStatus === 'active' ? { 
+            restricted_until: null, 
+            ban_reason: null,
+            auto_disabled: false,
+            disabled_reason: null
+          } : {})
+        })
+        .in('id', ids);
+
+      if (error) throw error;
+
+      toast.success(`${ids.length} account(s) set to ${newStatus}`);
+      setSelectedIds(new Set());
+      refreshData();
+    } catch (error) {
+      console.error('Error changing status:', error);
+      toast.error('Failed to change account status');
+    }
+  };
+
   // Remove tag from single account
   const handleRemoveTag = async (accountId: string, tagToRemove: string) => {
     try {
@@ -2696,6 +2731,32 @@ const Accounts: React.FC = () => {
                     SpamBot Check
                     {isSpamBotChecking && <Loader2 className="w-3 h-3 ml-auto animate-spin" />}
                   </DropdownMenuItem>
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <Shuffle className="w-4 h-4 mr-2" />
+                      Change Status
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuPortal>
+                      <DropdownMenuSubContent>
+                        <DropdownMenuItem onClick={() => handleBulkStatusChange('active')}>
+                          <Wifi className="w-4 h-4 mr-2 text-status-active" />
+                          Set to Active
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleBulkStatusChange('frozen')}>
+                          <Lock className="w-4 h-4 mr-2 text-blue-500" />
+                          Set to Frozen
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleBulkStatusChange('restricted')}>
+                          <AlertTriangle className="w-4 h-4 mr-2 text-status-restricted" />
+                          Set to Used/Restricted
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleBulkStatusChange('disconnected')}>
+                          <WifiOff className="w-4 h-4 mr-2 text-status-disconnected" />
+                          Set to Inactive/Disconnected
+                        </DropdownMenuItem>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuPortal>
+                  </DropdownMenuSub>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
                     <Tag className="w-4 h-4 mr-2" />
