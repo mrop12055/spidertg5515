@@ -2706,7 +2706,7 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-no-session-check")
+    print("  BUILD: 2026-01-22-task-cleanup-v2")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 60s cooldown")
@@ -2826,6 +2826,7 @@ async def main_loop():
                                         old_client = active_clients.pop(acc_id)
                                         if old_client.is_connected():
                                             await asyncio.wait_for(old_client.disconnect(), timeout=5)
+                                            await asyncio.sleep(0.1)  # Allow pending tasks to complete
                                     except:
                                         pass
                                 return acc_id, None, error or "Connection failed", phone, False
@@ -2835,6 +2836,7 @@ async def main_loop():
                                 try:
                                     old_client = active_clients.pop(acc_id)
                                     await asyncio.wait_for(old_client.disconnect(), timeout=3)
+                                    await asyncio.sleep(0.1)  # Allow pending tasks to complete
                                 except:
                                     pass
                             return acc_id, None, "TIMEOUT", phone, False
@@ -2844,6 +2846,7 @@ async def main_loop():
                                 try:
                                     old_client = active_clients.pop(acc_id)
                                     await asyncio.wait_for(old_client.disconnect(), timeout=3)
+                                    await asyncio.sleep(0.1)  # Allow pending tasks to complete
                                 except:
                                     pass
                             return acc_id, None, f"ERROR:{e}", phone, False
