@@ -115,15 +115,15 @@ PROXY_RETRY_DELAY = 30  # Retry proxy error accounts after 30 seconds
 PROXY_MAX_RETRIES = 3   # Max retry attempts before giving up (per session)
 
 # ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 10      # Telegram connection timeout
-CONNECTION_RETRIES = 1       # Fail fast - no proxy switching
-RETRY_DELAY = 0              # No retry delay
+CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
+CONNECTION_RETRIES = 2       # Connection retries (increased from 1)
+RETRY_DELAY = 2              # Retry delay in seconds (increased from 0)
 
-# HTTP Timeouts - split by purpose (increased for high-load 300+ clients)
-HTTP_TIMEOUT_DISPATCH = 45   # Task fetching (get-next-task, get-batch-tasks)
-HTTP_TIMEOUT_REPORT = 30     # Reporting (report-task-result, report-batch-results) - was 10, increased for 300+ clients
-HTTP_TIMEOUT_UPLOAD = 60     # Media uploads (photos, videos) - was 30, increased for DatabaseTimeout
-HTTP_TIMEOUT_DEFAULT = 20    # Other REST calls
+# HTTP Timeouts - split by purpose (increased for high-load 500+ clients)
+HTTP_TIMEOUT_DISPATCH = 90   # Task fetching (get-next-task, get-batch-tasks) - increased from 45
+HTTP_TIMEOUT_REPORT = 60     # Reporting (report-task-result, report-batch-results) - increased from 30
+HTTP_TIMEOUT_UPLOAD = 120    # Media uploads (photos, videos) - increased from 60
+HTTP_TIMEOUT_DEFAULT = 45    # Other REST calls - increased from 20
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
