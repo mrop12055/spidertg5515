@@ -19,50 +19,80 @@ interface AccountData {
   api_hash?: string;
 }
 
-// Device fingerprint pools for realistic randomization
+// Real device models as they appear in Telegram's device_model field
 const ANDROID_DEVICES = [
-  { model: "Samsung SM-G991B", versions: ["Android 11", "Android 12", "Android 13"] },
-  { model: "Samsung SM-G998B", versions: ["Android 11", "Android 12", "Android 13"] },
-  { model: "Samsung SM-A525F", versions: ["Android 11", "Android 12", "Android 13"] },
-  { model: "Samsung SM-A536B", versions: ["Android 12", "Android 13", "Android 14"] },
-  { model: "Samsung SM-S911B", versions: ["Android 13", "Android 14"] },
-  { model: "Samsung SM-S918B", versions: ["Android 13", "Android 14"] },
-  { model: "Xiaomi 12", versions: ["Android 12", "Android 13"] },
-  { model: "Xiaomi 12 Pro", versions: ["Android 12", "Android 13"] },
-  { model: "Xiaomi 13", versions: ["Android 13", "Android 14"] },
+  // Samsung Galaxy S Series (real model codes)
+  { model: "Samsung SM-S928B", versions: ["Android 14", "Android 15"] }, // S24 Ultra
+  { model: "Samsung SM-S926B", versions: ["Android 14", "Android 15"] }, // S24+
+  { model: "Samsung SM-S921B", versions: ["Android 14", "Android 15"] }, // S24
+  { model: "Samsung SM-S918B", versions: ["Android 13", "Android 14"] }, // S23 Ultra
+  { model: "Samsung SM-S916B", versions: ["Android 13", "Android 14"] }, // S23+
+  { model: "Samsung SM-S911B", versions: ["Android 13", "Android 14"] }, // S23
+  { model: "Samsung SM-S908B", versions: ["Android 12", "Android 13", "Android 14"] }, // S22 Ultra
+  { model: "Samsung SM-S901B", versions: ["Android 12", "Android 13", "Android 14"] }, // S22
+  { model: "Samsung SM-G998B", versions: ["Android 11", "Android 12", "Android 13"] }, // S21 Ultra
+  { model: "Samsung SM-G991B", versions: ["Android 11", "Android 12", "Android 13"] }, // S21
+  // Samsung Galaxy A Series
+  { model: "Samsung SM-A556B", versions: ["Android 14", "Android 15"] }, // A55
+  { model: "Samsung SM-A546B", versions: ["Android 13", "Android 14"] }, // A54
+  { model: "Samsung SM-A536B", versions: ["Android 12", "Android 13", "Android 14"] }, // A53
+  { model: "Samsung SM-A525F", versions: ["Android 11", "Android 12", "Android 13"] }, // A52
+  // Samsung Galaxy Z Fold/Flip
+  { model: "Samsung SM-F956B", versions: ["Android 14", "Android 15"] }, // Z Fold 6
+  { model: "Samsung SM-F946B", versions: ["Android 13", "Android 14"] }, // Z Fold 5
+  { model: "Samsung SM-F741B", versions: ["Android 14", "Android 15"] }, // Z Flip 6
+  { model: "Samsung SM-F731B", versions: ["Android 13", "Android 14"] }, // Z Flip 5
+  // Xiaomi
+  { model: "Xiaomi 14 Pro", versions: ["Android 14"] },
+  { model: "Xiaomi 14", versions: ["Android 14"] },
   { model: "Xiaomi 13 Pro", versions: ["Android 13", "Android 14"] },
-  { model: "Xiaomi Redmi Note 12", versions: ["Android 12", "Android 13"] },
-  { model: "Xiaomi Redmi Note 12 Pro", versions: ["Android 12", "Android 13"] },
-  { model: "OnePlus 9", versions: ["Android 11", "Android 12", "Android 13"] },
-  { model: "OnePlus 9 Pro", versions: ["Android 11", "Android 12", "Android 13"] },
-  { model: "OnePlus 10 Pro", versions: ["Android 12", "Android 13"] },
+  { model: "Xiaomi 13", versions: ["Android 13", "Android 14"] },
+  { model: "Xiaomi 12 Pro", versions: ["Android 12", "Android 13"] },
+  { model: "Redmi Note 13 Pro+", versions: ["Android 13", "Android 14"] },
+  { model: "Redmi Note 13 Pro", versions: ["Android 13", "Android 14"] },
+  { model: "Redmi Note 12 Pro", versions: ["Android 12", "Android 13"] },
+  { model: "POCO F5 Pro", versions: ["Android 13", "Android 14"] },
+  // OnePlus
+  { model: "OnePlus 12", versions: ["Android 14"] },
   { model: "OnePlus 11", versions: ["Android 13", "Android 14"] },
-  { model: "Google Pixel 6", versions: ["Android 12", "Android 13", "Android 14"] },
-  { model: "Google Pixel 6 Pro", versions: ["Android 12", "Android 13", "Android 14"] },
-  { model: "Google Pixel 7", versions: ["Android 13", "Android 14"] },
-  { model: "Google Pixel 7 Pro", versions: ["Android 13", "Android 14"] },
-  { model: "Google Pixel 8", versions: ["Android 14"] },
-  { model: "Google Pixel 8 Pro", versions: ["Android 14"] },
-  { model: "HUAWEI P40 Pro", versions: ["Android 10", "Android 11"] },
-  { model: "HUAWEI Mate 50 Pro", versions: ["Android 12", "Android 13"] },
-  { model: "OPPO Find X5 Pro", versions: ["Android 12", "Android 13"] },
-  { model: "vivo X80 Pro", versions: ["Android 12", "Android 13"] },
-  { model: "Realme GT 3", versions: ["Android 13"] },
-  { model: "Motorola Edge 40 Pro", versions: ["Android 13"] },
-  { model: "Sony Xperia 1 V", versions: ["Android 13", "Android 14"] },
+  { model: "OnePlus 10 Pro", versions: ["Android 12", "Android 13"] },
+  { model: "OnePlus 9 Pro", versions: ["Android 11", "Android 12", "Android 13"] },
+  { model: "OnePlus Nord 3", versions: ["Android 13", "Android 14"] },
+  // Google Pixel
+  { model: "Pixel 8 Pro", versions: ["Android 14", "Android 15"] },
+  { model: "Pixel 8", versions: ["Android 14", "Android 15"] },
+  { model: "Pixel 7 Pro", versions: ["Android 13", "Android 14"] },
+  { model: "Pixel 7", versions: ["Android 13", "Android 14"] },
+  { model: "Pixel 6 Pro", versions: ["Android 12", "Android 13", "Android 14"] },
+  // Other brands
+  { model: "OPPO Find X6 Pro", versions: ["Android 13", "Android 14"] },
+  { model: "vivo X100 Pro", versions: ["Android 14"] },
+  { model: "vivo X90 Pro", versions: ["Android 13", "Android 14"] },
+  { model: "realme GT 5 Pro", versions: ["Android 14"] },
   { model: "Nothing Phone (2)", versions: ["Android 13", "Android 14"] },
+  { model: "ASUS ROG Phone 8 Pro", versions: ["Android 14"] },
+  { model: "Motorola Edge 50 Pro", versions: ["Android 14"] },
+  { model: "Sony Xperia 1 V", versions: ["Android 13", "Android 14"] },
 ];
 
 const IOS_DEVICES = [
-  { model: "iPhone 12", versions: ["iOS 15.0", "iOS 15.5", "iOS 16.0", "iOS 16.5", "iOS 17.0"] },
-  { model: "iPhone 12 Pro", versions: ["iOS 15.0", "iOS 15.5", "iOS 16.0", "iOS 16.5", "iOS 17.0"] },
-  { model: "iPhone 13", versions: ["iOS 15.0", "iOS 16.0", "iOS 16.5", "iOS 17.0", "iOS 17.2"] },
-  { model: "iPhone 13 Pro", versions: ["iOS 15.0", "iOS 16.0", "iOS 16.5", "iOS 17.0", "iOS 17.2"] },
-  { model: "iPhone 14", versions: ["iOS 16.0", "iOS 16.5", "iOS 17.0", "iOS 17.2"] },
-  { model: "iPhone 14 Pro", versions: ["iOS 16.0", "iOS 16.5", "iOS 17.0", "iOS 17.2"] },
-  { model: "iPhone 15", versions: ["iOS 17.0", "iOS 17.2", "iOS 17.3"] },
-  { model: "iPhone 15 Pro", versions: ["iOS 17.0", "iOS 17.2", "iOS 17.3"] },
-  { model: "iPhone 15 Pro Max", versions: ["iOS 17.0", "iOS 17.2", "iOS 17.3"] },
+  // iPhone 16 series
+  { model: "iPhone16,2", versions: ["iOS 18.0", "iOS 18.1", "iOS 18.2"] }, // 16 Pro Max
+  { model: "iPhone16,1", versions: ["iOS 18.0", "iOS 18.1", "iOS 18.2"] }, // 16 Pro
+  // iPhone 15 series
+  { model: "iPhone15,3", versions: ["iOS 17.0", "iOS 17.2", "iOS 17.4", "iOS 18.0"] }, // 15 Pro Max
+  { model: "iPhone15,2", versions: ["iOS 17.0", "iOS 17.2", "iOS 17.4", "iOS 18.0"] }, // 15 Pro
+  { model: "iPhone15,4", versions: ["iOS 17.0", "iOS 17.2", "iOS 17.4", "iOS 18.0"] }, // 15
+  // iPhone 14 series
+  { model: "iPhone14,3", versions: ["iOS 16.0", "iOS 16.5", "iOS 17.0", "iOS 17.4"] }, // 14 Pro Max
+  { model: "iPhone14,2", versions: ["iOS 16.0", "iOS 16.5", "iOS 17.0", "iOS 17.4"] }, // 14 Pro
+  { model: "iPhone14,7", versions: ["iOS 16.0", "iOS 16.5", "iOS 17.0", "iOS 17.4"] }, // 14
+  // iPhone 13 series
+  { model: "iPhone14,5", versions: ["iOS 15.0", "iOS 16.0", "iOS 17.0"] }, // 13
+  { model: "iPhone14,2", versions: ["iOS 15.0", "iOS 16.0", "iOS 17.0"] }, // 13 Pro
+  // iPhone 12 series
+  { model: "iPhone13,4", versions: ["iOS 14.5", "iOS 15.0", "iOS 16.0", "iOS 17.0"] }, // 12 Pro Max
+  { model: "iPhone13,3", versions: ["iOS 14.5", "iOS 15.0", "iOS 16.0", "iOS 17.0"] }, // 12 Pro
 ];
 
 const TELEGRAM_VERSIONS = [
