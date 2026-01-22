@@ -2706,7 +2706,7 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-60s-retry")
+    print("  BUILD: 2026-01-22-no-session-check")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 60s cooldown")
@@ -2717,7 +2717,7 @@ async def main_loop():
     global failed_connection_accounts  # Use global retry tracking shared with keep_clients_alive
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
-    session_checked_ids = set()  # Track accounts that have been session-checked THIS RUN (to avoid spam)
+    # Session check disabled - accounts connect without reporting to backend
     pending_sync_accounts = {}  # Track accounts that need sync retry {account_id: (retry_time, phone)}
     last_synced_msg_ids = {}  # Track last synced message IDs per sender to prevent duplicates {account_id_sender_id: msg_id}
     last_cleanup = time.time()
@@ -2805,22 +2805,17 @@ async def main_loop():
                             print(f"  [{phone}] SKIP - No API credentials assigned")
                             return acc_id, None, "No API credentials", phone, False
                         
-                        # Skip session check if already checked this run (to avoid spam)
-                        already_checked = acc_id in session_checked_ids
-                        
                         try:
                             client, error = await asyncio.wait_for(
                                 connect_account_with_fingerprint(
                                     acc, 
                                     setup_handler=setup_message_handler, 
                                     task_proxy=proxy,
-                                    skip_session_check=already_checked  # Skip if already checked this run
+                                    skip_session_check=True  # DISABLED - no automatic session checks
                                 ),
                                 timeout=CONNECT_TIMEOUT_SECONDS
                             )
                             if client:
-                                # Mark as session-checked for this run
-                                session_checked_ids.add(acc_id)
                                 # Sync missed messages after successful connection
                                 sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
                                 return acc_id, client, error, phone, needs_retry
