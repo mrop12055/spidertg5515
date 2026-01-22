@@ -471,9 +471,19 @@ const Settings: React.FC = () => {
           <CardHeader className="pb-4">
             <div className="flex items-center justify-between">
               <div className="space-y-1">
-                <CardTitle className="text-lg">API Credentials Distribution</CardTitle>
+                <CardTitle className="text-lg flex items-center gap-3">
+                  API Credentials Distribution
+                  <div className="flex gap-2">
+                    <Badge variant="outline" className="font-normal">
+                      Total: {apiCredentials.length}
+                    </Badge>
+                    <Badge variant="secondary" className="font-normal">
+                      Unassigned: {apiCredentials.filter(api => api.accounts_count === 0).length}
+                    </Badge>
+                  </div>
+                </CardTitle>
                 <CardDescription>
-                  Distribute accounts across multiple API IDs to reduce ban risk
+                  Distribute accounts across multiple API IDs to reduce ban risk (1:1 mapping)
                 </CardDescription>
               </div>
               <div className="flex gap-2">
