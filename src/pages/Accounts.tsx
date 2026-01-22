@@ -808,83 +808,92 @@ const Accounts: React.FC = () => {
     setIsBulkDeleting(true);
     try {
       const idsToDelete = Array.from(selectedIds);
+      const BATCH_SIZE = 50; // Avoid URL length limits
       
-      // First, get all accounts to find their assigned proxies and API credentials
-      const { data: accountsToDelete } = await supabase
-        .from('telegram_accounts')
-        .select('id, proxy_id, api_credential_id')
-        .in('id', idsToDelete);
+      // Collect all proxy and API credential IDs first (in batches)
+      const proxyIdsToDelete: string[] = [];
+      const apiCredentialIdsToDelete: string[] = [];
       
-      const proxyIdsToDelete = (accountsToDelete || [])
-        .map(a => a.proxy_id)
-        .filter((id): id is string => id !== null);
-      
-      const apiCredentialIdsToDelete = (accountsToDelete || [])
-        .map(a => a.api_credential_id)
-        .filter((id): id is string => id !== null);
-      
-      // Clear warmup_pair_id references that might block deletion
-      // (accounts can reference each other via warmup_pair_id)
-      await supabase
-        .from('telegram_accounts')
-        .update({ warmup_pair_id: null, interaction_pair_id: null })
-        .in('id', idsToDelete);
-      
-      // Also clear references FROM other accounts TO these accounts
-      await supabase
-        .from('telegram_accounts')
-        .update({ warmup_pair_id: null })
-        .in('warmup_pair_id', idsToDelete);
-      
-      await supabase
-        .from('telegram_accounts')
-        .update({ interaction_pair_id: null })
-        .in('interaction_pair_id', idsToDelete);
-      
-      // Clear proxy assignments (before deleting proxies)
-      await supabase
-        .from('proxies')
-        .update({ assigned_account_id: null })
-        .in('assigned_account_id', idsToDelete);
-      
-      // Delete related records in other tables that reference these accounts
-      await Promise.all([
-        supabase.from('account_check_tasks').delete().in('account_id', idsToDelete),
-        supabase.from('warmup_messages').delete().in('sender_account_id', idsToDelete),
-        supabase.from('warmup_messages').delete().in('receiver_account_id', idsToDelete),
-        supabase.from('warmup_schedule').delete().in('account_id', idsToDelete),
-        supabase.from('maturation_tasks').delete().in('account_id', idsToDelete),
-        supabase.from('scheduled_interactions').delete().in('sender_account_id', idsToDelete),
-        supabase.from('scheduled_interactions').delete().in('receiver_account_id', idsToDelete),
-        supabase.from('interaction_scheduler').delete().in('sender_account_id', idsToDelete),
-        supabase.from('interaction_scheduler').delete().in('receiver_account_id', idsToDelete),
-        supabase.from('block_contact_tasks').delete().in('account_id', idsToDelete),
-        supabase.from('contact_import_tasks').delete().in('account_id', idsToDelete),
-      ]);
-      
-      // Delete warmup pairs that involve these accounts
-      await supabase.from('warmup_pairs').delete().in('account_a_id', idsToDelete);
-      await supabase.from('warmup_pairs').delete().in('account_b_id', idsToDelete);
-      
-      // Now delete the accounts
-      const { error } = await supabase
-        .from('telegram_accounts')
-        .delete()
-        .in('id', idsToDelete);
-
-      if (error) throw error;
-      
-      // Delete the assigned proxies
-      if (proxyIdsToDelete.length > 0) {
-        await supabase.from('proxies').delete().in('id', proxyIdsToDelete);
+      for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
+        const batch = idsToDelete.slice(i, i + BATCH_SIZE);
+        const { data: accountsToDelete } = await supabase
+          .from('telegram_accounts')
+          .select('id, proxy_id, api_credential_id')
+          .in('id', batch);
+        
+        (accountsToDelete || []).forEach(a => {
+          if (a.proxy_id) proxyIdsToDelete.push(a.proxy_id);
+          if (a.api_credential_id) apiCredentialIdsToDelete.push(a.api_credential_id);
+        });
       }
       
-      // Delete the assigned API credentials
-      if (apiCredentialIdsToDelete.length > 0) {
-        await supabase.from('telegram_api_credentials').delete().in('id', apiCredentialIdsToDelete);
-      }
+      // Process deletions in batches
+      for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
+        const batch = idsToDelete.slice(i, i + BATCH_SIZE);
+        
+        // Clear warmup_pair_id references
+        await supabase
+          .from('telegram_accounts')
+          .update({ warmup_pair_id: null, interaction_pair_id: null })
+          .in('id', batch);
+        
+        await supabase
+          .from('telegram_accounts')
+          .update({ warmup_pair_id: null })
+          .in('warmup_pair_id', batch);
+        
+        await supabase
+          .from('telegram_accounts')
+          .update({ interaction_pair_id: null })
+          .in('interaction_pair_id', batch);
+        
+        // Clear proxy assignments
+        await supabase
+          .from('proxies')
+          .update({ assigned_account_id: null })
+          .in('assigned_account_id', batch);
+        
+        // Delete related records in parallel
+        await Promise.all([
+          supabase.from('account_check_tasks').delete().in('account_id', batch),
+          supabase.from('warmup_messages').delete().in('sender_account_id', batch),
+          supabase.from('warmup_messages').delete().in('receiver_account_id', batch),
+          supabase.from('warmup_schedule').delete().in('account_id', batch),
+          supabase.from('maturation_tasks').delete().in('account_id', batch),
+          supabase.from('scheduled_interactions').delete().in('sender_account_id', batch),
+          supabase.from('scheduled_interactions').delete().in('receiver_account_id', batch),
+          supabase.from('interaction_scheduler').delete().in('sender_account_id', batch),
+          supabase.from('interaction_scheduler').delete().in('receiver_account_id', batch),
+          supabase.from('block_contact_tasks').delete().in('account_id', batch),
+          supabase.from('contact_import_tasks').delete().in('account_id', batch),
+        ]);
+        
+        // Delete warmup pairs
+        await Promise.all([
+          supabase.from('warmup_pairs').delete().in('account_a_id', batch),
+          supabase.from('warmup_pairs').delete().in('account_b_id', batch),
+        ]);
+        
+        // Delete the accounts
+        const { error } = await supabase
+          .from('telegram_accounts')
+          .delete()
+          .in('id', batch);
 
-      if (error) throw error;
+        if (error) throw error;
+      }
+      
+      // Delete proxies in batches
+      for (let i = 0; i < proxyIdsToDelete.length; i += BATCH_SIZE) {
+        const batch = proxyIdsToDelete.slice(i, i + BATCH_SIZE);
+        await supabase.from('proxies').delete().in('id', batch);
+      }
+      
+      // Delete API credentials in batches
+      for (let i = 0; i < apiCredentialIdsToDelete.length; i += BATCH_SIZE) {
+        const batch = apiCredentialIdsToDelete.slice(i, i + BATCH_SIZE);
+        await supabase.from('telegram_api_credentials').delete().in('id', batch);
+      }
       
       toast.success(`Deleted ${selectedIds.size} account(s)`);
       setSelectedIds(new Set());
