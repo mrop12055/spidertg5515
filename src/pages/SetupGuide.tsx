@@ -2561,13 +2561,46 @@ async def setup_message_handler(client, account_id: str):
 # ========== FLAG TO PAUSE keep_clients_alive DURING BATCH PROCESSING ==========
 _processing_batch = False
 
+# ========== GLOBAL RETRY TRACKING ==========
+# Track failed accounts with retry timestamps {account_id: retry_time}
+# Shared between keep_clients_alive and main_loop
+failed_connection_accounts = {}
+FAILED_RETRY_DELAY = 60  # Seconds to wait before retrying failed connection
+
+
+async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected"):
+    """
+    Properly disconnect a session and schedule it for retry after 60 seconds.
+    This ensures clean session release before retry.
+    """
+    global failed_connection_accounts
+    
+    phone = acc_id[:8]
+    
+    # Remove from active clients and disconnect properly
+    if acc_id in active_clients:
+        try:
+            client = active_clients.pop(acc_id)
+            if client.is_connected():
+                await asyncio.wait_for(client.disconnect(), timeout=5)
+                print(f"  [DISCONNECT] {phone} - {reason} - will retry in {FAILED_RETRY_DELAY}s")
+            else:
+                print(f"  [CLEANUP] {phone} - already disconnected - will retry in {FAILED_RETRY_DELAY}s")
+        except Exception as e:
+            print(f"  [CLEANUP] {phone} - force cleanup ({e}) - will retry in {FAILED_RETRY_DELAY}s")
+    
+    # Schedule retry after 60 seconds
+    failed_connection_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
+
 
 async def keep_clients_alive():
     """
     Background task that keeps all clients receiving updates - with network error handling.
     
     PAUSES during batch processing to prevent SQLite lock conflicts.
+    Disconnects failed clients and schedules them for 60s retry.
     """
+    global failed_connection_accounts
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 10
     
@@ -2589,8 +2622,8 @@ async def keep_clients_alive():
                         # This processes pending updates without blocking
                         await asyncio.wait_for(client.catch_up(), timeout=5)
                     else:
-                        # Client disconnected - mark for removal
-                        disconnected_ids.append(acc_id)
+                        # Client disconnected - mark for removal and retry
+                        disconnected_ids.append((acc_id, "connection lost"))
                 except asyncio.TimeoutError:
                     print(f"  [TIMEOUT] catch_up timeout for {acc_id[:8]}")
                 except Exception as e:
@@ -2600,24 +2633,20 @@ async def keep_clients_alive():
                         print(f"  [TELEGRAM] Server busy, skipping iteration: {str(e)[:40]}")
                         await asyncio.sleep(5)
                         continue
-                    # Check for network errors
+                    # Check for network errors - disconnect and schedule retry
                     if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
                         consecutive_errors += 1
+                        disconnected_ids.append((acc_id, f"network error: {str(e)[:30]}"))
                         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                             print(f"  [NETWORK] Multiple network errors - waiting 10s for recovery...")
                             await asyncio.sleep(10)
                             consecutive_errors = 0
                     else:
-                        disconnected_ids.append(acc_id)
+                        disconnected_ids.append((acc_id, f"error: {str(e)[:30]}"))
             
-            # Clean up disconnected clients
-            for acc_id in disconnected_ids:
-                if acc_id in active_clients:
-                    try:
-                        del active_clients[acc_id]
-                        print(f"  [CLEANUP] Removed disconnected client {acc_id[:8]}")
-                    except:
-                        pass
+            # Disconnect failed clients and schedule for 60s retry
+            for acc_id, reason in disconnected_ids:
+                await disconnect_and_schedule_retry(acc_id, reason)
             
             # Reset error counter on successful iteration
             if not disconnected_ids:
@@ -2647,9 +2676,10 @@ async def main_loop():
     print("=" * 50)
     print("=" * 50)
     
+    global failed_connection_accounts  # Use global retry tracking shared with keep_clients_alive
+    
     connected_ids = set()  # Track connected accounts to avoid redundant work
     session_checked_ids = set()  # Track accounts that have been session-checked THIS RUN (to avoid spam)
-    failed_proxy_accounts = {}  # Track failed accounts {account_id: retry_time} - retry after 60s
     pending_sync_accounts = {}  # Track accounts that need sync retry {account_id: (retry_time, phone)}
     last_synced_msg_ids = {}  # Track last synced message IDs per sender to prevent duplicates {account_id_sender_id: msg_id}
     last_cleanup = time.time()
@@ -2672,7 +2702,8 @@ async def main_loop():
             
             # Heartbeat logging
             if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
-                print(f"  [HEARTBEAT] Iteration {iteration_count}, Connected: {len(connected_ids)}, Active: {len(active_clients)}")
+                retry_count = len(failed_connection_accounts)
+                print(f"  [HEARTBEAT] Iteration {iteration_count}, Connected: {len(connected_ids)}, Active: {len(active_clients)}, Retry Queue: {retry_count}")
                 last_heartbeat = time.time()
             
             # Periodic cleanup - sync connected_ids with actual clients
@@ -2687,9 +2718,9 @@ async def main_loop():
                 
                 # Allow failed accounts to retry after their cooldown expires (60s from failure)
                 now = time.time()
-                expired_failures = [acc_id for acc_id, retry_time in failed_proxy_accounts.items() if now > retry_time]
+                expired_failures = [acc_id for acc_id, retry_time in failed_connection_accounts.items() if now > retry_time]
                 for acc_id in expired_failures:
-                    del failed_proxy_accounts[acc_id]
+                    del failed_connection_accounts[acc_id]
                     connected_ids.discard(acc_id)  # Allow re-connection attempt
                 
                 if expired_failures:
@@ -2710,14 +2741,11 @@ async def main_loop():
                 new_accounts = [
                     acc for acc in accounts 
                     if acc.get("id") not in connected_ids 
-                    and acc.get("id") not in failed_proxy_accounts
+                    and acc.get("id") not in failed_connection_accounts
                 ]
                 
                 if new_accounts:
                     print(f"  [CONNECT] Connecting {len(new_accounts)} accounts in PARALLEL...")
-                    
-                    # Retry delay for failed connections (60 seconds)
-                    FAILED_RETRY_DELAY = 60
                     
                     async def connect_one(acc):
                         acc_id = acc.get("id")
@@ -2817,23 +2845,22 @@ async def main_loop():
                             # Check for missing resources (skip permanently until fixed in dashboard)
                             if error in ["No proxy assigned", "No API credentials"]:
                                 skip_count += 1
-                                # Don't add to failed_proxy_accounts - these need dashboard fix
+                                # Don't add to retry - these need dashboard fix
                                 continue
                             
-                            # Connection failed - add to retry queue with 60s delay
+                            # Connection failed - disconnect session and add to retry queue with 60s delay
                             if error.startswith("NETWORK_ERROR:"):
-                                # Network errors - short retry (will retry next iteration)
-                                pass
+                                # Network errors - disconnect and schedule 60s retry
+                                error_count += 1
+                                await disconnect_and_schedule_retry(acc_id, f"network: {error[:30]}")
                             elif error == "TIMEOUT":
                                 timeout_count += 1
-                                # Timeout - add 60s cooldown before retry
-                                failed_proxy_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
-                                print(f"  [{phone}] Timeout - will retry in {FAILED_RETRY_DELAY}s")
+                                # Timeout - disconnect and schedule 60s retry
+                                await disconnect_and_schedule_retry(acc_id, "connection timeout")
                             else:
                                 error_count += 1
-                                # Other errors - add 60s cooldown before retry
-                                failed_proxy_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
-                                print(f"  [{phone}] Connection failed - will retry in {FAILED_RETRY_DELAY}s")
+                                # Other errors - disconnect and schedule 60s retry
+                                await disconnect_and_schedule_retry(acc_id, f"failed: {error[:30]}")
                     
                     print(f"  [CONNECTED] {success_count}/{len(new_accounts)} (timeouts={timeout_count}, errors={error_count}, skipped={skip_count}, sync_pending={sync_pending_count})")
 
