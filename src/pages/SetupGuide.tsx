@@ -115,10 +115,11 @@ active_clients: Dict[str, TelegramClient] = {}
 PROXY_RETRY_DELAY = 30  # Retry proxy error accounts after 30 seconds
 PROXY_MAX_RETRIES = 3   # Max retry attempts before giving up (per session)
 
-# ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 30      # Telegram connection timeout (increased for SOCKS5 latency)
-CONNECTION_RETRIES = 2       # Connection retries (increased from 1)
-RETRY_DELAY = 2              # Retry delay in seconds (increased from 0)
+# ========== SPLIT TIMEOUTS (SOCKS5 OPTIMIZED) ==========
+CONNECTION_TIMEOUT = 45      # Telegram connection timeout (increased for SOCKS5 latency on Windows)
+CONNECTION_RETRIES = 3       # Connection retries for SOCKS5 proxy stability
+RETRY_DELAY = 3              # Retry delay in seconds (longer for proxy recovery)
+HEARTBEAT_INTERVAL = 30      # Reduced from 60s for faster zombie detection
 
 # HTTP Timeouts - split by purpose (increased for SOCKS5 proxy environments)
 HTTP_TIMEOUT_DISPATCH = 120  # Task fetching (get-next-task, get-batch-tasks)
@@ -620,6 +621,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         
         for db_attempt in range(max_db_retries):
             try:
+                # SOCKS5 OPTIMIZED: Increased retries and delays for Windows proxy stability
                 client = TelegramClient(
                     session_path, int(api_id), api_hash,
                     device_model=device_model,
@@ -629,10 +631,10 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                     system_lang_code=system_lang_code,
                     proxy=proxy,
                     timeout=CONNECTION_TIMEOUT,
-                    connection_retries=3 if long_lived else 0,
-                    retry_delay=2 if long_lived else 0,
+                    connection_retries=5 if long_lived else 2,   # Increased for SOCKS5
+                    retry_delay=3 if long_lived else 1,           # Longer delay for proxy recovery
                     auto_reconnect=long_lived,
-                    request_retries=3 if long_lived else 1
+                    request_retries=5 if long_lived else 2        # More request retries for SOCKS5
                 )
                 break  # Success - exit retry loop
             except Exception as db_err:
@@ -2736,6 +2738,22 @@ async def keep_clients_alive():
             for acc_id, client in list(active_clients.items()):
                 try:
                     if client.is_connected():
+                        # ========== PING-BASED HEALTH CHECK (detect zombie connections) ==========
+                        try:
+                            await asyncio.wait_for(client.get_me(), timeout=10)
+                        except asyncio.TimeoutError:
+                            # Ping failed - connection is zombie, force disconnect and retry
+                            print(f"  [ZOMBIE] {acc_id[:8]} - ping timeout, forcing reconnection")
+                            disconnected_ids.append((acc_id, "zombie connection (ping timeout)"))
+                            continue
+                        except Exception as ping_err:
+                            ping_str = str(ping_err).lower()
+                            # WinError 121 during ping = dead connection
+                            if "winerror 121" in ping_str or "semaphore" in ping_str:
+                                print(f"  [SOCKS5] {acc_id[:8]} - Windows timeout during ping")
+                                disconnected_ids.append((acc_id, "socks5 timeout"))
+                                continue
+                        
                         # This processes pending updates without blocking
                         await asyncio.wait_for(client.catch_up(), timeout=5)
                     else:
@@ -2745,6 +2763,20 @@ async def keep_clients_alive():
                     print(f"  [TIMEOUT] catch_up timeout for {acc_id[:8]}")
                 except Exception as e:
                     error_str = str(e).lower()
+                    
+                    # ========== PROACTIVE WINERROR 121 HANDLING ==========
+                    # Force immediate disconnect and recreate on Windows semaphore timeout
+                    if "winerror 121" in error_str or "semaphore" in error_str:
+                        print(f"  [SOCKS5] {acc_id[:8]} - Windows semaphore timeout, forcing reconnect")
+                        disconnected_ids.append((acc_id, "socks5 timeout"))
+                        # Force client cleanup immediately
+                        if acc_id in active_clients:
+                            try:
+                                await asyncio.wait_for(active_clients[acc_id].disconnect(), timeout=3)
+                            except:
+                                pass
+                        continue
+                    
                     # Check for Telegram server errors (RpcCallFailError) - don't disconnect, just skip
                     if is_telegram_server_error(error_str):
                         print(f"  [TELEGRAM] Server busy, skipping iteration: {str(e)[:40]}")
@@ -2775,8 +2807,8 @@ async def keep_clients_alive():
             if is_telegram_server_error(error_str):
                 print(f"  [TELEGRAM] Server issue in keep_alive: {str(e)[:40]}")
                 await asyncio.sleep(10)
-            elif is_network_error(error_str) or "winerror 64" in error_str:
-                print(f"  [NETWORK] keep_clients_alive network error - waiting 5s...")
+            elif is_network_error(error_str) or "winerror 64" in error_str or "winerror 121" in error_str or "semaphore" in error_str:
+                print(f"  [NETWORK] keep_clients_alive network/proxy error - waiting 5s...")
                 await asyncio.sleep(5)
             else:
                 await asyncio.sleep(0.5)
@@ -2785,11 +2817,12 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-http-client-recreation")
+    print("  BUILD: 2026-01-22-socks5-telethon-resilience")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 60s cooldown")
     print("  📨 Skips accounts without proxy/API")
+    print("  🔌 SOCKS5 zombie detection + WinError 121 handling")
     print("=" * 50)
     print("=" * 50)
     
