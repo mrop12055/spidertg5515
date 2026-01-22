@@ -437,7 +437,7 @@ async def connect_with_retry(client: TelegramClient, max_retries: int = 3) -> bo
 
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,
                                 skip_avatar: bool = False, no_cache: bool = False, 
-                                long_lived: bool = False) -> Optional[TelegramClient]:
+                                long_lived: bool = False, skip_session_check: bool = False) -> Optional[TelegramClient]:
     """
     Get or create a Telegram client for an account.
     
@@ -472,6 +472,7 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
         skip_avatar: If True, skip profile sync
         no_cache: If True, skip client caching
         long_lived: If True, use settings optimized for long-lived connections
+        skip_session_check: If True, skip reporting session check to backend (for reconnections)
     """
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
@@ -481,13 +482,13 @@ async def get_or_create_client(account: dict, setup_handler=None, task_proxy: di
     
     async with lock:
         return await _get_or_create_client_internal(
-            account, setup_handler, task_proxy, skip_avatar, no_cache, long_lived
+            account, setup_handler, task_proxy, skip_avatar, no_cache, long_lived, skip_session_check
         )
 
 
 async def _get_or_create_client_internal(account: dict, setup_handler=None, task_proxy: dict = None,
                                           skip_avatar: bool = False, no_cache: bool = False, 
-                                          long_lived: bool = False) -> Optional[TelegramClient]:
+                                          long_lived: bool = False, skip_session_check: bool = False) -> Optional[TelegramClient]:
     """Internal implementation of get_or_create_client (called within lock)."""
     account_id = account["id"]
     phone = account.get("phone_number", account_id[:8])
@@ -665,13 +666,14 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                     asyncio.create_task(report_session_check(account_id, success=False, error="Account deleted - get_me returned None"))
                     return None
                 
-                # SUCCESS - Report active status with telegram data
-                asyncio.create_task(report_session_check(account_id, success=True, telegram_data={
-                    "id": me.id,
-                    "first_name": me.first_name,
-                    "last_name": me.last_name,
-                    "username": me.username
-                }))
+                # SUCCESS - Only report if NOT a reconnection (to avoid spamming session checks)
+                if not skip_session_check:
+                    asyncio.create_task(report_session_check(account_id, success=True, telegram_data={
+                        "id": me.id,
+                        "first_name": me.first_name,
+                        "last_name": me.last_name,
+                        "username": me.username
+                    }))
                 
             except AuthKeyUnregisteredError:
                 print(f"  [EXPIRED] {account['phone_number']}: Auth key unregistered")
@@ -1956,7 +1958,7 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def connect_account_with_fingerprint(account: dict, setup_handler=None, task_proxy: dict = None) -> tuple:
+async def connect_account_with_fingerprint(account: dict, setup_handler=None, task_proxy: dict = None, skip_session_check: bool = False) -> tuple:
     """
     Connect account using CORRECT ORDER: Proxy FIRST → Fingerprint → Connect
     
@@ -1980,6 +1982,7 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
         account: Account data with session, fingerprint, proxy info
         setup_handler: Optional handler to setup after connection
         task_proxy: Proxy from task (overrides account.proxy)
+        skip_session_check: If True, skip reporting session check on success (for reconnections)
     
     Returns: (client, error_str or None)
     """
@@ -2032,7 +2035,8 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
             account, 
             setup_handler=setup_handler, 
             task_proxy=proxy,
-            long_lived=True  # Stable settings for live chat
+            long_lived=True,  # Stable settings for live chat
+            skip_session_check=skip_session_check  # Avoid spamming session checks on reconnection
         )
         if client:
             return client, None
@@ -2644,6 +2648,7 @@ async def main_loop():
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
+    session_checked_ids = set()  # Track accounts that have been session-checked THIS RUN (to avoid spam)
     failed_proxy_accounts = {}  # Track accounts that failed due to proxy {account_id: retry_time}
     pending_sync_accounts = {}  # Track accounts that need sync retry {account_id: (retry_time, phone)}
     last_synced_msg_ids = {}  # Track last synced message IDs per sender to prevent duplicates {account_id_sender_id: msg_id}
@@ -2716,12 +2721,23 @@ async def main_loop():
                         phone = acc.get("phone_number", "???")[-4:]
                         if not acc_id:
                             return None, None, "No ID", phone, False
+                        
+                        # Skip session check if already checked this run (to avoid spam)
+                        already_checked = acc_id in session_checked_ids
+                        
                         try:
                             client, error = await asyncio.wait_for(
-                                connect_account_with_fingerprint(acc, setup_handler=setup_message_handler, task_proxy=acc.get("proxy")),
+                                connect_account_with_fingerprint(
+                                    acc, 
+                                    setup_handler=setup_message_handler, 
+                                    task_proxy=acc.get("proxy"),
+                                    skip_session_check=already_checked  # Skip if already checked this run
+                                ),
                                 timeout=CONNECT_TIMEOUT_SECONDS
                             )
                             if client:
+                                # Mark as session-checked for this run
+                                session_checked_ids.add(acc_id)
                                 # Sync missed messages after successful connection
                                 sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
                                 return acc_id, client, error, phone, needs_retry
@@ -2849,7 +2865,8 @@ async def main_loop():
                             for db_attempt in range(max_db_retries):
                                 try:
                                     client, connection_error = await connect_account_with_fingerprint(
-                                        account, setup_handler=setup_message_handler, task_proxy=proxy
+                                        account, setup_handler=setup_message_handler, task_proxy=proxy,
+                                        skip_session_check=True  # Skip session check for message sending
                                     )
                                     if client:
                                         break  # Success
@@ -2925,7 +2942,7 @@ async def main_loop():
                 account = task.get("account", {})
                 proxy = task.get("proxy")
                 
-                client, error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler, task_proxy=proxy)
+                client, error = await connect_account_with_fingerprint(account, setup_handler=setup_message_handler, task_proxy=proxy, skip_session_check=True)
                 
                 if client and recipient:
                     print(f"  [REPLY] To {recipient}...")
