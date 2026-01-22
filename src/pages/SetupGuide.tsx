@@ -28,7 +28,7 @@ SUPABASE_KEY = "${supabaseKey}"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (OFFICIAL TELEGRAM API - SAFE)
 
-BUILD: 2026-01-22-admin-fingerprint-only
+BUILD: 2026-01-22-task-cleanup-fix
 
 CRITICAL RULES:
 - NO ACCOUNT RUNS WITHOUT PROXY AND FINGERPRINT!
@@ -1196,6 +1196,8 @@ async def disconnect_client(account_id: str, phone: str = None, save_session: bo
     
     IMPORTANT: By default, saves session to DB before disconnecting to preserve entity cache.
     Set save_session=False for quick disconnects (e.g., error cases where session is invalid).
+    
+    FIX (2026-01-22): Added proper task cleanup to prevent "Task was destroyed but it is pending!" warnings.
     """
     if account_id in active_clients:
         try:
@@ -1205,7 +1207,17 @@ async def disconnect_client(account_id: str, phone: str = None, save_session: bo
             if save_session and phone:
                 await save_session_to_db(account_id, phone)
             
-            await client.disconnect()
+            # Proper disconnect with timeout and task cleanup
+            try:
+                await asyncio.wait_for(client.disconnect(), timeout=5)
+            except asyncio.TimeoutError:
+                print(f"  [WARN] Disconnect timeout for {phone or account_id[:8]}")
+            except Exception:
+                pass
+            
+            # CRITICAL: Allow pending asyncio tasks to complete (prevents "Task was destroyed" warnings)
+            await asyncio.sleep(0.1)
+            
             del active_clients[account_id]
             if phone:
                 print(f"  [DISCONNECT] Released {phone}")
@@ -1226,6 +1238,8 @@ async def shutdown_all(save_sessions: bool = True):
     
     CRITICAL: Always call this before exiting to preserve entity cache.
     Set save_sessions=False only for emergency shutdowns.
+    
+    FIX (2026-01-22): Added proper task cleanup to prevent "Task was destroyed but it is pending!" warnings.
     """
     print("\\n[SHUTDOWN] Saving sessions and disconnecting...")
     
@@ -1241,12 +1255,16 @@ async def shutdown_all(save_sessions: bool = True):
             except Exception as e:
                 print(f"  [WARN] Could not save session for {account_id[:8]}: {e}")
     
-    # Then disconnect all clients
+    # Then disconnect all clients with proper task cleanup
     for account_id, client in list(active_clients.items()):
         try:
             await asyncio.wait_for(client.disconnect(), timeout=5)
         except:
             pass
+    
+    # CRITICAL: Allow pending asyncio tasks to complete (prevents "Task was destroyed" warnings)
+    await asyncio.sleep(0.2)
+    
     active_clients.clear()
     
     # Close HTTP client
@@ -1616,7 +1634,10 @@ async def report_results_parallel(results: list, sent_cache: set = None) -> tupl
 
 
 async def disconnect_batch_clients():
-    """Disconnect ALL active clients after batch - CRITICAL for livechat isolation."""
+    """Disconnect ALL active clients after batch - CRITICAL for livechat isolation.
+    
+    FIX (2026-01-22): Added proper task cleanup to prevent "Task was destroyed but it is pending!" warnings.
+    """
     global active_clients
     if not active_clients:
         return 0
@@ -1633,7 +1654,12 @@ async def disconnect_batch_clients():
                     await save_session_to_db(account_id, phone)
                 except Exception:
                     pass  # Non-critical
-                await asyncio.wait_for(client.disconnect(), timeout=5)
+                try:
+                    await asyncio.wait_for(client.disconnect(), timeout=5)
+                except asyncio.TimeoutError:
+                    print(f"    ⚠ Disconnect timeout [{account_id[:8]}]")
+                except Exception:
+                    pass
             return True
         except Exception as e:
             print(f"    ⚠ Disconnect error [{account_id[:8]}]: {e}")
@@ -1642,6 +1668,9 @@ async def disconnect_batch_clients():
     # Disconnect all in parallel with timeout
     disconnect_tasks = [disconnect_one(acc_id, client) for acc_id, client in active_clients.items()]
     await asyncio.gather(*disconnect_tasks, return_exceptions=True)
+    
+    # CRITICAL: Allow pending asyncio tasks to complete (prevents "Task was destroyed" warnings)
+    await asyncio.sleep(0.2)
     
     # Clear the cache completely
     active_clients.clear()
@@ -2572,6 +2601,8 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
     """
     Properly disconnect a session and schedule it for retry after 60 seconds.
     This ensures clean session release before retry.
+    
+    FIX (2026-01-22): Added proper task cleanup to prevent "Task was destroyed but it is pending!" warnings.
     """
     global failed_connection_accounts
     
@@ -2582,7 +2613,14 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
         try:
             client = active_clients.pop(acc_id)
             if client.is_connected():
-                await asyncio.wait_for(client.disconnect(), timeout=5)
+                try:
+                    await asyncio.wait_for(client.disconnect(), timeout=5)
+                except asyncio.TimeoutError:
+                    print(f"  [TIMEOUT] Disconnect timeout for {phone} - forcing cleanup")
+                except Exception:
+                    pass
+                # CRITICAL: Allow pending asyncio tasks to complete (prevents "Task was destroyed" warnings)
+                await asyncio.sleep(0.1)
                 print(f"  [DISCONNECT] {phone} - {reason} - will retry in {FAILED_RETRY_DELAY}s")
             else:
                 print(f"  [CLEANUP] {phone} - already disconnected - will retry in {FAILED_RETRY_DELAY}s")
