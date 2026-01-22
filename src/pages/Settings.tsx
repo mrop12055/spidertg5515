@@ -75,18 +75,10 @@ const Settings: React.FC = () => {
   const [apiCredentials, setApiCredentials] = useState<ApiCredential[]>([]);
   const [isLoadingCredentials, setIsLoadingCredentials] = useState(true);
   
-  // Add API credential dialog
-  const [isAddApiOpen, setIsAddApiOpen] = useState(false);
-  const [newApiName, setNewApiName] = useState('');
-  const [newApiId, setNewApiId] = useState('');
-  const [newApiHash, setNewApiHash] = useState('');
-  const [newApiType, setNewApiType] = useState<string>('android');
-  const [isAddingApi, setIsAddingApi] = useState(false);
   
   // Bulk API import
   const [isBulkApiOpen, setIsBulkApiOpen] = useState(false);
   const [bulkApiInput, setBulkApiInput] = useState('');
-  const [bulkApiType, setBulkApiType] = useState<string>('random');
   const [isImportingBulk, setIsImportingBulk] = useState(false);
   
   // Manual redistribute
@@ -154,47 +146,6 @@ const Settings: React.FC = () => {
   };
 
 
-  // Add new API credential with auto-redistribution
-  const handleAddApiCredential = async () => {
-    if (!newApiName.trim() || !newApiId.trim() || !newApiHash.trim()) {
-      toast.error('Please fill all fields');
-      return;
-    }
-    
-    setIsAddingApi(true);
-    try {
-      const { error } = await supabase
-        .from('telegram_api_credentials')
-        .insert({
-          name: newApiName.trim(),
-          api_id: newApiId.trim(),
-          api_hash: newApiHash.trim(),
-          client_type: newApiType,
-          is_active: true,
-          accounts_count: 0,
-        });
-      
-      if (error) throw error;
-      
-      toast.success('API credential added! Auto-redistributing accounts...');
-      setNewApiName('');
-      setNewApiId('');
-      setNewApiHash('');
-      setNewApiType('android');
-      setIsAddApiOpen(false);
-      
-      // API added - user can manually redistribute if needed
-      toast.info('Use "Redistribute" button to assign this API to an account.');
-      
-      fetchApiCredentials();
-    } catch (error) {
-      console.error('Failed to add API credential:', error);
-      toast.error('Failed to add API credential');
-    } finally {
-      setIsAddingApi(false);
-    }
-  };
-
   // Delete API credential
   const handleDeleteApiCredential = async (id: string) => {
     try {
@@ -239,11 +190,16 @@ const Settings: React.FC = () => {
     return types[Math.floor(Math.random() * types.length)];
   };
 
-  // Bulk import API credentials - ONLY accepts api_id:api_hash format
+  // Generate random API ID (8-digit number)
+  const generateRandomApiId = () => {
+    return String(Math.floor(10000000 + Math.random() * 90000000));
+  };
+
+  // Bulk import API credentials - ONLY requires API hashes, auto-generates API ID
   const handleBulkImport = async () => {
     const lines = bulkApiInput.trim().split('\n').filter(line => line.trim());
     if (lines.length === 0) {
-      toast.error('Please enter at least one API credential (api_id:api_hash format)');
+      toast.error('Please enter at least one API hash (one per line)');
       return;
     }
     
@@ -254,45 +210,48 @@ const Settings: React.FC = () => {
     try {
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
-        let apiId: string;
-        let apiHash: string;
-        let deviceType: string;
         
-        // Parse api_id:api_hash format (ONLY supported format now)
-        const parts = line.split(/[,:]/);
-        if (parts.length >= 2) {
-          apiId = parts[0].trim();
-          apiHash = parts[1].trim();
-          // Use bulkApiType if specified, otherwise random
-          deviceType = bulkApiType === 'random' ? getRandomDeviceType() : bulkApiType;
+        // Extract 32-character hex hash from line (handles UUID format or plain hash)
+        let apiHash: string | null = null;
+        
+        // Try UUID format first (8-4-4-4-12 with dashes)
+        const uuidMatch = line.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
+        if (uuidMatch) {
+          apiHash = uuidMatch[0].replace(/-/g, '');
         } else {
-          toast.error(`Line ${i + 1}: Invalid format. Use api_id:api_hash`);
+          // Try plain 32-char hex
+          const hexMatch = line.match(/[a-f0-9]{32}/i);
+          if (hexMatch) {
+            apiHash = hexMatch[0];
+          }
+        }
+        
+        if (!apiHash || apiHash.length !== 32) {
+          toast.error(`Line ${i + 1}: Invalid hash (must be 32 hex characters)`);
           failCount++;
           continue;
         }
         
-        if (apiId && apiHash) {
-          const randomName = generateRandomName(i);
-          
-          const { error } = await supabase
-            .from('telegram_api_credentials')
-            .insert({
-              name: randomName,
-              api_id: apiId,
-              api_hash: apiHash,
-              client_type: deviceType,
-              is_active: true,
-              accounts_count: 0,
-            });
-          
-          if (error) {
-            console.error('Failed to add API:', error);
-            failCount++;
-          } else {
-            successCount++;
-          }
-        } else {
+        const randomName = generateRandomName(i);
+        const randomApiId = generateRandomApiId();
+        const randomDeviceType = getRandomDeviceType();
+        
+        const { error } = await supabase
+          .from('telegram_api_credentials')
+          .insert({
+            name: randomName,
+            api_id: randomApiId,
+            api_hash: apiHash,
+            client_type: randomDeviceType,
+            is_active: true,
+            accounts_count: 0,
+          });
+        
+        if (error) {
+          console.error('Failed to add API:', error);
           failCount++;
+        } else {
+          successCount++;
         }
       }
       
@@ -501,81 +460,21 @@ const Settings: React.FC = () => {
                     <DialogHeader>
                       <DialogTitle>Bulk Import API Credentials</DialogTitle>
                       <DialogDescription>
-                        Select a device type and enter API hashes (one per line). API ID is auto-filled.
+                        Enter API hashes (one per line). API ID and device type are auto-generated.
                       </DialogDescription>
                     </DialogHeader>
                     <div className="space-y-4 pt-4">
                       <div className="space-y-2">
-                        <Label>Device Type</Label>
-                        <Select 
-                          value={bulkApiType} 
-                          onValueChange={(value) => {
-                            setBulkApiType(value);
-                            setBulkApiInput('');
-                          }}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="android">📱 Android (API ID: 2040)</SelectItem>
-                            <SelectItem value="ios">🍎 iOS (API ID: 21724)</SelectItem>
-                            <SelectItem value="desktop">🖥️ Desktop (API ID: 2496)</SelectItem>
-                            <SelectItem value="macos">💻 macOS (API ID: 2834)</SelectItem>
-                            <SelectItem value="random">🎲 Custom (enter api_id:api_hash)</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label>{bulkApiType === 'random' ? 'API Credentials' : 'API Hashes'}</Label>
+                        <Label>API Hashes</Label>
                         <Textarea
-                          placeholder={bulkApiType === 'random' 
-                            ? "12345678:a1b2c3d4e5f6g7h8i9j0\n87654321:k1l2m3n4o5p6q7r8s9t0"
-                            : "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6\nq7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2"
-                          }
+                          placeholder="a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6&#10;q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2&#10;or paste UUID format with dashes"
                           value={bulkApiInput}
-                          onChange={(e) => {
-                            const text = e.target.value;
-                            if (bulkApiType === 'random') {
-                              setBulkApiInput(text);
-                            } else {
-                              // Device mode - extract API hashes from text
-                              const lines = text.split('\n');
-                              const hashes: string[] = [];
-                              
-                              for (const line of lines) {
-                                // First try to find UUID format (8-4-4-4-12 with dashes) and remove dashes
-                                const uuidMatch = line.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/gi);
-                                if (uuidMatch) {
-                                  uuidMatch.forEach(uuid => {
-                                    hashes.push(uuid.replace(/-/g, ''));
-                                  });
-                                } else {
-                                  // Fallback to finding 32 consecutive hex chars
-                                  const hexMatch = line.match(/[a-f0-9]{32}/gi);
-                                  if (hexMatch) {
-                                    hashes.push(...hexMatch);
-                                  }
-                                }
-                              }
-                              
-                              if (hashes.length > 0) {
-                                setBulkApiInput(hashes.join('\n'));
-                              } else {
-                                // Allow typing - only keep hex chars for partial input
-                                const cleanedLines = lines.map(line => 
-                                  line.replace(/[^a-f0-9\n]/gi, '')
-                                ).join('\n');
-                                setBulkApiInput(cleanedLines);
-                              }
-                            }
-                          }}
-                          rows={6}
+                          onChange={(e) => setBulkApiInput(e.target.value)}
+                          rows={8}
                           className="font-mono text-sm"
                         />
                         <p className="text-xs text-muted-foreground">
-                          Enter one API per line as: api_id:api_hash (e.g., 12345:abcdef123456...)
+                          Enter one API hash per line (32 hex characters). UUID format with dashes is also accepted.
                         </p>
                       </div>
                       
@@ -592,7 +491,7 @@ const Settings: React.FC = () => {
                         ) : (
                           <>
                             <Upload className="w-4 h-4 mr-2" />
-                            {bulkApiType === 'random' ? 'Import APIs' : `Add ${bulkApiType} API`}
+                            Import API Hashes
                           </>
                         )}
                       </Button>
@@ -600,77 +499,6 @@ const Settings: React.FC = () => {
                   </DialogContent>
                 </Dialog>
 
-                {/* Single Add Dialog */}
-                <Dialog open={isAddApiOpen} onOpenChange={setIsAddApiOpen}>
-                  <DialogTrigger asChild>
-                    <Button size="sm" className="gap-2">
-                      <Plus className="w-4 h-4" />
-                      Add API
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Add API Credential</DialogTitle>
-                      <DialogDescription>
-                        Add a custom Telegram API ID/Hash pair for account distribution
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 pt-4">
-                      <div className="space-y-2">
-                        <Label>Name</Label>
-                        <Input
-                          placeholder="e.g., Custom Android 1"
-                          value={newApiName}
-                          onChange={(e) => setNewApiName(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>API ID</Label>
-                        <Input
-                          placeholder="e.g., 12345678"
-                          value={newApiId}
-                          onChange={(e) => setNewApiId(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>API Hash</Label>
-                        <Input
-                          placeholder="e.g., abc123def456..."
-                          value={newApiHash}
-                          onChange={(e) => setNewApiHash(e.target.value)}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Client Type</Label>
-                        <Select value={newApiType} onValueChange={setNewApiType}>
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="android">Android</SelectItem>
-                            <SelectItem value="ios">iOS</SelectItem>
-                            <SelectItem value="desktop">Desktop</SelectItem>
-                            <SelectItem value="macos">macOS</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <Button 
-                        onClick={handleAddApiCredential} 
-                        disabled={isAddingApi}
-                        className="w-full"
-                      >
-                        {isAddingApi ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Adding...
-                          </>
-                        ) : (
-                          'Add API Credential'
-                        )}
-                      </Button>
-                    </div>
-                  </DialogContent>
-                </Dialog>
               </div>
             </div>
           </CardHeader>
