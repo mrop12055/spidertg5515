@@ -170,18 +170,34 @@ const Logs: React.FC = () => {
         });
       }
 
-      // Process Account Check Tasks
+      // Process Account Check Tasks with proper operation labels
+      const getOperationLabel = (taskType: string) => {
+        const labels: Record<string, string> = {
+          'change_name': 'Name Change',
+          'privacy_settings': 'Privacy Settings',
+          'sync_profile': 'Profile Sync',
+          'change_photo': 'Photo Change',
+          'change_password': 'Password Change',
+          'logout_sessions': 'Logout Sessions',
+          'spambot_check': 'SpamBot Check',
+          'verify_session': 'Session Verify',
+          'fingerprint_generated': 'Fingerprint Gen',
+        };
+        return labels[taskType] || taskType.replace(/_/g, ' ');
+      };
+
       if (accountCheckResult.data) {
         accountCheckResult.data.forEach(task => {
+          const operationLabel = getOperationLabel(task.task_type);
           logs.push({
             id: task.id,
-            source: 'Account Check',
+            source: operationLabel,
             type: task.task_type,
-            message: `${task.task_type.replace(/_/g, ' ')} - ${task.status}`,
+            message: task.result || `${operationLabel} ${task.status}`,
             status: task.status === 'completed' ? 'success' : task.status === 'failed' ? 'error' : 'info',
-            details: task.result || undefined,
+            details: task.result ? undefined : task.task_type,
             accountPhone: accountPhoneMap.get(task.account_id) || task.account_id,
-            timestamp: new Date(task.created_at || Date.now()),
+            timestamp: new Date(task.completed_at || task.created_at || Date.now()),
           });
         });
       }
@@ -449,7 +465,15 @@ const Logs: React.FC = () => {
   const getSourceIcon = (source: string) => {
     switch (source) {
       case 'VPS Runner': return <Server className="w-3.5 h-3.5" />;
-      case 'Account Check': return <UserCheck className="w-3.5 h-3.5" />;
+      case 'Name Change': return <UserCheck className="w-3.5 h-3.5" />;
+      case 'Privacy Settings': return <Shield className="w-3.5 h-3.5" />;
+      case 'Profile Sync': return <RefreshCw className="w-3.5 h-3.5" />;
+      case 'Photo Change': return <UserCheck className="w-3.5 h-3.5" />;
+      case 'Password Change': return <Shield className="w-3.5 h-3.5" />;
+      case 'Logout Sessions': return <Shield className="w-3.5 h-3.5" />;
+      case 'SpamBot Check': return <UserCheck className="w-3.5 h-3.5" />;
+      case 'Session Verify': return <CheckCircle className="w-3.5 h-3.5" />;
+      case 'Fingerprint Gen': return <Database className="w-3.5 h-3.5" />;
       case 'Warmup Chat': return <MessageSquare className="w-3.5 h-3.5" />;
       case 'Block Contact': return <Shield className="w-3.5 h-3.5" />;
       case 'Contact Import': return <Database className="w-3.5 h-3.5" />;
