@@ -12,15 +12,16 @@ const SetupGuide: React.FC = () => {
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
   // ========== 1. CONFIG.PY ==========
-  const configPy = `"""
+const configPy = `"""
 TelegramCRM - Configuration
+
+NOTE: API credentials are fetched per-account from the database.
+No hardcoded API_ID/API_HASH - each account uses its assigned credentials.
 """
 
 BACKEND_URL = "${supabaseUrl}/functions/v1"
 SUPABASE_URL = "${supabaseUrl}"
 SUPABASE_KEY = "${supabaseKey}"
-TELEGRAM_API_ID = "31812270"
-TELEGRAM_API_HASH = "4cce3baadfdb22bd5930f9d8f5063f98"
 `;
 
   // ========== 2. CLIENT_MANAGER.PY (STRICT 1:1 PROXY - OFFICIAL TELEGRAM API) ==========
@@ -103,7 +104,7 @@ from telethon.errors import (
     MediaEmptyError
 )
 
-from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY, TELEGRAM_API_ID, TELEGRAM_API_HASH
+from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY
 from fingerprint_generator import generate_fingerprint
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
@@ -585,8 +586,15 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         return None
     
     try:
-        api_id = account.get("api_id") or TELEGRAM_API_ID
-        api_hash = account.get("api_hash") or TELEGRAM_API_HASH
+        api_id = account.get("api_id")
+        api_hash = account.get("api_hash")
+        
+        # CRITICAL: Each account MUST have its own API credentials assigned
+        # Using shared/hardcoded API credentials causes bans!
+        if not api_id or not api_hash:
+            print(f"  ⛔ [SKIP] {phone} - NO API CREDENTIALS ASSIGNED (MANDATORY)")
+            print(f"          → Assign API credentials in the Admin Dashboard before running")
+            return None
         
         # ========== CREATE CLIENT WITH SQLITE LOCK RETRY ==========
         client = None
