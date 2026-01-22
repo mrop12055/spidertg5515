@@ -506,7 +506,7 @@ const Logs: React.FC = () => {
           </Card>
         )}
 
-        <Tabs defaultValue="current" className="space-y-4">
+        <Tabs defaultValue="system" className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
             <TabsList className="h-10">
               <TabsTrigger value="current" className="gap-2">
