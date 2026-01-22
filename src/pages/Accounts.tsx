@@ -92,6 +92,7 @@ const Accounts: React.FC = () => {
   const [uploadResults, setUploadResults] = useState<{ successful: number; failed: number } | null>(null);
   const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
   const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
+  const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0, currentChunk: 0, totalChunks: 0 });
   
   // Bulk selection state
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -632,30 +633,79 @@ const Accounts: React.FC = () => {
         tagsToAssign.push(newUploadTag.trim());
       }
 
-      const { data, error } = await supabase.functions.invoke('process-account-upload', {
-        body: { accounts: accountsToUpload, tags: tagsToAssign }
-      });
+      // Process in chunks of 300 for speed and reliability
+      const CHUNK_SIZE = 300;
+      const totalAccounts = accountsToUpload.length;
+      const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
+      let totalSuccessful = 0;
+      let totalFailed = 0;
+      const allAccountIds: string[] = [];
 
-      if (error) throw error;
+      setUploadProgress({ processed: 0, total: totalAccounts, currentChunk: 0, totalChunks });
+
+      for (let i = 0; i < totalAccounts; i += CHUNK_SIZE) {
+        const chunk = accountsToUpload.slice(i, i + CHUNK_SIZE);
+        const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
+
+        setUploadProgress({ 
+          processed: i, 
+          total: totalAccounts, 
+          currentChunk: chunkNumber, 
+          totalChunks 
+        });
+
+        try {
+          const { data, error } = await supabase.functions.invoke('process-account-upload', {
+            body: { accounts: chunk, tags: tagsToAssign }
+          });
+
+          if (error) {
+            console.error(`Chunk ${chunkNumber} error:`, error);
+            totalFailed += chunk.length;
+          } else {
+            totalSuccessful += data.successful || 0;
+            totalFailed += data.failed || 0;
+            if (data.account_ids) {
+              allAccountIds.push(...data.account_ids);
+            }
+          }
+        } catch (err) {
+          console.error(`Chunk ${chunkNumber} exception:`, err);
+          totalFailed += chunk.length;
+        }
+      }
+
+      setUploadProgress({ processed: totalAccounts, total: totalAccounts, currentChunk: totalChunks, totalChunks });
 
       setUploadResults({
-        successful: data.successful || 0,
-        failed: data.failed || 0,
+        successful: totalSuccessful,
+        failed: totalFailed,
       });
 
-      if (data.successful > 0) {
-        toast.success(`Uploaded ${data.successful} account(s) - verifying...`);
+      if (totalSuccessful > 0) {
+        toast.success(`Uploaded ${totalSuccessful} account(s) - verifying...`);
         
-        // Auto-verify after upload
-        if (data.account_ids && data.account_ids.length > 0) {
+        // Auto-verify after upload (batch the verification too)
+        if (allAccountIds.length > 0) {
           setTimeout(async () => {
             try {
-              const { data: verifyData } = await supabase.functions.invoke('verify-sessions', {
-                body: { account_ids: data.account_ids }
-              });
-              if (verifyData?.summary) {
-                toast.success(`Verified: ${verifyData.summary.valid || 0} active, ${verifyData.summary.invalid || 0} invalid`);
+              // Verify in batches of 100
+              const verifyBatchSize = 100;
+              let validCount = 0;
+              let invalidCount = 0;
+              
+              for (let i = 0; i < allAccountIds.length; i += verifyBatchSize) {
+                const batch = allAccountIds.slice(i, i + verifyBatchSize);
+                const { data: verifyData } = await supabase.functions.invoke('verify-sessions', {
+                  body: { account_ids: batch }
+                });
+                if (verifyData?.summary) {
+                  validCount += verifyData.summary.valid || 0;
+                  invalidCount += verifyData.summary.invalid || 0;
+                }
               }
+              
+              toast.success(`Verified: ${validCount} active, ${invalidCount} invalid`);
               refreshData();
             } catch (e) {
               console.error('Auto-verify error:', e);
@@ -663,11 +713,13 @@ const Accounts: React.FC = () => {
           }, 1000);
         }
       }
-      if (data.failed > 0) {
-        toast.error(`${data.failed} account(s) failed`);
+      if (totalFailed > 0 && totalFailed < totalAccounts) {
+        toast.warning(`${totalFailed} account(s) skipped (duplicates or errors)`);
+      } else if (totalFailed === totalAccounts && totalAccounts > 0) {
+        toast.error(`All accounts failed or already exist`);
       }
 
-      if (data.successful > 0 && data.failed === 0) {
+      if (totalSuccessful > 0 && totalFailed === 0) {
         setSessionFiles([]);
         setUploadTags([]);
         setNewUploadTag('');
@@ -680,6 +732,7 @@ const Accounts: React.FC = () => {
       toast.error('Failed to upload accounts');
     } finally {
       setIsUploading(false);
+      setUploadProgress({ processed: 0, total: 0, currentChunk: 0, totalChunks: 0 });
     }
   };
 
@@ -2546,14 +2599,36 @@ const Accounts: React.FC = () => {
                       </div>
                     )}
 
-                    {uploadResults && (
+                    {/* Upload Progress Bar */}
+                    {isUploading && uploadProgress.total > 0 && (
+                      <div className="space-y-2 p-3 rounded-lg bg-primary/5 border border-primary/20">
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="font-medium flex items-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            Uploading accounts...
+                          </span>
+                          <span className="text-muted-foreground">
+                            Chunk {uploadProgress.currentChunk}/{uploadProgress.totalChunks}
+                          </span>
+                        </div>
+                        <Progress 
+                          value={(uploadProgress.processed / uploadProgress.total) * 100} 
+                          className="h-2"
+                        />
+                        <p className="text-xs text-muted-foreground text-center">
+                          {uploadProgress.processed} / {uploadProgress.total} accounts processed
+                        </p>
+                      </div>
+                    )}
+
+                    {uploadResults && !isUploading && (
                       <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 text-sm">
                         <span className="flex items-center gap-1 text-status-active">
                           <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
                         </span>
                         {uploadResults.failed > 0 && (
-                          <span className="flex items-center gap-1 text-destructive">
-                            <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
+                          <span className="flex items-center gap-1 text-amber-500">
+                            <AlertCircle className="w-4 h-4" /> {uploadResults.failed} skipped
                           </span>
                         )}
                       </div>

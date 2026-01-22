@@ -885,12 +885,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         }
       }
 
-      setUploadProgress(prev => ({
-        ...prev,
-        total: accountsToUpload.length,
-        status: 'processing'
-      }));
-
       if (accountsToUpload.length === 0) {
         setUploadProgress(prev => ({
           ...prev,
@@ -901,27 +895,77 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         return;
       }
 
-      // Send to edge function
-      const { data, error } = await supabase.functions.invoke('process-account-upload', {
-        body: { accounts: accountsToUpload }
-      });
-
-      if (error) throw error;
+      // Process in chunks of 300 for speed and reliability
+      const CHUNK_SIZE = 300;
+      const totalAccounts = accountsToUpload.length;
+      let totalSuccessful = 0;
+      let totalFailed = 0;
+      const allErrors: string[] = [];
 
       setUploadProgress({
-        total: accountsToUpload.length,
-        processed: accountsToUpload.length,
-        successful: data.successful || 0,
-        failed: data.failed || 0,
-        status: 'completed',
-        errors: data.errors || []
+        total: totalAccounts,
+        processed: 0,
+        successful: 0,
+        failed: 0,
+        status: 'processing',
+        errors: []
       });
 
-      if (data.successful > 0) {
-        toast.success(`Successfully uploaded ${data.successful} accounts`);
+      for (let i = 0; i < totalAccounts; i += CHUNK_SIZE) {
+        const chunk = accountsToUpload.slice(i, i + CHUNK_SIZE);
+        const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
+        const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
+
+        try {
+          const { data, error } = await supabase.functions.invoke('process-account-upload', {
+            body: { accounts: chunk }
+          });
+
+          if (error) {
+            console.error(`Chunk ${chunkNumber} error:`, error);
+            totalFailed += chunk.length;
+            allErrors.push(`Chunk ${chunkNumber}: ${error.message}`);
+          } else {
+            totalSuccessful += data.successful || 0;
+            totalFailed += data.failed || 0;
+            if (data.errors?.length) {
+              allErrors.push(...data.errors.slice(0, 5)); // Limit errors per chunk
+            }
+          }
+        } catch (err) {
+          console.error(`Chunk ${chunkNumber} exception:`, err);
+          totalFailed += chunk.length;
+          allErrors.push(`Chunk ${chunkNumber}: ${(err as Error).message}`);
+        }
+
+        // Update progress after each chunk
+        setUploadProgress({
+          total: totalAccounts,
+          processed: Math.min(i + CHUNK_SIZE, totalAccounts),
+          successful: totalSuccessful,
+          failed: totalFailed,
+          status: 'processing',
+          errors: allErrors.slice(0, 20) // Keep last 20 errors
+        });
       }
-      if (data.failed > 0) {
-        toast.error(`Failed to upload ${data.failed} accounts`);
+
+      // Final status
+      setUploadProgress({
+        total: totalAccounts,
+        processed: totalAccounts,
+        successful: totalSuccessful,
+        failed: totalFailed,
+        status: 'completed',
+        errors: allErrors.slice(0, 20)
+      });
+
+      if (totalSuccessful > 0) {
+        toast.success(`Successfully uploaded ${totalSuccessful} accounts`);
+      }
+      if (totalFailed > 0 && totalFailed < totalAccounts) {
+        toast.warning(`${totalFailed} accounts skipped (duplicates or errors)`);
+      } else if (totalFailed === totalAccounts) {
+        toast.error(`All ${totalFailed} accounts failed or already exist`);
       }
 
       refreshData();
