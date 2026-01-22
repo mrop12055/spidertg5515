@@ -183,19 +183,8 @@ const Settings: React.FC = () => {
       setNewApiType('android');
       setIsAddApiOpen(false);
       
-      // Auto-redistribute accounts to include the new API
-      try {
-        const { data, error: redistError } = await supabase.functions.invoke('redistribute-api-credentials');
-        if (redistError) {
-          console.error('Auto-redistribution failed:', redistError);
-          toast.error('API added but auto-redistribution failed. Please redistribute manually.');
-        } else {
-          toast.success(`Accounts redistributed! ${data?.assigned || 0} accounts assigned across all APIs.`);
-        }
-      } catch (redistErr) {
-        console.error('Auto-redistribution error:', redistErr);
-        toast.error('API added but auto-redistribution failed.');
-      }
+      // API added - user can manually redistribute if needed
+      toast.info('Use "Redistribute" button to assign this API to an account.');
       
       fetchApiCredentials();
     } catch (error) {
@@ -326,13 +315,8 @@ const Settings: React.FC = () => {
         setBulkApiInput('');
         setIsBulkApiOpen(false);
         
-        // Auto-redistribute after bulk import
-        try {
-          const { data } = await supabase.functions.invoke('redistribute-api-credentials');
-          toast.success(`Accounts redistributed! ${data?.assigned || 0} accounts assigned.`);
-        } catch (err) {
-          console.error('Auto-redistribution failed:', err);
-        }
+        // APIs added - user can manually redistribute if needed
+        toast.info('Use "Redistribute" button to assign APIs to accounts.');
         
         fetchApiCredentials();
       } else {
@@ -378,26 +362,8 @@ const Settings: React.FC = () => {
     }
   };
 
-  // Auto-redistribute based on least usage every 1 minute
-  const triggerAutoRedistribution = async () => {
-    try {
-      console.log('[Settings] Auto-triggering redistribution based on least usage...');
-      await supabase.functions.invoke('redistribute-api-credentials');
-      await fetchApiCredentials();
-    } catch (err) {
-      console.error('[Settings] Auto-redistribution failed:', err);
-    }
-  };
-
   useEffect(() => {
     fetchApiCredentials();
-    
-    // Auto-redistribute every 1 minute based on least API usage
-    const interval = setInterval(() => {
-      triggerAutoRedistribution();
-    }, 60000); // 60 seconds = 1 minute
-    
-    return () => clearInterval(interval);
   }, []);
 
   // Load local settings from localStorage
