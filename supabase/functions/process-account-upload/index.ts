@@ -165,26 +165,30 @@ function generateUniqueFingerprint(existingFingerprints: Set<string>, preferredC
   };
 }
 
-// Select API credential with load balancing (least accounts first)
-function selectApiCredential(credentials: ApiCredential[], deviceModel: string): ApiCredential {
+// STRICT 1:1 API ASSIGNMENT - No load balancing, each account gets unique API
+// This function is no longer used - replaced by queue-based assignment
+function selectApiCredentialFromQueue(
+  apiQueue: ApiCredential[], 
+  deviceModel: string
+): ApiCredential | null {
+  if (apiQueue.length === 0) return null;
+  
   // Determine device type from fingerprint
   const isIos = deviceModel.toLowerCase().includes('iphone');
   
-  // Filter by matching client type if possible
-  let matchingCreds = credentials.filter(c => {
+  // Try to find matching client type first
+  const matchingIndex = apiQueue.findIndex(c => {
     if (isIos) return c.client_type === 'ios' || c.client_type === 'macos';
     return c.client_type === 'android' || c.client_type === 'desktop';
   });
   
-  // Fallback to all if no match
-  if (matchingCreds.length === 0) {
-    matchingCreds = credentials;
+  if (matchingIndex !== -1) {
+    // Remove and return the matching API
+    return apiQueue.splice(matchingIndex, 1)[0];
   }
   
-  // Sort by accounts_count (load balancing)
-  matchingCreds.sort((a, b) => a.accounts_count - b.accounts_count);
-  
-  return matchingCreds[0];
+  // Fallback: take the first available API
+  return apiQueue.shift() || null;
 }
 
 // Extract country code from phone number
@@ -318,17 +322,17 @@ serve(async (req) => {
 
     console.log(`[process-account-upload] Processing ${accounts.length} accounts`);
 
-    // Fetch API credentials for distribution
+    // Fetch API credentials for STRICT 1:1 distribution (only unassigned APIs)
     const { data: apiCredentials } = await supabase
       .from('telegram_api_credentials')
       .select('*')
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .eq('accounts_count', 0)  // STRICT: Only APIs with NO accounts assigned
+      .order('created_at', { ascending: true });
     
-    if (!apiCredentials || apiCredentials.length === 0) {
-      console.log('[process-account-upload] No API credentials found - using default');
-    } else {
-      console.log(`[process-account-upload] Found ${apiCredentials.length} API credentials for distribution`);
-    }
+    // Create a queue of available APIs (like proxies)
+    const apiQueue: ApiCredential[] = [...(apiCredentials || [])];
+    console.log(`[process-account-upload] Found ${apiQueue.length} unassigned API credentials for 1:1 distribution`);
 
     // Fetch existing fingerprints to ensure uniqueness
     const { data: existingAccounts } = await supabase
@@ -362,7 +366,9 @@ serve(async (req) => {
       accounts: [] as any[],
       account_ids: [] as string[],
       proxies_assigned: 0,
-      proxies_unavailable: 0
+      proxies_unavailable: 0,
+      apis_assigned: 0,
+      apis_unavailable: 0
     };
 
     // Fetch all existing accounts in one query for faster lookup
@@ -397,11 +403,19 @@ serve(async (req) => {
         const extracted = extractUserDataFromSession(account.session_data);
         const status = extracted.isValid ? 'active' : 'disconnected';
         
-        // Select API credential with load balancing
+        // Check if account already exists
+        const existing = existingAccountsMap.get(account.phone_number);
+        
+        // STRICT 1:1 API assignment from queue (like proxies) - NEW accounts only
         let selectedApiCredential: ApiCredential | null = null;
-        if (apiCredentials && apiCredentials.length > 0) {
+        if (!existing && apiQueue.length > 0) {
           const preferredType = Math.random() < 0.8 ? 'android' : 'ios';
-          selectedApiCredential = selectApiCredential(apiCredentials, preferredType === 'ios' ? 'iPhone' : 'Samsung');
+          selectedApiCredential = selectApiCredentialFromQueue(apiQueue, preferredType === 'ios' ? 'iPhone' : 'Samsung');
+          if (selectedApiCredential) {
+            results.apis_assigned++;
+          }
+        } else if (!existing && apiQueue.length === 0) {
+          results.apis_unavailable++;
         }
         
         // Generate UNIQUE device fingerprint matching the API type
@@ -412,8 +426,6 @@ serve(async (req) => {
         
         // Extract phone country
         const phoneCountry = extractPhoneCountry(account.phone_number);
-        
-        const existing = existingAccountsMap.get(account.phone_number);
 
         // Determine the status - PRESERVE existing status for restricted/banned/frozen accounts
         // Only set status for new accounts or if existing was 'disconnected'
