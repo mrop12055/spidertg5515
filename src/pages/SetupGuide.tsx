@@ -2639,17 +2639,17 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-20-24h-sync")
+    print("  BUILD: 2026-01-22-60s-retry")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
-    print("  🔄 Skips older messages to prevent duplicates")
-    print("  📨 Tracks last synced IDs per sender")
+    print("  🔄 Failed connections retry after 60s cooldown")
+    print("  📨 Skips accounts without proxy/API")
     print("=" * 50)
     print("=" * 50)
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
     session_checked_ids = set()  # Track accounts that have been session-checked THIS RUN (to avoid spam)
-    failed_proxy_accounts = {}  # Track accounts that failed due to proxy {account_id: retry_time}
+    failed_proxy_accounts = {}  # Track failed accounts {account_id: retry_time} - retry after 60s
     pending_sync_accounts = {}  # Track accounts that need sync retry {account_id: (retry_time, phone)}
     last_synced_msg_ids = {}  # Track last synced message IDs per sender to prevent duplicates {account_id_sender_id: msg_id}
     last_cleanup = time.time()
@@ -2685,7 +2685,7 @@ async def main_loop():
                 if stale_ids:
                     print(f"  [CLEANUP] Removed {len(stale_ids)} stale IDs from connected_ids")
                 
-                # Allow failed proxy accounts to retry after 5 minutes
+                # Allow failed accounts to retry after their cooldown expires (60s from failure)
                 now = time.time()
                 expired_failures = [acc_id for acc_id, retry_time in failed_proxy_accounts.items() if now > retry_time]
                 for acc_id in expired_failures:
@@ -2693,7 +2693,7 @@ async def main_loop():
                     connected_ids.discard(acc_id)  # Allow re-connection attempt
                 
                 if expired_failures:
-                    print(f"  [CLEANUP] Allowing {len(expired_failures)} proxy-failed accounts to retry")
+                    print(f"  [RETRY] {len(expired_failures)} failed accounts ready for retry")
                 
                 # Clean up disconnected clients
                 await cleanup_stale_clients()
@@ -2716,11 +2716,28 @@ async def main_loop():
                 if new_accounts:
                     print(f"  [CONNECT] Connecting {len(new_accounts)} accounts in PARALLEL...")
                     
+                    # Retry delay for failed connections (60 seconds)
+                    FAILED_RETRY_DELAY = 60
+                    
                     async def connect_one(acc):
                         acc_id = acc.get("id")
                         phone = acc.get("phone_number", "???")[-4:]
                         if not acc_id:
                             return None, None, "No ID", phone, False
+                        
+                        # ========== PRE-CHECK: Validate required resources ==========
+                        # Each account MUST have its own proxy and API credentials
+                        proxy = acc.get("proxy")
+                        api_id = acc.get("api_id")
+                        api_hash = acc.get("api_hash")
+                        
+                        if not proxy or not proxy.get("host"):
+                            print(f"  [{phone}] SKIP - No proxy assigned")
+                            return acc_id, None, "No proxy assigned", phone, False
+                        
+                        if not api_id or not api_hash:
+                            print(f"  [{phone}] SKIP - No API credentials assigned")
+                            return acc_id, None, "No API credentials", phone, False
                         
                         # Skip session check if already checked this run (to avoid spam)
                         already_checked = acc_id in session_checked_ids
@@ -2730,7 +2747,7 @@ async def main_loop():
                                 connect_account_with_fingerprint(
                                     acc, 
                                     setup_handler=setup_message_handler, 
-                                    task_proxy=acc.get("proxy"),
+                                    task_proxy=proxy,
                                     skip_session_check=already_checked  # Skip if already checked this run
                                 ),
                                 timeout=CONNECT_TIMEOUT_SECONDS
@@ -2741,10 +2758,33 @@ async def main_loop():
                                 # Sync missed messages after successful connection
                                 sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
                                 return acc_id, client, error, phone, needs_retry
-                            return acc_id, client, error, phone, False
+                            else:
+                                # Connection failed - ensure session is cleaned up
+                                if acc_id in active_clients:
+                                    try:
+                                        old_client = active_clients.pop(acc_id)
+                                        if old_client.is_connected():
+                                            await asyncio.wait_for(old_client.disconnect(), timeout=5)
+                                    except:
+                                        pass
+                                return acc_id, None, error or "Connection failed", phone, False
                         except asyncio.TimeoutError:
+                            # Timeout - clean up any partial connection
+                            if acc_id in active_clients:
+                                try:
+                                    old_client = active_clients.pop(acc_id)
+                                    await asyncio.wait_for(old_client.disconnect(), timeout=3)
+                                except:
+                                    pass
                             return acc_id, None, "TIMEOUT", phone, False
                         except Exception as e:
+                            # Error - clean up session
+                            if acc_id in active_clients:
+                                try:
+                                    old_client = active_clients.pop(acc_id)
+                                    await asyncio.wait_for(old_client.disconnect(), timeout=3)
+                                except:
+                                    pass
                             return acc_id, None, f"ERROR:{e}", phone, False
                     
                     results = await asyncio.gather(
@@ -2757,6 +2797,8 @@ async def main_loop():
                     timeout_count = 0
                     error_count = 0
                     sync_pending_count = 0
+                    skip_count = 0
+                    
                     for result in results:
                         if isinstance(result, Exception):
                             error_count += 1
@@ -2772,16 +2814,28 @@ async def main_loop():
                                 pending_sync_accounts[acc_id] = (time.time() + SYNC_RETRY_INTERVAL, phone)
                                 sync_pending_count += 1
                         elif error:
+                            # Check for missing resources (skip permanently until fixed in dashboard)
+                            if error in ["No proxy assigned", "No API credentials"]:
+                                skip_count += 1
+                                # Don't add to failed_proxy_accounts - these need dashboard fix
+                                continue
+                            
+                            # Connection failed - add to retry queue with 60s delay
                             if error.startswith("NETWORK_ERROR:"):
-                                pass  # Will retry next iteration
-                            elif error == "TIMEOUT" or error == "All proxies failed":
+                                # Network errors - short retry (will retry next iteration)
+                                pass
+                            elif error == "TIMEOUT":
                                 timeout_count += 1
-                                # NO cooldown - will retry next iteration with different proxy
+                                # Timeout - add 60s cooldown before retry
+                                failed_proxy_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
+                                print(f"  [{phone}] Timeout - will retry in {FAILED_RETRY_DELAY}s")
                             else:
                                 error_count += 1
-                                # NO cooldown - keep trying
+                                # Other errors - add 60s cooldown before retry
+                                failed_proxy_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
+                                print(f"  [{phone}] Connection failed - will retry in {FAILED_RETRY_DELAY}s")
                     
-                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} accounts (timeouts={timeout_count}, errors={error_count}, sync_pending={sync_pending_count})")
+                    print(f"  [CONNECTED] {success_count}/{len(new_accounts)} (timeouts={timeout_count}, errors={error_count}, skipped={skip_count}, sync_pending={sync_pending_count})")
 
                 # Get delay from server response (usually 0 for fast polling)
                 wait_seconds = task.get("seconds", 0.5)
