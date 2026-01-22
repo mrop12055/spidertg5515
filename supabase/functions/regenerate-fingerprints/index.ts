@@ -139,12 +139,143 @@ function randomChoice<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+// Generate realistic manufacturer-specific build IDs
+function generateBuildId(deviceModel: string, systemVersion: string): string {
+  const randomHex = (len: number) => {
+    let result = '';
+    for (let i = 0; i < len; i++) {
+      result += '0123456789ABCDEF'[Math.floor(Math.random() * 16)];
+    }
+    return result;
+  };
+  
+  const randomLetters = (len: number) => {
+    let result = '';
+    for (let i = 0; i < len; i++) {
+      result += 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'[Math.floor(Math.random() * 26)];
+    }
+    return result;
+  };
+  
+  // Samsung format: G991BXXU5CVKA, S928BXXU3AXJA, A525FXXU4CVK1
+  if (deviceModel.includes('Samsung SM-')) {
+    const modelCode = deviceModel.replace('Samsung SM-', '');
+    const regions = ['XXU', 'XXS', 'OXM', 'BTU', 'XEU'];
+    const region = randomChoice(regions);
+    const major = Math.floor(Math.random() * 6) + 1; // 1-6
+    const year = randomChoice(['A', 'B', 'C', 'D']); // Year code
+    const month = randomChoice(['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L']); // Month code
+    const revision = randomChoice(['A', 'B', 'C', '1', '2', '3']);
+    return `${modelCode}${region}${major}${year}${randomLetters(1)}${month}${revision}`;
+  }
+  
+  // Google Pixel format: AP2A.240805.005, AP1A.240705.004, TQ3A.230805.001
+  if (deviceModel.includes('Pixel')) {
+    const prefixes = ['AP2A', 'AP1A', 'TQ3A', 'UQ1A', 'AP4A'];
+    const prefix = randomChoice(prefixes);
+    const year = 24 + Math.floor(Math.random() * 2); // 24-25
+    const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
+    const day = String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
+    const patch = String(Math.floor(Math.random() * 10)).padStart(3, '0');
+    return `${prefix}.${year}${month}${day}.${patch}`;
+  }
+  
+  // Xiaomi/Redmi/POCO format: V14.0.23.11.28.DEV, V816.0.6.0.UMFMIXM
+  if (deviceModel.includes('Xiaomi') || deviceModel.includes('Redmi') || deviceModel.includes('POCO')) {
+    const type = Math.random() < 0.5 ? 'stable' : 'dev';
+    if (type === 'dev') {
+      const major = 14 + Math.floor(Math.random() * 2);
+      const year = 23 + Math.floor(Math.random() * 2);
+      const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
+      const day = String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
+      return `V${major}.0.${year}.${month}.${day}.DEV`;
+    } else {
+      const versions = ['UMFMIXM', 'TMFCNXM', 'SMFMIXM', 'UMGCNXM', 'TMGMIXM'];
+      const ver = randomChoice(versions);
+      const major = 14 + Math.floor(Math.random() * 3);
+      const minor = Math.floor(Math.random() * 10);
+      return `V${major}.0.${minor}.0.${ver}`;
+    }
+  }
+  
+  // OnePlus format: KB2003_11_C.58, IN2023_11.A.32
+  if (deviceModel.includes('OnePlus')) {
+    const codes = ['KB2003', 'LE2123', 'IN2023', 'NE2213', 'CPH2449'];
+    const code = randomChoice(codes);
+    const android = systemVersion.includes('14') ? '14' : systemVersion.includes('13') ? '13' : '12';
+    const letter = randomChoice(['A', 'B', 'C', 'F']);
+    const patch = Math.floor(Math.random() * 60) + 20;
+    return `${code}_${android}.${letter}.${patch}`;
+  }
+  
+  // iPhone format: 21A329, 21F79, 22A3354 (iOS build numbers)
+  if (deviceModel.includes('iPhone')) {
+    const major = systemVersion.includes('18') ? 22 : systemVersion.includes('17') ? 21 : 20;
+    const letters = 'ABCDEFGHIJ';
+    const letter = letters[Math.floor(Math.random() * letters.length)];
+    const build = Math.floor(Math.random() * 400) + 50;
+    return `${major}${letter}${build}`;
+  }
+  
+  // OPPO/vivo/realme format: RMX3630_11.C.28, V2227A_14.0.12.8
+  if (deviceModel.includes('OPPO') || deviceModel.includes('vivo') || deviceModel.includes('realme')) {
+    const codes = ['RMX3630', 'CPH2591', 'V2227A', 'RMX3771'];
+    const code = randomChoice(codes);
+    const android = systemVersion.includes('14') ? '14' : '13';
+    const patch = Math.floor(Math.random() * 30) + 1;
+    return `${code}_${android}.0.${patch}.${Math.floor(Math.random() * 10)}`;
+  }
+  
+  // Nothing format: Pong-U2.6-241025-1844
+  if (deviceModel.includes('Nothing')) {
+    const codes = ['Pong', 'Spacewar'];
+    const code = randomChoice(codes);
+    const major = 2 + Math.floor(Math.random() * 2);
+    const minor = Math.floor(Math.random() * 10);
+    const year = 24 + Math.floor(Math.random() * 2);
+    const month = String(Math.floor(Math.random() * 12) + 1).padStart(2, '0');
+    const day = String(Math.floor(Math.random() * 28) + 1).padStart(2, '0');
+    return `${code}-U${major}.${minor}-${year}${month}${day}-${1000 + Math.floor(Math.random() * 9000)}`;
+  }
+  
+  // Sony format: 67.2.A.2.102
+  if (deviceModel.includes('Sony')) {
+    const major = 65 + Math.floor(Math.random() * 5);
+    const minor = Math.floor(Math.random() * 3) + 1;
+    const patch = Math.floor(Math.random() * 5) + 1;
+    const build = Math.floor(Math.random() * 200) + 50;
+    return `${major}.${minor}.A.${patch}.${build}`;
+  }
+  
+  // ASUS ROG format: WW_34.0610.0610.81
+  if (deviceModel.includes('ASUS')) {
+    const regions = ['WW', 'CN', 'TW'];
+    const region = randomChoice(regions);
+    const major = 33 + Math.floor(Math.random() * 3);
+    const build = String(Math.floor(Math.random() * 1000) + 500).padStart(4, '0');
+    return `${region}_${major}.${build}.${build}.${Math.floor(Math.random() * 100)}`;
+  }
+  
+  // Motorola format: U1TQS34.43-18-2-6
+  if (deviceModel.includes('Motorola')) {
+    const prefixes = ['U1TQS', 'U1TDS', 'U1SQS'];
+    const prefix = randomChoice(prefixes);
+    const major = 33 + Math.floor(Math.random() * 3);
+    return `${prefix}${major}.${Math.floor(Math.random() * 50) + 10}-${Math.floor(Math.random() * 20) + 1}-${Math.floor(Math.random() * 5) + 1}-${Math.floor(Math.random() * 10)}`;
+  }
+  
+  // Generic Android fallback
+  const androidVersion = systemVersion.replace('Android ', '');
+  return `${androidVersion}.${randomHex(4)}.${Math.floor(Math.random() * 100)}`;
+}
+
 function generateUniqueFingerprint(usedFingerprints: Set<string>): {
   device_model: string;
   system_version: string;
   app_version: string;
   lang_code: string;
   system_lang_code: string;
+  build_id: string;
 } {
   let attempts = 0;
   const maxAttempts = 500;
@@ -169,13 +300,14 @@ function generateUniqueFingerprint(usedFingerprints: Set<string>): {
     const lang = randomChoice(LANGUAGES);
     const lang_code = lang.code;
     const system_lang_code = randomChoice(lang.systems);
+    const build_id = generateBuildId(device_model, system_version);
     
-    // Create unique key for this fingerprint (full combination)
-    const fingerprintKey = `${device_model}|${system_version}|${app_version}|${lang_code}|${system_lang_code}`;
+    // Create unique key for this fingerprint (full combination including build_id)
+    const fingerprintKey = `${device_model}|${system_version}|${app_version}|${lang_code}|${system_lang_code}|${build_id}`;
     
     if (!usedFingerprints.has(fingerprintKey)) {
       usedFingerprints.add(fingerprintKey);
-      return { device_model, system_version, app_version, lang_code, system_lang_code };
+      return { device_model, system_version, app_version, lang_code, system_lang_code, build_id };
     }
     
     attempts++;
@@ -183,17 +315,20 @@ function generateUniqueFingerprint(usedFingerprints: Set<string>): {
   
   // Fallback: generate with random suffix to ensure uniqueness
   const device = randomChoice(ANDROID_DEVICES);
+  const system_version = randomChoice(device.versions);
   const uniqueSuffix = Math.floor(Math.random() * 10000);
   const app_version = `${randomChoice(TELEGRAM_VERSIONS)}.${uniqueSuffix}`;
-  const fingerprintKey = `${device.model}|${randomChoice(device.versions)}|${app_version}|en|en-US`;
+  const build_id = generateBuildId(device.model, system_version);
+  const fingerprintKey = `${device.model}|${system_version}|${app_version}|en|en-US|${build_id}`;
   usedFingerprints.add(fingerprintKey);
   
   return {
     device_model: device.model,
-    system_version: randomChoice(device.versions),
+    system_version,
     app_version,
     lang_code: "en",
-    system_lang_code: "en-US"
+    system_lang_code: "en-US",
+    build_id
   };
 }
 
@@ -319,6 +454,7 @@ serve(async (req) => {
               app_version: fingerprint.app_version,
               lang_code: fingerprint.lang_code,
               system_lang_code: fingerprint.system_lang_code,
+              build_id: fingerprint.build_id,
             })
             .eq('id', id)
         )
