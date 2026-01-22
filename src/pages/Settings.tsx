@@ -204,14 +204,21 @@ const Settings: React.FC = () => {
     }
     
     setIsImportingBulk(true);
-    let successCount = 0;
-    let failCount = 0;
     
     try {
+      // Parse all hashes first
+      const validCredentials: Array<{
+        name: string;
+        api_id: string;
+        api_hash: string;
+        client_type: string;
+        is_active: boolean;
+        accounts_count: number;
+      }> = [];
+      const invalidLines: number[] = [];
+      
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim();
-        
-        // Extract 32-character hex hash from line (handles UUID format or plain hash)
         let apiHash: string | null = null;
         
         // Try UUID format first (8-4-4-4-12 with dashes)
@@ -226,43 +233,51 @@ const Settings: React.FC = () => {
           }
         }
         
-        if (!apiHash || apiHash.length !== 32) {
-          toast.error(`Line ${i + 1}: Invalid hash (must be 32 hex characters)`);
-          failCount++;
-          continue;
-        }
-        
-        const randomName = generateRandomName(i);
-        const randomApiId = generateRandomApiId();
-        const randomDeviceType = getRandomDeviceType();
-        
-        const { error } = await supabase
-          .from('telegram_api_credentials')
-          .insert({
-            name: randomName,
-            api_id: randomApiId,
+        if (apiHash && apiHash.length === 32) {
+          validCredentials.push({
+            name: generateRandomName(i),
+            api_id: generateRandomApiId(),
             api_hash: apiHash,
-            client_type: randomDeviceType,
+            client_type: getRandomDeviceType(),
             is_active: true,
             accounts_count: 0,
           });
+        } else {
+          invalidLines.push(i + 1);
+        }
+      }
+      
+      if (validCredentials.length === 0) {
+        toast.error('No valid API hashes found');
+        setIsImportingBulk(false);
+        return;
+      }
+      
+      // Bulk insert in batches of 100 for speed
+      const BATCH_SIZE = 100;
+      let successCount = 0;
+      let failCount = invalidLines.length;
+      
+      for (let i = 0; i < validCredentials.length; i += BATCH_SIZE) {
+        const batch = validCredentials.slice(i, i + BATCH_SIZE);
+        const { error, data } = await supabase
+          .from('telegram_api_credentials')
+          .insert(batch)
+          .select('id');
         
         if (error) {
-          console.error('Failed to add API:', error);
-          failCount++;
+          console.error('Batch insert failed:', error);
+          failCount += batch.length;
         } else {
-          successCount++;
+          successCount += data?.length || batch.length;
         }
       }
       
       if (successCount > 0) {
-        toast.success(`Added ${successCount} API credentials${failCount > 0 ? `, ${failCount} failed` : ''}`);
+        toast.success(`Added ${successCount} API credentials${failCount > 0 ? `, ${failCount} failed/invalid` : ''}`);
         setBulkApiInput('');
         setIsBulkApiOpen(false);
-        
-        // APIs added - user can manually redistribute if needed
         toast.info('Use "Redistribute" button to assign APIs to accounts.');
-        
         fetchApiCredentials();
       } else {
         toast.error('Failed to add any API credentials');
