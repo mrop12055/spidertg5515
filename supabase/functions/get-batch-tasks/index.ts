@@ -985,20 +985,30 @@ serve(async (req) => {
           }
 
           if (!account) {
-            // ROUND-ROBIN DISTRIBUTION: Prioritize accounts with LEAST batch usage first
-            // This ensures even distribution across accounts (1 message each before reusing)
+            // LEAST-USED-FIRST ROUND-ROBIN: Prioritize accounts with LEAST TOTAL usage today
+            // This ensures ALL accounts send 1 message before ANY account sends 2
+            // Example: 1000 accounts, 5000 recipients → each account sends ~5 messages evenly
             const sortedAccounts = [...campaignUsableAccounts].sort((a: any, b: any) => {
-              // PRIMARY: Sort by batch usage (least used in this batch first)
-              const batchUsageA = batchAccountUsage.get(a.id) || 0;
-              const batchUsageB = batchAccountUsage.get(b.id) || 0;
-              if (batchUsageA !== batchUsageB) {
-                return batchUsageA - batchUsageB;
+              // PRIMARY: Sort by TOTAL daily usage (historical DB + current batch)
+              // This is the key change - we use accountCampaignSentToday + batchAccountUsage
+              const totalTodayA = (accountCampaignSentToday.get(a.id) || 0) + (batchAccountUsage.get(a.id) || 0);
+              const totalTodayB = (accountCampaignSentToday.get(b.id) || 0) + (batchAccountUsage.get(b.id) || 0);
+              if (totalTodayA !== totalTodayB) {
+                return totalTodayA - totalTodayB; // Least used OVERALL gets priority
               }
-              // SECONDARY: Sort by API usage for load balancing
+              // SECONDARY: Sort by API usage for load balancing across API credentials
               const apiUsageA = (apiUsageCounts.get(a.api_credential_id) || 0) + (batchApiUsage.get(a.api_credential_id) || 0);
               const apiUsageB = (apiUsageCounts.get(b.api_credential_id) || 0) + (batchApiUsage.get(b.api_credential_id) || 0);
               return apiUsageA - apiUsageB;
             });
+            
+            // Log top 5 least-used accounts for visibility
+            if (tasks.length === 0) {
+              const top5 = sortedAccounts.slice(0, 5).map((a: any) => 
+                `${a.phone_number}:${(accountCampaignSentToday.get(a.id) || 0) + (batchAccountUsage.get(a.id) || 0)}`
+              );
+              console.log(`[get-batch-tasks] LEAST-USED-FIRST top 5: ${top5.join(', ')}`);
+            }
             
             account = sortedAccounts.find((a: any) => {
               // CRITICAL: Check remaining quota instead of just usedAccountIds
