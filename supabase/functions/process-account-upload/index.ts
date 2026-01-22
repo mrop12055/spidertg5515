@@ -119,6 +119,79 @@ const LANGUAGES = [
   { code: "zh", systems: ["zh-CN", "zh-TW"] },
 ];
 
+// India-specific language distribution (weighted for authenticity)
+const INDIA_LANGUAGES = [
+  { code: "en", system: "en-IN", weight: 54 },    // English (India) - most common
+  { code: "hi", system: "hi-IN", weight: 35 },    // Hindi - second most common
+  { code: "ta", system: "ta-IN", weight: 3 },     // Tamil
+  { code: "te", system: "te-IN", weight: 3 },     // Telugu
+  { code: "mr", system: "mr-IN", weight: 2 },     // Marathi
+  { code: "bn", system: "bn-IN", weight: 2 },     // Bengali
+  { code: "gu", system: "gu-IN", weight: 1 },     // Gujarati
+];
+
+// India-specific popular devices (Samsung, Xiaomi, Realme, OnePlus dominate)
+const INDIA_POPULAR_DEVICES = [
+  // Samsung - 20% market share
+  { model: "Samsung SM-A556B", versions: ["Android 14", "Android 15"], weight: 8 },
+  { model: "Samsung SM-A546B", versions: ["Android 13", "Android 14"], weight: 7 },
+  { model: "Samsung SM-A536B", versions: ["Android 12", "Android 13", "Android 14"], weight: 6 },
+  { model: "Samsung SM-A346B", versions: ["Android 13", "Android 14"], weight: 5 },
+  { model: "Samsung SM-A256B", versions: ["Android 13", "Android 14"], weight: 4 },
+  { model: "Samsung SM-M546B", versions: ["Android 14"], weight: 4 },
+  { model: "Samsung SM-S928B", versions: ["Android 14", "Android 15"], weight: 3 },
+  { model: "Samsung SM-S918B", versions: ["Android 13", "Android 14"], weight: 3 },
+  // Xiaomi/Redmi/POCO - 18% market share
+  { model: "Redmi Note 13 Pro+", versions: ["Android 13", "Android 14"], weight: 7 },
+  { model: "Redmi Note 13 Pro", versions: ["Android 13", "Android 14"], weight: 6 },
+  { model: "Redmi Note 12 Pro", versions: ["Android 12", "Android 13"], weight: 5 },
+  { model: "Redmi 13C", versions: ["Android 13", "Android 14"], weight: 5 },
+  { model: "POCO F5 Pro", versions: ["Android 13", "Android 14"], weight: 4 },
+  { model: "POCO X6 Pro", versions: ["Android 14"], weight: 4 },
+  { model: "Xiaomi 14", versions: ["Android 14"], weight: 3 },
+  // Realme - 12% market share  
+  { model: "realme GT 5 Pro", versions: ["Android 14"], weight: 4 },
+  { model: "realme 12 Pro+", versions: ["Android 14"], weight: 4 },
+  { model: "realme Narzo 70 Pro", versions: ["Android 14"], weight: 4 },
+  { model: "realme 11 Pro", versions: ["Android 13", "Android 14"], weight: 3 },
+  // OnePlus - 5% market share (premium)
+  { model: "OnePlus 12", versions: ["Android 14"], weight: 3 },
+  { model: "OnePlus 11", versions: ["Android 13", "Android 14"], weight: 3 },
+  { model: "OnePlus Nord 3", versions: ["Android 13", "Android 14"], weight: 3 },
+  { model: "OnePlus Nord CE 3", versions: ["Android 13", "Android 14"], weight: 2 },
+  // Vivo - 15% market share
+  { model: "vivo V30 Pro", versions: ["Android 14"], weight: 4 },
+  { model: "vivo V29", versions: ["Android 13", "Android 14"], weight: 3 },
+  { model: "vivo T2 Pro", versions: ["Android 13", "Android 14"], weight: 3 },
+  { model: "vivo Y100", versions: ["Android 13", "Android 14"], weight: 3 },
+  // OPPO - 10% market share
+  { model: "OPPO Reno 11 Pro", versions: ["Android 14"], weight: 3 },
+  { model: "OPPO Reno 10 Pro", versions: ["Android 13", "Android 14"], weight: 3 },
+  { model: "OPPO F25 Pro", versions: ["Android 14"], weight: 2 },
+  // iQOO (Vivo sub-brand popular in India)
+  { model: "iQOO 12", versions: ["Android 14"], weight: 2 },
+  { model: "iQOO Neo 9 Pro", versions: ["Android 14"], weight: 2 },
+  // Motorola
+  { model: "Motorola Edge 50 Pro", versions: ["Android 14"], weight: 2 },
+  { model: "Motorola G84", versions: ["Android 13", "Android 14"], weight: 2 },
+  // Nothing
+  { model: "Nothing Phone (2)", versions: ["Android 13", "Android 14"], weight: 2 },
+  // Google Pixel (small but growing in India)
+  { model: "Pixel 8", versions: ["Android 14", "Android 15"], weight: 2 },
+  { model: "Pixel 7a", versions: ["Android 13", "Android 14"], weight: 2 },
+];
+
+// Helper to select weighted random item
+function weightedRandomChoice<T extends { weight: number }>(items: T[]): T {
+  const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
+  let random = Math.random() * totalWeight;
+  for (const item of items) {
+    random -= item.weight;
+    if (random <= 0) return item;
+  }
+  return items[items.length - 1];
+}
+
 function randomChoice<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
@@ -259,11 +332,22 @@ function generateBuildId(deviceModel: string, systemVersion: string): string {
     return `${prefix}${major}.${Math.floor(Math.random() * 50) + 10}-${Math.floor(Math.random() * 20) + 1}-${Math.floor(Math.random() * 5) + 1}-${Math.floor(Math.random() * 10)}`;
   }
   
+  // iQOO format (Vivo sub-brand): V2254A_14.0.12.3.W10.V000L1
+  if (deviceModel.includes('iQOO')) {
+    const codes = ['V2254A', 'V2243A', 'V2217A', 'V2269A'];
+    const code = randomChoice(codes);
+    const android = systemVersion.includes('14') ? '14' : '13';
+    const build = Math.floor(Math.random() * 20) + 1;
+    const patch = Math.floor(Math.random() * 5) + 1;
+    return `${code}_${android}.0.${build}.${patch}.W10.V000L1`;
+  }
+  
   // Generic Android fallback
   const androidVersion = systemVersion.replace('Android ', '');
   return `${androidVersion}.${randomHex(4)}.${Math.floor(Math.random() * 100)}`;
 }
 
+// Generate ADVANCED India-specific unique fingerprint
 function generateUniqueFingerprint(existingFingerprints: Set<string>, preferredClientType?: string): {
   device_model: string;
   system_version: string;
@@ -273,42 +357,44 @@ function generateUniqueFingerprint(existingFingerprints: Set<string>, preferredC
   build_id: string;
 } {
   let attempts = 0;
-  const maxAttempts = 100;
+  const maxAttempts = 200; // Increased for better uniqueness
   
   while (attempts < maxAttempts) {
-    // If we have a preferred client type, use matching device
-    let useAndroid = Math.random() < 0.8;
-    if (preferredClientType === 'ios' || preferredClientType === 'macos') {
-      useAndroid = false;
-    } else if (preferredClientType === 'android') {
-      useAndroid = true;
-    }
-    
     let device_model: string;
     let system_version: string;
+    let lang_code: string;
+    let system_lang_code: string;
     
-    if (useAndroid) {
-      const device = randomChoice(ANDROID_DEVICES);
-      device_model = device.model;
-      system_version = randomChoice(device.versions);
-    } else {
+    // For iOS preference, use iOS devices (rare in India market)
+    if (preferredClientType === 'ios' || preferredClientType === 'macos') {
       const device = randomChoice(IOS_DEVICES);
       device_model = device.model;
       system_version = randomChoice(device.versions);
+      // iOS users in India still use English mostly
+      lang_code = "en";
+      system_lang_code = "en-IN";
+    } else {
+      // USE INDIA-SPECIFIC DEVICES (weighted by market share)
+      const device = weightedRandomChoice(INDIA_POPULAR_DEVICES);
+      device_model = device.model;
+      system_version = randomChoice(device.versions);
+      
+      // USE INDIA-SPECIFIC LANGUAGE (weighted distribution)
+      const langChoice = weightedRandomChoice(INDIA_LANGUAGES);
+      lang_code = langChoice.code;
+      system_lang_code = langChoice.system;
     }
     
     const app_version = randomChoice(TELEGRAM_VERSIONS);
-    const lang = randomChoice(LANGUAGES);
-    const lang_code = lang.code;
-    const system_lang_code = randomChoice(lang.systems);
     const build_id = generateBuildId(device_model, system_version);
     
-    // Create unique key for this fingerprint (including build_id)
+    // Create unique key for this fingerprint (including build_id for 100% uniqueness)
     const fingerprintKey = `${device_model}|${system_version}|${app_version}|${lang_code}|${system_lang_code}|${build_id}`;
     
     // Check if this fingerprint is already used
     if (!existingFingerprints.has(fingerprintKey) && !usedFingerprints.has(fingerprintKey)) {
       usedFingerprints.add(fingerprintKey);
+      console.log(`[fingerprint] Generated India fingerprint: ${device_model} | ${system_version} | ${lang_code}-${system_lang_code}`);
       return { device_model, system_version, app_version, lang_code, system_lang_code, build_id };
     }
     
@@ -316,16 +402,20 @@ function generateUniqueFingerprint(existingFingerprints: Set<string>, preferredC
   }
   
   // Fallback: generate with random suffix to ensure uniqueness
-  const device = randomChoice(ANDROID_DEVICES);
+  const device = weightedRandomChoice(INDIA_POPULAR_DEVICES);
   const system_version = randomChoice(device.versions);
   const app_version = `${randomChoice(TELEGRAM_VERSIONS)}.${Math.floor(Math.random() * 100)}`;
-  const build_id = generateBuildId(device.model, system_version);
+  const build_id = generateBuildId(device.model, system_version) + Math.floor(Math.random() * 1000);
+  const langChoice = weightedRandomChoice(INDIA_LANGUAGES);
+  
+  console.log(`[fingerprint] Fallback India fingerprint: ${device.model} | ${system_version} | ${langChoice.code}-${langChoice.system}`);
+  
   return {
     device_model: device.model,
     system_version,
     app_version,
-    lang_code: randomChoice(LANGUAGES).code,
-    system_lang_code: "en-US",
+    lang_code: langChoice.code,
+    system_lang_code: langChoice.system,
     build_id
   };
 }
