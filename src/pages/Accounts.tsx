@@ -903,36 +903,60 @@ const Accounts: React.FC = () => {
     
     setIsExporting(true);
     try {
-      const { data: accountsData, error } = await supabase
-        .from('telegram_accounts')
-        .select('phone_number, session_data, first_name, last_name, username')
-        .in('id', Array.from(selectedIds));
-      
-      if (error) throw error;
-      
+      const idsArray = Array.from(selectedIds);
       const zip = new JSZip();
       
-      accountsData?.forEach((acc: any) => {
-        if (acc.session_data) {
-          const filename = `${acc.phone_number.replace(/\+/g, '')}.session`;
-          const binaryData = atob(acc.session_data);
-          const bytes = new Uint8Array(binaryData.length);
-          for (let i = 0; i < binaryData.length; i++) {
-            bytes[i] = binaryData.charCodeAt(i);
-          }
-          zip.file(filename, bytes);
-          
-          const metadata = {
-            phone_number: acc.phone_number,
-            first_name: acc.first_name,
-            last_name: acc.last_name,
-            username: acc.username,
-          };
-          zip.file(`${acc.phone_number.replace(/\+/g, '')}.json`, JSON.stringify(metadata, null, 2));
+      // Fetch in batches of 100 to avoid timeouts
+      const BATCH_SIZE = 100;
+      let processedCount = 0;
+      
+      for (let i = 0; i < idsArray.length; i += BATCH_SIZE) {
+        const batchIds = idsArray.slice(i, i + BATCH_SIZE);
+        
+        const { data: accountsData, error } = await supabase
+          .from('telegram_accounts')
+          .select('phone_number, session_data, first_name, last_name, username')
+          .in('id', batchIds);
+        
+        if (error) {
+          console.error(`Batch ${Math.floor(i / BATCH_SIZE) + 1} error:`, error);
+          continue;
         }
+        
+        accountsData?.forEach((acc: any) => {
+          if (acc.session_data) {
+            const filename = `${acc.phone_number.replace(/\+/g, '')}.session`;
+            
+            // Fast binary conversion using Uint8Array.from
+            const binaryString = atob(acc.session_data);
+            const bytes = Uint8Array.from(binaryString, c => c.charCodeAt(0));
+            zip.file(filename, bytes);
+            
+            const metadata = {
+              phone_number: acc.phone_number,
+              first_name: acc.first_name,
+              last_name: acc.last_name,
+              username: acc.username,
+            };
+            zip.file(`${acc.phone_number.replace(/\+/g, '')}.json`, JSON.stringify(metadata, null, 2));
+          }
+        });
+        
+        processedCount += accountsData?.length || 0;
+        
+        // Brief yield to prevent UI freeze
+        if (i + BATCH_SIZE < idsArray.length) {
+          await new Promise(resolve => setTimeout(resolve, 10));
+        }
+      }
+      
+      // Generate ZIP with compression for speed
+      const blob = await zip.generateAsync({ 
+        type: 'blob',
+        compression: 'DEFLATE',
+        compressionOptions: { level: 3 } // Lower = faster
       });
       
-      const blob = await zip.generateAsync({ type: 'blob' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -940,7 +964,7 @@ const Accounts: React.FC = () => {
       a.click();
       URL.revokeObjectURL(url);
       
-      toast.success(`Exported ${selectedIds.size} session(s)`);
+      toast.success(`Exported ${processedCount} session(s)`);
     } catch (error) {
       console.error('Error exporting sessions:', error);
       toast.error('Failed to export sessions');
