@@ -120,6 +120,7 @@ const TELEGRAM_VERSIONS = [
   "11.0.0", "11.1.0", "11.2.0", "11.3.0", "11.4.0"
 ];
 
+// Default languages (global distribution)
 const LANGUAGES = [
   { code: "en", systems: ["en-US", "en-GB", "en-AU", "en-CA"] },
   { code: "ar", systems: ["ar-SA", "ar-AE", "ar-EG"] },
@@ -133,6 +134,39 @@ const LANGUAGES = [
   { code: "ja", systems: ["ja-JP"] },
   { code: "ko", systems: ["ko-KR"] },
   { code: "zh", systems: ["zh-CN", "zh-TW", "zh-HK"] },
+];
+
+// India-specific language distribution (realistic for Indian users)
+const INDIA_LANGUAGES = [
+  { code: "en", systems: ["en-IN", "en-US"], weight: 55 },  // Most Indians use English
+  { code: "hi", systems: ["hi-IN"], weight: 35 },           // Hindi second most common
+  { code: "ta", systems: ["ta-IN"], weight: 3 },            // Tamil
+  { code: "te", systems: ["te-IN"], weight: 2 },            // Telugu
+  { code: "bn", systems: ["bn-IN"], weight: 2 },            // Bengali
+  { code: "mr", systems: ["mr-IN"], weight: 2 },            // Marathi
+  { code: "gu", systems: ["gu-IN"], weight: 1 },            // Gujarati
+];
+
+// India-popular device models (Samsung, Xiaomi, Realme, OnePlus dominate India market)
+const INDIA_POPULAR_DEVICES = [
+  // Samsung (40% market share in India)
+  "Samsung SM-S928B", "Samsung SM-S926B", "Samsung SM-S921B",  // S24 series
+  "Samsung SM-S918B", "Samsung SM-S916B", "Samsung SM-S911B",  // S23 series
+  "Samsung SM-A556B", "Samsung SM-A546B", "Samsung SM-A536B",  // A series (very popular)
+  "Samsung SM-A346B", "Samsung SM-A236B", "Samsung SM-A525F",
+  "Samsung SM-F956B", "Samsung SM-F946B",  // Fold series
+  // Xiaomi/Redmi/POCO (20% market share)
+  "Xiaomi 14", "Xiaomi 14 Pro", "Xiaomi 13", "Xiaomi 13 Pro",
+  "Redmi Note 13 Pro+", "Redmi Note 13 Pro", "Redmi Note 12 Pro+", "Redmi Note 12 Pro",
+  "POCO F5 Pro", "POCO F5",
+  // OnePlus (popular in India)
+  "OnePlus 12", "OnePlus 11", "OnePlus 10 Pro", "OnePlus Nord 3", "OnePlus Nord CE 3",
+  // Realme (very popular in India)
+  "realme GT 5 Pro", "realme GT 3",
+  // vivo/OPPO (popular in India)
+  "vivo X100 Pro", "vivo X90 Pro", "OPPO Find X7 Ultra", "OPPO Reno 11 Pro",
+  // Motorola (growing in India)
+  "Motorola Edge 50 Pro", "Motorola Edge 40 Pro",
 ];
 
 function randomChoice<T>(arr: T[]): T {
@@ -269,7 +303,32 @@ function generateBuildId(deviceModel: string, systemVersion: string): string {
   return `${androidVersion}.${randomHex(4)}.${Math.floor(Math.random() * 100)}`;
 }
 
-function generateUniqueFingerprint(usedFingerprints: Set<string>): {
+// Weighted random selection for India languages
+function selectIndiaLanguage(): { code: string; systems: string[] } {
+  const total = INDIA_LANGUAGES.reduce((sum, l) => sum + l.weight, 0);
+  let random = Math.random() * total;
+  for (const lang of INDIA_LANGUAGES) {
+    random -= lang.weight;
+    if (random <= 0) {
+      return { code: lang.code, systems: lang.systems };
+    }
+  }
+  return INDIA_LANGUAGES[0]; // fallback
+}
+
+// Get device for India market (prioritize popular brands)
+function selectIndiaDevice(): { model: string; versions: string[] } {
+  // 95% chance to use India-popular device
+  if (Math.random() < 0.95) {
+    const modelName = randomChoice(INDIA_POPULAR_DEVICES);
+    const device = ANDROID_DEVICES.find(d => d.model === modelName);
+    if (device) return device;
+  }
+  // Fallback to any Android device
+  return randomChoice(ANDROID_DEVICES);
+}
+
+function generateUniqueFingerprint(usedFingerprints: Set<string>, indiaMode: boolean = false): {
   device_model: string;
   system_version: string;
   app_version: string;
@@ -281,25 +340,41 @@ function generateUniqueFingerprint(usedFingerprints: Set<string>): {
   const maxAttempts = 500;
   
   while (attempts < maxAttempts) {
-    const useAndroid = Math.random() < 0.8;
-    
     let device_model: string;
     let system_version: string;
+    let lang_code: string;
+    let system_lang_code: string;
     
-    if (useAndroid) {
-      const device = randomChoice(ANDROID_DEVICES);
+    if (indiaMode) {
+      // India mode: Use India-popular devices and languages
+      // 100% Android (iPhones are rare in Indian Telegram usage patterns)
+      const device = selectIndiaDevice();
       device_model = device.model;
       system_version = randomChoice(device.versions);
+      
+      const lang = selectIndiaLanguage();
+      lang_code = lang.code;
+      system_lang_code = randomChoice(lang.systems);
     } else {
-      const device = randomChoice(IOS_DEVICES);
-      device_model = device.model;
-      system_version = randomChoice(device.versions);
+      // Global mode: Original logic
+      const useAndroid = Math.random() < 0.8;
+      
+      if (useAndroid) {
+        const device = randomChoice(ANDROID_DEVICES);
+        device_model = device.model;
+        system_version = randomChoice(device.versions);
+      } else {
+        const device = randomChoice(IOS_DEVICES);
+        device_model = device.model;
+        system_version = randomChoice(device.versions);
+      }
+      
+      const lang = randomChoice(LANGUAGES);
+      lang_code = lang.code;
+      system_lang_code = randomChoice(lang.systems);
     }
     
     const app_version = randomChoice(TELEGRAM_VERSIONS);
-    const lang = randomChoice(LANGUAGES);
-    const lang_code = lang.code;
-    const system_lang_code = randomChoice(lang.systems);
     const build_id = generateBuildId(device_model, system_version);
     
     // Create unique key for this fingerprint (full combination including build_id)
@@ -314,20 +389,22 @@ function generateUniqueFingerprint(usedFingerprints: Set<string>): {
   }
   
   // Fallback: generate with random suffix to ensure uniqueness
-  const device = randomChoice(ANDROID_DEVICES);
+  const device = selectIndiaDevice();
   const system_version = randomChoice(device.versions);
   const uniqueSuffix = Math.floor(Math.random() * 10000);
   const app_version = `${randomChoice(TELEGRAM_VERSIONS)}.${uniqueSuffix}`;
   const build_id = generateBuildId(device.model, system_version);
-  const fingerprintKey = `${device.model}|${system_version}|${app_version}|en|en-US|${build_id}`;
+  const lang_code = indiaMode ? "en" : "en";
+  const system_lang_code = indiaMode ? "en-IN" : "en-US";
+  const fingerprintKey = `${device.model}|${system_version}|${app_version}|${lang_code}|${system_lang_code}|${build_id}`;
   usedFingerprints.add(fingerprintKey);
   
   return {
     device_model: device.model,
     system_version,
     app_version,
-    lang_code: "en",
-    system_lang_code: "en-US",
+    lang_code,
+    system_lang_code,
     build_id
   };
 }
@@ -340,16 +417,18 @@ serve(async (req) => {
   try {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
     
-    // Parse request body for force option
+    // Parse request body for options
     let forceAll = false;
+    let indiaMode = false;
     try {
       const body = await req.json();
       forceAll = body.force === true;
+      indiaMode = body.india === true;  // Enable India-specific fingerprints
     } catch {
       // No body or invalid JSON, use defaults
     }
 
-    console.log(`[regenerate-fingerprints] Starting fingerprint regeneration (force=${forceAll})...`);
+    console.log(`[regenerate-fingerprints] Starting fingerprint regeneration (force=${forceAll}, india=${indiaMode})...`);
 
     // Fetch ALL accounts with their current fingerprints
     const { data: allAccounts, error: fetchError } = await supabase
@@ -429,9 +508,11 @@ serve(async (req) => {
     const updates: { id: string; fingerprint: ReturnType<typeof generateUniqueFingerprint> }[] = [];
     
     for (const accountId of accountsToUpdate) {
-      const fingerprint = generateUniqueFingerprint(usedFingerprints);
+      const fingerprint = generateUniqueFingerprint(usedFingerprints, indiaMode);
       updates.push({ id: accountId, fingerprint });
     }
+    
+    console.log(`[regenerate-fingerprints] Generated ${updates.length} unique fingerprints (India mode: ${indiaMode})`);
 
     // Apply updates in batches
     const BATCH_SIZE = 50;
