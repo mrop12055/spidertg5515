@@ -1099,6 +1099,7 @@ export type Database = {
           auto_disabled: boolean | null
           avatar_url: string | null
           ban_reason: string | null
+          build_id: string | null
           created_at: string | null
           daily_limit: number | null
           device_model: string | null
@@ -1143,6 +1144,7 @@ export type Database = {
           auto_disabled?: boolean | null
           avatar_url?: string | null
           ban_reason?: string | null
+          build_id?: string | null
           created_at?: string | null
           daily_limit?: number | null
           device_model?: string | null
@@ -1187,6 +1189,7 @@ export type Database = {
           auto_disabled?: boolean | null
           avatar_url?: string | null
           ban_reason?: string | null
+          build_id?: string | null
           created_at?: string | null
           daily_limit?: number | null
           device_model?: string | null
