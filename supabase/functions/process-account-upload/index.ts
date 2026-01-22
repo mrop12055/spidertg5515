@@ -679,47 +679,43 @@ serve(async (req) => {
       }
     }
 
-    // Batch insert new accounts (up to 100 at a time to avoid payload limits)
+    // Batch insert new accounts using upsert for speed (skip duplicates)
     const BATCH_SIZE = 100;
     for (let i = 0; i < accountsToInsert.length; i += BATCH_SIZE) {
       const batch = accountsToInsert.slice(i, i + BATCH_SIZE);
       const { data: insertedBatch, error: insertError } = await supabase
         .from('telegram_accounts')
-        .insert(batch)
+        .upsert(batch, { 
+          onConflict: 'phone_number',
+          ignoreDuplicates: true // Skip duplicates instead of updating
+        })
         .select('id, phone_number');
       
       if (insertError) {
-        console.error(`[process-account-upload] Batch insert error:`, insertError.message);
-        // Try individual inserts as fallback
-        for (const acc of batch) {
-          try {
-            const { data, error } = await supabase
-              .from('telegram_accounts')
-              .insert(acc)
-              .select('id')
-              .single();
-            if (error) throw error;
-            results.successful++;
-            results.account_ids.push(data.id);
-          } catch (e) {
-            results.failed++;
-            results.errors.push(`${acc.phone_number}: ${(e as Error).message}`);
-          }
-        }
+        console.error(`[process-account-upload] Batch upsert error:`, insertError.message);
+        results.failed += batch.length;
+        results.errors.push(`Batch error: ${insertError.message}`);
       } else if (insertedBatch) {
         results.successful += insertedBatch.length;
         insertedBatch.forEach(acc => results.account_ids.push(acc.id));
-        console.log(`[process-account-upload] Batch inserted ${insertedBatch.length} accounts`);
+        console.log(`[process-account-upload] Batch upserted ${insertedBatch.length} accounts`);
         
-        // Update proxy assignments with actual account IDs
-        for (const inserted of insertedBatch) {
-          const assignment = proxyAssignments.find(a => a.accountId === inserted.phone_number);
-          if (assignment) {
-            await supabase
-              .from('proxies')
-              .update({ assigned_account_id: inserted.id })
-              .eq('id', assignment.proxyId);
-          }
+        // Update proxy assignments with actual account IDs (parallel for speed)
+        const proxyUpdates = insertedBatch
+          .map(inserted => {
+            const assignment = proxyAssignments.find(a => a.accountId === inserted.phone_number);
+            if (assignment) {
+              return supabase
+                .from('proxies')
+                .update({ assigned_account_id: inserted.id })
+                .eq('id', assignment.proxyId);
+            }
+            return null;
+          })
+          .filter(Boolean);
+        
+        if (proxyUpdates.length > 0) {
+          await Promise.all(proxyUpdates);
         }
       }
     }
