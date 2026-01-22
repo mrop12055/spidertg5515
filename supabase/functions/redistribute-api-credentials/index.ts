@@ -23,7 +23,7 @@ serve(async (req) => {
   try {
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    console.log('[redistribute-api-credentials] Starting 1:1 redistribution with PARALLEL processing...');
+    console.log('[redistribute-api-credentials] Starting SAFE redistribution (preserving existing 1:1 mappings)...');
 
     // Fetch all active API credentials
     const { data: apiCredentials, error: credError } = await supabase
@@ -40,28 +40,81 @@ serve(async (req) => {
 
     console.log(`[redistribute-api-credentials] Found ${apiCredentials.length} API credentials`);
 
-    // Fetch ALL active accounts with valid sessions
-    const { data: allAccounts, error: accError } = await supabase
+    // Fetch accounts that ALREADY have API credentials assigned (DO NOT TOUCH THESE)
+    const { data: assignedAccounts, error: assignedError } = await supabase
       .from('telegram_accounts')
-      .select('id, phone_number, status, session_data, api_credential_id')
+      .select('id, api_credential_id')
       .in('status', ['active', 'restricted', 'cooldown'])
       .not('session_data', 'is', null)
-      .order('created_at', { ascending: true }); // Oldest accounts get priority
+      .not('api_credential_id', 'is', null);
 
-    if (accError) {
-      throw accError;
+    if (assignedError) {
+      throw assignedError;
     }
 
-    if (!allAccounts || allAccounts.length === 0) {
+    // Build set of already-used API credentials
+    const usedApiIds = new Set<string>();
+    (assignedAccounts || []).forEach(acc => {
+      if (acc.api_credential_id) {
+        usedApiIds.add(acc.api_credential_id);
+      }
+    });
+
+    console.log(`[redistribute-api-credentials] ${assignedAccounts?.length || 0} accounts already have API credentials (preserving these)`);
+    console.log(`[redistribute-api-credentials] ${usedApiIds.size} API credentials are in use`);
+
+    // Fetch accounts WITHOUT API credentials (ONLY THESE WILL BE ASSIGNED)
+    const { data: unassignedAccounts, error: unassignedError } = await supabase
+      .from('telegram_accounts')
+      .select('id, phone_number, status, session_data')
+      .in('status', ['active', 'restricted', 'cooldown'])
+      .not('session_data', 'is', null)
+      .is('api_credential_id', null)
+      .order('created_at', { ascending: true }); // Oldest accounts get priority
+
+    if (unassignedError) {
+      throw unassignedError;
+    }
+
+    if (!unassignedAccounts || unassignedAccounts.length === 0) {
+      // Update counts for all APIs
+      await updateAllApiCounts(supabase, apiCredentials);
+      
       return new Response(
-        JSON.stringify({ message: 'No accounts found to redistribute', assigned: 0 }),
+        JSON.stringify({ 
+          message: 'All accounts already have API credentials assigned', 
+          assigned: 0,
+          alreadyAssigned: assignedAccounts?.length || 0,
+          unassigned: 0
+        }),
         { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`[redistribute-api-credentials] Found ${allAccounts.length} accounts with valid sessions`);
+    console.log(`[redistribute-api-credentials] Found ${unassignedAccounts.length} accounts WITHOUT API credentials`);
 
-    // Get 24h usage for each API to prioritize low-usage APIs
+    // Get available APIs (not yet assigned to any account)
+    const availableApis = apiCredentials.filter(api => !usedApiIds.has(api.id));
+    
+    console.log(`[redistribute-api-credentials] ${availableApis.length} API credentials are available for assignment`);
+
+    if (availableApis.length === 0) {
+      // Update counts for all APIs
+      await updateAllApiCounts(supabase, apiCredentials);
+      
+      return new Response(
+        JSON.stringify({ 
+          message: `No available API credentials. All ${apiCredentials.length} APIs are already assigned.`,
+          assigned: 0,
+          alreadyAssigned: assignedAccounts?.length || 0,
+          unassigned: unassignedAccounts.length,
+          needMoreApis: unassignedAccounts.length
+        }),
+        { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Get 24h usage for available APIs to prioritize low-usage APIs
     const yesterday = new Date();
     yesterday.setHours(yesterday.getHours() - 24);
     
@@ -74,72 +127,54 @@ serve(async (req) => {
 
     // Count 24h usage per API
     const apiUsage24h = new Map<string, number>();
-    apiCredentials.forEach(c => apiUsage24h.set(c.id, 0));
+    availableApis.forEach(c => apiUsage24h.set(c.id, 0));
     (recipientsData || []).forEach((rec: any) => {
-      if (rec.api_credential_id) {
+      if (rec.api_credential_id && apiUsage24h.has(rec.api_credential_id)) {
         apiUsage24h.set(rec.api_credential_id, (apiUsage24h.get(rec.api_credential_id) || 0) + 1);
       }
     });
 
-    // Sort APIs by 24h usage (lowest first - these get accounts first)
-    const sortedApis = [...apiCredentials].sort((a, b) => {
+    // Sort available APIs by 24h usage (lowest first - these get accounts first)
+    const sortedApis = [...availableApis].sort((a, b) => {
       const usageA = apiUsage24h.get(a.id) || 0;
       const usageB = apiUsage24h.get(b.id) || 0;
       return usageA - usageB; // Lowest usage first
     });
 
-    console.log('[redistribute-api-credentials] APIs sorted by 24h usage:', 
+    console.log('[redistribute-api-credentials] Available APIs sorted by 24h usage:', 
       sortedApis.map(api => `${api.name}: ${apiUsage24h.get(api.id) || 0} used`));
 
-    // Track which APIs have been assigned (1:1 limit)
-    const assignedApis = new Set<string>();
-    const assignments: { accountId: string; apiId: string }[] = [];
-    const unassignedAccounts: string[] = [];
+    // Build assignments (1 account per available API)
+    const assignments: { accountId: string; apiId: string; phone: string }[] = [];
+    const stillUnassigned: string[] = [];
 
-    // Assign 1 account per API (round-robin with 1:1 limit)
-    for (let i = 0; i < allAccounts.length; i++) {
-      const account = allAccounts[i];
+    for (let i = 0; i < unassignedAccounts.length; i++) {
+      const account = unassignedAccounts[i];
       
-      // Find the first available API that hasn't been assigned yet
-      let assignedApi: typeof sortedApis[0] | null = null;
-      
-      for (const api of sortedApis) {
-        if (!assignedApis.has(api.id)) {
-          assignedApi = api;
-          assignedApis.add(api.id);
-          break;
-        }
-      }
-
-      if (assignedApi) {
+      if (i < sortedApis.length) {
+        // There's an available API for this account
         assignments.push({
           accountId: account.id,
-          apiId: assignedApi.id
+          apiId: sortedApis[i].id,
+          phone: account.phone_number
         });
       } else {
-        // No more APIs available - account goes unassigned
-        unassignedAccounts.push(account.id);
+        // No more APIs available
+        stillUnassigned.push(account.id);
       }
     }
 
-    console.log(`[redistribute-api-credentials] Assignments planned: ${assignments.length} accounts to APIs, ${unassignedAccounts.length} unassigned`);
+    console.log(`[redistribute-api-credentials] Will assign ${assignments.length} accounts, ${stillUnassigned.length} will remain unassigned`);
 
-    // STEP 1: First, unassign ALL accounts (clean slate) - single efficient query
-    console.log('[redistribute-api-credentials] Step 1: Unassigning all accounts...');
-    await supabase
-      .from('telegram_accounts')
-      .update({ api_credential_id: null })
-      .in('status', ['active', 'restricted', 'cooldown']);
-
-    // STEP 2: Assign accounts to APIs in PARALLEL BATCHES
-    console.log(`[redistribute-api-credentials] Step 2: Assigning ${assignments.length} accounts in parallel batches of ${BATCH_SIZE}...`);
+    // Assign accounts to APIs in PARALLEL BATCHES
+    console.log(`[redistribute-api-credentials] Assigning ${assignments.length} accounts in parallel batches of ${BATCH_SIZE}...`);
     
     for (let i = 0; i < assignments.length; i += BATCH_SIZE) {
       const batch = assignments.slice(i, i + BATCH_SIZE);
       const batchNum = Math.floor(i / BATCH_SIZE) + 1;
       const totalBatches = Math.ceil(assignments.length / BATCH_SIZE);
       
-      console.log(`[redistribute-api-credentials] Processing assignment batch ${batchNum}/${totalBatches} (${batch.length} accounts)`);
+      console.log(`[redistribute-api-credentials] Processing batch ${batchNum}/${totalBatches} (${batch.length} accounts)`);
       
       // Process entire batch in parallel
       await Promise.all(
@@ -154,33 +189,8 @@ serve(async (req) => {
 
     console.log(`[redistribute-api-credentials] Completed all account assignments`);
 
-    // STEP 3: Update credential counts in PARALLEL BATCHES
-    console.log(`[redistribute-api-credentials] Step 3: Updating ${apiCredentials.length} API credential counts in parallel...`);
-    
-    for (let i = 0; i < apiCredentials.length; i += BATCH_SIZE) {
-      const batch = apiCredentials.slice(i, i + BATCH_SIZE);
-      const batchNum = Math.floor(i / BATCH_SIZE) + 1;
-      const totalBatches = Math.ceil(apiCredentials.length / BATCH_SIZE);
-      
-      console.log(`[redistribute-api-credentials] Processing count update batch ${batchNum}/${totalBatches} (${batch.length} APIs)`);
-      
-      // Get counts and update in parallel
-      await Promise.all(
-        batch.map(async (cred) => {
-          const { count } = await supabase
-            .from('telegram_accounts')
-            .select('*', { count: 'exact', head: true })
-            .eq('api_credential_id', cred.id);
-          
-          await supabase
-            .from('telegram_api_credentials')
-            .update({ accounts_count: count || 0 })
-            .eq('id', cred.id);
-        })
-      );
-    }
-    
-    console.log(`[redistribute-api-credentials] Updated all credential counts`);
+    // Update all API credential counts
+    await updateAllApiCounts(supabase, apiCredentials);
 
     // Fetch final distribution
     const { data: finalDist } = await supabase
@@ -189,20 +199,20 @@ serve(async (req) => {
       .eq('is_active', true)
       .order('accounts_count', { ascending: false });
 
-    // Warn if there are unassigned accounts
-    if (unassignedAccounts.length > 0) {
-      console.warn(`[redistribute-api-credentials] WARNING: ${unassignedAccounts.length} accounts are UNASSIGNED because there aren't enough APIs. Need ${unassignedAccounts.length} more API credentials!`);
+    // Summary message
+    let message = `✅ Assigned ${assignments.length} accounts to APIs`;
+    if (stillUnassigned.length > 0) {
+      message += `. ⚠️ ${stillUnassigned.length} accounts still need APIs - add ${stillUnassigned.length} more API credentials!`;
     }
 
     return new Response(
       JSON.stringify({ 
         success: true,
         assigned: assignments.length,
-        unassigned: unassignedAccounts.length,
+        alreadyAssigned: assignedAccounts?.length || 0,
+        unassigned: stillUnassigned.length,
         maxPerApi: MAX_ACCOUNTS_PER_API,
-        message: unassignedAccounts.length > 0 
-          ? `⚠️ ${unassignedAccounts.length} accounts have NO API assigned. Add ${unassignedAccounts.length} more API credentials!`
-          : `All ${assignments.length} accounts assigned (1:1 limit enforced)`,
+        message,
         distribution: finalDist
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -216,3 +226,28 @@ serve(async (req) => {
     );
   }
 });
+
+// Helper function to update all API credential counts
+async function updateAllApiCounts(supabase: any, apiCredentials: any[]) {
+  console.log(`[redistribute-api-credentials] Updating ${apiCredentials.length} API credential counts...`);
+  
+  for (let i = 0; i < apiCredentials.length; i += BATCH_SIZE) {
+    const batch = apiCredentials.slice(i, i + BATCH_SIZE);
+    
+    await Promise.all(
+      batch.map(async (cred) => {
+        const { count } = await supabase
+          .from('telegram_accounts')
+          .select('*', { count: 'exact', head: true })
+          .eq('api_credential_id', cred.id);
+        
+        await supabase
+          .from('telegram_api_credentials')
+          .update({ accounts_count: count || 0 })
+          .eq('id', cred.id);
+      })
+    );
+  }
+  
+  console.log(`[redistribute-api-credentials] Updated all credential counts`);
+}
