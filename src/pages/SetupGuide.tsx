@@ -61,21 +61,13 @@ SQLITE LOCK FIX (2026-01-16):
 """
 
 import os
-import sys
 import base64
 import tempfile
 import asyncio
 import httpx
 import socks
 import threading
-import platform
 from typing import Dict, Optional
-
-# ========== WINDOWS SOCKS5 FIX: Use SelectorEventLoop instead of ProactorEventLoop ==========
-# ProactorEventLoop (Windows default) causes WinError 121 semaphore timeouts with SOCKS5 proxies
-# SelectorEventLoop handles TCP/SOCKS connections more reliably
-if platform.system() == "Windows":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # ========== PER-ACCOUNT CONNECTION LOCKS (prevents SQLite "database is locked") ==========
 # Uses threading.Lock wrapped in asyncio for cross-coroutine safety
@@ -123,17 +115,16 @@ active_clients: Dict[str, TelegramClient] = {}
 PROXY_RETRY_DELAY = 30  # Retry proxy error accounts after 30 seconds
 PROXY_MAX_RETRIES = 3   # Max retry attempts before giving up (per session)
 
-# ========== SPLIT TIMEOUTS (SOCKS5 OPTIMIZED) ==========
-CONNECTION_TIMEOUT = 45      # Telegram connection timeout (increased for SOCKS5 latency on Windows)
-CONNECTION_RETRIES = 3       # Connection retries for SOCKS5 proxy stability
-RETRY_DELAY = 3              # Retry delay in seconds (longer for proxy recovery)
-HEARTBEAT_INTERVAL = 30      # Reduced from 60s for faster zombie detection
+# ========== SPLIT TIMEOUTS ==========
+CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
+CONNECTION_RETRIES = 2       # Connection retries (increased from 1)
+RETRY_DELAY = 2              # Retry delay in seconds (increased from 0)
 
-# HTTP Timeouts - split by purpose (increased for SOCKS5 proxy environments)
-HTTP_TIMEOUT_DISPATCH = 120  # Task fetching (get-next-task, get-batch-tasks)
-HTTP_TIMEOUT_REPORT = 90     # Reporting (report-task-result, report-batch-results)
-HTTP_TIMEOUT_UPLOAD = 180    # Media uploads (photos, videos)
-HTTP_TIMEOUT_DEFAULT = 60    # Other REST calls
+# HTTP Timeouts - split by purpose (increased for high-load 500+ clients)
+HTTP_TIMEOUT_DISPATCH = 90   # Task fetching (get-next-task, get-batch-tasks) - increased from 45
+HTTP_TIMEOUT_REPORT = 60     # Reporting (report-task-result, report-batch-results) - increased from 30
+HTTP_TIMEOUT_UPLOAD = 120    # Media uploads (photos, videos) - increased from 60
+HTTP_TIMEOUT_DEFAULT = 45    # Other REST calls - increased from 20
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
@@ -163,48 +154,17 @@ ACCOUNT_ERROR_PATTERNS = {
 
 # ========== SHARED HTTP CLIENT POOL ==========
 _http_client: Optional[httpx.AsyncClient] = None
-_http_error_count = 0  # Track consecutive HTTP errors for client recreation
 
 
-def get_http_client(force_recreate: bool = False) -> httpx.AsyncClient:
-    """Get shared HTTP client with connection pooling - optimized for SOCKS5 environments"""
-    global _http_client, _http_error_count
-    if force_recreate and _http_client is not None:
-        try:
-            # Close existing client to force new connections
-            asyncio.create_task(_http_client.aclose())
-        except:
-            pass
-        _http_client = None
-        _http_error_count = 0
-        
+def get_http_client() -> httpx.AsyncClient:
+    """Get shared HTTP client with connection pooling - no default timeout (set per-request)"""
+    global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
             timeout=HTTP_TIMEOUT_DEFAULT,
-            limits=httpx.Limits(
-                max_connections=200,  # Reduced for stability
-                max_keepalive_connections=20,  # Much lower to avoid stale connections
-                keepalive_expiry=15  # Shorter expiry for Windows environments
-            ),
-            http2=False,  # Disable HTTP/2 to prevent SSL session ID errors
+            limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)
         )
-        _http_error_count = 0
     return _http_client
-
-
-def track_http_error():
-    """Track HTTP error and recreate client if too many consecutive failures."""
-    global _http_error_count
-    _http_error_count += 1
-    if _http_error_count >= 5:
-        print("  [HTTP] Recreating client after 5 consecutive errors...")
-        get_http_client(force_recreate=True)
-
-
-def reset_http_errors():
-    """Reset error counter on successful request."""
-    global _http_error_count
-    _http_error_count = 0
 
 
 # ========== PROXY ERROR RETRY FUNCTIONS ==========
@@ -629,7 +589,6 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         
         for db_attempt in range(max_db_retries):
             try:
-                # SOCKS5 OPTIMIZED: Increased retries and delays for Windows proxy stability
                 client = TelegramClient(
                     session_path, int(api_id), api_hash,
                     device_model=device_model,
@@ -639,10 +598,10 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                     system_lang_code=system_lang_code,
                     proxy=proxy,
                     timeout=CONNECTION_TIMEOUT,
-                    connection_retries=5 if long_lived else 2,   # Increased for SOCKS5
-                    retry_delay=3 if long_lived else 1,           # Longer delay for proxy recovery
+                    connection_retries=3 if long_lived else 0,
+                    retry_delay=2 if long_lived else 0,
                     auto_reconnect=long_lived,
-                    request_retries=5 if long_lived else 2        # More request retries for SOCKS5
+                    request_retries=3 if long_lived else 1
                 )
                 break  # Success - exit retry loop
             except Exception as db_err:
@@ -879,123 +838,75 @@ async def get_batch_tasks(runner: str = None, batch_size: int = 50, max_retries:
     return {"tasks": [], "delay_after": 5}
 
 
-async def report_result(task_type: str, result: dict, max_retries: int = 5):
-    """Report task result with retry on transient network errors (SOCKS5/Windows optimized)."""
-    for attempt in range(max_retries):
-        try:
-            # Recreate client on later attempts
-            http = get_http_client(force_recreate=(attempt >= 2))
-            resp = await asyncio.wait_for(
-                http.post(
-                    f"{BACKEND_URL}/report-task-result",
-                    headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                    json={"task_type": task_type, "result": result},
-                    timeout=HTTP_TIMEOUT_REPORT,
-                ),
-                timeout=HTTP_TIMEOUT_REPORT + 15  # Extra buffer for Windows
-            )
-            if resp.status_code < 300:
-                reset_http_errors()
-                return  # Success
-            if resp.status_code >= 500:
-                raise Exception(f"Server error: {resp.status_code}")
-            print(f"  [REPORT ERROR] {task_type}: status={resp.status_code}")
-            return
-        except Exception as e:
-            track_http_error()
-            err_str = str(e).lower()
-            is_transient = any(p in err_str for p in [
-                'ssl', 'readerror', 'connecterror', 'timeout', 
-                'winerror', 'semaphore', 'connection', 'invalid session'
-            ])
-            if is_transient and attempt < max_retries - 1:
-                wait_time = 3 + (attempt * 2)  # 3s, 5s, 7s, 9s - longer waits
-                await asyncio.sleep(wait_time)
-                continue
-            # Only print on final failure to reduce log spam
-            if attempt == max_retries - 1:
-                print(f"  [REPORT FAILED] {task_type}: {type(e).__name__}")
+async def report_result(task_type: str, result: dict):
+    """Report task result (never block the runner; log failures)."""
+    try:
+        http = get_http_client()
+        resp = await http.post(
+            f"{BACKEND_URL}/report-task-result",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json={"task_type": task_type, "result": result},
+            timeout=HTTP_TIMEOUT_REPORT,
+        )
+        if resp.status_code >= 300:
+            print(f"  [REPORT ERROR] {task_type}: status={resp.status_code}, body={resp.text[:200]}")
+    except Exception as e:
+        print(f"  [REPORT EXC] {task_type}: {type(e).__name__}: {repr(e)}")
 
 
-async def report_session_check(account_id: str, success: bool, error: str = None, telegram_data: dict = None, max_retries: int = 5):
+async def report_session_check(account_id: str, success: bool, error: str = None, telegram_data: dict = None):
     """
-    Report session connection result with retry - handles FROZEN, BANNED, DISCONNECTED detection.
-    """
-    payload = {
-        "account_id": account_id,
-        "success": success,
-    }
-    if error:
-        payload["error"] = error
-    if telegram_data:
-        payload["telegram_data"] = telegram_data
+    Report session connection result - handles FROZEN, BANNED, DISCONNECTED detection.
     
-    for attempt in range(max_retries):
-        try:
-            http = get_http_client(force_recreate=(attempt >= 2))
-            resp = await asyncio.wait_for(
-                http.post(
-                    f"{BACKEND_URL}/report-session-check",
-                    headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                    json=payload,
-                    timeout=HTTP_TIMEOUT_REPORT,
-                ),
-                timeout=HTTP_TIMEOUT_REPORT + 15
-            )
-            if resp.status_code < 300:
-                reset_http_errors()
-                result = resp.json()
-                print(f"  [SESSION CHECK] {account_id[:8]} -> {result.get('new_status', 'ok')}")
-                return
-            if resp.status_code >= 500:
-                raise Exception(f"Server error: {resp.status_code}")
-            return
-        except Exception as e:
-            track_http_error()
-            err_str = str(e).lower()
-            is_transient = any(p in err_str for p in [
-                'ssl', 'readerror', 'connecterror', 'timeout', 
-                'winerror', 'semaphore', 'connection', 'invalid session'
-            ])
-            if is_transient and attempt < max_retries - 1:
-                wait_time = 3 + (attempt * 2)
-                await asyncio.sleep(wait_time)
-                continue
+    Args:
+        account_id: The account UUID
+        success: True if get_me() succeeded
+        error: Error message if failed (for auto-detection of frozen/banned/etc)
+        telegram_data: Dict with id, first_name, last_name, username from get_me()
+    """
+    try:
+        http = get_http_client()
+        payload = {
+            "account_id": account_id,
+            "success": success,
+        }
+        if error:
+            payload["error"] = error
+        if telegram_data:
+            payload["telegram_data"] = telegram_data
+            
+        resp = await http.post(
+            f"{BACKEND_URL}/report-session-check",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json=payload,
+            timeout=HTTP_TIMEOUT_REPORT,
+        )
+        if resp.status_code >= 300:
+            print(f"  [SESSION CHECK ERROR] {account_id}: status={resp.status_code}, body={resp.text[:200]}")
+        else:
+            result = resp.json()
+            print(f"  [SESSION CHECK] {account_id} -> {result.get('new_status', 'unknown')}")
+    except Exception as e:
+        print(f"  [SESSION CHECK EXC] {account_id}: {type(e).__name__}: {repr(e)}")
 
 
-async def report_batch_results(results: list, max_retries: int = 5) -> bool:
-    """Report many send results with retry on transient network errors."""
-    for attempt in range(max_retries):
-        try:
-            http = get_http_client(force_recreate=(attempt >= 2))
-            resp = await asyncio.wait_for(
-                http.post(
-                    f"{BACKEND_URL}/report-batch-results",
-                    headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-                    json={"results": results},
-                    timeout=HTTP_TIMEOUT_REPORT,
-                ),
-                timeout=HTTP_TIMEOUT_REPORT + 15
-            )
-            if 200 <= resp.status_code < 300:
-                reset_http_errors()
-                return True
-            if resp.status_code >= 500:
-                raise Exception(f"Server error: {resp.status_code}")
-            return False
-        except Exception as e:
-            track_http_error()
-            err_str = str(e).lower()
-            is_transient = any(p in err_str for p in [
-                'ssl', 'readerror', 'connecterror', 'timeout', 
-                'winerror', 'semaphore', 'connection', 'invalid session'
-            ])
-            if is_transient and attempt < max_retries - 1:
-                wait_time = 3 + (attempt * 2)
-                await asyncio.sleep(wait_time)
-                continue
-            return False
-    return False
+async def report_batch_results(results: list) -> bool:
+    """Report many send results in one request for speed."""
+    try:
+        http = get_http_client()
+        resp = await http.post(
+            f"{BACKEND_URL}/report-batch-results",
+            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+            json={"results": results},
+            timeout=HTTP_TIMEOUT_REPORT,
+        )
+        if 200 <= resp.status_code < 300:
+            return True
+        print(f"  [BATCH REPORT] {resp.status_code}: {resp.text[:200]}")
+        return False
+    except Exception as e:
+        print(f"  [BATCH REPORT ERROR] {type(e).__name__}: {repr(e)}")
+        return False
 
 
 async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
@@ -2691,8 +2602,7 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
     Properly disconnect a session and schedule it for retry after 60 seconds.
     This ensures clean session release before retry.
     
-    FIX (2026-01-22): Disable auto_reconnect BEFORE disconnect to prevent
-    'NoneType' object has no attribute 'connect' errors.
+    FIX (2026-01-22): Added proper task cleanup to prevent "Task was destroyed but it is pending!" warnings.
     """
     global failed_connection_accounts
     
@@ -2702,15 +2612,6 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
     if acc_id in active_clients:
         try:
             client = active_clients.pop(acc_id)
-            
-            # CRITICAL: Disable auto_reconnect BEFORE disconnect
-            # This prevents Telethon from trying to reconnect with a None _connection
-            try:
-                if hasattr(client, '_sender') and client._sender:
-                    client._sender._auto_reconnect = False
-            except:
-                pass
-            
             if client.is_connected():
                 try:
                     await asyncio.wait_for(client.disconnect(), timeout=5)
@@ -2756,43 +2657,6 @@ async def keep_clients_alive():
             for acc_id, client in list(active_clients.items()):
                 try:
                     if client.is_connected():
-                        # ========== PING-BASED HEALTH CHECK (detect zombie connections) ==========
-                        try:
-                            await asyncio.wait_for(client.get_me(), timeout=10)
-                        except asyncio.TimeoutError:
-                            # Ping failed - connection is zombie, force full cleanup
-                            print(f"  [ZOMBIE] {acc_id[:8]} - ping timeout, forcing full cleanup")
-                            # Remove FIRST to prevent auto_reconnect
-                            client_to_kill = active_clients.pop(acc_id, None)
-                            if client_to_kill:
-                                try:
-                                    client_to_kill._sender._auto_reconnect = False
-                                except:
-                                    pass
-                                try:
-                                    await asyncio.wait_for(client_to_kill.disconnect(), timeout=3)
-                                except:
-                                    pass
-                            disconnected_ids.append((acc_id, "zombie connection (ping timeout)"))
-                            continue
-                        except Exception as ping_err:
-                            ping_str = str(ping_err).lower()
-                            # WinError 121 during ping = dead connection
-                            if "winerror 121" in ping_str or "semaphore" in ping_str or "'nonetype'" in ping_str:
-                                print(f"  [SOCKS5] {acc_id[:8]} - Windows timeout during ping, full cleanup")
-                                client_to_kill = active_clients.pop(acc_id, None)
-                                if client_to_kill:
-                                    try:
-                                        client_to_kill._sender._auto_reconnect = False
-                                    except:
-                                        pass
-                                    try:
-                                        await asyncio.wait_for(client_to_kill.disconnect(), timeout=3)
-                                    except:
-                                        pass
-                                disconnected_ids.append((acc_id, "socks5 timeout"))
-                                continue
-                        
                         # This processes pending updates without blocking
                         await asyncio.wait_for(client.catch_up(), timeout=5)
                     else:
@@ -2802,27 +2666,6 @@ async def keep_clients_alive():
                     print(f"  [TIMEOUT] catch_up timeout for {acc_id[:8]}")
                 except Exception as e:
                     error_str = str(e).lower()
-                    
-                    # ========== PROACTIVE WINERROR 121 HANDLING ==========
-                    # Force immediate disconnect and recreate on Windows semaphore timeout
-                    # CRITICAL: Remove from active_clients BEFORE disconnect to prevent auto_reconnect
-                    if "winerror 121" in error_str or "semaphore" in error_str or "'nonetype'" in error_str:
-                        print(f"  [SOCKS5] {acc_id[:8]} - Windows semaphore timeout, forcing full cleanup")
-                        # Remove FIRST to prevent auto_reconnect from firing
-                        client_to_kill = active_clients.pop(acc_id, None)
-                        if client_to_kill:
-                            try:
-                                # Disable auto_reconnect before disconnect
-                                client_to_kill._sender._auto_reconnect = False
-                            except:
-                                pass
-                            try:
-                                await asyncio.wait_for(client_to_kill.disconnect(), timeout=3)
-                            except:
-                                pass
-                        disconnected_ids.append((acc_id, "socks5 timeout"))
-                        continue
-                    
                     # Check for Telegram server errors (RpcCallFailError) - don't disconnect, just skip
                     if is_telegram_server_error(error_str):
                         print(f"  [TELEGRAM] Server busy, skipping iteration: {str(e)[:40]}")
@@ -2853,8 +2696,8 @@ async def keep_clients_alive():
             if is_telegram_server_error(error_str):
                 print(f"  [TELEGRAM] Server issue in keep_alive: {str(e)[:40]}")
                 await asyncio.sleep(10)
-            elif is_network_error(error_str) or "winerror 64" in error_str or "winerror 121" in error_str or "semaphore" in error_str:
-                print(f"  [NETWORK] keep_clients_alive network/proxy error - waiting 5s...")
+            elif is_network_error(error_str) or "winerror 64" in error_str:
+                print(f"  [NETWORK] keep_clients_alive network error - waiting 5s...")
                 await asyncio.sleep(5)
             else:
                 await asyncio.sleep(0.5)
@@ -2863,13 +2706,11 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-auto-reconnect-disable-fix")
+    print("  BUILD: 2026-01-22-no-session-check")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 60s cooldown")
     print("  📨 Skips accounts without proxy/API")
-    print("  🔌 SOCKS5: WindowsSelectorEventLoopPolicy fix")
-    print("  🩺 Zombie detection + WinError 121 handling")
     print("=" * 50)
     print("=" * 50)
     
@@ -2985,7 +2826,6 @@ async def main_loop():
                                         old_client = active_clients.pop(acc_id)
                                         if old_client.is_connected():
                                             await asyncio.wait_for(old_client.disconnect(), timeout=5)
-                                            await asyncio.sleep(0.1)  # Allow pending tasks to complete
                                     except:
                                         pass
                                 return acc_id, None, error or "Connection failed", phone, False
@@ -2995,7 +2835,6 @@ async def main_loop():
                                 try:
                                     old_client = active_clients.pop(acc_id)
                                     await asyncio.wait_for(old_client.disconnect(), timeout=3)
-                                    await asyncio.sleep(0.1)  # Allow pending tasks to complete
                                 except:
                                     pass
                             return acc_id, None, "TIMEOUT", phone, False
@@ -3005,7 +2844,6 @@ async def main_loop():
                                 try:
                                     old_client = active_clients.pop(acc_id)
                                     await asyncio.wait_for(old_client.disconnect(), timeout=3)
-                                    await asyncio.sleep(0.1)  # Allow pending tasks to complete
                                 except:
                                     pass
                             return acc_id, None, f"ERROR:{e}", phone, False
