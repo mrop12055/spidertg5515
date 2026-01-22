@@ -76,62 +76,8 @@ const Logs: React.FC = () => {
   const [isLoadingSystemLogs, setIsLoadingSystemLogs] = useState(false);
   const [systemLogFilter, setSystemLogFilter] = useState<string>('all');
 
-  // Realtime subscription for account tasks progress updates
+  // Account task types for tracking
   const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile', 'spambot_check', 'verify_session'];
-  
-  useEffect(() => {
-    if (!isAccountTaskRunning) return;
-    
-    const channel = supabase
-      .channel('logs-account-tasks')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'account_check_tasks' },
-        (payload) => {
-          const task = payload.new as any;
-          if (task && ACCOUNT_TASK_TYPES.includes(task.task_type) && (task.status === 'completed' || task.status === 'failed')) {
-            const logEntry = {
-              id: task.id,
-              taskType: task.task_type,
-              accountPhone: task.account_id,
-              status: task.status as 'completed' | 'failed',
-              result: task.result,
-              timestamp: new Date(),
-            };
-            
-            setAccountTasksProgress(prev => {
-              const newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
-              const newFailed = task.status === 'failed' ? prev.failed + 1 : prev.failed;
-              const newLogs = [logEntry, ...prev.logs].slice(0, 100);
-              const nowIso = new Date().toISOString();
-              
-              // Check if all done
-              if (newCompleted + newFailed >= prev.total && prev.total > 0) {
-                setIsAccountTaskRunning(false);
-                toast.success(`${prev.taskType} complete: ${newCompleted} success, ${newFailed} failed`);
-                fetchSystemLogs(); // Refresh logs
-              }
-              
-              return {
-                ...prev,
-                completed: newCompleted,
-                failed: newFailed,
-                logs: newLogs,
-                lastUpdateAt: nowIso,
-              };
-            });
-            
-            // Also add to history
-            setAccountTaskHistory(prev => [logEntry, ...prev].slice(0, 200));
-          }
-        }
-      )
-      .subscribe();
-    
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [isAccountTaskRunning, setAccountTasksProgress, setIsAccountTaskRunning, setAccountTaskHistory]);
 
   // Get unique task types from history
   const uniqueTaskTypes = Array.from(new Set(accountTaskHistory.map(log => log.taskType)));
@@ -428,6 +374,112 @@ const Logs: React.FC = () => {
   useEffect(() => {
     fetchSystemLogs();
   }, [fetchSystemLogs]);
+
+  // Polling mechanism to track progress when task is running
+  useEffect(() => {
+    if (!isAccountTaskRunning || !accountTasksProgress.internalTaskType) return;
+    
+    const pollProgress = async () => {
+      try {
+        const taskType = accountTasksProgress.internalTaskType;
+        const startedAt = accountTasksProgress.startedAt;
+        
+        if (!taskType || !startedAt) return;
+        
+        // Get task counts
+        const [completedResult, failedResult, pendingResult] = await Promise.all([
+          supabase
+            .from('account_check_tasks')
+            .select('id, account_id, result', { count: 'exact' })
+            .eq('task_type', taskType)
+            .eq('status', 'completed')
+            .gte('completed_at', startedAt)
+            .limit(100),
+          supabase
+            .from('account_check_tasks')
+            .select('id, account_id, result', { count: 'exact' })
+            .eq('task_type', taskType)
+            .eq('status', 'failed')
+            .gte('completed_at', startedAt)
+            .limit(100),
+          supabase
+            .from('account_check_tasks')
+            .select('id', { count: 'exact' })
+            .eq('task_type', taskType)
+            .in('status', ['pending', 'in_progress'])
+            .gte('created_at', startedAt),
+        ]);
+        
+        const completedCount = completedResult.count || 0;
+        const failedCount = failedResult.count || 0;
+        const pendingCount = pendingResult.count || 0;
+        
+        // Build logs from completed/failed tasks
+        const accountIds = [
+          ...(completedResult.data || []).map(t => t.account_id),
+          ...(failedResult.data || []).map(t => t.account_id)
+        ];
+        
+        // Fetch account phone numbers
+        const accountPhoneMap = new Map<string, string>();
+        if (accountIds.length > 0) {
+          const { data: accounts } = await supabase
+            .from('telegram_accounts')
+            .select('id, phone_number')
+            .in('id', accountIds.slice(0, 100));
+          accounts?.forEach(a => accountPhoneMap.set(a.id, a.phone_number));
+        }
+        
+        const logs: AccountTaskLog[] = [
+          ...(completedResult.data || []).map(t => ({
+            id: t.id,
+            taskType: taskType,
+            accountPhone: accountPhoneMap.get(t.account_id) || t.account_id,
+            status: 'completed' as const,
+            result: t.result,
+            timestamp: new Date(),
+          })),
+          ...(failedResult.data || []).map(t => ({
+            id: t.id,
+            taskType: taskType,
+            accountPhone: accountPhoneMap.get(t.account_id) || t.account_id,
+            status: 'failed' as const,
+            result: t.result,
+            timestamp: new Date(),
+          })),
+        ];
+        
+        setAccountTasksProgress(prev => {
+          const isComplete = pendingCount === 0 && (completedCount + failedCount) >= prev.total && prev.total > 0;
+          
+          if (isComplete && (completedCount !== prev.completed || failedCount !== prev.failed)) {
+            setIsAccountTaskRunning(false);
+            toast.success(`${prev.taskType} complete: ${completedCount} success, ${failedCount} failed`);
+            fetchSystemLogs();
+          }
+          
+          return {
+            ...prev,
+            completed: completedCount,
+            failed: failedCount,
+            logs: logs.slice(0, 100),
+            lastUpdateAt: new Date().toISOString(),
+          };
+        });
+        
+      } catch (error) {
+        console.error('Error polling task progress:', error);
+      }
+    };
+    
+    // Initial poll
+    pollProgress();
+    
+    // Poll every 2 seconds
+    const interval = setInterval(pollProgress, 2000);
+    
+    return () => clearInterval(interval);
+  }, [isAccountTaskRunning, accountTasksProgress.internalTaskType, accountTasksProgress.startedAt, accountTasksProgress.total, setAccountTasksProgress, setIsAccountTaskRunning, fetchSystemLogs]);
 
   // Filter logs
   const filterLogs = (logs: AccountTaskLog[]) => {
