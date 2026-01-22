@@ -725,80 +725,8 @@ const Logs: React.FC = () => {
             </Card>
           </TabsContent>
 
-          {/* History Tab */}
+          {/* History Tab - Shows Operation Summaries */}
           <TabsContent value="history" className="mt-0">
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base">Task History</CardTitle>
-                    <CardDescription>
-                      {historyStats.total} total • {historyStats.completed} completed • {historyStats.failed} failed
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          disabled={accountTaskHistory.length === 0}
-                        >
-                          <Download className="w-4 h-4 mr-2" />
-                          Export
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => exportToJSON(accountTaskHistory, 'task-history')}>
-                          <FileJson className="w-4 h-4 mr-2" />
-                          Export as JSON
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => exportToCSV(accountTaskHistory, 'task-history')}>
-                          <FileSpreadsheet className="w-4 h-4 mr-2" />
-                          Export as CSV
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={clearHistory}
-                      disabled={accountTaskHistory.length === 0}
-                    >
-                      <Trash2 className="w-4 h-4 mr-2" />
-                      Clear
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {filteredHistory.length > 0 ? (
-                  <ScrollArea className="h-[500px] pr-4">
-                    <div className="space-y-2">
-                      {filteredHistory.map((log, index) => (
-                        <LogEntry key={`${log.id}-history-${index}`} log={log} showTimestamp />
-                      ))}
-                    </div>
-                  </ScrollArea>
-                ) : accountTaskHistory.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                    <History className="w-8 h-8 mb-3 opacity-50" />
-                    <p className="text-sm">No task history yet</p>
-                    <p className="text-xs mt-1">Completed tasks will be recorded here</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                    <Search className="w-8 h-8 mb-3 opacity-50" />
-                    <p className="text-sm">No logs match your filters</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          {/* System Logs Tab - Now shows Operation Summaries */}
-          <TabsContent value="system" className="mt-0 space-y-4">
-            {/* Operation Summaries Card */}
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
@@ -826,67 +754,57 @@ const Logs: React.FC = () => {
                     <p className="text-sm">Loading operation history...</p>
                   </div>
                 ) : operationSummaries.length > 0 ? (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div className="space-y-1">
                     {operationSummaries.map((summary) => (
                       <div 
                         key={summary.taskType}
-                        className="border rounded-lg p-4 hover:bg-muted/50 transition-colors"
+                        className="flex items-center justify-between py-2.5 px-3 rounded-md hover:bg-muted/50 transition-colors border-b last:border-b-0"
                       >
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="p-2 rounded-md bg-primary/10 text-primary">
+                        <div className="flex items-center gap-3">
+                          <div className="text-muted-foreground">
                             {summary.icon}
                           </div>
-                          <div className="flex-1">
-                            <h4 className="font-medium text-sm">{summary.operation}</h4>
-                            <p className="text-xs text-muted-foreground">
-                              Last run: {format(summary.lastRun, 'MMM d, HH:mm')}
-                            </p>
-                          </div>
+                          <span className="font-medium text-sm">{summary.operation}</span>
                         </div>
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4 text-sm">
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-2 h-2 rounded-full bg-green-500" />
-                              <span className="text-green-600 dark:text-green-400 font-medium">{summary.success}</span>
-                              <span className="text-muted-foreground">success</span>
-                            </div>
-                            <div className="flex items-center gap-1.5">
-                              <div className="w-2 h-2 rounded-full bg-red-500" />
-                              <span className="text-red-600 dark:text-red-400 font-medium">{summary.failed}</span>
-                              <span className="text-muted-foreground">failed</span>
-                            </div>
+                        <div className="flex items-center gap-6 text-sm">
+                          <span className="text-muted-foreground">
+                            {format(summary.lastRun, 'MMM d, HH:mm')}
+                          </span>
+                          <div className="flex items-center gap-1.5 min-w-[80px]">
+                            <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                            <span className="text-green-600 dark:text-green-400 font-medium">{summary.success}</span>
+                            <span className="text-muted-foreground text-xs">success</span>
                           </div>
-                          <Badge variant="secondary" className="text-xs">
+                          <div className="flex items-center gap-1.5 min-w-[70px]">
+                            <XCircle className="w-3.5 h-3.5 text-red-500" />
+                            <span className="text-red-600 dark:text-red-400 font-medium">{summary.failed}</span>
+                            <span className="text-muted-foreground text-xs">failed</span>
+                          </div>
+                          <Badge variant="outline" className="text-xs min-w-[60px] justify-center">
                             {summary.total} total
                           </Badge>
                         </div>
-                        {summary.total > 0 && (
-                          <div className="mt-3">
-                            <Progress 
-                              value={(summary.success / summary.total) * 100} 
-                              className="h-1.5"
-                            />
-                          </div>
-                        )}
                       </div>
                     ))}
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                    <ClipboardList className="w-8 h-8 mb-3 opacity-50" />
-                    <p className="text-sm">No operations recorded yet</p>
+                    <History className="w-8 h-8 mb-3 opacity-50" />
+                    <p className="text-sm">No operation history yet</p>
                     <p className="text-xs mt-1">Run account tasks to see operation history</p>
                   </div>
                 )}
               </CardContent>
             </Card>
+          </TabsContent>
 
-            {/* Detailed Logs Card */}
+          {/* System Logs Tab */}
+          <TabsContent value="system" className="mt-0">
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle className="text-base">Detailed Logs</CardTitle>
+                    <CardTitle className="text-base">System Logs</CardTitle>
                     <CardDescription>
                       {systemLogStats.total} total • {systemLogStats.success} success • {systemLogStats.errors} errors
                     </CardDescription>
@@ -903,6 +821,15 @@ const Logs: React.FC = () => {
                         ))}
                       </SelectContent>
                     </Select>
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
+                      onClick={fetchSystemLogs}
+                      disabled={isLoadingSystemLogs}
+                    >
+                      <RefreshCw className={cn("w-4 h-4 mr-2", isLoadingSystemLogs && "animate-spin")} />
+                      Refresh
+                    </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button 
@@ -929,8 +856,13 @@ const Logs: React.FC = () => {
                 </div>
               </CardHeader>
               <CardContent>
-                {filteredSystemLogs.length > 0 ? (
-                  <ScrollArea className="h-[400px] pr-4">
+                {isLoadingSystemLogs ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="w-8 h-8 animate-spin mb-3" />
+                    <p className="text-sm">Loading system logs...</p>
+                  </div>
+                ) : filteredSystemLogs.length > 0 ? (
+                  <ScrollArea className="h-[500px] pr-4">
                     <div className="space-y-2">
                       {filteredSystemLogs.map((log, index) => (
                         <SystemLogEntry key={`${log.id}-${index}`} log={log} getSourceIcon={getSourceIcon} />
