@@ -3365,8 +3365,11 @@ async def process_single_task(task):
     phone = account.get("phone_number", "")
     
     try:
+        # NOTE: skip_session_check=True for all account management tasks to avoid redundant API calls
+        # Only verify_session task should actually report session status
+        
         if task_type == "spambot_check":
-            client = await get_or_create_client(account, task_proxy=task_proxy)
+            client = await get_or_create_client(account, task_proxy=task_proxy, skip_session_check=True)
             if client:
                 print(f"  [SPAM] Checking {phone}...")
                 status, ban_reason, response = await check_spambot(client)
@@ -3374,14 +3377,14 @@ async def process_single_task(task):
                 print(f"    Result: {status}")
         
         elif task_type == "change_name":
-            client = await get_or_create_client(account, task_proxy=task_proxy)
+            client = await get_or_create_client(account, task_proxy=task_proxy, skip_session_check=True)
             if client:
                 print(f"  [NAME] Changing for {phone}...")
                 success, error = await change_name(client, task_data.get("first_name", ""), task_data.get("last_name", ""))
                 await report_result("change_name", {"task_id": task_id, "account_id": account_id, "success": success, "error": error, "first_name": task_data.get("first_name"), "last_name": task_data.get("last_name")})
         
         elif task_type == "change_photo":
-            client = await get_or_create_client(account, task_proxy=task_proxy)
+            client = await get_or_create_client(account, task_proxy=task_proxy, skip_session_check=True)
             if client:
                 print(f"  [PHOTO] Changing for {phone}...")
                 photo_source = task_data.get("photo_url") or task_data.get("photo_base64", "")
@@ -3389,7 +3392,7 @@ async def process_single_task(task):
                 await report_result("change_photo", {"task_id": task_id, "account_id": account_id, "success": success, "error": error})
         
         elif task_type == "privacy_settings":
-            client = await get_or_create_client(account, task_proxy=task_proxy)
+            client = await get_or_create_client(account, task_proxy=task_proxy, skip_session_check=True)
             if client:
                 print(f"  [PRIVACY] Updating for {phone}...")
                 success, error = await update_privacy(
@@ -3402,14 +3405,14 @@ async def process_single_task(task):
                 await report_result("privacy_settings", {"task_id": task_id, "account_id": account_id, "success": success, "error": error})
         
         elif task_type == "change_password":
-            client = await get_or_create_client(account, task_proxy=task_proxy)
+            client = await get_or_create_client(account, task_proxy=task_proxy, skip_session_check=True)
             if client:
                 print(f"  [PASS] Changing for {phone}...")
                 success, error = await change_password(client, task_data.get("existing_password", ""), task_data.get("new_password", ""))
                 await report_result("change_password", {"task_id": task_id, "account_id": account_id, "success": success, "error": error})
         
         elif task_type == "logout_sessions":
-            client = await get_or_create_client(account, task_proxy=task_proxy)
+            client = await get_or_create_client(account, task_proxy=task_proxy, skip_session_check=True)
             if client:
                 print(f"  [LOGOUT] Logging out other sessions for {phone}...")
                 success, error = await logout_other_sessions(client)
@@ -3431,7 +3434,8 @@ async def process_single_task(task):
         elif task_type == "sync_profile":
             print(f"  [SYNC] Syncing profile for {phone}...")
             try:
-                client = await get_or_create_client(account, task_proxy=task_proxy)
+                # skip_session_check=True since sync_profile already calls get_me() for its own purpose
+                client = await get_or_create_client(account, task_proxy=task_proxy, skip_session_check=True)
                 if client:
                     me = await client.get_me()
                     if me:
