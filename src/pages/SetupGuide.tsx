@@ -2691,7 +2691,8 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
     Properly disconnect a session and schedule it for retry after 60 seconds.
     This ensures clean session release before retry.
     
-    FIX (2026-01-22): Added proper task cleanup to prevent "Task was destroyed but it is pending!" warnings.
+    FIX (2026-01-22): Disable auto_reconnect BEFORE disconnect to prevent
+    'NoneType' object has no attribute 'connect' errors.
     """
     global failed_connection_accounts
     
@@ -2701,6 +2702,15 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
     if acc_id in active_clients:
         try:
             client = active_clients.pop(acc_id)
+            
+            # CRITICAL: Disable auto_reconnect BEFORE disconnect
+            # This prevents Telethon from trying to reconnect with a None _connection
+            try:
+                if hasattr(client, '_sender') and client._sender:
+                    client._sender._auto_reconnect = False
+            except:
+                pass
+            
             if client.is_connected():
                 try:
                     await asyncio.wait_for(client.disconnect(), timeout=5)
@@ -2750,15 +2760,36 @@ async def keep_clients_alive():
                         try:
                             await asyncio.wait_for(client.get_me(), timeout=10)
                         except asyncio.TimeoutError:
-                            # Ping failed - connection is zombie, force disconnect and retry
-                            print(f"  [ZOMBIE] {acc_id[:8]} - ping timeout, forcing reconnection")
+                            # Ping failed - connection is zombie, force full cleanup
+                            print(f"  [ZOMBIE] {acc_id[:8]} - ping timeout, forcing full cleanup")
+                            # Remove FIRST to prevent auto_reconnect
+                            client_to_kill = active_clients.pop(acc_id, None)
+                            if client_to_kill:
+                                try:
+                                    client_to_kill._sender._auto_reconnect = False
+                                except:
+                                    pass
+                                try:
+                                    await asyncio.wait_for(client_to_kill.disconnect(), timeout=3)
+                                except:
+                                    pass
                             disconnected_ids.append((acc_id, "zombie connection (ping timeout)"))
                             continue
                         except Exception as ping_err:
                             ping_str = str(ping_err).lower()
                             # WinError 121 during ping = dead connection
-                            if "winerror 121" in ping_str or "semaphore" in ping_str:
-                                print(f"  [SOCKS5] {acc_id[:8]} - Windows timeout during ping")
+                            if "winerror 121" in ping_str or "semaphore" in ping_str or "'nonetype'" in ping_str:
+                                print(f"  [SOCKS5] {acc_id[:8]} - Windows timeout during ping, full cleanup")
+                                client_to_kill = active_clients.pop(acc_id, None)
+                                if client_to_kill:
+                                    try:
+                                        client_to_kill._sender._auto_reconnect = False
+                                    except:
+                                        pass
+                                    try:
+                                        await asyncio.wait_for(client_to_kill.disconnect(), timeout=3)
+                                    except:
+                                        pass
                                 disconnected_ids.append((acc_id, "socks5 timeout"))
                                 continue
                         
@@ -2774,15 +2805,22 @@ async def keep_clients_alive():
                     
                     # ========== PROACTIVE WINERROR 121 HANDLING ==========
                     # Force immediate disconnect and recreate on Windows semaphore timeout
-                    if "winerror 121" in error_str or "semaphore" in error_str:
-                        print(f"  [SOCKS5] {acc_id[:8]} - Windows semaphore timeout, forcing reconnect")
-                        disconnected_ids.append((acc_id, "socks5 timeout"))
-                        # Force client cleanup immediately
-                        if acc_id in active_clients:
+                    # CRITICAL: Remove from active_clients BEFORE disconnect to prevent auto_reconnect
+                    if "winerror 121" in error_str or "semaphore" in error_str or "'nonetype'" in error_str:
+                        print(f"  [SOCKS5] {acc_id[:8]} - Windows semaphore timeout, forcing full cleanup")
+                        # Remove FIRST to prevent auto_reconnect from firing
+                        client_to_kill = active_clients.pop(acc_id, None)
+                        if client_to_kill:
                             try:
-                                await asyncio.wait_for(active_clients[acc_id].disconnect(), timeout=3)
+                                # Disable auto_reconnect before disconnect
+                                client_to_kill._sender._auto_reconnect = False
                             except:
                                 pass
+                            try:
+                                await asyncio.wait_for(client_to_kill.disconnect(), timeout=3)
+                            except:
+                                pass
+                        disconnected_ids.append((acc_id, "socks5 timeout"))
                         continue
                     
                     # Check for Telegram server errors (RpcCallFailError) - don't disconnect, just skip
@@ -2825,7 +2863,7 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-windows-selector-eventloop")
+    print("  BUILD: 2026-01-22-auto-reconnect-disable-fix")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 60s cooldown")
