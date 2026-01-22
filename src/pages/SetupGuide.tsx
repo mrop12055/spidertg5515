@@ -61,13 +61,21 @@ SQLITE LOCK FIX (2026-01-16):
 """
 
 import os
+import sys
 import base64
 import tempfile
 import asyncio
 import httpx
 import socks
 import threading
+import platform
 from typing import Dict, Optional
+
+# ========== WINDOWS SOCKS5 FIX: Use SelectorEventLoop instead of ProactorEventLoop ==========
+# ProactorEventLoop (Windows default) causes WinError 121 semaphore timeouts with SOCKS5 proxies
+# SelectorEventLoop handles TCP/SOCKS connections more reliably
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # ========== PER-ACCOUNT CONNECTION LOCKS (prevents SQLite "database is locked") ==========
 # Uses threading.Lock wrapped in asyncio for cross-coroutine safety
@@ -2817,12 +2825,13 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-socks5-telethon-resilience")
+    print("  BUILD: 2026-01-22-windows-selector-eventloop")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 60s cooldown")
     print("  📨 Skips accounts without proxy/API")
-    print("  🔌 SOCKS5 zombie detection + WinError 121 handling")
+    print("  🔌 SOCKS5: WindowsSelectorEventLoopPolicy fix")
+    print("  🩺 Zombie detection + WinError 121 handling")
     print("=" * 50)
     print("=" * 50)
     
