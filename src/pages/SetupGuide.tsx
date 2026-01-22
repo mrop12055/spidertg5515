@@ -116,15 +116,15 @@ PROXY_RETRY_DELAY = 30  # Retry proxy error accounts after 30 seconds
 PROXY_MAX_RETRIES = 3   # Max retry attempts before giving up (per session)
 
 # ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
+CONNECTION_TIMEOUT = 30      # Telegram connection timeout (increased for SOCKS5 latency)
 CONNECTION_RETRIES = 2       # Connection retries (increased from 1)
 RETRY_DELAY = 2              # Retry delay in seconds (increased from 0)
 
-# HTTP Timeouts - split by purpose (increased for high-load 500+ clients)
-HTTP_TIMEOUT_DISPATCH = 90   # Task fetching (get-next-task, get-batch-tasks) - increased from 45
-HTTP_TIMEOUT_REPORT = 60     # Reporting (report-task-result, report-batch-results) - increased from 30
-HTTP_TIMEOUT_UPLOAD = 120    # Media uploads (photos, videos) - increased from 60
-HTTP_TIMEOUT_DEFAULT = 45    # Other REST calls - increased from 20
+# HTTP Timeouts - split by purpose (increased for SOCKS5 proxy environments)
+HTTP_TIMEOUT_DISPATCH = 120  # Task fetching (get-next-task, get-batch-tasks)
+HTTP_TIMEOUT_REPORT = 90     # Reporting (report-task-result, report-batch-results)
+HTTP_TIMEOUT_UPLOAD = 180    # Media uploads (photos, videos)
+HTTP_TIMEOUT_DEFAULT = 60    # Other REST calls
 
 # Backoff tracking for HTTP errors
 _consecutive_http_errors = 0
@@ -157,12 +157,17 @@ _http_client: Optional[httpx.AsyncClient] = None
 
 
 def get_http_client() -> httpx.AsyncClient:
-    """Get shared HTTP client with connection pooling - no default timeout (set per-request)"""
+    """Get shared HTTP client with connection pooling - optimized for SOCKS5 environments"""
     global _http_client
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
             timeout=HTTP_TIMEOUT_DEFAULT,
-            limits=httpx.Limits(max_connections=500, max_keepalive_connections=100)
+            limits=httpx.Limits(
+                max_connections=500,
+                max_keepalive_connections=50,  # Reduced to avoid SSL session reuse issues
+                keepalive_expiry=30  # Close idle connections after 30s
+            ),
+            http2=False,  # Disable HTTP/2 to prevent SSL session ID errors
         )
     return _http_client
 
@@ -838,25 +843,42 @@ async def get_batch_tasks(runner: str = None, batch_size: int = 50, max_retries:
     return {"tasks": [], "delay_after": 5}
 
 
-async def report_result(task_type: str, result: dict):
-    """Report task result (never block the runner; log failures)."""
-    try:
-        http = get_http_client()
-        resp = await http.post(
-            f"{BACKEND_URL}/report-task-result",
-            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json={"task_type": task_type, "result": result},
-            timeout=HTTP_TIMEOUT_REPORT,
-        )
-        if resp.status_code >= 300:
+async def report_result(task_type: str, result: dict, max_retries: int = 3):
+    """Report task result with retry on transient network errors (SOCKS5 optimized)."""
+    for attempt in range(max_retries):
+        try:
+            http = get_http_client()
+            resp = await asyncio.wait_for(
+                http.post(
+                    f"{BACKEND_URL}/report-task-result",
+                    headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                    json={"task_type": task_type, "result": result},
+                    timeout=HTTP_TIMEOUT_REPORT,
+                ),
+                timeout=HTTP_TIMEOUT_REPORT + 10  # Extra buffer for asyncio
+            )
+            if resp.status_code < 300:
+                return  # Success
+            if resp.status_code >= 500:
+                raise Exception(f"Server error: {resp.status_code}")
             print(f"  [REPORT ERROR] {task_type}: status={resp.status_code}, body={resp.text[:200]}")
-    except Exception as e:
-        print(f"  [REPORT EXC] {task_type}: {type(e).__name__}: {repr(e)}")
+            return
+        except Exception as e:
+            err_str = str(e).lower()
+            is_transient = any(p in err_str for p in [
+                'ssl', 'readerror', 'connecterror', 'timeout', 
+                'winerror', 'semaphore', 'connection', 'invalid session'
+            ])
+            if is_transient and attempt < max_retries - 1:
+                wait_time = 2 ** attempt  # 1s, 2s, 4s
+                await asyncio.sleep(wait_time)
+                continue
+            print(f"  [REPORT EXC] {task_type}: {type(e).__name__}: {str(e)[:60]}")
 
 
-async def report_session_check(account_id: str, success: bool, error: str = None, telegram_data: dict = None):
+async def report_session_check(account_id: str, success: bool, error: str = None, telegram_data: dict = None, max_retries: int = 3):
     """
-    Report session connection result - handles FROZEN, BANNED, DISCONNECTED detection.
+    Report session connection result with retry - handles FROZEN, BANNED, DISCONNECTED detection.
     
     Args:
         account_id: The account UUID
@@ -864,49 +886,81 @@ async def report_session_check(account_id: str, success: bool, error: str = None
         error: Error message if failed (for auto-detection of frozen/banned/etc)
         telegram_data: Dict with id, first_name, last_name, username from get_me()
     """
-    try:
-        http = get_http_client()
-        payload = {
-            "account_id": account_id,
-            "success": success,
-        }
-        if error:
-            payload["error"] = error
-        if telegram_data:
-            payload["telegram_data"] = telegram_data
-            
-        resp = await http.post(
-            f"{BACKEND_URL}/report-session-check",
-            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json=payload,
-            timeout=HTTP_TIMEOUT_REPORT,
-        )
-        if resp.status_code >= 300:
+    payload = {
+        "account_id": account_id,
+        "success": success,
+    }
+    if error:
+        payload["error"] = error
+    if telegram_data:
+        payload["telegram_data"] = telegram_data
+    
+    for attempt in range(max_retries):
+        try:
+            http = get_http_client()
+            resp = await asyncio.wait_for(
+                http.post(
+                    f"{BACKEND_URL}/report-session-check",
+                    headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                    json=payload,
+                    timeout=HTTP_TIMEOUT_REPORT,
+                ),
+                timeout=HTTP_TIMEOUT_REPORT + 10
+            )
+            if resp.status_code < 300:
+                result = resp.json()
+                print(f"  [SESSION CHECK] {account_id} -> {result.get('new_status', 'unknown')}")
+                return
+            if resp.status_code >= 500:
+                raise Exception(f"Server error: {resp.status_code}")
             print(f"  [SESSION CHECK ERROR] {account_id}: status={resp.status_code}, body={resp.text[:200]}")
-        else:
-            result = resp.json()
-            print(f"  [SESSION CHECK] {account_id} -> {result.get('new_status', 'unknown')}")
-    except Exception as e:
-        print(f"  [SESSION CHECK EXC] {account_id}: {type(e).__name__}: {repr(e)}")
+            return
+        except Exception as e:
+            err_str = str(e).lower()
+            is_transient = any(p in err_str for p in [
+                'ssl', 'readerror', 'connecterror', 'timeout', 
+                'winerror', 'semaphore', 'connection', 'invalid session'
+            ])
+            if is_transient and attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                await asyncio.sleep(wait_time)
+                continue
+            print(f"  [SESSION CHECK EXC] {account_id}: {type(e).__name__}: {str(e)[:60]}")
 
 
-async def report_batch_results(results: list) -> bool:
-    """Report many send results in one request for speed."""
-    try:
-        http = get_http_client()
-        resp = await http.post(
-            f"{BACKEND_URL}/report-batch-results",
-            headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
-            json={"results": results},
-            timeout=HTTP_TIMEOUT_REPORT,
-        )
-        if 200 <= resp.status_code < 300:
-            return True
-        print(f"  [BATCH REPORT] {resp.status_code}: {resp.text[:200]}")
-        return False
-    except Exception as e:
-        print(f"  [BATCH REPORT ERROR] {type(e).__name__}: {repr(e)}")
-        return False
+async def report_batch_results(results: list, max_retries: int = 3) -> bool:
+    """Report many send results with retry on transient network errors."""
+    for attempt in range(max_retries):
+        try:
+            http = get_http_client()
+            resp = await asyncio.wait_for(
+                http.post(
+                    f"{BACKEND_URL}/report-batch-results",
+                    headers={"apikey": SUPABASE_KEY, "Content-Type": "application/json"},
+                    json={"results": results},
+                    timeout=HTTP_TIMEOUT_REPORT,
+                ),
+                timeout=HTTP_TIMEOUT_REPORT + 10
+            )
+            if 200 <= resp.status_code < 300:
+                return True
+            if resp.status_code >= 500:
+                raise Exception(f"Server error: {resp.status_code}")
+            print(f"  [BATCH REPORT] {resp.status_code}: {resp.text[:200]}")
+            return False
+        except Exception as e:
+            err_str = str(e).lower()
+            is_transient = any(p in err_str for p in [
+                'ssl', 'readerror', 'connecterror', 'timeout', 
+                'winerror', 'semaphore', 'connection', 'invalid session'
+            ])
+            if is_transient and attempt < max_retries - 1:
+                wait_time = 2 ** attempt
+                await asyncio.sleep(wait_time)
+                continue
+            print(f"  [BATCH REPORT ERROR] {type(e).__name__}: {str(e)[:60]}")
+            return False
+    return False
 
 
 async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
@@ -2706,7 +2760,7 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-task-cleanup-v2")
+    print("  BUILD: 2026-01-22-socks5-http-resilience")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 60s cooldown")
