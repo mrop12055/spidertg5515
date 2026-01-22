@@ -154,22 +154,48 @@ ACCOUNT_ERROR_PATTERNS = {
 
 # ========== SHARED HTTP CLIENT POOL ==========
 _http_client: Optional[httpx.AsyncClient] = None
+_http_error_count = 0  # Track consecutive HTTP errors for client recreation
 
 
-def get_http_client() -> httpx.AsyncClient:
+def get_http_client(force_recreate: bool = False) -> httpx.AsyncClient:
     """Get shared HTTP client with connection pooling - optimized for SOCKS5 environments"""
-    global _http_client
+    global _http_client, _http_error_count
+    if force_recreate and _http_client is not None:
+        try:
+            # Close existing client to force new connections
+            asyncio.create_task(_http_client.aclose())
+        except:
+            pass
+        _http_client = None
+        _http_error_count = 0
+        
     if _http_client is None or _http_client.is_closed:
         _http_client = httpx.AsyncClient(
             timeout=HTTP_TIMEOUT_DEFAULT,
             limits=httpx.Limits(
-                max_connections=500,
-                max_keepalive_connections=50,  # Reduced to avoid SSL session reuse issues
-                keepalive_expiry=30  # Close idle connections after 30s
+                max_connections=200,  # Reduced for stability
+                max_keepalive_connections=20,  # Much lower to avoid stale connections
+                keepalive_expiry=15  # Shorter expiry for Windows environments
             ),
             http2=False,  # Disable HTTP/2 to prevent SSL session ID errors
         )
+        _http_error_count = 0
     return _http_client
+
+
+def track_http_error():
+    """Track HTTP error and recreate client if too many consecutive failures."""
+    global _http_error_count
+    _http_error_count += 1
+    if _http_error_count >= 5:
+        print("  [HTTP] Recreating client after 5 consecutive errors...")
+        get_http_client(force_recreate=True)
+
+
+def reset_http_errors():
+    """Reset error counter on successful request."""
+    global _http_error_count
+    _http_error_count = 0
 
 
 # ========== PROXY ERROR RETRY FUNCTIONS ==========
@@ -843,11 +869,12 @@ async def get_batch_tasks(runner: str = None, batch_size: int = 50, max_retries:
     return {"tasks": [], "delay_after": 5}
 
 
-async def report_result(task_type: str, result: dict, max_retries: int = 3):
-    """Report task result with retry on transient network errors (SOCKS5 optimized)."""
+async def report_result(task_type: str, result: dict, max_retries: int = 5):
+    """Report task result with retry on transient network errors (SOCKS5/Windows optimized)."""
     for attempt in range(max_retries):
         try:
-            http = get_http_client()
+            # Recreate client on later attempts
+            http = get_http_client(force_recreate=(attempt >= 2))
             resp = await asyncio.wait_for(
                 http.post(
                     f"{BACKEND_URL}/report-task-result",
@@ -855,36 +882,34 @@ async def report_result(task_type: str, result: dict, max_retries: int = 3):
                     json={"task_type": task_type, "result": result},
                     timeout=HTTP_TIMEOUT_REPORT,
                 ),
-                timeout=HTTP_TIMEOUT_REPORT + 10  # Extra buffer for asyncio
+                timeout=HTTP_TIMEOUT_REPORT + 15  # Extra buffer for Windows
             )
             if resp.status_code < 300:
+                reset_http_errors()
                 return  # Success
             if resp.status_code >= 500:
                 raise Exception(f"Server error: {resp.status_code}")
-            print(f"  [REPORT ERROR] {task_type}: status={resp.status_code}, body={resp.text[:200]}")
+            print(f"  [REPORT ERROR] {task_type}: status={resp.status_code}")
             return
         except Exception as e:
+            track_http_error()
             err_str = str(e).lower()
             is_transient = any(p in err_str for p in [
                 'ssl', 'readerror', 'connecterror', 'timeout', 
                 'winerror', 'semaphore', 'connection', 'invalid session'
             ])
             if is_transient and attempt < max_retries - 1:
-                wait_time = 2 ** attempt  # 1s, 2s, 4s
+                wait_time = 3 + (attempt * 2)  # 3s, 5s, 7s, 9s - longer waits
                 await asyncio.sleep(wait_time)
                 continue
-            print(f"  [REPORT EXC] {task_type}: {type(e).__name__}: {str(e)[:60]}")
+            # Only print on final failure to reduce log spam
+            if attempt == max_retries - 1:
+                print(f"  [REPORT FAILED] {task_type}: {type(e).__name__}")
 
 
-async def report_session_check(account_id: str, success: bool, error: str = None, telegram_data: dict = None, max_retries: int = 3):
+async def report_session_check(account_id: str, success: bool, error: str = None, telegram_data: dict = None, max_retries: int = 5):
     """
     Report session connection result with retry - handles FROZEN, BANNED, DISCONNECTED detection.
-    
-    Args:
-        account_id: The account UUID
-        success: True if get_me() succeeded
-        error: Error message if failed (for auto-detection of frozen/banned/etc)
-        telegram_data: Dict with id, first_name, last_name, username from get_me()
     """
     payload = {
         "account_id": account_id,
@@ -897,7 +922,7 @@ async def report_session_check(account_id: str, success: bool, error: str = None
     
     for attempt in range(max_retries):
         try:
-            http = get_http_client()
+            http = get_http_client(force_recreate=(attempt >= 2))
             resp = await asyncio.wait_for(
                 http.post(
                     f"{BACKEND_URL}/report-session-check",
@@ -905,34 +930,34 @@ async def report_session_check(account_id: str, success: bool, error: str = None
                     json=payload,
                     timeout=HTTP_TIMEOUT_REPORT,
                 ),
-                timeout=HTTP_TIMEOUT_REPORT + 10
+                timeout=HTTP_TIMEOUT_REPORT + 15
             )
             if resp.status_code < 300:
+                reset_http_errors()
                 result = resp.json()
-                print(f"  [SESSION CHECK] {account_id} -> {result.get('new_status', 'unknown')}")
+                print(f"  [SESSION CHECK] {account_id[:8]} -> {result.get('new_status', 'ok')}")
                 return
             if resp.status_code >= 500:
                 raise Exception(f"Server error: {resp.status_code}")
-            print(f"  [SESSION CHECK ERROR] {account_id}: status={resp.status_code}, body={resp.text[:200]}")
             return
         except Exception as e:
+            track_http_error()
             err_str = str(e).lower()
             is_transient = any(p in err_str for p in [
                 'ssl', 'readerror', 'connecterror', 'timeout', 
                 'winerror', 'semaphore', 'connection', 'invalid session'
             ])
             if is_transient and attempt < max_retries - 1:
-                wait_time = 2 ** attempt
+                wait_time = 3 + (attempt * 2)
                 await asyncio.sleep(wait_time)
                 continue
-            print(f"  [SESSION CHECK EXC] {account_id}: {type(e).__name__}: {str(e)[:60]}")
 
 
-async def report_batch_results(results: list, max_retries: int = 3) -> bool:
+async def report_batch_results(results: list, max_retries: int = 5) -> bool:
     """Report many send results with retry on transient network errors."""
     for attempt in range(max_retries):
         try:
-            http = get_http_client()
+            http = get_http_client(force_recreate=(attempt >= 2))
             resp = await asyncio.wait_for(
                 http.post(
                     f"{BACKEND_URL}/report-batch-results",
@@ -940,25 +965,25 @@ async def report_batch_results(results: list, max_retries: int = 3) -> bool:
                     json={"results": results},
                     timeout=HTTP_TIMEOUT_REPORT,
                 ),
-                timeout=HTTP_TIMEOUT_REPORT + 10
+                timeout=HTTP_TIMEOUT_REPORT + 15
             )
             if 200 <= resp.status_code < 300:
+                reset_http_errors()
                 return True
             if resp.status_code >= 500:
                 raise Exception(f"Server error: {resp.status_code}")
-            print(f"  [BATCH REPORT] {resp.status_code}: {resp.text[:200]}")
             return False
         except Exception as e:
+            track_http_error()
             err_str = str(e).lower()
             is_transient = any(p in err_str for p in [
                 'ssl', 'readerror', 'connecterror', 'timeout', 
                 'winerror', 'semaphore', 'connection', 'invalid session'
             ])
             if is_transient and attempt < max_retries - 1:
-                wait_time = 2 ** attempt
+                wait_time = 3 + (attempt * 2)
                 await asyncio.sleep(wait_time)
                 continue
-            print(f"  [BATCH REPORT ERROR] {type(e).__name__}: {str(e)[:60]}")
             return False
     return False
 
@@ -2760,7 +2785,7 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-socks5-http-resilience")
+    print("  BUILD: 2026-01-22-http-client-recreation")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 60s cooldown")
