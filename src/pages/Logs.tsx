@@ -74,6 +74,14 @@ const Logs: React.FC = () => {
     try {
       const logs: SystemLog[] = [];
 
+      // First, fetch account phone numbers for lookup
+      const { data: accounts } = await supabase
+        .from('telegram_accounts')
+        .select('id, phone_number');
+      
+      const accountPhoneMap = new Map<string, string>();
+      accounts?.forEach(a => accountPhoneMap.set(a.id, a.phone_number));
+
       // Fetch from multiple tables in parallel
       const [
         vpsLogsResult,
@@ -92,17 +100,18 @@ const Logs: React.FC = () => {
           .order('created_at', { ascending: false })
           .limit(200),
         
-        // Account Check Tasks
+        // Account Check Tasks - fetch completed/failed
         supabase
           .from('account_check_tasks')
-          .select('*, telegram_accounts(phone_number)')
+          .select('id, account_id, task_type, status, result, created_at, completed_at')
+          .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(200),
+          .limit(500),
         
         // Warmup Messages (recent completed/failed)
         supabase
           .from('warmup_messages')
-          .select('*, sender:telegram_accounts!warmup_messages_sender_account_id_fkey(phone_number)')
+          .select('id, sender_account_id, status, message_content, message_type, error_message, sent_at, created_at')
           .in('status', ['sent', 'failed'])
           .order('created_at', { ascending: false })
           .limit(200),
@@ -110,7 +119,7 @@ const Logs: React.FC = () => {
         // Block Contact Tasks
         supabase
           .from('block_contact_tasks')
-          .select('*, telegram_accounts(phone_number)')
+          .select('id, account_id, status, action, target_phone, result, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
           .limit(100),
@@ -118,7 +127,7 @@ const Logs: React.FC = () => {
         // Contact Import Tasks
         supabase
           .from('contact_import_tasks')
-          .select('*, telegram_accounts(phone_number)')
+          .select('id, account_id, status, result, valid_numbers, invalid_numbers, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
           .limit(100),
@@ -126,7 +135,7 @@ const Logs: React.FC = () => {
         // Maturation Tasks
         supabase
           .from('maturation_tasks')
-          .select('*, telegram_accounts(phone_number)')
+          .select('id, account_id, task_type, status, description, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
           .limit(100),
@@ -134,14 +143,14 @@ const Logs: React.FC = () => {
         // Warmup Errors
         supabase
           .from('warmup_errors')
-          .select('*, telegram_accounts(phone_number)')
+          .select('id, account_id, error_type, error_message, created_at')
           .order('created_at', { ascending: false })
           .limit(100),
         
         // Proxy Errors
         supabase
           .from('proxy_errors')
-          .select('*, proxies(host, port)')
+          .select('id, proxy_id, error_type, error_message, created_at')
           .order('created_at', { ascending: false })
           .limit(100),
       ]);
@@ -171,7 +180,7 @@ const Logs: React.FC = () => {
             message: `${task.task_type.replace(/_/g, ' ')} - ${task.status}`,
             status: task.status === 'completed' ? 'success' : task.status === 'failed' ? 'error' : 'info',
             details: task.result || undefined,
-            accountPhone: (task.telegram_accounts as any)?.phone_number,
+            accountPhone: accountPhoneMap.get(task.account_id) || task.account_id,
             timestamp: new Date(task.created_at || Date.now()),
           });
         });
@@ -187,7 +196,7 @@ const Logs: React.FC = () => {
             message: `Warmup message ${msg.status}`,
             status: msg.status === 'sent' ? 'success' : 'error',
             details: msg.error_message || msg.message_content?.substring(0, 50),
-            accountPhone: (msg.sender as any)?.phone_number,
+            accountPhone: accountPhoneMap.get(msg.sender_account_id) || msg.sender_account_id,
             timestamp: new Date(msg.sent_at || msg.created_at || Date.now()),
           });
         });
@@ -203,7 +212,7 @@ const Logs: React.FC = () => {
             message: `${task.action} contact: ${task.target_phone}`,
             status: task.status === 'completed' ? 'success' : 'error',
             details: task.result || undefined,
-            accountPhone: (task.telegram_accounts as any)?.phone_number,
+            accountPhone: accountPhoneMap.get(task.account_id) || task.account_id,
             timestamp: new Date(task.completed_at || task.created_at),
           });
         });
@@ -221,7 +230,7 @@ const Logs: React.FC = () => {
             message: `Imported ${validCount} valid, ${invalidCount} invalid numbers`,
             status: task.status === 'completed' ? 'success' : 'error',
             details: task.result || undefined,
-            accountPhone: (task.telegram_accounts as any)?.phone_number,
+            accountPhone: accountPhoneMap.get(task.account_id) || task.account_id,
             timestamp: new Date(task.completed_at || task.created_at),
           });
         });
@@ -236,7 +245,7 @@ const Logs: React.FC = () => {
             type: task.task_type,
             message: task.description || `${task.task_type.replace(/_/g, ' ')}`,
             status: task.status === 'completed' ? 'success' : task.status === 'failed' ? 'error' : 'info',
-            accountPhone: (task.telegram_accounts as any)?.phone_number,
+            accountPhone: accountPhoneMap.get(task.account_id) || task.account_id,
             timestamp: new Date(task.completed_at || task.created_at || Date.now()),
           });
         });
@@ -251,7 +260,7 @@ const Logs: React.FC = () => {
             type: err.error_type || 'error',
             message: err.error_message,
             status: 'error',
-            accountPhone: (err.telegram_accounts as any)?.phone_number,
+            accountPhone: err.account_id ? (accountPhoneMap.get(err.account_id) || err.account_id) : undefined,
             timestamp: new Date(err.created_at || Date.now()),
           });
         });
@@ -260,14 +269,13 @@ const Logs: React.FC = () => {
       // Process Proxy Errors
       if (proxyErrorsResult.data) {
         proxyErrorsResult.data.forEach(err => {
-          const proxy = err.proxies as any;
           logs.push({
             id: err.id,
             source: 'Proxy Error',
             type: err.error_type || 'error',
             message: err.error_message || 'Proxy connection failed',
             status: 'error',
-            details: proxy ? `${proxy.host}:${proxy.port}` : undefined,
+            details: err.proxy_id,
             timestamp: new Date(err.created_at),
           });
         });
