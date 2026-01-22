@@ -63,6 +63,7 @@ const Logs: React.FC = () => {
     accountTasksProgress, 
     setAccountTasksProgress,
     isAccountTaskRunning, 
+    setIsAccountTaskRunning,
     accountTaskHistory, 
     setAccountTaskHistory 
   } = useTelegram();
@@ -74,6 +75,63 @@ const Logs: React.FC = () => {
   const [operationSummaries, setOperationSummaries] = useState<OperationSummary[]>([]);
   const [isLoadingSystemLogs, setIsLoadingSystemLogs] = useState(false);
   const [systemLogFilter, setSystemLogFilter] = useState<string>('all');
+
+  // Realtime subscription for account tasks progress updates
+  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile', 'spambot_check', 'verify_session'];
+  
+  useEffect(() => {
+    if (!isAccountTaskRunning) return;
+    
+    const channel = supabase
+      .channel('logs-account-tasks')
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'account_check_tasks' },
+        (payload) => {
+          const task = payload.new as any;
+          if (task && ACCOUNT_TASK_TYPES.includes(task.task_type) && (task.status === 'completed' || task.status === 'failed')) {
+            const logEntry = {
+              id: task.id,
+              taskType: task.task_type,
+              accountPhone: task.account_id,
+              status: task.status as 'completed' | 'failed',
+              result: task.result,
+              timestamp: new Date(),
+            };
+            
+            setAccountTasksProgress(prev => {
+              const newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
+              const newFailed = task.status === 'failed' ? prev.failed + 1 : prev.failed;
+              const newLogs = [logEntry, ...prev.logs].slice(0, 100);
+              const nowIso = new Date().toISOString();
+              
+              // Check if all done
+              if (newCompleted + newFailed >= prev.total && prev.total > 0) {
+                setIsAccountTaskRunning(false);
+                toast.success(`${prev.taskType} complete: ${newCompleted} success, ${newFailed} failed`);
+                fetchSystemLogs(); // Refresh logs
+              }
+              
+              return {
+                ...prev,
+                completed: newCompleted,
+                failed: newFailed,
+                logs: newLogs,
+                lastUpdateAt: nowIso,
+              };
+            });
+            
+            // Also add to history
+            setAccountTaskHistory(prev => [logEntry, ...prev].slice(0, 200));
+          }
+        }
+      )
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isAccountTaskRunning, setAccountTasksProgress, setIsAccountTaskRunning, setAccountTaskHistory]);
 
   // Get unique task types from history
   const uniqueTaskTypes = Array.from(new Set(accountTaskHistory.map(log => log.taskType)));
