@@ -229,25 +229,21 @@ const Settings: React.FC = () => {
     return `${adj}${noun}_${num}`;
   };
 
-  // Predefined API credentials for each device type
-  const deviceApiCredentials: Record<string, { api_id: string; api_hash: string }> = {
-    android: { api_id: '2040', api_hash: 'b18441a1ff607e10a989891a5462e627' },
-    ios: { api_id: '21724', api_hash: '3e0cb5efcd52300aec5994fdfc5bdc16' },
-    desktop: { api_id: '2496', api_hash: '8da85b0d5bfe62527e5b244c209159c3' },
-    macos: { api_id: '2834', api_hash: '68875f756c9b437a8b916ca3de215571' },
-  };
+  // REMOVED: Predefined API credentials - DO NOT USE HARDCODED API CREDENTIALS
+  // Each account MUST have its own unique API credentials to prevent bans
+  // Users must provide their own api_id:api_hash pairs
 
-  // Generate random device type
+  // Generate random device type for labeling only
   const getRandomDeviceType = () => {
     const types = ['android', 'ios', 'desktop', 'macos'];
     return types[Math.floor(Math.random() * types.length)];
   };
 
-  // Bulk import API credentials
+  // Bulk import API credentials - ONLY accepts api_id:api_hash format
   const handleBulkImport = async () => {
     const lines = bulkApiInput.trim().split('\n').filter(line => line.trim());
     if (lines.length === 0) {
-      toast.error('Please enter at least one API hash');
+      toast.error('Please enter at least one API credential (api_id:api_hash format)');
       return;
     }
     
@@ -262,27 +258,17 @@ const Settings: React.FC = () => {
         let apiHash: string;
         let deviceType: string;
         
-        if (bulkApiType === 'random') {
-          // Custom mode - parse api_id:api_hash format
-          const parts = line.split(/[,:]/);
-          if (parts.length >= 2) {
-            apiId = parts[0].trim();
-            apiHash = parts[1].trim();
-            deviceType = getRandomDeviceType();
-          } else {
-            failCount++;
-            continue;
-          }
+        // Parse api_id:api_hash format (ONLY supported format now)
+        const parts = line.split(/[,:]/);
+        if (parts.length >= 2) {
+          apiId = parts[0].trim();
+          apiHash = parts[1].trim();
+          // Use bulkApiType if specified, otherwise random
+          deviceType = bulkApiType === 'random' ? getRandomDeviceType() : bulkApiType;
         } else {
-          // Device selected - use predefined api_id, user provides api_hash only
-          const creds = deviceApiCredentials[bulkApiType];
-          if (!creds) {
-            failCount++;
-            continue;
-          }
-          apiId = creds.api_id;
-          apiHash = line; // User only enters api_hash
-          deviceType = bulkApiType;
+          toast.error(`Line ${i + 1}: Invalid format. Use api_id:api_hash`);
+          failCount++;
+          continue;
         }
         
         if (apiId && apiHash) {
@@ -589,10 +575,7 @@ const Settings: React.FC = () => {
                           className="font-mono text-sm"
                         />
                         <p className="text-xs text-muted-foreground">
-                          {bulkApiType === 'random' 
-                            ? 'Enter one API per line as: api_id:api_hash'
-                            : `Enter API hashes only (one per line) — API ID ${deviceApiCredentials[bulkApiType]?.api_id} will be used`
-                          }
+                          Enter one API per line as: api_id:api_hash (e.g., 12345:abcdef123456...)
                         </p>
                       </div>
                       
