@@ -48,6 +48,16 @@ interface SystemLog {
   timestamp: Date;
 }
 
+interface OperationSummary {
+  operation: string;
+  taskType: string;
+  total: number;
+  success: number;
+  failed: number;
+  lastRun: Date;
+  icon: React.ReactNode;
+}
+
 const Logs: React.FC = () => {
   const { 
     accountTasksProgress, 
@@ -61,6 +71,7 @@ const Logs: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'all' | 'completed' | 'failed'>('all');
   const [taskTypeFilter, setTaskTypeFilter] = useState<string>('all');
   const [systemLogs, setSystemLogs] = useState<SystemLog[]>([]);
+  const [operationSummaries, setOperationSummaries] = useState<OperationSummary[]>([]);
   const [isLoadingSystemLogs, setIsLoadingSystemLogs] = useState(false);
   const [systemLogFilter, setSystemLogFilter] = useState<string>('all');
 
@@ -186,8 +197,37 @@ const Logs: React.FC = () => {
         return labels[taskType] || taskType.replace(/_/g, ' ');
       };
 
+      const getOperationIcon = (taskType: string): React.ReactNode => {
+        switch (taskType) {
+          case 'change_name': return <UserCheck className="w-4 h-4" />;
+          case 'privacy_settings': return <Shield className="w-4 h-4" />;
+          case 'sync_profile': return <RefreshCw className="w-4 h-4" />;
+          case 'change_photo': return <UserCheck className="w-4 h-4" />;
+          case 'spambot_check': return <Zap className="w-4 h-4" />;
+          case 'verify_session': return <CheckCircle className="w-4 h-4" />;
+          case 'fingerprint_generated': return <Database className="w-4 h-4" />;
+          default: return <ClipboardList className="w-4 h-4" />;
+        }
+      };
+
+      // Build operation summaries from account check tasks
+      const operationMap = new Map<string, { success: number; failed: number; lastRun: Date }>();
+      
       if (accountCheckResult.data) {
         accountCheckResult.data.forEach(task => {
+          const existing = operationMap.get(task.task_type) || { success: 0, failed: 0, lastRun: new Date(0) };
+          if (task.status === 'completed') {
+            existing.success++;
+          } else if (task.status === 'failed') {
+            existing.failed++;
+          }
+          const taskDate = new Date(task.completed_at || task.created_at || Date.now());
+          if (taskDate > existing.lastRun) {
+            existing.lastRun = taskDate;
+          }
+          operationMap.set(task.task_type, existing);
+
+          // Also add individual logs
           const operationLabel = getOperationLabel(task.task_type);
           logs.push({
             id: task.id,
@@ -201,6 +241,24 @@ const Logs: React.FC = () => {
           });
         });
       }
+
+      // Convert operation map to summaries array
+      const summaries: OperationSummary[] = [];
+      operationMap.forEach((value, taskType) => {
+        summaries.push({
+          operation: getOperationLabel(taskType),
+          taskType,
+          total: value.success + value.failed,
+          success: value.success,
+          failed: value.failed,
+          lastRun: value.lastRun,
+          icon: getOperationIcon(taskType),
+        });
+      });
+      
+      // Sort summaries by total count descending
+      summaries.sort((a, b) => b.total - a.total);
+      setOperationSummaries(summaries);
 
       // Process Warmup Messages
       if (warmupMessagesResult.data) {
@@ -738,13 +796,97 @@ const Logs: React.FC = () => {
             </Card>
           </TabsContent>
 
-          {/* System Logs Tab */}
-          <TabsContent value="system" className="mt-0">
+          {/* System Logs Tab - Now shows Operation Summaries */}
+          <TabsContent value="system" className="mt-0 space-y-4">
+            {/* Operation Summaries Card */}
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle className="text-base">System Logs</CardTitle>
+                    <CardTitle className="text-base">Operation History</CardTitle>
+                    <CardDescription>
+                      Summary of all operations with success/failed counts
+                    </CardDescription>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={fetchSystemLogs}
+                    disabled={isLoadingSystemLogs}
+                  >
+                    <RefreshCw className={cn("w-4 h-4 mr-2", isLoadingSystemLogs && "animate-spin")} />
+                    Refresh
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoadingSystemLogs ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="w-8 h-8 animate-spin mb-3" />
+                    <p className="text-sm">Loading operation history...</p>
+                  </div>
+                ) : operationSummaries.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {operationSummaries.map((summary) => (
+                      <div 
+                        key={summary.taskType}
+                        className="border rounded-lg p-4 hover:bg-muted/50 transition-colors"
+                      >
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="p-2 rounded-md bg-primary/10 text-primary">
+                            {summary.icon}
+                          </div>
+                          <div className="flex-1">
+                            <h4 className="font-medium text-sm">{summary.operation}</h4>
+                            <p className="text-xs text-muted-foreground">
+                              Last run: {format(summary.lastRun, 'MMM d, HH:mm')}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4 text-sm">
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-2 h-2 rounded-full bg-green-500" />
+                              <span className="text-green-600 dark:text-green-400 font-medium">{summary.success}</span>
+                              <span className="text-muted-foreground">success</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <div className="w-2 h-2 rounded-full bg-red-500" />
+                              <span className="text-red-600 dark:text-red-400 font-medium">{summary.failed}</span>
+                              <span className="text-muted-foreground">failed</span>
+                            </div>
+                          </div>
+                          <Badge variant="secondary" className="text-xs">
+                            {summary.total} total
+                          </Badge>
+                        </div>
+                        {summary.total > 0 && (
+                          <div className="mt-3">
+                            <Progress 
+                              value={(summary.success / summary.total) * 100} 
+                              className="h-1.5"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <ClipboardList className="w-8 h-8 mb-3 opacity-50" />
+                    <p className="text-sm">No operations recorded yet</p>
+                    <p className="text-xs mt-1">Run account tasks to see operation history</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Detailed Logs Card */}
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">Detailed Logs</CardTitle>
                     <CardDescription>
                       {systemLogStats.total} total • {systemLogStats.success} success • {systemLogStats.errors} errors
                     </CardDescription>
@@ -761,15 +903,6 @@ const Logs: React.FC = () => {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={fetchSystemLogs}
-                      disabled={isLoadingSystemLogs}
-                    >
-                      <RefreshCw className={cn("w-4 h-4 mr-2", isLoadingSystemLogs && "animate-spin")} />
-                      Refresh
-                    </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button 
@@ -796,13 +929,8 @@ const Logs: React.FC = () => {
                 </div>
               </CardHeader>
               <CardContent>
-                {isLoadingSystemLogs ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                    <Loader2 className="w-8 h-8 animate-spin mb-3" />
-                    <p className="text-sm">Loading system logs...</p>
-                  </div>
-                ) : filteredSystemLogs.length > 0 ? (
-                  <ScrollArea className="h-[500px] pr-4">
+                {filteredSystemLogs.length > 0 ? (
+                  <ScrollArea className="h-[400px] pr-4">
                     <div className="space-y-2">
                       {filteredSystemLogs.map((log, index) => (
                         <SystemLogEntry key={`${log.id}-${index}`} log={log} getSourceIcon={getSourceIcon} />
