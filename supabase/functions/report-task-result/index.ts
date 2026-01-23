@@ -541,15 +541,24 @@ serve(async (req) => {
               .eq("id", account_id);
           } else if (isTemporaryRestriction && account_id) {
             // TEMPORARY RESTRICTION - mark account as restricted for 12 hours
-            console.log(`[report-task-result] Account ${account_id} TEMPORARILY RESTRICTED for 12h: ${error}`);
-            
-            await supabase
-              .from("telegram_accounts")
-              .update({
-                restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
-                ban_reason: error,
-              })
-              .eq("id", account_id);
+            // IMPORTANT: Only apply restriction for CAMPAIGN messages (new outreach)
+            // For LIVE CHAT messages (existing conversations), PeerFlood should NOT restrict
+            // because the recipient is already a contact - just mark message as failed
+            if (campaign_recipient_id) {
+              console.log(`[report-task-result] Account ${account_id} TEMPORARILY RESTRICTED for 12h (campaign message): ${error}`);
+              
+              await supabase
+                .from("telegram_accounts")
+                .update({
+                  restricted_until: new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+                  ban_reason: error,
+                })
+                .eq("id", account_id);
+            } else {
+              // Live chat message - DON'T restrict account, just log the error
+              // PeerFlood for existing contacts is unusual but shouldn't restrict the account
+              console.log(`[report-task-result] PeerFlood on LIVE CHAT for account ${account_id} - NOT restricting (existing conversation): ${error}`);
+            }
           } else if (isFrozenAccount && account_id) {
             // FROZEN ACCOUNT - account is frozen by Telegram, set to FROZEN status permanently
             // This is NOT a temporary restriction - account cannot be used for campaigns anymore
