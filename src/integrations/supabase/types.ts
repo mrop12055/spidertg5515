@@ -1780,6 +1780,7 @@ export type Database = {
       }
     }
     Functions: {
+      batch_increment_success: { Args: { updates: Json }; Returns: undefined }
       has_role: {
         Args: {
           _role: Database["public"]["Enums"]["app_role"]
@@ -1795,6 +1796,7 @@ export type Database = {
         Args: { acc_id: string }
         Returns: undefined
       }
+      increment_api_usage: { Args: { p_api_id: string }; Returns: undefined }
       increment_campaign_failed_count: {
         Args: { cid: string }
         Returns: undefined

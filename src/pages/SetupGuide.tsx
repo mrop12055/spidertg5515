@@ -29,7 +29,7 @@ SUPABASE_KEY = "${supabaseKey}"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (ROUND-ROBIN API SYSTEM)
 
-BUILD: 2026-01-25-advanced-telethon-v1
+BUILD: 2026-01-25-advanced-v2
 
 ROUND-ROBIN API CREDENTIALS:
 - Each task gets API credentials from the backend pool
@@ -4270,7 +4270,7 @@ if __name__ == "__main__":
 """
 TelegramCRM - Warmup Runner (PARALLEL BATCH MODE)
 ===================================================
-BUILD: 2026-01-14-proxy-fingerprint-sync
+BUILD: 2026-01-25-advanced-v2
 
 ORDER OF OPERATIONS (CRITICAL):
 1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
@@ -4314,25 +4314,54 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 async def add_contact(client, phone, first_name, last_name=""):
-    """Add contact using official Telegram API with proper error handling."""
+    """
+    Add contact using ADVANCED Telethon 2026 patterns.
+    BUILD: 2026-01-25-advanced-v2
+    
+    Multi-strategy approach:
+    1. ResolvePhoneRequest (fastest - doesn't add to contacts)
+    2. ImportContactsRequest (fallback - adds to contacts)
+    """
     try:
-        from telethon.tl.functions.contacts import ImportContactsRequest
-        from telethon.tl.types import InputPhoneContact
+        from telethon.tl.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
+        from telethon.tl.types import InputPhoneContact, InputPeerUser
         from telethon.errors import FloodWaitError, PhoneNumberInvalidError
         import random
         
-        # Use official client_id range (32-bit signed int)
+        phone_formatted = phone if phone.startswith("+") else f"+{phone}"
+        
+        # Strategy 1: Try ResolvePhoneRequest (doesn't add to contacts)
+        try:
+            result = await asyncio.wait_for(
+                client(ResolvePhoneRequest(phone=phone_formatted)), timeout=10
+            )
+            if result.users:
+                user = result.users[0]
+                return True, phone, None
+        except Exception as e:
+            if "PHONE_NOT_OCCUPIED" in str(e):
+                return False, phone, "User not found on Telegram"
+            # Fall through to ImportContactsRequest
+        
+        # Strategy 2: ImportContactsRequest (fallback)
         contact = InputPhoneContact(
             client_id=random.randint(0, 2**31 - 1),
-            phone=phone if phone.startswith("+") else f"+{phone}",
+            phone=phone_formatted,
             first_name=first_name,
             last_name=last_name
         )
         result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+        
         if result.imported:
             return True, phone, None
         if result.users:
             return True, phone, None  # Contact exists
+        if hasattr(result, 'retry_contacts') and result.retry_contacts:
+            # Telegram says "wait and retry" - soft rate limit
+            await asyncio.sleep(30)
+            result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+            if result.users:
+                return True, phone, None
         return True, phone, "Contact exists or invalid"
         
     except FloodWaitError as e:
@@ -4347,42 +4376,67 @@ async def add_contact(client, phone, first_name, last_name=""):
 
 async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_id=None, recipient_username=None, recipient_first_name=None):
     """
-    Send warmup chat message using official Telegram API.
-    Uses get_input_entity for efficiency (cached lookups).
-    NO DELAYS - admin controls speed via dashboard.
+    Send warmup chat message using ADVANCED Telethon 2026 patterns.
+    BUILD: 2026-01-25-advanced-v2
+    
+    Multi-strategy with InputPeerUser for efficient messaging:
+    1. telegram_id → InputPeerUser (fastest)
+    2. username → get_input_entity (cached)
+    3. ResolvePhoneRequest (no contact add)
+    4. ImportContactsRequest (fallback)
     """
     try:
-        from telethon.tl.functions.contacts import ImportContactsRequest
-        from telethon.tl.types import InputPhoneContact
+        from telethon.tl.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
+        from telethon.tl.functions.messages import SendMessageRequest
+        from telethon.tl.types import InputPhoneContact, InputPeerUser
         from telethon.errors import (
             FloodWaitError, UserPrivacyRestrictedError, PeerFloodError,
             UserBlockedError, AuthKeyUnregisteredError
         )
         
         user = None
+        input_peer = None
         
-        # Strategy 1: Use telegram_id (fastest - direct lookup)
+        # Strategy 1: Use telegram_id (fastest - direct InputPeerUser)
         if recipient_telegram_id:
             try:
-                user = await asyncio.wait_for(client.get_input_entity(int(recipient_telegram_id)), timeout=5)
-            except (ValueError, KeyError):
+                entity = await asyncio.wait_for(client.get_input_entity(int(recipient_telegram_id)), timeout=5)
+                if hasattr(entity, 'access_hash'):
+                    input_peer = InputPeerUser(user_id=entity.user_id, access_hash=entity.access_hash)
+                else:
+                    user = entity
+            except (ValueError, KeyError, AttributeError):
                 pass
             except Exception:
                 pass
         
         # Strategy 2: Use username (cached lookup)
-        if not user and recipient_username:
+        if not user and not input_peer and recipient_username:
             try:
                 username = recipient_username if recipient_username.startswith("@") else f"@{recipient_username}"
-                user = await asyncio.wait_for(client.get_input_entity(username), timeout=5)
+                entity = await asyncio.wait_for(client.get_input_entity(username), timeout=5)
+                user = entity
             except Exception:
                 pass
         
-        # Strategy 3: Import contact by phone (last resort)
-        if not user and recipient_phone:
+        # Strategy 3: ResolvePhoneRequest (doesn't add to contacts)
+        if not user and not input_peer and recipient_phone:
+            phone = recipient_phone if recipient_phone.startswith("+") else f"+{recipient_phone}"
+            try:
+                result = await asyncio.wait_for(
+                    client(ResolvePhoneRequest(phone=phone)), timeout=10
+                )
+                if result.users:
+                    resolved_user = result.users[0]
+                    input_peer = InputPeerUser(user_id=resolved_user.id, access_hash=resolved_user.access_hash)
+            except Exception:
+                pass
+        
+        # Strategy 4: ImportContactsRequest fallback (adds to contacts)
+        if not user and not input_peer and recipient_phone:
             phone = recipient_phone if recipient_phone.startswith("+") else f"+{recipient_phone}"
             contact = InputPhoneContact(
-                client_id=random.randint(0, 2**31 - 1),  # Official range
+                client_id=random.randint(0, 2**31 - 1),
                 phone=phone,
                 first_name=recipient_first_name or "Friend",
                 last_name=""
@@ -4390,15 +4444,36 @@ async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_
             try:
                 result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
                 if result.users:
-                    user = result.users[0]
+                    resolved_user = result.users[0]
+                    input_peer = InputPeerUser(user_id=resolved_user.id, access_hash=resolved_user.access_hash)
+                elif hasattr(result, 'retry_contacts') and result.retry_contacts:
+                    # Telegram soft rate limit - wait and retry
+                    await asyncio.sleep(30)
+                    result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+                    if result.users:
+                        resolved_user = result.users[0]
+                        input_peer = InputPeerUser(user_id=resolved_user.id, access_hash=resolved_user.access_hash)
             except Exception:
                 pass
         
-        if not user:
+        if not user and not input_peer:
             return False, "Could not find user"
         
-        # Send message directly - NO DELAYS (admin controls timing)
-        await asyncio.wait_for(client.send_message(user, message), timeout=10)
+        # Send message using most efficient method available
+        if input_peer:
+            # Use SendMessageRequest directly with InputPeerUser (most efficient)
+            await asyncio.wait_for(
+                client(SendMessageRequest(
+                    peer=input_peer,
+                    message=message,
+                    no_webpage=False,
+                    random_id=random.randint(0, 2**63 - 1)
+                )),
+                timeout=10
+            )
+        else:
+            # Fallback to standard send_message
+            await asyncio.wait_for(client.send_message(user, message), timeout=10)
         
         return True, None
         
