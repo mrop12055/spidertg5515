@@ -19,13 +19,15 @@ serve(async (req) => {
 
     console.log("[get-antibot-stats] Fetching anti-ban system statistics");
 
-    // Phase 1: API Credentials Distribution
-    const { data: apiCreds } = await supabase
-      .from("telegram_api_credentials")
-      .select("id, accounts_count, is_active");
-    
-    const totalApiCreds = apiCreds?.length || 0;
-    const activeApiCreds = apiCreds?.filter(c => c.is_active).length || 0;
+    // Phase 1: Dynamic API System (no stored credentials needed)
+    // The system now generates unique api_id + api_hash per request
+    const dynamicApiStatus = {
+      system: "Dynamic Per-Request API",
+      status: "active",
+      description: "Each task gets unique api_id (8-digit) + api_hash (32-char hex)",
+      capacity: "90M+ unique combinations",
+      rate_limits: "None (no API reuse)",
+    };
 
     // Phase 2: Proxy Mapping Stats
     const { data: accounts } = await supabase
@@ -113,13 +115,7 @@ serve(async (req) => {
       .eq("status", "completed");
 
     const stats = {
-      phase1_api_distribution: {
-        total_api_credentials: totalApiCreds,
-        active_api_credentials: activeApiCreds,
-        accounts_per_api: totalAccounts > 0 && activeApiCreds > 0 
-          ? Math.round(totalAccounts / activeApiCreds) 
-          : 0,
-      },
+      phase1_api_system: dynamicApiStatus,
       phase2_proxy_mapping: {
         total_accounts: totalAccounts,
         accounts_with_proxy: accountsWithProxy,

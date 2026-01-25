@@ -174,7 +174,7 @@ serve(async (req) => {
       // Restricted accounts can still respond to ongoing chats, just can't start new campaigns
       const result = await supabase
         .from("telegram_accounts")
-        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+        .select("*, proxies!fk_proxy(*)")
         .in("status", ["active", "restricted", "cooldown"]);
       activeAccounts = result.data || [];
       accountsError = result.error;
@@ -185,7 +185,7 @@ serve(async (req) => {
       // This avoids Supabase .or() timestamp comparison issues
       const result = await supabase
         .from("telegram_accounts")
-        .select("*, telegram_api_credentials(*), proxies!fk_proxy(*)")
+        .select("*, proxies!fk_proxy(*)")
         .eq("status", "active");
       
       const allActiveAccounts = result.data || [];

@@ -445,7 +445,7 @@ serve(async (req) => {
     // OPTIMIZED: Single query for ALL account statuses instead of 4 separate queries
     // This reduces DB round-trips from 4 to 1, dramatically improving response time
     const ACCOUNT_WITH_JOINS_SELECT =
-      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,last_campaign_send_at,api_credential_id,auto_disabled,success_rate,telegram_api_credentials(id,api_id,api_hash,client_type,is_active),proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
+      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,last_campaign_send_at,auto_disabled,success_rate,proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
 
     // Single query for all statuses - much faster than 4 separate queries
     const { data: allAccountsRaw, error: allAccountsError } = await supabase

@@ -209,7 +209,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         // Fetch accounts - PARALLEL PAGED (UNLIMITED - supports 100K+ accounts)
         fetchPagedParallel(
           'telegram_accounts',
-          'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, api_credential_id, telegram_id, last_spambot_check, tags, interaction_pair_id',
+          'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, telegram_id, last_spambot_check, tags, interaction_pair_id',
           'created_at',
           undefined,
           100000 // Max 100K accounts
@@ -280,7 +280,6 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           spambotStatus: (acc as any).spambot_status || 'unknown',
           phoneCountry: (acc as any).phone_country || undefined,
           geoMismatch: (acc as any).geo_mismatch || false,
-          apiCredentialId: (acc as any).api_credential_id || undefined,
           telegramId: (acc as any).telegram_id || undefined,
           // Tags
           tags: (acc as any).tags || [],
