@@ -909,7 +909,7 @@ async def report_batch_results(results: list) -> bool:
         return False
 
 
-async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None):
+async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None, recipient_name: str = None):
     """
     Send message using official Telegram API best practices.
     Uses get_input_entity() for efficiency (avoids extra API calls).
@@ -970,10 +970,12 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                 # Strategy 2: Import contact if not cached
                 if not entity:
                     # Use smaller client_id range (official Telegram recommendation: 32-bit signed int)
+                    # Use recipient name if provided, otherwise use phone number as display name
+                    display_name = recipient_name if recipient_name else phone.replace("+", "")
                     contact = InputPhoneContact(
                         client_id=random.randint(0, 2**31 - 1),
                         phone=phone, 
-                        first_name="User",  # Neutral name
+                        first_name=display_name,
                         last_name=""
                     )
                     try:
@@ -1087,10 +1089,12 @@ async def validate_contact(client: TelegramClient, phone: str):
         from telethon.tl.types import InputPhoneContact
         import random
         # Use smaller client_id range (official recommendation)
+        # Use phone number as display name for validation contacts
+        display_name = phone.replace("+", "") if phone.startswith("+") else phone
         contact = InputPhoneContact(
             client_id=random.randint(0, 2**31 - 1),
             phone=phone, 
-            first_name="V", 
+            first_name=display_name, 
             last_name=""
         )
         result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
@@ -1479,7 +1483,7 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                     await asyncio.sleep(stagger_delay)
             
             try:
-                send_res = await send_message(client, recipient, content, msg.get("media_url"))
+                send_res = await send_message(client, recipient, content, msg.get("media_url"), recipient_name)
                 
                 # Parse result
                 if isinstance(send_res, tuple) and len(send_res) == 3:
