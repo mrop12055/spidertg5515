@@ -390,15 +390,18 @@ serve(async (req) => {
           ];
           
           // Errors that should RESTRICT account (12h cooldown for new messages, but can still chat)
-          // IMPORTANT: Do NOT include 'restricted' alone - it matches "Privacy restricted" which is a RECIPIENT error!
           // PeerFlood = too many messages to new users - account needs 12h cooldown but can still chat with existing contacts
+          // Privacy restricted = sender account is limited from messaging new users (NOT a recipient setting!)
           const temporaryRestrictionErrors = [
             'flood',
             'spam',
             'user_is_blocked',
             'floodwaiterror',    // Telegram flood wait error
             'peerflood',         // Too many messages to new users - 12h cooldown
-            'account restricted' // Only match if it says "account restricted" not "privacy restricted"
+            'account restricted', // Only match if it says "account restricted"
+            'privacy restricted', // ADD: Sender is restricted from messaging new contacts
+            'userprivacyrestrictederror', // ADD: Telethon error class name
+            'privacy',           // ADD: Generic privacy error - sender limitation
           ];
           
           // FROZEN account errors - account is frozen by Telegram, set to FROZEN status permanently
@@ -430,10 +433,9 @@ serve(async (req) => {
           ];
           
           // Errors that should RETRY with a DIFFERENT API (not account)
-          // Privacy errors may be API-related - try with different API credentials
-          const retryWithDifferentApiErrors = [
-            'privacy',               // Privacy settings - try different API
-            'privacy restricted',    // Privacy restrictions - try different API
+          // NOTE: Privacy errors moved to temporaryRestrictionErrors - they are sender limitations
+          const retryWithDifferentApiErrors: string[] = [
+            // Privacy removed - it's a sender account restriction, not API issue
           ];
           
           const errorLower = (error || '').toLowerCase();
