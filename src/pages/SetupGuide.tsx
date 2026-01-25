@@ -1735,7 +1735,8 @@ import traceback
 from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
     send_message, shutdown_all, disconnect_batch, report_batch_results,
-    active_clients, reset_http_client, save_session_to_db
+    active_clients, reset_http_client, save_session_to_db,
+    process_batch_optimized, bulk_import_contacts, bulk_send_messages
 )
 
 # ========== GLOBAL STATE ==========
