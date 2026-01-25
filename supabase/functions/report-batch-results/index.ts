@@ -573,10 +573,9 @@ serve(async (req) => {
           );
         }
 
-        // Handle account retry (rate limits like "Too many requests")
-        // CRITICAL: IMMEDIATELY restrict these accounts for 12 hours and switch
-        // NO RETRIES - instant switch. This error only happens on NEW campaign messages
-        // The restricted account can STILL handle existing conversations (replies)
+        // Handle account retry (rate limits like "Too many requests", "PeerFlood")
+        // ONLY restrict if it's ACTUALLY a rate limit error (is_rate_limit flag or error contains flood/rate limit)
+        // Privacy errors should NOT restrict the account - they're recipient-side issues
         for (const r of retryWithDifferentAccount) {
           failPromises.push(
             (async () => {
@@ -591,9 +590,22 @@ serve(async (req) => {
                 failedIds.push(r.account_id);
               }
 
-              // IMMEDIATELY RESTRICT the account for 12 hours (rate limit = "Too many requests")
-              // This restriction is for NEW campaign messages only - can still reply to existing chats
-              if (r.account_id) {
+              // ONLY restrict if this is actually a rate limit (not privacy, not connection error)
+              // Check: is_rate_limit flag OR error contains rate limit keywords
+              const errorLower = (r.error || '').toLowerCase();
+              const isActualRateLimit = r.is_rate_limit || 
+                errorLower.includes('too many requests') ||
+                errorLower.includes('peerflood') ||
+                errorLower.includes('flood');
+              
+              // DON'T restrict for: connection errors, privacy errors, or other non-rate-limit issues
+              const isConnectionError = errorLower.includes('connect') ||
+                errorLower.includes('timeout') ||
+                errorLower.includes('network') ||
+                errorLower.includes('winerror');
+              const isPrivacyError = errorLower.includes('privacy');
+              
+              if (r.account_id && isActualRateLimit && !isConnectionError && !isPrivacyError) {
                 const restrictedUntil = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
                 await supabase
                   .from("telegram_accounts")
@@ -603,23 +615,26 @@ serve(async (req) => {
                     ban_reason: `Rate limited for new campaign messages. Can still reply to existing chats. Error: ${r.error || "Too many requests"}`,
                   })
                   .eq("id", r.account_id);
-                console.log(`[report-batch-results] Account ${r.account_id} IMMEDIATELY RESTRICTED for 12h - can still reply to existing conversations`);
+                console.log(`[report-batch-results] Account ${r.account_id} RESTRICTED 12h (rate limit): ${r.error}`);
+              } else if (r.account_id && (isConnectionError || isPrivacyError)) {
+                // Log but DON'T restrict - these are not sender rate limits
+                console.log(`[report-batch-results] Account ${r.account_id} NOT restricted (${isConnectionError ? 'connection' : 'privacy'} error): ${r.error}`);
               }
 
-              // IMMEDIATE switch to different account - no delay, no retry count
+              // Reset recipient for pickup by different account
               await supabase
                 .from("campaign_recipients")
                 .update({
                   status: "pending",
-                  failed_reason: null,  // Clear error since switching account
+                  failed_reason: null,
                   failed_account_ids: failedIds,
                   sent_by_account_id: null,
                   api_credential_id: null,
-                  scheduled_at: null,  // Clear for immediate pickup
+                  scheduled_at: null,
                 })
                 .eq("id", r.campaign_recipient_id);
                 
-              console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} reset for IMMEDIATE pickup by different account`);
+              console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} reset for pickup by different account`);
             })()
           );
         }
