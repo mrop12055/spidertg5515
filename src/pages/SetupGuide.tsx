@@ -1481,21 +1481,13 @@ async def process_batch_optimized(tasks: list, stagger_min: float, stagger_max: 
     success_count = sum(1 for r in results if r.get("success"))
     print(f"     ✓ Sent {success_count}/{len(tasks)} messages ({time.time()-phase4_start:.1f}s)")
     
-    # ========== PHASE 5: Disconnect ALL (parallel) ==========
+    # ========== PHASE 5: Disconnect ALL (parallel, NO session save) ==========
     phase5_start = time.time()
-    print(f"  🔌 Phase 5: Disconnecting and saving sessions...")
+    print(f"  🔌 Phase 5: Disconnecting clients...")
     
     async def disconnect_one(acc_id, client):
         try:
             if client.is_connected():
-                # Get phone for session save
-                phone = None
-                for task in tasks:
-                    if task.get("account", {}).get("id") == acc_id:
-                        phone = task.get("account", {}).get("phone_number", acc_id)
-                        break
-                
-                await save_session_to_db(acc_id, phone or acc_id)
                 await asyncio.wait_for(client.disconnect(), timeout=5)
         except Exception:
             pass
