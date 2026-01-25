@@ -1525,7 +1525,8 @@ serve(async (req) => {
         
         // CRITICAL: Check both account status AND proxy status
         if (senderAccount && senderAccount.status === "active" && receiverAccount && proxy?.status === "active") {
-          const apiCred = senderAccount.telegram_api_credentials;
+          // DYNAMIC API: Generate fresh unique credentials for this warmup interaction task
+          const freshApi = generateApiCredentials();
           
           // Mark as in_progress
           await supabase
@@ -1552,8 +1553,8 @@ serve(async (req) => {
               app_version: senderAccount.app_version,
               lang_code: senderAccount.lang_code,
               system_lang_code: senderAccount.system_lang_code,
-              api_id: apiCred?.api_id || senderAccount.api_id,
-              api_hash: apiCred?.api_hash || senderAccount.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
               proxy_id: senderAccount.proxy_id,
             },
             proxy: {
@@ -1600,7 +1601,8 @@ serve(async (req) => {
         
         // CRITICAL: Check both account status AND proxy status
         if (accountData && accountData.status === "active" && proxy?.status === "active") {
-          const apiCred = accountData.telegram_api_credentials;
+          // DYNAMIC API: Generate fresh unique credentials for this warmup schedule task
+          const freshApi = generateApiCredentials();
           
           // Mark as in_progress
           await supabase
@@ -1624,8 +1626,8 @@ serve(async (req) => {
               app_version: accountData.app_version,
               lang_code: accountData.lang_code,
               system_lang_code: accountData.system_lang_code,
-              api_id: apiCred?.api_id || accountData.api_id,
-              api_hash: apiCred?.api_hash || accountData.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
               proxy_id: accountData.proxy_id,
             },
             proxy: {
@@ -1670,7 +1672,8 @@ serve(async (req) => {
         
         // CRITICAL: Check both account status AND proxy status
         if (accountData && accountData.status === "active" && proxy?.status === "active") {
-          const apiCred = accountData.telegram_api_credentials;
+          // DYNAMIC API: Generate fresh unique credentials for this legacy warmup task
+          const freshApi = generateApiCredentials();
           console.log(`[get-next-task] Legacy warmup task ${task.task_type} for ${task.account_id}`);
           return new Response(JSON.stringify({
             task: "warmup_" + task.task_type,
@@ -1684,8 +1687,8 @@ serve(async (req) => {
               app_version: accountData.app_version,
               lang_code: accountData.lang_code,
               system_lang_code: accountData.system_lang_code,
-              api_id: apiCred?.api_id || accountData.api_id,
-              api_hash: apiCred?.api_hash || accountData.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
               proxy_id: accountData.proxy_id,
             },
             proxy: {
@@ -1745,7 +1748,6 @@ serve(async (req) => {
         const taskType = task.task_type;
 
         if (accountData) {
-          const apiCred = accountData.telegram_api_credentials;
           const proxyData = Array.isArray(accountData.proxies) ? accountData.proxies[0] : accountData.proxies;
           
           // CRITICAL: Check proxy BEFORE processing any task
@@ -1761,6 +1763,9 @@ serve(async (req) => {
               headers: { ...corsHeaders, "Content-Type": "application/json" },
             });
           }
+          
+          // DYNAMIC API: Generate fresh unique credentials for EVERY account management task
+          const freshApi = generateApiCredentials();
           
           if (taskType === "spambot_check") {
             const lastCheck = accountData.last_spambot_check;
@@ -1789,8 +1794,8 @@ serve(async (req) => {
                     app_version: accountData.app_version,
                     lang_code: accountData.lang_code,
                     system_lang_code: accountData.system_lang_code,
-                    api_id: apiCred?.api_id || accountData.api_id,
-                    api_hash: apiCred?.api_hash || accountData.api_hash,
+                    api_id: freshApi.api_id,
+                    api_hash: freshApi.api_hash,
                     proxy_id: accountData.proxy_id,
                   },
                   proxy: {
@@ -1820,8 +1825,8 @@ serve(async (req) => {
                   app_version: accountData.app_version,
                   lang_code: accountData.lang_code,
                   system_lang_code: accountData.system_lang_code,
-                  api_id: apiCred?.api_id || accountData.api_id,
-                  api_hash: apiCred?.api_hash || accountData.api_hash,
+                  api_id: freshApi.api_id,
+                  api_hash: freshApi.api_hash,
                   proxy_id: accountData.proxy_id,
                 },
                 proxy: {
@@ -1860,8 +1865,8 @@ serve(async (req) => {
                   app_version: accountData.app_version,
                   lang_code: accountData.lang_code,
                   system_lang_code: accountData.system_lang_code,
-                  api_id: apiCred?.api_id || accountData.api_id,
-                  api_hash: apiCred?.api_hash || accountData.api_hash,
+                  api_id: freshApi.api_id,
+                  api_hash: freshApi.api_hash,
                   proxy_id: accountData.proxy_id,
                 },
                 proxy: {
@@ -2053,7 +2058,8 @@ serve(async (req) => {
             .eq("status", "pending");
 
           console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)} to ${conv.recipient_phone || conv.recipient_username} (priority=${msg.priority}, account=${account.status})`);
-          const apiCred = account.telegram_api_credentials;
+          // DYNAMIC API: Generate fresh unique credentials for this live chat message
+          const freshApi = generateApiCredentials();
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -2078,8 +2084,8 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
               proxy: account.proxies,
             },
             mode: "live",
@@ -2133,7 +2139,8 @@ serve(async (req) => {
             .eq("status", "pending");
 
           console.log(`[get-next-task] HIGH PRIORITY task: message ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
-          const apiCred = account.telegram_api_credentials;
+          // DYNAMIC API: Generate fresh unique credentials for this high priority message
+          const freshApi = generateApiCredentials();
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -2153,8 +2160,8 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
             },
             mode: "live",  // No delay for high-priority
           }), {
@@ -2187,7 +2194,8 @@ serve(async (req) => {
             .eq("status", "pending");
 
           console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)}`);
-          const apiCred = account.telegram_api_credentials;
+          // DYNAMIC API: Generate fresh unique credentials for this live conversation message
+          const freshApi = generateApiCredentials();
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -2207,8 +2215,8 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
             },
             mode: "live",
           }), {
