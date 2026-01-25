@@ -1417,6 +1417,7 @@ async def process_batch_optimized(tasks: list, stagger_min: float, stagger_max: 
     """
     from collections import defaultdict
     import random
+    import time
     
     print(f"  📦 BULK PARALLEL PROCESSING {len(tasks)} messages (5-phase pipeline)...")
     
