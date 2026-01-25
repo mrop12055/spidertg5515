@@ -1,39 +1,25 @@
 /**
  * Round-Robin API Credential Helper
  * 
- * BUILD: 2026-01-25-advanced-v2
+ * BUILD: 2026-01-25-accurate-tracking-v3
  * 
- * Provides round-robin selection of API credentials from telegram_api_credentials table.
- * Each task gets the API with the LOWEST usage_count, ensuring even distribution.
+ * ARCHITECTURE: "Increment on Success" (not on assignment)
+ * - selectNextApiCredential(): Returns API WITHOUT incrementing (for task assignment)
+ * - recordApiUsage(): Called ONLY when message is successfully sent
  * 
- * OPTIMIZATIONS:
- * - Atomic increment via increment_api_usage() RPC (prevents race conditions)
- * - Batch operations for high-throughput scenarios
- * 
- * Example with 10 APIs and 40 tasks:
- * - Each API will be used exactly 4 times (40 / 10 = 4)
- * - API usage: 1,2,3,4,5,6,7,8,9,10,1,2,3,4,5,6,7,8,9,10...
+ * This ensures usage counts reflect ACTUAL message sends, not polling/assignment overhead.
  */
 
 /**
- * Get the next API credential using round-robin rotation.
- * Selects the API with the LOWEST usage_count among active APIs.
- * Uses atomic increment to prevent race conditions under high load.
+ * SELECT the next API credential using round-robin rotation.
+ * DOES NOT increment usage - that happens via recordApiUsage() on success.
  * 
  * @param supabase - Supabase client instance
- * @returns API credentials object or null if no APIs available
+ * @returns API credentials object (including id for tracking) or null if no APIs available
  */
-export async function getNextApiCredential(
+export async function selectNextApiCredential(
   supabase: any
-): Promise<{ api_id: string; api_hash: string } | null> {
-  // Reset daily usage if date changed (fire-and-forget for performance)
-  const today = new Date().toISOString().split('T')[0];
-  supabase
-    .from('telegram_api_credentials')
-    .update({ daily_usage: 0, daily_usage_reset_at: today })
-    .neq('daily_usage_reset_at', today)
-    .then(() => {});
-
+): Promise<{ id: string; api_id: string; api_hash: string } | null> {
   // Get active API with lowest usage_count (round-robin selection)
   const { data: apis, error } = await supabase
     .from('telegram_api_credentials')
@@ -49,53 +35,28 @@ export async function getNextApiCredential(
   }
 
   const api = apis[0];
-
-  // ATOMIC INCREMENT via RPC (prevents race conditions under high concurrency)
-  const { error: rpcError } = await supabase.rpc('increment_api_usage', { p_api_id: api.id });
-  
-  if (rpcError) {
-    // Fallback to direct update if RPC fails
-    console.warn('[api-helper] RPC failed, using fallback:', rpcError.message);
-    await supabase
-      .from('telegram_api_credentials')
-      .update({
-        usage_count: (api.usage_count || 0) + 1,
-        daily_usage: (api.daily_usage || 0) + 1,
-        last_used_at: new Date().toISOString()
-      })
-      .eq('id', api.id);
-  }
-
-  console.log(`[api-helper] Selected API ${api.api_id} (usage: ${api.usage_count || 0} -> ${(api.usage_count || 0) + 1})`);
+  console.log(`[api-helper] Selected API ${api.api_id} (current usage: ${api.usage_count || 0}) - NO increment on assignment`);
 
   return {
+    id: api.id,
     api_id: api.api_id,
     api_hash: api.api_hash
   };
 }
 
 /**
- * Get multiple API credentials for batch operations using round-robin.
- * Distributes tasks evenly across all available APIs.
- * Uses batch atomic updates for efficiency.
+ * SELECT multiple API credentials for batch operations using round-robin.
+ * DOES NOT increment usage - that happens via recordApiUsage() on success.
  * 
  * @param supabase - Supabase client instance
  * @param count - Number of API credentials needed
- * @returns Array of API credential objects
+ * @returns Array of API credential objects (including id for tracking)
  */
-export async function getMultipleApiCredentials(
+export async function selectMultipleApiCredentials(
   supabase: any,
   count: number
-): Promise<Array<{ api_id: string; api_hash: string }>> {
+): Promise<Array<{ id: string; api_id: string; api_hash: string }>> {
   if (count <= 0) return [];
-
-  // Reset daily usage if date changed (fire-and-forget)
-  const today = new Date().toISOString().split('T')[0];
-  supabase
-    .from('telegram_api_credentials')
-    .update({ daily_usage: 0, daily_usage_reset_at: today })
-    .neq('daily_usage_reset_at', today)
-    .then(() => {});
 
   // Get all active APIs sorted by usage
   const { data: apis, error } = await supabase
@@ -109,35 +70,92 @@ export async function getMultipleApiCredentials(
     return [];
   }
 
-  const results: Array<{ api_id: string; api_hash: string }> = [];
-  const usageDelta = new Map<string, number>();
+  const results: Array<{ id: string; api_id: string; api_hash: string }> = [];
 
-  // Distribute tasks across APIs in round-robin fashion
+  // Distribute tasks across APIs in round-robin fashion (without incrementing)
   for (let i = 0; i < count; i++) {
     const api = apis[i % apis.length];
     results.push({
+      id: api.id,
       api_id: api.api_id,
       api_hash: api.api_hash
     });
-    usageDelta.set(api.id, (usageDelta.get(api.id) || 0) + 1);
   }
 
-  // Batch update all usage counts using atomic RPCs in parallel
-  const updatePromises = [];
-  for (const [id, delta] of usageDelta) {
-    // Call RPC delta times (each call increments by 1 atomically)
-    for (let i = 0; i < delta; i++) {
+  console.log(`[api-helper] Selected ${count} APIs across ${apis.length} available - NO increment on assignment`);
+  return results;
+}
+
+/**
+ * RECORD API usage after a successful message send.
+ * This is the ONLY place where usage_count is incremented.
+ * Uses atomic RPC to prevent race conditions.
+ * 
+ * @param supabase - Supabase client instance
+ * @param apiCredentialId - The UUID of the API credential that was used
+ */
+export async function recordApiUsage(
+  supabase: any,
+  apiCredentialId: string
+): Promise<void> {
+  if (!apiCredentialId) {
+    console.warn('[api-helper] recordApiUsage called without apiCredentialId');
+    return;
+  }
+
+  // ATOMIC INCREMENT via RPC (prevents race conditions under high concurrency)
+  const { error: rpcError } = await supabase.rpc('increment_api_usage', { p_api_id: apiCredentialId });
+  
+  if (rpcError) {
+    // Fallback to direct update if RPC fails
+    console.warn('[api-helper] RPC failed, using fallback:', rpcError.message);
+    await supabase
+      .from('telegram_api_credentials')
+      .update({
+        usage_count: supabase.sql`COALESCE(usage_count, 0) + 1`,
+        daily_usage: supabase.sql`COALESCE(daily_usage, 0) + 1`,
+        last_used_at: new Date().toISOString()
+      })
+      .eq('id', apiCredentialId);
+  }
+
+  console.log(`[api-helper] Recorded usage for API ${apiCredentialId} (incremented on successful send)`);
+}
+
+/**
+ * BATCH record API usage for multiple successful sends.
+ * More efficient than calling recordApiUsage() multiple times.
+ * 
+ * @param supabase - Supabase client instance
+ * @param apiCredentialIds - Array of API credential UUIDs that were successfully used
+ */
+export async function recordBatchApiUsage(
+  supabase: any,
+  apiCredentialIds: string[]
+): Promise<void> {
+  if (!apiCredentialIds || apiCredentialIds.length === 0) return;
+
+  // Count occurrences of each API
+  const usageCounts = new Map<string, number>();
+  for (const id of apiCredentialIds) {
+    if (id) {
+      usageCounts.set(id, (usageCounts.get(id) || 0) + 1);
+    }
+  }
+
+  // Call RPC for each API (in parallel)
+  const updatePromises: Promise<any>[] = [];
+  for (const [apiId, count] of usageCounts) {
+    // Call RPC 'count' times for this API (each call increments by 1)
+    for (let i = 0; i < count; i++) {
       updatePromises.push(
-        supabase.rpc('increment_api_usage', { p_api_id: id })
+        supabase.rpc('increment_api_usage', { p_api_id: apiId })
       );
     }
   }
-  
-  // Execute all updates in parallel
-  await Promise.all(updatePromises);
 
-  console.log(`[api-helper] Distributed ${count} tasks across ${apis.length} APIs`);
-  return results;
+  await Promise.all(updatePromises);
+  console.log(`[api-helper] Batch recorded usage for ${apiCredentialIds.length} successful sends`);
 }
 
 /**
@@ -167,6 +185,42 @@ export async function resetApiUsageCounts(supabase: any): Promise<void> {
     .eq('is_active', true);
 
   console.log('[api-helper] Reset all API usage counts');
+}
+
+// =============================================
+// LEGACY EXPORTS (for backwards compatibility)
+// These now delegate to the new selection functions
+// =============================================
+
+/**
+ * @deprecated Use selectNextApiCredential() instead. This legacy function
+ * previously incremented on assignment, which caused over-counting.
+ */
+export async function getNextApiCredential(
+  supabase: any
+): Promise<{ api_id: string; api_hash: string } | null> {
+  const result = await selectNextApiCredential(supabase);
+  if (!result) return null;
+  // Return without id for backwards compatibility with old callers
+  return {
+    api_id: result.api_id,
+    api_hash: result.api_hash
+  };
+}
+
+/**
+ * @deprecated Use selectMultipleApiCredentials() instead.
+ */
+export async function getMultipleApiCredentials(
+  supabase: any,
+  count: number
+): Promise<Array<{ api_id: string; api_hash: string }>> {
+  const results = await selectMultipleApiCredentials(supabase, count);
+  // Return without id for backwards compatibility
+  return results.map(r => ({
+    api_id: r.api_id,
+    api_hash: r.api_hash
+  }));
 }
 
 // Legacy exports for backwards compatibility (not used, but prevents import errors)

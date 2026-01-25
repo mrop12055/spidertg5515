@@ -71,6 +71,18 @@ export const ApiCredentialsManager: React.FC = () => {
 
   useEffect(() => {
     fetchCredentials();
+    
+    // Auto-refresh on window focus
+    const handleFocus = () => fetchCredentials();
+    window.addEventListener('focus', handleFocus);
+    
+    // Periodic refresh every 30 seconds
+    const interval = setInterval(fetchCredentials, 30000);
+    
+    return () => {
+      window.removeEventListener('focus', handleFocus);
+      clearInterval(interval);
+    };
   }, []);
 
   const handleAddSingle = async () => {
@@ -249,8 +261,10 @@ export const ApiCredentialsManager: React.FC = () => {
     }
   };
 
-  const totalUsage = credentials.reduce((sum, c) => sum + (c.usage_count || 0), 0);
-  const activeCount = credentials.filter(c => c.is_active).length;
+  const activeCredentials = credentials.filter(c => c.is_active);
+  const totalUsage = activeCredentials.reduce((sum, c) => sum + (c.usage_count || 0), 0);
+  const activeCount = activeCredentials.length;
+  const todayUsage = activeCredentials.reduce((sum, c) => sum + (c.daily_usage || 0), 0);
 
   return (
     <Card>
@@ -391,7 +405,7 @@ export const ApiCredentialsManager: React.FC = () => {
         </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-4 gap-4">
           <div className="p-3 rounded-lg border bg-card">
             <p className="text-2xl font-bold">{credentials.length}</p>
             <p className="text-xs text-muted-foreground">Total APIs</p>
@@ -401,8 +415,12 @@ export const ApiCredentialsManager: React.FC = () => {
             <p className="text-xs text-muted-foreground">Active (In Rotation)</p>
           </div>
           <div className="p-3 rounded-lg border bg-card">
-            <p className="text-2xl font-bold text-blue-500">{totalUsage}</p>
-            <p className="text-xs text-muted-foreground">Total Tasks</p>
+            <p className="text-2xl font-bold text-blue-500">{totalUsage.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">Total Messages Sent</p>
+          </div>
+          <div className="p-3 rounded-lg border bg-card">
+            <p className="text-2xl font-bold text-amber-500">{todayUsage.toLocaleString()}</p>
+            <p className="text-xs text-muted-foreground">Today's Usage</p>
           </div>
         </div>
 
@@ -411,8 +429,8 @@ export const ApiCredentialsManager: React.FC = () => {
           <div className="flex items-center gap-2 text-muted-foreground">
             <Activity className="w-4 h-4" />
             <span>
-              <strong>Round-Robin:</strong> Each task uses the API with the lowest usage count. 
-              With {activeCount} active APIs and {totalUsage} tasks, each API handles ~{activeCount > 0 ? Math.round(totalUsage / activeCount) : 0} tasks evenly.
+              <strong>Round-Robin:</strong> Usage is tracked only on successful message sends. 
+              With {activeCount} active APIs and {totalUsage.toLocaleString()} sends, each API averages ~{activeCount > 0 ? Math.round(totalUsage / activeCount).toLocaleString() : 0} messages.
             </span>
           </div>
         </div>
