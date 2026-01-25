@@ -1730,7 +1730,8 @@ const Campaigns: React.FC = () => {
                 return true;
               });
 
-              const hasPending = (report?.pending ?? 0) > 0;
+              // Use database values directly (synced via trigger)
+              const hasPending = (campaign.pendingCount ?? 0) > 0;
               const noUsableAccounts = usableAssigned.length === 0 && assignedAccountIds.length > 0;
               const campaignStuck = campaign.status === 'running' && hasPending && noUsableAccounts;
               
@@ -1838,13 +1839,14 @@ const Campaigns: React.FC = () => {
                         </div>
                       </div>
                       
-                      {/* Center Section - Stats (Compact) */}
+                      {/* Center Section - Stats (Compact) - Use database values directly (synced via trigger) */}
                       <div className="hidden md:flex items-center gap-1 shrink-0">
                         {(() => {
-                          const total = report?.total || campaign.recipientCount || 0;
-                          const sent = report?.successful ?? campaign.sentCount ?? 0;
-                          const failed = report?.failed ?? campaign.failedCount ?? 0;
-                          const pending = report?.pending ?? campaign.pendingCount ?? 0;
+                          // Use database values directly - they're kept in sync via trigger
+                          const total = campaign.recipientCount || 0;
+                          const sent = campaign.sentCount || 0;
+                          const failed = campaign.failedCount || 0;
+                          const pending = campaign.pendingCount || 0;
                           const percent = total > 0 ? Math.round((sent / total) * 100) : 0;
                           
                           return (
@@ -1923,12 +1925,12 @@ const Campaigns: React.FC = () => {
                             </DialogHeader>
                             
                             <div className="space-y-6 pt-4">
-                              {/* Stats Summary */}
+                              {/* Stats Summary - Use database values directly (synced via trigger) */}
                               {(() => {
-                                const total = report?.total || campaign.recipientCount || 0;
-                                const sent = report?.successful ?? campaign.sentCount ?? 0;
-                                const failed = report?.failed ?? campaign.failedCount ?? 0;
-                                const pending = report?.pending ?? Math.max(0, total - sent - failed);
+                                const total = campaign.recipientCount || 0;
+                                const sent = campaign.sentCount || 0;
+                                const failed = campaign.failedCount || 0;
+                                const pending = campaign.pendingCount || 0;
                                 const successRate = total > 0 ? Math.round((sent / total) * 100) : 0;
                                 
                                 // Show empty state if no recipients
@@ -1984,7 +1986,7 @@ const Campaigns: React.FC = () => {
                                       <h4 className="text-sm font-semibold text-destructive mb-1">Campaign Stopped</h4>
                                       <p className="text-sm text-muted-foreground">
                                         {campaignFailedDueToAccounts || campaignStuck 
-                                          ? `No usable accounts available. ${report?.pending || 0} messages still pending.`
+                                          ? `No usable accounts available. ${campaign.pendingCount || 0} messages still pending.`
                                           : 'Campaign failed due to errors during message sending.'
                                         }
                                       </p>
@@ -2070,7 +2072,8 @@ const Campaigns: React.FC = () => {
                               
                               {/* Failed Recipients with Reasons */}
                               {(() => {
-                                const failedCount = report?.failed ?? campaign.failedCount ?? 0;
+                                // Use database value directly (synced via trigger)
+                                const failedCount = campaign.failedCount || 0;
                                 const failedRecipients = report?.failedRecipients || [];
                                 const hasLoaded = loadedReportIds.has(campaign.id);
                                 
