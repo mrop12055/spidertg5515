@@ -491,8 +491,9 @@ serve(async (req) => {
                 app_version: senderAccount.app_version,
                 lang_code: senderAccount.lang_code,
                 system_lang_code: senderAccount.system_lang_code,
-                api_id: senderApi.api_id,
+              api_id: senderApi.api_id,
                 api_hash: senderApi.api_hash,
+                api_credential_id: senderApi.id,
                 proxy: senderProxy,
               },
               proxy: senderProxy,
@@ -509,6 +510,7 @@ serve(async (req) => {
                 system_lang_code: receiverAccount.system_lang_code,
                 api_id: receiverApi?.api_id || receiverAccount.api_id,
                 api_hash: receiverApi?.api_hash || receiverAccount.api_hash,
+                api_credential_id: receiverApi?.id,
               },
               partner_proxy: contactsExchanged ? null : receiverProxy,
             });
@@ -985,7 +987,7 @@ serve(async (req) => {
             .replace(/{phone}/g, recipient.phone_number);
 
           // ROUND-ROBIN API: Get API credentials from pool
-          const accountApi = await getNextApiCredential(supabase);
+          const accountApi = await selectNextApiCredential(supabase);
           if (!accountApi) {
             console.log(`[get-batch-tasks] SKIP recipient ${recipient.id}: No API credentials available in pool`);
             continue;
@@ -1018,6 +1020,7 @@ serve(async (req) => {
               system_lang_code: account.system_lang_code,
               api_id: accountApi.api_id,
               api_hash: accountApi.api_hash,
+              api_credential_id: accountApi.id,
               proxy_id: account.proxy_id,
             },
             proxy: account.proxies
@@ -1177,7 +1180,7 @@ serve(async (req) => {
             if (!account) continue;
             
             // ROUND-ROBIN API: Get API credentials from pool
-            const accountApi = await getNextApiCredential(supabase);
+            const accountApi = await selectNextApiCredential(supabase);
             if (!accountApi) {
               console.log(`[get-batch-tasks] SKIP livechat account ${account.phone_number}: No API credentials available in pool`);
               continue;
@@ -1195,6 +1198,7 @@ serve(async (req) => {
                 system_lang_code: account.system_lang_code,
                 api_id: accountApi.api_id,
                 api_hash: accountApi.api_hash,
+                api_credential_id: accountApi.id,
                 proxy_id: account.proxy_id,
               },
               proxy: account.proxies ? {
@@ -1220,6 +1224,7 @@ serve(async (req) => {
                   recipient_name: conv.recipient_name,
                   api_id: accountApi.api_id,
                   api_hash: accountApi.api_hash,
+                  api_credential_id: accountApi.id,
                 };
               }),
             });
@@ -1230,7 +1235,7 @@ serve(async (req) => {
           // Return accounts for connection with round-robin API credentials
           const accountsForConnection = await Promise.all(
             usableAccounts.map(async (a: any) => {
-              const api = await getNextApiCredential(supabase);
+              const api = await selectNextApiCredential(supabase);
               if (!api) return null;
               return {
                 id: a.id,
@@ -1243,6 +1248,7 @@ serve(async (req) => {
                 system_lang_code: a.system_lang_code,
                 api_id: api.api_id,
                 api_hash: api.api_hash,
+                api_credential_id: api.id,
                 proxy_id: a.proxy_id,
                 proxy: a.proxies ? {
                   id: a.proxies.id,
@@ -1273,7 +1279,7 @@ serve(async (req) => {
       // Fallback: Return accounts for listening (no pending messages or parallel disabled)
       const accountsForConnection = await Promise.all(
         usableAccounts.map(async (a: any) => {
-          const api = await getNextApiCredential(supabase);
+          const api = await selectNextApiCredential(supabase);
           if (!api) return null;
           return {
             id: a.id,
@@ -1286,6 +1292,7 @@ serve(async (req) => {
             system_lang_code: a.system_lang_code,
             api_id: api.api_id,
             api_hash: api.api_hash,
+            api_credential_id: api.id,
             proxy_id: a.proxy_id,
             proxy: a.proxies ? {
               host: a.proxies.host,
@@ -1370,7 +1377,7 @@ serve(async (req) => {
           claimIds.push(task.id);
           
           // ROUND-ROBIN API: Get API credentials from pool
-          const accountApi = await getNextApiCredential(supabase);
+          const accountApi = await selectNextApiCredential(supabase);
           if (!accountApi) {
             console.log(`[get-batch-tasks] SKIP account task ${task.id}: No API credentials available in pool`);
             continue;
@@ -1391,6 +1398,7 @@ serve(async (req) => {
               system_lang_code: accountData.system_lang_code,
               api_id: accountApi.api_id,
               api_hash: accountApi.api_hash,
+              api_credential_id: accountApi.id,
               proxy_id: accountData.proxy_id,
             },
             proxy: {

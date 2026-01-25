@@ -2005,9 +2005,8 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                     "privacy_restricted", "user_privacy_restricted"
                 ])
                 
-                # Get API credential ID
-                api_creds = account.get("telegram_api_credentials")
-                api_credential_id = api_creds.get("id") if api_creds else account.get("api_credential_id")
+                # Get API credential ID (directly from account payload)
+                api_credential_id = account.get("api_credential_id")
                 
                 result = {
                     "success": success,
@@ -3500,7 +3499,8 @@ async def main_loop():
                                             "message_id": msg.get("id"),
                                             "success": False,
                                             "error": connection_error,
-                                            "account_id": acc_id
+                                            "account_id": acc_id,
+                                            "api_credential_id": msg.get("api_credential_id") or account.get("api_credential_id")
                                         })
                                 return
                         
@@ -3520,7 +3520,8 @@ async def main_loop():
                                     "message_id": msg.get("id"),
                                     "success": success,
                                     "error": send_error,
-                                    "account_id": acc_id
+                                    "account_id": acc_id,
+                                    "api_credential_id": msg.get("api_credential_id") or account.get("api_credential_id")
                                 })
                         
                         # SAVE SESSION after batch - preserves entity cache
@@ -3563,7 +3564,8 @@ async def main_loop():
                             "message_id": msg.get("id"),
                             "success": success,
                             "error": send_error,
-                            "account_id": account.get("id")
+                            "account_id": account.get("id"),
+                            "api_credential_id": account.get("api_credential_id")
                         })
                     else:
                         print(f"  [SKIP REPORT] Network error, not updating status")
@@ -3573,7 +3575,8 @@ async def main_loop():
                         "message_id": msg.get("id"),
                         "success": False,
                         "error": error,
-                        "account_id": account.get("id")
+                        "account_id": account.get("id"),
+                        "api_credential_id": account.get("api_credential_id")
                     })
         
         except Exception as e:
@@ -4704,6 +4707,7 @@ async def process_single_warmup_task(task: dict) -> dict:
     partner_proxy = task.get("partner_proxy")
     
     account_id = account.get("id")
+    api_credential_id = account.get("api_credential_id")
     phone = account.get("phone_number", "????")[-4:]
     
     if not account_id:
@@ -4746,7 +4750,7 @@ async def process_single_warmup_task(task: dict) -> dict:
             first_name = task_data.get("first_name", "Friend")
             print(f"  [CONTACT] [{phone}] Adding contact...")
             success, added_phone, error = await add_contact(client, target_phone, first_name)
-            return {"task_id": task_id, "pair_id": pair_id, "account_id": account_id, "success": success, "error": error, "task_subtype": "add_contact"}
+            return {"task_id": task_id, "pair_id": pair_id, "account_id": account_id, "api_credential_id": api_credential_id, "success": success, "error": error, "task_subtype": "add_contact"}
         
         elif task_type == "warmup_chat":
             recipient_phone = task_data.get("recipient_phone")
@@ -4756,31 +4760,31 @@ async def process_single_warmup_task(task: dict) -> dict:
             message = task_data.get("message", "Hey! 👋")
             print(f"  [CHAT] [{phone}] Sending warmup message...")
             success, error = await send_warmup_chat(client, recipient_phone, message, recipient_telegram_id, recipient_username, recipient_first_name)
-            return {"task_id": task_id, "pair_id": pair_id, "account_id": account_id, "success": success, "error": error}
+            return {"task_id": task_id, "pair_id": pair_id, "account_id": account_id, "api_credential_id": api_credential_id, "success": success, "error": error}
         
         elif task_type == "warmup_join_channel":
             channel = task_data.get("channel_username") or task.get("channel_username")
             print(f"  [JOIN] [{phone}] Joining channel...")
             success, channel_name, error = await join_channel(client, channel)
-            return {"task_id": task_id, "task_type": "join_channel", "account_id": account_id, "success": success, "error": error}
+            return {"task_id": task_id, "task_type": "join_channel", "account_id": account_id, "api_credential_id": api_credential_id, "success": success, "error": error}
         
         elif task_type == "warmup_view_content":
             channel = task_data.get("channel_username") or task.get("channel_username")
             print(f"  [VIEW] [{phone}] Viewing content...")
             success, count, error = await view_channel_messages(client, channel)
-            return {"task_id": task_id, "task_type": "view_content", "account_id": account_id, "success": success, "error": error}
+            return {"task_id": task_id, "task_type": "view_content", "account_id": account_id, "api_credential_id": api_credential_id, "success": success, "error": error}
         
         elif task_type == "warmup_send_reaction":
             channel = task_data.get("channel_username") or task.get("channel_username")
             print(f"  [REACT] [{phone}] Sending reaction...")
             success, reaction, error = await send_reaction(client, channel)
-            return {"task_id": task_id, "task_type": "send_reaction", "account_id": account_id, "success": success, "error": error}
+            return {"task_id": task_id, "task_type": "send_reaction", "account_id": account_id, "api_credential_id": api_credential_id, "success": success, "error": error}
         
         elif task_type == "warmup_profile_update":
             bio = task_data.get("bio")
             print(f"  [BIO] [{phone}] Updating bio...")
             success, error = await update_profile_bio(client, bio)
-            return {"task_id": task_id, "task_type": "profile_update", "account_id": account_id, "success": success, "error": error}
+            return {"task_id": task_id, "task_type": "profile_update", "account_id": account_id, "api_credential_id": api_credential_id, "success": success, "error": error}
         
         else:
             print(f"  [?] [{phone}] Unknown task type: {task_type}")
