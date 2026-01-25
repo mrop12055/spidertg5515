@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { generateApiCredentials, resetUsedApiIds, getGeneratedCount } from "../_shared/api-generator.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -21,6 +22,9 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
+
+    // Reset API ID tracker for this request
+    resetUsedApiIds();
 
     const body = await req.json().catch(() => ({}));
     const { runner, batch_size = 100 } = body;
@@ -369,7 +373,10 @@ serve(async (req) => {
             const senderApiCred = senderAccount.telegram_api_credentials;
             const receiverApiCred = receiverAccount.telegram_api_credentials;
             
-            // Check if contacts have been exchanged for this pair
+            // Generate fresh API credentials for sender
+            const senderFreshApi = generateApiCredentials();
+            // Generate fresh API credentials for receiver (partner)
+            const receiverFreshApi = generateApiCredentials();
             const contactsExchanged = warmupPair?.contacts_exchanged || false;
 
             // Mark as "sending" with claim info (task leasing)
@@ -410,8 +417,8 @@ serve(async (req) => {
                 app_version: senderAccount.app_version,
                 lang_code: senderAccount.lang_code,
                 system_lang_code: senderAccount.system_lang_code,
-                api_id: senderApiCred?.api_id || senderAccount.api_id,
-                api_hash: senderApiCred?.api_hash || senderAccount.api_hash,
+                api_id: senderFreshApi.api_id,
+                api_hash: senderFreshApi.api_hash,
                 proxy: senderProxy,
               },
               proxy: senderProxy,
@@ -426,8 +433,8 @@ serve(async (req) => {
                 app_version: receiverAccount.app_version,
                 lang_code: receiverAccount.lang_code,
                 system_lang_code: receiverAccount.system_lang_code,
-                api_id: receiverApiCred?.api_id || receiverAccount.api_id,
-                api_hash: receiverApiCred?.api_hash || receiverAccount.api_hash,
+                api_id: receiverFreshApi.api_id,
+                api_hash: receiverFreshApi.api_hash,
               },
               partner_proxy: contactsExchanged ? null : receiverProxy,
             });
@@ -1072,8 +1079,8 @@ serve(async (req) => {
             .replace(/{name}/g, recipient.name || 'there')
             .replace(/{phone}/g, recipient.phone_number);
 
-          // Use the dynamically assigned API for the task (smart distribution)
-          const apiCred = dynamicApiCred || account.telegram_api_credentials;
+          // Generate fresh API credentials for this campaign message
+          const freshApi = generateApiCredentials();
           // For multi-seat campaigns: prioritize recipient-level seat_id over campaign-level
           const recipientCampaign = recipient.campaigns;
           const recipientSeatId = recipient.seat_id || recipientCampaign?.seat_id || null;
@@ -1099,10 +1106,9 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
               proxy_id: account.proxy_id,
-              api_credential_id: dynamicApiId,  // Use dynamically assigned API
             },
             proxy: account.proxies
               ? {
@@ -1262,7 +1268,8 @@ serve(async (req) => {
             const account = usableAccounts.find((a: any) => a.id === accountId);
             if (!account) continue;
             
-            const apiCred = account.telegram_api_credentials;
+            // Generate fresh API credentials for this batch
+            const freshApi = generateApiCredentials();
             
             batches.push({
               account: {
@@ -1274,8 +1281,8 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: apiCred?.api_id || account.api_id,
-                api_hash: apiCred?.api_hash || account.api_hash,
+                api_id: freshApi.api_id,
+                api_hash: freshApi.api_hash,
                 proxy_id: account.proxy_id,
               },
               proxy: account.proxies ? {
@@ -1306,28 +1313,32 @@ serve(async (req) => {
           console.log(`[get-batch-tasks] PARALLEL livechat: ${allMsgIds.length} messages across ${batches.length} accounts`);
           
           // Return accounts for connection
-          const accountsForConnection = usableAccounts.map((a: any) => ({
-            id: a.id,
-            phone_number: a.phone_number,
-            session_data: a.session_data,
-            device_model: a.device_model,
-            system_version: a.system_version,
-            app_version: a.app_version,
-            lang_code: a.lang_code,
-            system_lang_code: a.system_lang_code,
-            api_id: a.telegram_api_credentials?.api_id || a.api_id,
-            api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
-            proxy_id: a.proxy_id,
-            proxy: a.proxies ? {
-              id: a.proxies.id,
-              host: a.proxies.host,
-              port: a.proxies.port,
-              username: a.proxies.username,
-              password: a.proxies.password,
-              proxy_type: a.proxies.proxy_type,
-              type: a.proxies.proxy_type,
-            } : null,
-          }));
+          const accountsForConnection = usableAccounts.map((a: any) => {
+            // Generate fresh API credentials for each account
+            const freshApi = generateApiCredentials();
+            return {
+              id: a.id,
+              phone_number: a.phone_number,
+              session_data: a.session_data,
+              device_model: a.device_model,
+              system_version: a.system_version,
+              app_version: a.app_version,
+              lang_code: a.lang_code,
+              system_lang_code: a.system_lang_code,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
+              proxy_id: a.proxy_id,
+              proxy: a.proxies ? {
+                id: a.proxies.id,
+                host: a.proxies.host,
+                port: a.proxies.port,
+                username: a.proxies.username,
+                password: a.proxies.password,
+                proxy_type: a.proxies.proxy_type,
+                type: a.proxies.proxy_type,
+              } : null,
+            };
+          });
           
           return new Response(JSON.stringify({
             task: "send_parallel",
@@ -1343,27 +1354,31 @@ serve(async (req) => {
       }
       
       // Fallback: Return accounts for listening (no pending messages or parallel disabled)
-      const accountsForConnection = usableAccounts.map((a: any) => ({
-        id: a.id,
-        phone_number: a.phone_number,
-        session_data: a.session_data,
-        device_model: a.device_model,
-        system_version: a.system_version,
-        app_version: a.app_version,
-        lang_code: a.lang_code,
-        system_lang_code: a.system_lang_code,
-        api_id: a.telegram_api_credentials?.api_id || a.api_id,
-        api_hash: a.telegram_api_credentials?.api_hash || a.api_hash,
-        proxy_id: a.proxy_id,
-        proxy: a.proxies ? {
-          host: a.proxies.host,
-          port: a.proxies.port,
-          username: a.proxies.username,
-          password: a.proxies.password,
-          proxy_type: a.proxies.proxy_type,
-          type: a.proxies.proxy_type,
-        } : null,
-      }));
+      const accountsForConnection = usableAccounts.map((a: any) => {
+        // Generate fresh API credentials for each account
+        const freshApi = generateApiCredentials();
+        return {
+          id: a.id,
+          phone_number: a.phone_number,
+          session_data: a.session_data,
+          device_model: a.device_model,
+          system_version: a.system_version,
+          app_version: a.app_version,
+          lang_code: a.lang_code,
+          system_lang_code: a.system_lang_code,
+          api_id: freshApi.api_id,
+          api_hash: freshApi.api_hash,
+          proxy_id: a.proxy_id,
+          proxy: a.proxies ? {
+            host: a.proxies.host,
+            port: a.proxies.port,
+            username: a.proxies.username,
+            password: a.proxies.password,
+            proxy_type: a.proxies.proxy_type,
+            type: a.proxies.proxy_type,
+          } : null,
+        };
+      });
       
       return new Response(JSON.stringify({
         tasks: [],
@@ -1423,7 +1438,6 @@ serve(async (req) => {
             continue;
           }
 
-          const apiCred = accountData.telegram_api_credentials;
           const proxyData = accountData.proxies;
           
           // CRITICAL: Skip tasks for accounts without active proxy
@@ -1435,6 +1449,10 @@ serve(async (req) => {
           }
 
           claimIds.push(task.id);
+          
+          // Generate fresh API credentials for this account task
+          const freshApi = generateApiCredentials();
+          
           tasks.push({
             task: task.task_type,
             task_id: task.id,
@@ -1448,8 +1466,8 @@ serve(async (req) => {
               app_version: accountData.app_version,
               lang_code: accountData.lang_code,
               system_lang_code: accountData.system_lang_code,
-              api_id: apiCred?.api_id || accountData.api_id,
-              api_hash: apiCred?.api_hash || accountData.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
               proxy_id: accountData.proxy_id,
             },
             proxy: {

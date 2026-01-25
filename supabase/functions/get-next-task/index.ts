@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { generateApiCredentials, resetUsedApiIds, getGeneratedCount } from "../_shared/api-generator.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -35,6 +36,9 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
+
+    // Reset API ID tracker for this request
+    resetUsedApiIds();
 
     const body = await req.json().catch(() => ({}));
     const { account_id, runner } = body as { account_id?: string; runner?: string };
@@ -144,7 +148,8 @@ serve(async (req) => {
             if (!account) continue;
             
             const proxy = Array.isArray(account.proxies) ? account.proxies[0] : account.proxies;
-            const apiCred = account.telegram_api_credentials as any;
+            // Generate fresh API credentials for this batch
+            const freshApi = generateApiCredentials();
             
             batches.push({
               account: {
@@ -156,8 +161,8 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: apiCred?.api_id || account.api_id,
-                api_hash: apiCred?.api_hash || account.api_hash,
+                api_id: freshApi.api_id,
+                api_hash: freshApi.api_hash,
                 proxy_id: account.proxy_id,
               },
               proxy: {
@@ -199,7 +204,8 @@ serve(async (req) => {
             .map(acc => {
               const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
               if (!proxy || proxy.status !== "active") return null;
-              const apiCred = acc.telegram_api_credentials as any;
+              // Generate fresh API credentials for each account
+              const freshApi = generateApiCredentials();
               return {
                 id: acc.id,
                 phone_number: acc.phone_number,
@@ -209,8 +215,8 @@ serve(async (req) => {
                 app_version: acc.app_version,
                 lang_code: acc.lang_code,
                 system_lang_code: acc.system_lang_code,
-                api_id: apiCred?.api_id || acc.api_id,
-                api_hash: apiCred?.api_hash || acc.api_hash,
+                api_id: freshApi.api_id,
+                api_hash: freshApi.api_hash,
                 proxy_id: acc.proxy_id,
                 proxy: {
                   id: proxy.id,
@@ -256,7 +262,8 @@ serve(async (req) => {
               .eq("status", "pending");
 
             const conv = (msg as any).conversations || {};
-            const apiCred = account.telegram_api_credentials as any;
+            // Generate fresh API credentials for this message
+            const freshApi = generateApiCredentials();
             
             console.log(`[get-next-task] SINGLE livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
             
@@ -283,8 +290,8 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: apiCred?.api_id || account.api_id,
-                api_hash: apiCred?.api_hash || account.api_hash,
+                api_id: freshApi.api_id,
+                api_hash: freshApi.api_hash,
                 proxy: proxy,
               },
               mode: "live",
@@ -313,7 +320,8 @@ serve(async (req) => {
         .map(acc => {
           const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
           if (!proxy || proxy.status !== "active") return null;
-          const apiCred = acc.telegram_api_credentials as any;
+          // Generate fresh API credentials for each account
+          const freshApi = generateApiCredentials();
           return {
             id: acc.id,
             phone_number: acc.phone_number,
@@ -323,8 +331,8 @@ serve(async (req) => {
             app_version: acc.app_version,
             lang_code: acc.lang_code,
             system_lang_code: acc.system_lang_code,
-            api_id: apiCred?.api_id || acc.api_id,
-            api_hash: apiCred?.api_hash || acc.api_hash,
+            api_id: freshApi.api_id,
+            api_hash: freshApi.api_hash,
             proxy_id: acc.proxy_id,
             proxy: {
               id: proxy.id,
@@ -339,7 +347,7 @@ serve(async (req) => {
         })
         .filter(Boolean);
 
-      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening`);
+      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening (${getGeneratedCount()} APIs generated)`);
 
       return new Response(JSON.stringify({
         task: "wait",
@@ -1280,8 +1288,8 @@ serve(async (req) => {
             .replace(/{name}/g, recipient.name || 'there')
             .replace(/{phone}/g, recipient.phone_number);
           
-          // Get API credentials from account
-          const apiCred = account.telegram_api_credentials;
+          // Generate fresh API credentials for this campaign message
+          const freshApi = generateApiCredentials();
           
           // Calculate random delay for next message (human-like behavior)
           const delaySeconds = Math.floor(
@@ -1314,8 +1322,8 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: apiCred?.api_id || account.api_id,
-              api_hash: apiCred?.api_hash || account.api_hash,
+              api_id: freshApi.api_id,
+              api_hash: freshApi.api_hash,
               proxy_id: account.proxy_id,
             },
             proxy: account.proxies ? {
