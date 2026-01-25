@@ -1836,7 +1836,7 @@ const Campaigns: React.FC = () => {
                           const total = report?.total || campaign.recipientCount || 0;
                           const sent = report?.successful ?? campaign.sentCount ?? 0;
                           const failed = report?.failed ?? campaign.failedCount ?? 0;
-                          const pending = report?.pending ?? Math.max(0, total - sent - failed);
+                          const pending = report?.pending ?? campaign.pendingCount ?? 0;
                           const percent = total > 0 ? Math.round((sent / total) * 100) : 0;
                           
                           return (

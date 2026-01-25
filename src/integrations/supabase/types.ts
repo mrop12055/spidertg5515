@@ -289,6 +289,7 @@ export type Database = {
           id: string
           message_template: string
           name: string
+          pending_count: number | null
           recipient_count: number | null
           reply_count: number | null
           scheduled_at: string | null
@@ -304,6 +305,7 @@ export type Database = {
           id?: string
           message_template: string
           name: string
+          pending_count?: number | null
           recipient_count?: number | null
           reply_count?: number | null
           scheduled_at?: string | null
@@ -319,6 +321,7 @@ export type Database = {
           id?: string
           message_template?: string
           name?: string
+          pending_count?: number | null
           recipient_count?: number | null
           reply_count?: number | null
           scheduled_at?: string | null

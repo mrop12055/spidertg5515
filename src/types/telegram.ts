@@ -107,6 +107,7 @@ export interface Campaign {
   recipientCount: number;
   sentCount: number;
   failedCount: number;
+  pendingCount: number;
   replyCount: number;
   accountIds: string[];
   createdAt: Date;

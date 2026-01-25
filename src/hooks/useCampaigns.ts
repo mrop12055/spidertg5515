@@ -13,6 +13,7 @@ const transformCampaign = (c: any): Campaign => ({
   recipientCount: c.recipient_count || 0,
   sentCount: c.sent_count || 0,
   failedCount: c.failed_count || 0,
+  pendingCount: c.pending_count || 0,
   replyCount: c.reply_count || 0,
   accountIds: c.campaign_accounts?.map((ca: any) => ca.account_id) || [],
   createdAt: new Date(c.created_at),
@@ -81,6 +82,7 @@ export const useCampaigns = () => {
                   recipientCount: updated.recipient_count || 0,
                   sentCount: updated.sent_count || 0,
                   failedCount: updated.failed_count || 0,
+                  pendingCount: updated.pending_count || 0,
                   replyCount: updated.reply_count || 0,
                   updatedAt: new Date(updated.updated_at),
                 };
