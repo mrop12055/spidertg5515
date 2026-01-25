@@ -1152,6 +1152,370 @@ async def validate_contact(client: TelegramClient, phone: str):
         return False, None, None
 
 
+def add_message_variation(content: str) -> str:
+    """Add invisible zero-width characters for uniqueness.
+    
+    Prevents Telegram's identical-message detection by inserting
+    invisible Unicode characters at random positions.
+    """
+    import random
+    variations = ['\\u200b', '\\u200c', '\\u200d', '\\ufeff']
+    pos = random.randint(0, len(content))
+    return content[:pos] + random.choice(variations) + content[pos:]
+
+
+async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
+    """Import ALL contacts for the batch in parallel using official Telegram API.
+    
+    Uses official Telegram MTProto via Telethon:
+    - telethon.tl.functions.contacts.ImportContactsRequest
+    - telethon.tl.types.InputPhoneContact
+    
+    Returns:
+        {(account_id, recipient): entity} mapping
+    """
+    from telethon.tl.functions.contacts import ImportContactsRequest
+    from telethon.tl.types import InputPhoneContact
+    import random
+    
+    entities_map = {}
+    
+    async def import_one(account_id, client, recipient, recipient_name):
+        """Import a single contact using official Telegram API."""
+        try:
+            recipient_str = str(recipient) if recipient else ""
+            
+            # Priority 1: Try cached entity first (no API call)
+            try:
+                entity = await asyncio.wait_for(
+                    client.get_input_entity(recipient_str), timeout=3
+                )
+                return (account_id, recipient), entity
+            except (ValueError, KeyError):
+                pass
+            
+            # Priority 2: Numeric Telegram ID
+            if recipient_str.lstrip('-').isdigit():
+                try:
+                    entity = await asyncio.wait_for(
+                        client.get_entity(int(recipient_str)), timeout=5
+                    )
+                    return (account_id, recipient), entity
+                except Exception:
+                    pass
+            
+            # Priority 3: Username
+            if recipient_str.startswith("@"):
+                try:
+                    entity = await asyncio.wait_for(
+                        client.get_input_entity(recipient_str), timeout=5
+                    )
+                    return (account_id, recipient), entity
+                except Exception:
+                    pass
+            
+            # Priority 4: Phone number - ImportContactsRequest (official API)
+            phone = recipient_str if recipient_str.startswith("+") else f"+{recipient_str}"
+            if len(phone) > 6:
+                display_name = recipient_name or phone.replace("+", "")
+                contact = InputPhoneContact(
+                    client_id=random.randint(0, 2**31 - 1),
+                    phone=phone,
+                    first_name=display_name,
+                    last_name=""
+                )
+                result = await asyncio.wait_for(
+                    client(ImportContactsRequest([contact])), timeout=10
+                )
+                if result.users:
+                    return (account_id, recipient), result.users[0]
+            
+            return (account_id, recipient), None
+            
+        except Exception as e:
+            print(f"    ⚠ Import [{account_id[:8]}] → {recipient}: {str(e)[:40]}")
+            return (account_id, recipient), None
+    
+    # Build import tasks for parallel execution
+    import_tasks = []
+    for task in tasks:
+        account = task.get("account", {})
+        account_id = account.get("id")
+        recipient = task.get("recipient")
+        recipient_name = task.get("recipient_name")
+        client = clients_map.get(account_id)
+        
+        if client and recipient:
+            import_tasks.append(
+                import_one(account_id, client, recipient, recipient_name)
+            )
+    
+    # Execute ALL imports in parallel (official Telegram API)
+    results = await asyncio.gather(*import_tasks, return_exceptions=True)
+    
+    for result in results:
+        if isinstance(result, tuple) and len(result) == 2:
+            key, entity = result
+            if entity:
+                entities_map[key] = entity
+    
+    return entities_map
+
+
+async def bulk_send_messages(
+    clients_map: dict, 
+    entities_map: dict, 
+    tasks: list
+) -> list:
+    """Send ALL messages in parallel using pre-imported entities.
+    
+    Uses official Telegram MTProto via Telethon:
+    - client.send_message() for text
+    - client.send_file() for media
+    """
+    from telethon.errors import (
+        FloodWaitError, PeerFloodError, UserPrivacyRestrictedError,
+        UserBlockedError, ChatWriteForbiddenError, SlowModeWaitError
+    )
+    
+    results = []
+    
+    async def send_one(task) -> dict:
+        """Send a single message using official Telegram API."""
+        account = task.get("account", {})
+        account_id = account.get("id")
+        account_phone = account.get("phone_number", "????")[-4:]
+        msg = task.get("message", {})
+        recipient = task.get("recipient")
+        content = msg.get("content", "")
+        media_url = msg.get("media_url")
+        
+        client = clients_map.get(account_id)
+        entity = entities_map.get((account_id, recipient))
+        
+        # Base result structure
+        result = {
+            "success": False,
+            "error": None,
+            "campaign_recipient_id": msg.get("campaign_recipient_id"),
+            "message_id": msg.get("id"),
+            "account_id": account_id,
+            "content": content,
+            "recipient_phone": recipient,
+            "recipient_name": task.get("recipient_name"),
+            "campaign_seat_id": task.get("campaign_seat_id"),
+            "campaign_id": task.get("campaign_id"),
+            "campaign_name": task.get("campaign_name"),
+        }
+        
+        if not client:
+            result["error"] = "No client available"
+            return result
+        
+        if not entity:
+            result["error"] = "Contact not found on Telegram"
+            return result
+        
+        try:
+            # Add invisible message variation for uniqueness
+            varied_content = add_message_variation(content)
+            
+            # Official Telegram send_message API
+            if media_url:
+                # Handle media send using official send_file API
+                try:
+                    import io
+                    http = get_http_client()
+                    resp = await http.get(media_url, timeout=HTTP_TIMEOUT_UPLOAD)
+                    if resp.status_code == 200:
+                        from urllib.parse import urlparse, unquote
+                        url_path = urlparse(media_url).path
+                        filename = unquote(url_path.split("/")[-1]) if url_path else "attachment"
+                        
+                        content_type = resp.headers.get("content-type", "").lower()
+                        ext = filename.split(".")[-1].lower() if "." in filename else ""
+                        is_image = ext in ("jpg", "jpeg", "png", "gif", "webp") or content_type.startswith("image/")
+                        
+                        file_bytes = io.BytesIO(resp.content)
+                        file_bytes.name = filename if "." in filename else "photo.jpg"
+                        
+                        await asyncio.wait_for(
+                            client.send_file(entity, file_bytes, caption=varied_content, force_document=not is_image),
+                            timeout=30
+                        )
+                    else:
+                        await asyncio.wait_for(
+                            client.send_message(entity, varied_content, link_preview=True),
+                            timeout=10
+                        )
+                except Exception:
+                    await asyncio.wait_for(
+                        client.send_message(entity, varied_content, link_preview=True),
+                        timeout=10
+                    )
+            else:
+                # Text-only message using official send_message API
+                await asyncio.wait_for(
+                    client.send_message(entity, varied_content, link_preview=True),
+                    timeout=10
+                )
+            
+            result["success"] = True
+            print(f"    ✓ [{account_phone}] → {recipient}")
+            return result
+            
+        except FloodWaitError as e:
+            result["error"] = f"FloodWait:{e.seconds}s"
+            result["is_rate_limit"] = True
+            result["skip_account"] = True
+        except PeerFloodError:
+            result["error"] = "PeerFlood"
+            result["is_rate_limit"] = True
+            result["skip_account"] = True
+        except UserPrivacyRestrictedError:
+            result["error"] = "Privacy restricted"
+            result["skip_account"] = True
+            result["retry_with_different_api"] = True
+        except UserBlockedError:
+            result["error"] = "User blocked"
+        except ChatWriteForbiddenError:
+            result["error"] = "Cannot write"
+        except SlowModeWaitError as e:
+            result["error"] = f"SlowMode:{e.seconds}s"
+        except Exception as e:
+            result["error"] = str(e)[:100]
+        
+        print(f"    ✗ [{account_phone}] → {recipient}: {result['error']}")
+        return result
+    
+    # Execute ALL sends in parallel
+    send_results = await asyncio.gather(
+        *[send_one(task) for task in tasks],
+        return_exceptions=True
+    )
+    
+    # Filter exceptions
+    for r in send_results:
+        if isinstance(r, dict):
+            results.append(r)
+        elif isinstance(r, Exception):
+            print(f"    ⚠ Send exception: {r}")
+    
+    return results
+
+
+async def process_batch_optimized(tasks: list, stagger_min: float, stagger_max: float) -> list:
+    """Process entire batch using 5-phase bulk parallel pipeline.
+    
+    PHASE 1: Connect ALL accounts (parallel)     → 2-3s
+    PHASE 2: Import ALL contacts (parallel)      → 1-2s  
+    PHASE 3: Safety wait                         → 5-6s
+    PHASE 4: Send ALL messages (parallel)        → 2-3s
+    PHASE 5: Disconnect ALL accounts (parallel)  → 1s
+    
+    Uses OFFICIAL Telegram APIs via Telethon MTProto.
+    """
+    from collections import defaultdict
+    import random
+    
+    print(f"  📦 BULK PARALLEL PROCESSING {len(tasks)} messages (5-phase pipeline)...")
+    
+    # Group tasks by account
+    account_tasks_map = defaultdict(list)
+    for task in tasks:
+        acc_id = task.get("account", {}).get("id")
+        if acc_id:
+            account_tasks_map[acc_id].append(task)
+    
+    # ========== PHASE 1: Connect ALL accounts (parallel) ==========
+    phase1_start = time.time()
+    print(f"  🔌 Phase 1: Connecting {len(account_tasks_map)} accounts...")
+    
+    clients_map = {}
+    
+    async def connect_one(acc_id, first_task):
+        try:
+            account = first_task.get("account", {})
+            proxy = first_task.get("proxy")
+            client = await get_or_create_client(
+                account, task_proxy=proxy, skip_avatar=True, no_cache=True
+            )
+            return acc_id, client
+        except Exception as e:
+            print(f"    ⚠ Connect [{acc_id[:8]}]: {str(e)[:40]}")
+            return acc_id, None
+    
+    connect_results = await asyncio.gather(
+        *[connect_one(acc_id, tasks_list[0]) for acc_id, tasks_list in account_tasks_map.items()],
+        return_exceptions=True
+    )
+    
+    for result in connect_results:
+        if isinstance(result, tuple) and len(result) == 2:
+            acc_id, client = result
+            if client:
+                clients_map[acc_id] = client
+    
+    print(f"     ✓ Connected {len(clients_map)}/{len(account_tasks_map)} accounts ({time.time()-phase1_start:.1f}s)")
+    
+    # ========== PHASE 2: Import ALL contacts (parallel) ==========
+    phase2_start = time.time()
+    print(f"  📇 Phase 2: Importing contacts (official ImportContactsRequest)...")
+    
+    entities_map = await bulk_import_contacts(clients_map, tasks)
+    
+    print(f"     ✓ Imported {len(entities_map)}/{len(tasks)} contacts ({time.time()-phase2_start:.1f}s)")
+    
+    # ========== PHASE 3: Safety wait (prevents rapid-fire pattern) ==========
+    wait_time = random.uniform(5.0, 6.0)
+    print(f"  ⏳ Phase 3: Safety wait {wait_time:.1f}s...")
+    await asyncio.sleep(wait_time)
+    
+    # ========== PHASE 4: Send ALL messages (parallel) ==========
+    phase4_start = time.time()
+    print(f"  📤 Phase 4: Sending {len(tasks)} messages (official send_message)...")
+    
+    results = await bulk_send_messages(clients_map, entities_map, tasks)
+    
+    success_count = sum(1 for r in results if r.get("success"))
+    print(f"     ✓ Sent {success_count}/{len(tasks)} messages ({time.time()-phase4_start:.1f}s)")
+    
+    # ========== PHASE 5: Disconnect ALL (parallel) ==========
+    phase5_start = time.time()
+    print(f"  🔌 Phase 5: Disconnecting and saving sessions...")
+    
+    async def disconnect_one(acc_id, client):
+        try:
+            if client.is_connected():
+                # Get phone for session save
+                phone = None
+                for task in tasks:
+                    if task.get("account", {}).get("id") == acc_id:
+                        phone = task.get("account", {}).get("phone_number", acc_id)
+                        break
+                
+                await save_session_to_db(acc_id, phone or acc_id)
+                await asyncio.wait_for(client.disconnect(), timeout=5)
+        except Exception:
+            pass
+    
+    await asyncio.gather(
+        *[disconnect_one(acc_id, client) for acc_id, client in clients_map.items()],
+        return_exceptions=True
+    )
+    
+    # Allow asyncio cleanup
+    await asyncio.sleep(0.2)
+    
+    # Clear from active clients cache
+    for acc_id in clients_map:
+        active_clients.pop(acc_id, None)
+    
+    print(f"     ✓ Disconnected {len(clients_map)} clients ({time.time()-phase5_start:.1f}s)")
+    
+    return results
+
+
 async def disconnect_batch(account_ids: list):
     """Disconnect multiple clients after batch completion to free memory."""
     disconnected = 0
@@ -1822,35 +2186,14 @@ async def main_loop():
             print(f"     [fetch: {fetch_time:.2f}s]")
 
             try:
-                # GROUP tasks by account_id to prevent SQLite session locks
-                # Each account opens ONE connection and sends ALL its messages
-                from collections import defaultdict
-                account_groups = defaultdict(list)
-                for task in tasks:
-                    acc_id = task.get("account", {}).get("id")
-                    if acc_id:
-                        account_groups[acc_id].append(task)
-                
-                print(f"     [{len(tasks)} tasks across {len(account_groups)} accounts]")
-                
-                # Process each account group in parallel (sequential within each account)
+                # Use optimized 5-phase bulk parallel processing
+                # Phase 1: Connect ALL → Phase 2: Import ALL → Phase 3: Wait 5-6s
+                # Phase 4: Send ALL → Phase 5: Disconnect ALL
                 send_start = time.time()
-                group_results = await asyncio.gather(
-                    *[process_account_tasks(acc_id, acc_tasks, stagger_min, stagger_max) 
-                      for acc_id, acc_tasks in account_groups.items()],
-                    return_exceptions=True
-                )
-                
-                # Flatten results from all groups
-                results = []
-                for group_result in group_results:
-                    if isinstance(group_result, list):
-                        results.extend(group_result)
-                    elif isinstance(group_result, Exception):
-                        print(f"  ⚠ Group error: {group_result}")
+                results = await process_batch_optimized(tasks, stagger_min, stagger_max)
                 
                 send_time = time.time() - send_start
-                print(f"     [send: {send_time:.2f}s]")
+                print(f"     [total send pipeline: {send_time:.2f}s]")
 
                 # Report ALL results in parallel (bounded concurrency, 5s timeout)
                 # Pass sent_cache to remove reported items
