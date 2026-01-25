@@ -569,12 +569,12 @@ serve(async (req) => {
     
     console.log(`[get-next-task] Accounts: ${accountsBeforeApiLimit.length} available, ${accountsUnderDailyCampaignLimit.length} under daily campaign limit (${DAILY_CAMPAIGN_LIMIT_PER_ACCOUNT}/day)`);
 
-    // ========== DYNAMIC API SYSTEM: Fresh unique API generated per-task ==========
-    // No legacy API tracking needed - each task gets generateApiCredentials() call
-    // This ensures: 1:1 ratio (every message = unique API), zero rate limits, unlimited capacity
+    // ========== ROUND-ROBIN API SYSTEM: Real APIs rotated evenly across tasks ==========
+    // APIs are selected from telegram_api_credentials table with lowest usage_count
+    // This ensures: even distribution, no overloading single API, usage tracking
     const accounts = accountsUnderDailyCampaignLimit;
     
-    console.log(`[get-next-task] Using dynamic per-task API generation (no API tracking needed)`);
+    console.log(`[get-next-task] Using round-robin API rotation from credential pool`);
 
     if (allAccountsError) {
       console.error("[get-next-task] Error fetching accounts:", allAccountsError);

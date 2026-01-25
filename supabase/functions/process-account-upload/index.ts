@@ -549,9 +549,9 @@ serve(async (req) => {
 
     console.log(`[process-account-upload] Processing ${accounts.length} accounts`);
 
-    // Dynamic API System: No need to fetch/assign API credentials
-    // Each task will get a fresh unique api_id + api_hash generated at runtime
-    console.log(`[process-account-upload] Using dynamic per-request API system (no stored credentials needed)`);
+    // Round-Robin API System: API credentials are assigned per-task from the pool
+    // No need to assign APIs to accounts - backend handles rotation during task dispatch
+    console.log(`[process-account-upload] Using round-robin API rotation (credentials from pool)`);
 
     // Fetch existing fingerprints to ensure uniqueness
     const { data: existingAccounts } = await supabase
