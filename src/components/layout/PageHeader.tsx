@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
 import type { LucideIcon } from "lucide-react";
 import { motion } from "framer-motion";
@@ -58,9 +58,20 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
   children,
   className,
 }) => {
+  // Only animate on initial mount - not on every re-render
+  const [hasAnimated, setHasAnimated] = useState(false);
+  
+  useEffect(() => {
+    // Mark as animated after mount
+    setHasAnimated(true);
+  }, []);
+
+  // After first render, skip animations to prevent "refreshing" appearance
+  const shouldAnimate = !hasAnimated;
+
   return (
     <motion.div
-      initial="hidden"
+      initial={shouldAnimate ? "hidden" : false}
       animate="show"
       variants={headerVariants}
       transition={headerTransition}
@@ -72,7 +83,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
       <div className="flex items-center gap-4">
         {Icon && (
           <motion.div
-            initial="hidden"
+            initial={shouldAnimate ? "hidden" : false}
             animate="show"
             variants={iconVariants}
             transition={iconTransition}
@@ -84,7 +95,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
 
         <div>
           <motion.h1
-            initial="hidden"
+            initial={shouldAnimate ? "hidden" : false}
             animate="show"
             variants={titleVariants}
             transition={{ duration: 0.4, delay: 0.15 }}
@@ -95,7 +106,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
 
           {description && (
             <motion.p
-              initial="hidden"
+              initial={shouldAnimate ? "hidden" : false}
               animate="show"
               variants={descVariants}
               transition={{ duration: 0.4, delay: 0.2 }}
@@ -109,7 +120,7 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
 
       {(action || children) && (
         <motion.div
-          initial="hidden"
+          initial={shouldAnimate ? "hidden" : false}
           animate="show"
           variants={actionsVariants}
           transition={{ duration: 0.4, delay: 0.25 }}
