@@ -1257,10 +1257,14 @@ export type Database = {
           api_id: string
           client_type: string
           created_at: string | null
+          daily_usage: number | null
+          daily_usage_reset_at: string | null
           id: string
           is_active: boolean | null
+          last_used_at: string | null
           last_validated_at: string | null
           name: string
+          usage_count: number | null
           validation_error: string | null
         }
         Insert: {
@@ -1269,10 +1273,14 @@ export type Database = {
           api_id: string
           client_type: string
           created_at?: string | null
+          daily_usage?: number | null
+          daily_usage_reset_at?: string | null
           id?: string
           is_active?: boolean | null
+          last_used_at?: string | null
           last_validated_at?: string | null
           name: string
+          usage_count?: number | null
           validation_error?: string | null
         }
         Update: {
@@ -1281,10 +1289,14 @@ export type Database = {
           api_id?: string
           client_type?: string
           created_at?: string | null
+          daily_usage?: number | null
+          daily_usage_reset_at?: string | null
           id?: string
           is_active?: boolean | null
+          last_used_at?: string | null
           last_validated_at?: string | null
           name?: string
+          usage_count?: number | null
           validation_error?: string | null
         }
         Relationships: []

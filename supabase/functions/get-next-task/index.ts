@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getAccountApiCredentials, hasApiCredentials } from "../_shared/api-helper.ts";
+import { getNextApiCredential, getMultipleApiCredentials, hasAvailableApis } from "../_shared/api-helper.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -146,9 +146,12 @@ serve(async (req) => {
             
             const proxy = Array.isArray(account.proxies) ? account.proxies[0] : account.proxies;
             
-            // DYNAMIC API: Each MESSAGE gets its own unique api_id and api_hash
-            // Account-level credentials are for connection only (Python uses first message's API)
-            const accountFreshApi = generateApiCredentials();
+            // ROUND-ROBIN API: Get API credentials from pool
+            const accountFreshApi = await getNextApiCredential(supabase);
+            if (!accountFreshApi) {
+              console.log('[get-next-task] No API credentials available for livechat batch');
+              continue;
+            }
             
             batches.push({
               account: {
@@ -161,7 +164,7 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: accountFreshApi.api_id,  // Default for connection
+                api_id: accountFreshApi.api_id,
                 api_hash: accountFreshApi.api_hash,
                 proxy_id: account.proxy_id,
               },
@@ -174,10 +177,10 @@ serve(async (req) => {
                 proxy_type: proxy.proxy_type,
                 type: proxy.proxy_type,
               },
-              // CRITICAL: Each message gets its OWN unique API credentials
-              messages: msgs.map(msg => {
+              // ROUND-ROBIN API: Each message gets API from the pool
+              messages: await Promise.all(msgs.map(async (msg) => {
                 const conv = (msg as any).conversations || {};
-                const messageFreshApi = generateApiCredentials();  // UNIQUE per message!
+                const messageFreshApi = await getNextApiCredential(supabase);
                 return {
                   id: msg.id,
                   content: msg.content,
@@ -188,10 +191,10 @@ serve(async (req) => {
                   recipient_username: conv.recipient_username,
                   recipient_phone: conv.recipient_phone,
                   recipient_name: conv.recipient_name,
-                  api_id: messageFreshApi.api_id,      // UNIQUE per message
-                  api_hash: messageFreshApi.api_hash,  // UNIQUE per message
+                  api_id: messageFreshApi?.api_id || accountFreshApi.api_id,
+                  api_hash: messageFreshApi?.api_hash || accountFreshApi.api_hash,
                 };
-              }),
+              })),
             });
           }
           
@@ -204,12 +207,13 @@ serve(async (req) => {
             .in("status", ["active", "restricted", "cooldown", "frozen"])
             .not("session_data", "is", null);
           
-          const validAccounts = (livechatAccounts || [])
-            .map(acc => {
+          const validAccounts = await Promise.all((livechatAccounts || [])
+            .map(async (acc) => {
               const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
               if (!proxy || proxy.status !== "active") return null;
-              // Generate fresh API credentials for each account
-              const freshApi = generateApiCredentials();
+              // ROUND-ROBIN API: Get from pool
+              const freshApi = await getNextApiCredential(supabase);
+              if (!freshApi) return null;
               return {
                 id: acc.id,
                 phone_number: acc.phone_number,
@@ -233,8 +237,7 @@ serve(async (req) => {
                   type: proxy.proxy_type,
                 },
               };
-            })
-            .filter(Boolean);
+            })).then(results => results.filter(Boolean));
           
           return new Response(JSON.stringify({
             task: "send_parallel",
@@ -267,8 +270,12 @@ serve(async (req) => {
               .eq("status", "pending");
 
             const conv = (msg as any).conversations || {};
-            // Generate fresh API credentials for this message
-            const freshApi = generateApiCredentials();
+            // ROUND-ROBIN API: Get from pool
+            const freshApi = await getNextApiCredential(supabase);
+            if (!freshApi) {
+              console.log('[get-next-task] No API credentials available for single livechat');
+              continue;
+            }
             
             console.log(`[get-next-task] SINGLE livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
             
@@ -322,12 +329,13 @@ serve(async (req) => {
         .in("status", ["active", "restricted", "cooldown", "frozen"])
         .not("session_data", "is", null);
 
-      const validAccounts = (livechatAccounts || [])
-        .map(acc => {
+      const validAccounts = await Promise.all((livechatAccounts || [])
+        .map(async (acc) => {
           const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
           if (!proxy || proxy.status !== "active") return null;
-          // Generate fresh API credentials for each account
-          const freshApi = generateApiCredentials();
+          // ROUND-ROBIN API: Get from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) return null;
           return {
             id: acc.id,
             phone_number: acc.phone_number,
@@ -351,10 +359,9 @@ serve(async (req) => {
               type: proxy.proxy_type,
             },
           };
-        })
-        .filter(Boolean);
+        })).then(results => results.filter(Boolean));
 
-      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening (${getGeneratedCount()} APIs generated)`);
+      console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening`);
 
       return new Response(JSON.stringify({
         task: "wait",
@@ -1104,8 +1111,14 @@ serve(async (req) => {
             .replace(/{name}/g, recipient.name || 'there')
             .replace(/{phone}/g, recipient.phone_number);
           
-          // Generate fresh API credentials for this campaign message
-          const freshApi = generateApiCredentials();
+          // ROUND-ROBIN API: Get API credentials from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) {
+            console.log('[get-next-task] No API credentials available for campaign message');
+            return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No API credentials available" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
           
           // Calculate random delay for next message (human-like behavior)
           const delaySeconds = Math.floor(
@@ -1335,8 +1348,14 @@ serve(async (req) => {
         
         // CRITICAL: Check both account status AND proxy status
         if (senderAccount && senderAccount.status === "active" && receiverAccount && proxy?.status === "active") {
-          // DYNAMIC API: Generate fresh unique credentials for this warmup interaction task
-          const freshApi = generateApiCredentials();
+          // ROUND-ROBIN API: Get API credentials from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) {
+            console.log('[get-next-task] No API credentials available for warmup interaction');
+            return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No API credentials available" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
           
           // Mark as in_progress
           await supabase
@@ -1411,8 +1430,14 @@ serve(async (req) => {
         
         // CRITICAL: Check both account status AND proxy status
         if (accountData && accountData.status === "active" && proxy?.status === "active") {
-          // DYNAMIC API: Generate fresh unique credentials for this warmup schedule task
-          const freshApi = generateApiCredentials();
+          // ROUND-ROBIN API: Get API credentials from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) {
+            console.log('[get-next-task] No API credentials available for warmup schedule');
+            return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No API credentials available" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
           
           // Mark as in_progress
           await supabase
@@ -1482,8 +1507,14 @@ serve(async (req) => {
         
         // CRITICAL: Check both account status AND proxy status
         if (accountData && accountData.status === "active" && proxy?.status === "active") {
-          // DYNAMIC API: Generate fresh unique credentials for this legacy warmup task
-          const freshApi = generateApiCredentials();
+          // ROUND-ROBIN API: Get API credentials from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) {
+            console.log('[get-next-task] No API credentials available for legacy warmup');
+            return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No API credentials available" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
           console.log(`[get-next-task] Legacy warmup task ${task.task_type} for ${task.account_id}`);
           return new Response(JSON.stringify({
             task: "warmup_" + task.task_type,
@@ -1574,8 +1605,14 @@ serve(async (req) => {
             });
           }
           
-          // DYNAMIC API: Generate fresh unique credentials for EVERY account management task
-          const freshApi = generateApiCredentials();
+          // ROUND-ROBIN API: Get API credentials from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) {
+            console.log('[get-next-task] No API credentials available for account task');
+            return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No API credentials available" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
           
           if (taskType === "spambot_check") {
             const lastCheck = accountData.last_spambot_check;
@@ -1868,8 +1905,12 @@ serve(async (req) => {
             .eq("status", "pending");
 
           console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)} to ${conv.recipient_phone || conv.recipient_username} (priority=${msg.priority}, account=${account.status})`);
-          // DYNAMIC API: Generate fresh unique credentials for this live chat message
-          const freshApi = generateApiCredentials();
+          // ROUND-ROBIN API: Get API credentials from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) {
+            console.log('[get-next-task] No API credentials available for live chat');
+            continue;
+          }
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -1949,8 +1990,12 @@ serve(async (req) => {
             .eq("status", "pending");
 
           console.log(`[get-next-task] HIGH PRIORITY task: message ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
-          // DYNAMIC API: Generate fresh unique credentials for this high priority message
-          const freshApi = generateApiCredentials();
+          // ROUND-ROBIN API: Get API credentials from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) {
+            console.log('[get-next-task] No API credentials available for high priority message');
+            continue;
+          }
           return new Response(JSON.stringify({
             task: "send",
             message: {
@@ -1997,6 +2042,15 @@ serve(async (req) => {
         const account = allUsableAccounts.find((a: { id: string }) => a.id === msg.account_id);
 
         if (account) {
+          // ROUND-ROBIN API: Get API credentials from pool
+          const freshApi = await getNextApiCredential(supabase);
+          if (!freshApi) {
+            console.log('[get-next-task] No API credentials available for live conversation');
+            return new Response(JSON.stringify({ task: "wait", seconds: 30, reason: "No API credentials available" }), {
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+          }
+          
           await supabase
             .from("messages")
             .update({ status: "sending" })
@@ -2004,8 +2058,6 @@ serve(async (req) => {
             .eq("status", "pending");
 
           console.log(`[get-next-task] Live chat task: message ${msg.id.slice(0, 8)}`);
-          // DYNAMIC API: Generate fresh unique credentials for this live conversation message
-          const freshApi = generateApiCredentials();
           return new Response(JSON.stringify({
             task: "send",
             message: {

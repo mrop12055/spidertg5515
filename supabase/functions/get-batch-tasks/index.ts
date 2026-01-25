@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getAccountApiCredentials, hasApiCredentials } from "../_shared/api-helper.ts";
+import { getNextApiCredential, getMultipleApiCredentials } from "../_shared/api-helper.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -370,13 +370,13 @@ serve(async (req) => {
             const senderApiCred = senderAccount.telegram_api_credentials;
             const receiverApiCred = receiverAccount.telegram_api_credentials;
             
-            // Get API credentials from stored account data
-            const senderApi = getAccountApiCredentials(senderAccount);
-            const receiverApi = getAccountApiCredentials(receiverAccount);
+            // ROUND-ROBIN API: Get API credentials from pool
+            const senderApi = await getNextApiCredential(supabase);
+            const receiverApi = await getNextApiCredential(supabase);
             
-            // Skip if no API credentials
+            // Skip if no API credentials available
             if (!senderApi) {
-              console.log(`[get-batch-tasks] SKIP warmup msg ${msg.id}: sender ${senderAccount.phone_number} has no API assigned`);
+              console.log(`[get-batch-tasks] SKIP warmup msg ${msg.id}: No API credentials available in pool`);
               continue;
             }
             
@@ -913,10 +913,10 @@ serve(async (req) => {
             .replace(/{name}/g, recipient.name || 'there')
             .replace(/{phone}/g, recipient.phone_number);
 
-          // Get API credentials from stored account data
-          const accountApi = getAccountApiCredentials(account);
+          // ROUND-ROBIN API: Get API credentials from pool
+          const accountApi = await getNextApiCredential(supabase);
           if (!accountApi) {
-            console.log(`[get-batch-tasks] SKIP recipient ${recipient.id}: account ${account.phone_number} has no API assigned`);
+            console.log(`[get-batch-tasks] SKIP recipient ${recipient.id}: No API credentials available in pool`);
             continue;
           }
           
@@ -1105,10 +1105,10 @@ serve(async (req) => {
             const account = usableAccounts.find((a: any) => a.id === accountId);
             if (!account) continue;
             
-            // Get API credentials from stored account data
-            const accountApi = getAccountApiCredentials(account);
+            // ROUND-ROBIN API: Get API credentials from pool
+            const accountApi = await getNextApiCredential(supabase);
             if (!accountApi) {
-              console.log(`[get-batch-tasks] SKIP livechat account ${account.phone_number}: no API assigned`);
+              console.log(`[get-batch-tasks] SKIP livechat account ${account.phone_number}: No API credentials available in pool`);
               continue;
             }
             
@@ -1156,11 +1156,11 @@ serve(async (req) => {
           
           console.log(`[get-batch-tasks] PARALLEL livechat: ${allMsgIds.length} messages across ${batches.length} accounts`);
           
-          // Return accounts for connection
-          const accountsForConnection = usableAccounts
-            .filter((a: any) => hasApiCredentials(a))
-            .map((a: any) => {
-              const api = getAccountApiCredentials(a)!;
+          // Return accounts for connection with round-robin API credentials
+          const accountsForConnection = await Promise.all(
+            usableAccounts.map(async (a: any) => {
+              const api = await getNextApiCredential(supabase);
+              if (!api) return null;
               return {
                 id: a.id,
                 phone_number: a.phone_number,
@@ -1183,7 +1183,8 @@ serve(async (req) => {
                   type: a.proxies.proxy_type,
                 } : null,
               };
-            });
+            })
+          ).then(results => results.filter(Boolean));
           
           return new Response(JSON.stringify({
             task: "send_parallel",
@@ -1199,10 +1200,10 @@ serve(async (req) => {
       }
       
       // Fallback: Return accounts for listening (no pending messages or parallel disabled)
-      const accountsForConnection = usableAccounts
-        .filter((a: any) => hasApiCredentials(a))
-        .map((a: any) => {
-          const api = getAccountApiCredentials(a)!;
+      const accountsForConnection = await Promise.all(
+        usableAccounts.map(async (a: any) => {
+          const api = await getNextApiCredential(supabase);
+          if (!api) return null;
           return {
             id: a.id,
             phone_number: a.phone_number,
@@ -1224,7 +1225,8 @@ serve(async (req) => {
               type: a.proxies.proxy_type,
             } : null,
           };
-        });
+        })
+      ).then(results => results.filter(Boolean));
       
       return new Response(JSON.stringify({
         tasks: [],
@@ -1296,10 +1298,10 @@ serve(async (req) => {
 
           claimIds.push(task.id);
           
-          // Get API credentials from stored account data
-          const accountApi = getAccountApiCredentials(accountData);
+          // ROUND-ROBIN API: Get API credentials from pool
+          const accountApi = await getNextApiCredential(supabase);
           if (!accountApi) {
-            console.log(`[get-batch-tasks] SKIP account task ${task.id}: ${accountData.phone_number} has no API assigned`);
+            console.log(`[get-batch-tasks] SKIP account task ${task.id}: No API credentials available in pool`);
             continue;
           }
           
