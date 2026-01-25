@@ -29,7 +29,7 @@ SUPABASE_KEY = "${supabaseKey}"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (ROUND-ROBIN API SYSTEM)
 
-BUILD: 2026-01-25-round-robin-v1
+BUILD: 2026-01-25-advanced-telethon-v1
 
 ROUND-ROBIN API CREDENTIALS:
 - Each task gets API credentials from the backend pool
@@ -119,6 +119,14 @@ from telethon.errors import (
     MessageNotModifiedError,
     MediaEmptyError
 )
+
+# ========== ADVANCED TELETHON 2026 IMPORTS ==========
+# ResolvePhoneRequest - Check if phone exists on Telegram WITHOUT adding to contacts
+# SendMessageRequest - Direct message sending with InputPeerUser for maximum efficiency
+# InputPeerUser - Direct peer addressing with cached access_hash
+from telethon.tl.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
+from telethon.tl.functions.messages import SendMessageRequest
+from telethon.tl.types import InputPhoneContact, InputPeerUser
 
 from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY
 
@@ -984,10 +992,8 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
             except Exception as e:
                 print(f"    [WARN] Username lookup failed for {recipient_str}: {e}")
         
-        # Priority 3: Phone number (requires contact import)
+        # Priority 3: Phone number - ADVANCED MULTI-STRATEGY RESOLUTION
         if not entity and recipient_str:
-            from telethon.tl.functions.contacts import ImportContactsRequest
-            from telethon.tl.types import InputPhoneContact
             import random
             
             # Only treat as phone if it starts with + or looks like a phone number
@@ -1002,10 +1008,23 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                 except Exception:
                     pass
                 
-                # Strategy 2: Import contact if not cached
+                # Strategy 2: Try ResolvePhoneRequest (doesn't add to contacts - Telethon 2026 best practice)
                 if not entity:
-                    # Use smaller client_id range (official Telegram recommendation: 32-bit signed int)
-                    # Use recipient name if provided, otherwise use phone number as display name
+                    try:
+                        result = await asyncio.wait_for(
+                            client(ResolvePhoneRequest(phone=phone)), timeout=10
+                        )
+                        if result.users:
+                            user = result.users[0]
+                            entity = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+                    except Exception as e:
+                        err_str = str(e).upper()
+                        if "PHONE_NOT_OCCUPIED" in err_str:
+                            return False, "User not found on Telegram"
+                        # Fall through to ImportContactsRequest fallback
+                
+                # Strategy 3: Import contact if not cached (fallback with retry_contacts handling)
+                if not entity:
                     display_name = recipient_name if recipient_name else phone.replace("+", "")
                     contact = InputPhoneContact(
                         client_id=random.randint(0, 2**31 - 1),
@@ -1016,9 +1035,17 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
                     try:
                         result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
                         if result.users:
-                            entity = result.users[0]
+                            user = result.users[0]
+                            entity = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
                         elif result.retry_contacts:
-                            return False, "Privacy restricted - cannot add contact"
+                            # Telegram says "wait and retry" - soft rate limit
+                            await asyncio.sleep(30)
+                            result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+                            if result.users:
+                                user = result.users[0]
+                                entity = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+                            else:
+                                return False, "Cooldown - please retry later"
                     except PhoneNumberInvalidError:
                         return False, "Invalid phone number format"
                     except PhoneNumberBannedError:
@@ -1118,17 +1145,40 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
 
 
 async def validate_contact(client: TelegramClient, phone: str):
-    """Validate contact using safer API calls"""
+    """Validate contact using ResolvePhoneRequest (advanced Telethon 2026 pattern).
+    
+    IMPROVEMENT: Uses ResolvePhoneRequest which:
+    1. Checks if phone exists on Telegram WITHOUT adding to contacts
+    2. Returns access_hash for efficient future messaging
+    3. Falls back to ImportContactsRequest for compatibility
+    """
     try:
-        from telethon.tl.functions.contacts import ImportContactsRequest
-        from telethon.tl.types import InputPhoneContact
+        # Ensure phone has + prefix
+        phone_formatted = phone if phone.startswith("+") else f"+{phone}"
+        
+        # Strategy 1: Try ResolvePhoneRequest first (doesn't add to contacts)
+        try:
+            result = await asyncio.wait_for(
+                client(ResolvePhoneRequest(phone=phone_formatted)),
+                timeout=15
+            )
+            if result.users:
+                user = result.users[0]
+                name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+                return True, name, user.id
+            return False, None, None
+        except Exception as e:
+            err_str = str(e).upper()
+            if "PHONE_NOT_OCCUPIED" in err_str:
+                return False, None, None
+            # Fall through to ImportContactsRequest fallback
+        
+        # Strategy 2: Fallback to ImportContactsRequest for older Telegram clients
         import random
-        # Use smaller client_id range (official recommendation)
-        # Use phone number as display name for validation contacts
-        display_name = phone.replace("+", "") if phone.startswith("+") else phone
+        display_name = phone_formatted.replace("+", "")
         contact = InputPhoneContact(
             client_id=random.randint(0, 2**31 - 1),
-            phone=phone, 
+            phone=phone_formatted, 
             first_name=display_name, 
             last_name=""
         )
@@ -1136,6 +1186,13 @@ async def validate_contact(client: TelegramClient, phone: str):
         if result.users:
             user = result.users[0]
             return True, f"{user.first_name or ''} {user.last_name or ''}".strip(), user.id
+        elif result.retry_contacts:
+            # Telegram says "wait and retry" - soft rate limit
+            await asyncio.sleep(30)
+            result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+            if result.users:
+                user = result.users[0]
+                return True, f"{user.first_name or ''} {user.last_name or ''}".strip(), user.id
         return False, None, None
     except FloodWaitError as e:
         return False, None, None
@@ -1158,27 +1215,26 @@ def add_message_variation(content: str) -> str:
 
 
 async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
-    """Import ALL contacts for the batch in parallel using official Telegram API.
+    """Import ALL contacts for the batch in parallel using advanced Telethon 2026 patterns.
     
-    Uses official Telegram MTProto via Telethon:
-    - telethon.tl.functions.contacts.ImportContactsRequest
-    - telethon.tl.types.InputPhoneContact
+    IMPROVED MULTI-STRATEGY RESOLUTION:
+    1. Try cached entity first (fastest - no API call)
+    2. Try ResolvePhoneRequest (doesn't add to contacts)
+    3. Fallback to ImportContactsRequest with retry_contacts handling
     
     Returns:
-        {(account_id, recipient): entity} mapping
+        {(account_id, recipient): InputPeerUser or entity} mapping
     """
-    from telethon.tl.functions.contacts import ImportContactsRequest
-    from telethon.tl.types import InputPhoneContact
     import random
     
     entities_map = {}
     
     async def import_one(account_id, client, recipient, recipient_name):
-        """Import a single contact using official Telegram API."""
+        """Import a single contact using multi-strategy resolution (Telethon 2026 best practices)."""
         try:
             recipient_str = str(recipient) if recipient else ""
             
-            # Priority 1: Try cached entity first (no API call)
+            # Priority 1: Try cached entity first (no API call - fastest)
             try:
                 entity = await asyncio.wait_for(
                     client.get_input_entity(recipient_str), timeout=3
@@ -1207,10 +1263,30 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
                 except Exception:
                     pass
             
-            # Priority 4: Phone number - ImportContactsRequest (official API)
+            # Priority 4: Phone number - ADVANCED MULTI-STRATEGY
             phone = recipient_str if recipient_str.startswith("+") else f"+{recipient_str}"
             if len(phone) > 6:
                 display_name = recipient_name or phone.replace("+", "")
+                
+                # Strategy A: Try ResolvePhoneRequest first (doesn't add to contacts)
+                try:
+                    result = await asyncio.wait_for(
+                        client(ResolvePhoneRequest(phone=phone)), timeout=10
+                    )
+                    if result.users:
+                        user = result.users[0]
+                        # Return InputPeerUser for direct messaging (most efficient)
+                        return (account_id, recipient), InputPeerUser(
+                            user_id=user.id, 
+                            access_hash=user.access_hash
+                        )
+                except Exception as e:
+                    err_str = str(e).upper()
+                    if "PHONE_NOT_OCCUPIED" in err_str:
+                        return (account_id, recipient), None
+                    # Fall through to ImportContactsRequest fallback
+                
+                # Strategy B: Fallback to ImportContactsRequest with retry_contacts handling
                 contact = InputPhoneContact(
                     client_id=random.randint(0, 2**31 - 1),
                     phone=phone,
@@ -1221,7 +1297,23 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
                     client(ImportContactsRequest([contact])), timeout=10
                 )
                 if result.users:
-                    return (account_id, recipient), result.users[0]
+                    user = result.users[0]
+                    return (account_id, recipient), InputPeerUser(
+                        user_id=user.id, 
+                        access_hash=user.access_hash
+                    )
+                elif result.retry_contacts:
+                    # Telegram says "wait and retry" - soft rate limit
+                    await asyncio.sleep(30)
+                    result = await asyncio.wait_for(
+                        client(ImportContactsRequest([contact])), timeout=10
+                    )
+                    if result.users:
+                        user = result.users[0]
+                        return (account_id, recipient), InputPeerUser(
+                            user_id=user.id, 
+                            access_hash=user.access_hash
+                        )
             
             return (account_id, recipient), None
             
@@ -1262,19 +1354,20 @@ async def bulk_send_messages(
 ) -> list:
     """Send ALL messages in parallel using pre-imported entities.
     
-    Uses official Telegram MTProto via Telethon:
-    - client.send_message() for text
-    - client.send_file() for media
+    IMPROVED: Uses SendMessageRequest with InputPeerUser for maximum efficiency.
+    - If entity is InputPeerUser (from our improved import), use direct SendMessageRequest
+    - Falls back to client.send_message() for User objects
     """
     from telethon.errors import (
         FloodWaitError, PeerFloodError, UserPrivacyRestrictedError,
         UserBlockedError, ChatWriteForbiddenError, SlowModeWaitError
     )
+    import random as rnd
     
     results = []
     
     async def send_one(task) -> dict:
-        """Send a single message using official Telegram API."""
+        """Send a single message using advanced Telethon 2026 patterns."""
         account = task.get("account", {})
         account_id = account.get("id")
         account_phone = account.get("phone_number", "????")[-4:]
@@ -1313,9 +1406,8 @@ async def bulk_send_messages(
             # Add invisible message variation for uniqueness
             varied_content = add_message_variation(content)
             
-            # Official Telegram send_message API
+            # Media send using official send_file API
             if media_url:
-                # Handle media send using official send_file API
                 try:
                     import io
                     http = get_http_client()
@@ -1336,18 +1428,27 @@ async def bulk_send_messages(
                             client.send_file(entity, file_bytes, caption=varied_content, force_document=not is_image),
                             timeout=30
                         )
-                    else:
-                        await asyncio.wait_for(
-                            client.send_message(entity, varied_content, link_preview=True),
-                            timeout=10
-                        )
-                except Exception:
-                    await asyncio.wait_for(
-                        client.send_message(entity, varied_content, link_preview=True),
-                        timeout=10
-                    )
+                        result["success"] = True
+                        print(f"    ✓ [{account_phone}] → {recipient} (media)")
+                        return result
+                except Exception as media_err:
+                    print(f"    ⚠ [{account_phone}] Media failed, trying text: {str(media_err)[:30]}")
+            
+            # Text-only message - use SendMessageRequest for InputPeerUser (most efficient)
+            if isinstance(entity, InputPeerUser):
+                # ADVANCED: Direct SendMessageRequest with InputPeerUser
+                # This is the most efficient method - no internal peer resolution needed
+                await asyncio.wait_for(
+                    client(SendMessageRequest(
+                        peer=entity,
+                        message=varied_content,
+                        no_webpage=False,  # Enable link preview
+                        random_id=rnd.randint(0, 2**63 - 1)
+                    )),
+                    timeout=10
+                )
             else:
-                # Text-only message using official send_message API
+                # Fallback for User objects and other entity types
                 await asyncio.wait_for(
                     client.send_message(entity, varied_content, link_preview=True),
                     timeout=10
