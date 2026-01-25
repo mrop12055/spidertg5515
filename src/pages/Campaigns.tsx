@@ -112,6 +112,14 @@ const Campaigns: React.FC = () => {
   
   // Seats for campaign assignment (supports multiple seats)
   const [seats, setSeats] = useState<Seat[]>([]);
+  const [seatsLoaded, setSeatsLoaded] = useState(false);
+  
+  // Memoized seats lookup map to prevent re-renders
+  const seatsMap = useMemo(() => {
+    const map = new Map<string, string>();
+    seats.forEach(s => map.set(s.id, s.name));
+    return map;
+  }, [seats]);
   
   // Data selection for campaigns
   const [isDataSelectOpen, setIsDataSelectOpen] = useState(false);
@@ -494,6 +502,7 @@ const Campaigns: React.FC = () => {
   const fetchSeats = useCallback(async () => {
     const { data } = await supabase.from('seats').select('id, name, is_active').eq('is_active', true);
     setSeats(data || []);
+    setSeatsLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -1728,9 +1737,8 @@ const Campaigns: React.FC = () => {
               // Check if campaign failed due to no usable accounts (has pending but failed status)
               const campaignFailedDueToAccounts = campaign.status === 'failed' && hasPending;
               
-              // Get seat name for this campaign
-              const campaignSeat = seats.find(s => s.id === campaign.seatId);
-              const seatName = campaignSeat?.name;
+              // Get seat name for this campaign (use memoized map)
+              const seatName = campaign.seatId ? seatsMap.get(campaign.seatId) : undefined;
               
               return (
                 <Card
@@ -1805,7 +1813,7 @@ const Campaigns: React.FC = () => {
                             }`}>
                               {campaign.status}
                             </span>
-                            {seatName && (
+                            {seatsLoaded && seatName && (
                               <>
                                 <span className="text-muted-foreground text-[10px]">•</span>
                                 <span className="text-[10px] text-muted-foreground">{seatName}</span>
@@ -2005,7 +2013,7 @@ const Campaigns: React.FC = () => {
                                 <div className="grid grid-cols-2 gap-3">
                                   <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
                                     <p className="text-xs text-muted-foreground">Assigned Seat</p>
-                                    <p className="font-medium mt-1">{seatName || 'Not assigned'}</p>
+                                    <p className="font-medium mt-1">{seatsLoaded ? (seatName || 'Not assigned') : '...'}</p>
                                   </div>
                                   <div className="bg-muted/30 rounded-xl p-3 border border-border/50">
                                     <p className="text-xs text-muted-foreground">Message Delay</p>
