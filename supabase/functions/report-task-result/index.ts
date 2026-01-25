@@ -6,6 +6,50 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// In-memory request deduplication cache (per-isolate)
+// Key: requestId, Value: timestamp
+const requestCache = new Map<string, number>();
+const DEDUP_WINDOW_MS = 5 * 60 * 1000; // 5 minute deduplication window
+const MAX_CACHE_SIZE = 10000; // Prevent memory leaks
+
+// Generate deterministic request ID for deduplication
+function generateRequestId(taskType: string, result: any): string {
+  const key = taskType === 'send' 
+    ? `send:${result.campaign_recipient_id || result.message_id}:${result.account_id}:${result.success}`
+    : taskType === 'warmup_chat' || taskType === 'warmup_add_contact'
+    ? `warmup:${result.task_id}:${result.account_id}:${result.success}`
+    : `${taskType}:${result.task_id || result.account_id}:${result.success}`;
+  return key;
+}
+
+// Check if request was recently processed (deduplicated)
+function isDuplicate(requestId: string): boolean {
+  const now = Date.now();
+  
+  // Clean expired entries periodically (every 100th call)
+  if (requestCache.size > MAX_CACHE_SIZE / 2 && Math.random() < 0.01) {
+    for (const [key, timestamp] of requestCache.entries()) {
+      if (now - timestamp > DEDUP_WINDOW_MS) {
+        requestCache.delete(key);
+      }
+    }
+  }
+  
+  const cachedTime = requestCache.get(requestId);
+  if (cachedTime && now - cachedTime < DEDUP_WINDOW_MS) {
+    return true; // Duplicate within window
+  }
+  
+  // Add to cache (trim if too large)
+  if (requestCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = requestCache.keys().next().value;
+    if (firstKey) requestCache.delete(firstKey);
+  }
+  requestCache.set(requestId, now);
+  
+  return false;
+}
+
 // Helper function to detect and handle FROZEN accounts from error messages
 // Should be called for ALL task types that can fail
 async function checkAndMarkFrozenAccount(supabase: any, accountId: string, error: string): Promise<boolean> {
@@ -119,7 +163,18 @@ serve(async (req) => {
     const body = await req.json();
     const { task_type, result } = body;
 
-    console.log(`[report-task-result] Task type: ${task_type}`, result);
+    // ==================== REQUEST DEDUPLICATION ====================
+    // Prevent duplicate processing of the same task result
+    const requestId = generateRequestId(task_type, result);
+    if (isDuplicate(requestId)) {
+      console.log(`[report-task-result] DEDUP: Ignoring duplicate request ${requestId}`);
+      return new Response(
+        JSON.stringify({ success: true, deduplicated: true, request_id: requestId }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[report-task-result] Task type: ${task_type}, request_id: ${requestId.substring(0, 50)}`);
 
     switch (task_type) {
       case "send": {
