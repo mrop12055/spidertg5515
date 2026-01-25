@@ -340,21 +340,37 @@ serve(async (req) => {
 
         await Promise.all(finalPromises);
         
-        // Track lifetime success counts for health monitoring (call RPC for each account)
+        // Track lifetime success counts using BATCH RPC (reduces N calls to 1)
+        // BUILD: 2026-01-25-advanced-v2
         const successAccountCounts = new Map<string, number>();
         for (const r of successResults) {
           if (r.account_id) {
             successAccountCounts.set(r.account_id, (successAccountCounts.get(r.account_id) || 0) + 1);
           }
         }
-        const successRpcPromises: Promise<any>[] = [];
-        for (const [accountId, count] of successAccountCounts) {
-          for (let i = 0; i < count; i++) {
-            successRpcPromises.push(asPromise(supabase.rpc('increment_account_success', { acc_id: accountId })));
+        
+        // Use batch_increment_success for efficiency (single DB call vs N calls)
+        if (successAccountCounts.size > 0) {
+          const batchUpdates = Array.from(successAccountCounts.entries()).map(([id, delta]) => ({
+            id,
+            delta
+          }));
+          
+          const { error: batchError } = await supabase.rpc('batch_increment_success', { 
+            updates: batchUpdates 
+          });
+          
+          if (batchError) {
+            // Fallback to individual calls if batch fails
+            console.warn('[report-batch-results] Batch RPC failed, using fallback:', batchError.message);
+            const successRpcPromises: Promise<any>[] = [];
+            for (const [accountId, count] of successAccountCounts) {
+              for (let i = 0; i < count; i++) {
+                successRpcPromises.push(asPromise(supabase.rpc('increment_account_success', { acc_id: accountId })));
+              }
+            }
+            await Promise.all(successRpcPromises);
           }
-        }
-        if (successRpcPromises.length > 0) {
-          await Promise.all(successRpcPromises);
         }
         
         console.log(

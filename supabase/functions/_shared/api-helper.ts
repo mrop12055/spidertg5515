@@ -1,8 +1,14 @@
 /**
  * Round-Robin API Credential Helper
  * 
+ * BUILD: 2026-01-25-advanced-v2
+ * 
  * Provides round-robin selection of API credentials from telegram_api_credentials table.
  * Each task gets the API with the LOWEST usage_count, ensuring even distribution.
+ * 
+ * OPTIMIZATIONS:
+ * - Atomic increment via increment_api_usage() RPC (prevents race conditions)
+ * - Batch operations for high-throughput scenarios
  * 
  * Example with 10 APIs and 40 tasks:
  * - Each API will be used exactly 4 times (40 / 10 = 4)
@@ -12,7 +18,7 @@
 /**
  * Get the next API credential using round-robin rotation.
  * Selects the API with the LOWEST usage_count among active APIs.
- * This ensures even distribution: all APIs get equal usage.
+ * Uses atomic increment to prevent race conditions under high load.
  * 
  * @param supabase - Supabase client instance
  * @returns API credentials object or null if no APIs available
@@ -20,12 +26,13 @@
 export async function getNextApiCredential(
   supabase: any
 ): Promise<{ api_id: string; api_hash: string } | null> {
-  // Reset daily usage if date changed
+  // Reset daily usage if date changed (fire-and-forget for performance)
   const today = new Date().toISOString().split('T')[0];
-  await supabase
+  supabase
     .from('telegram_api_credentials')
     .update({ daily_usage: 0, daily_usage_reset_at: today })
-    .neq('daily_usage_reset_at', today);
+    .neq('daily_usage_reset_at', today)
+    .then(() => {});
 
   // Get active API with lowest usage_count (round-robin selection)
   const { data: apis, error } = await supabase
@@ -43,15 +50,21 @@ export async function getNextApiCredential(
 
   const api = apis[0];
 
-  // Increment usage count atomically
-  await supabase
-    .from('telegram_api_credentials')
-    .update({
-      usage_count: (api.usage_count || 0) + 1,
-      daily_usage: supabase.rpc ? undefined : (api.daily_usage || 0) + 1,
-      last_used_at: new Date().toISOString()
-    })
-    .eq('id', api.id);
+  // ATOMIC INCREMENT via RPC (prevents race conditions under high concurrency)
+  const { error: rpcError } = await supabase.rpc('increment_api_usage', { p_api_id: api.id });
+  
+  if (rpcError) {
+    // Fallback to direct update if RPC fails
+    console.warn('[api-helper] RPC failed, using fallback:', rpcError.message);
+    await supabase
+      .from('telegram_api_credentials')
+      .update({
+        usage_count: (api.usage_count || 0) + 1,
+        daily_usage: (api.daily_usage || 0) + 1,
+        last_used_at: new Date().toISOString()
+      })
+      .eq('id', api.id);
+  }
 
   console.log(`[api-helper] Selected API ${api.api_id} (usage: ${api.usage_count || 0} -> ${(api.usage_count || 0) + 1})`);
 
@@ -64,6 +77,7 @@ export async function getNextApiCredential(
 /**
  * Get multiple API credentials for batch operations using round-robin.
  * Distributes tasks evenly across all available APIs.
+ * Uses batch atomic updates for efficiency.
  * 
  * @param supabase - Supabase client instance
  * @param count - Number of API credentials needed
@@ -75,12 +89,13 @@ export async function getMultipleApiCredentials(
 ): Promise<Array<{ api_id: string; api_hash: string }>> {
   if (count <= 0) return [];
 
-  // Reset daily usage if date changed
+  // Reset daily usage if date changed (fire-and-forget)
   const today = new Date().toISOString().split('T')[0];
-  await supabase
+  supabase
     .from('telegram_api_credentials')
     .update({ daily_usage: 0, daily_usage_reset_at: today })
-    .neq('daily_usage_reset_at', today);
+    .neq('daily_usage_reset_at', today)
+    .then(() => {});
 
   // Get all active APIs sorted by usage
   const { data: apis, error } = await supabase
@@ -107,22 +122,18 @@ export async function getMultipleApiCredentials(
     usageDelta.set(api.id, (usageDelta.get(api.id) || 0) + 1);
   }
 
-  // Batch update all usage counts
+  // Batch update all usage counts using atomic RPCs in parallel
   const updatePromises = [];
   for (const [id, delta] of usageDelta) {
-    const api = apis.find((a: any) => a.id === id);
-    if (api) {
+    // Call RPC delta times (each call increments by 1 atomically)
+    for (let i = 0; i < delta; i++) {
       updatePromises.push(
-        supabase
-          .from('telegram_api_credentials')
-          .update({
-            usage_count: (api.usage_count || 0) + delta,
-            last_used_at: new Date().toISOString()
-          })
-          .eq('id', id)
+        supabase.rpc('increment_api_usage', { p_api_id: id })
       );
     }
   }
+  
+  // Execute all updates in parallel
   await Promise.all(updatePromises);
 
   console.log(`[api-helper] Distributed ${count} tasks across ${apis.length} APIs`);

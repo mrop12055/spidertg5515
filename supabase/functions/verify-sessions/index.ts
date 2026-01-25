@@ -6,9 +6,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// BUILD: 2026-01-25-advanced-v2
+// OPTIMIZATION: Parallel batch processing with bounded concurrency
+
 // Note: User data extraction from session files is unreliable due to SQLite structure
 // Profile data (name, username) should be fetched via Python runner using client.get_me()
 // This function only validates the session file format, not the actual Telegram connection
+
+const BATCH_SIZE = 20; // Process 20 accounts in parallel
 
 serve(async (req) => {
   // Handle CORS preflight
@@ -30,7 +35,7 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Verifying ${account_ids.length} accounts...`);
+    console.log(`[verify-sessions] Verifying ${account_ids.length} accounts...`);
 
     // Fetch accounts with session data and ban_reason
     const { data: accounts, error: fetchError } = await supabase
@@ -45,7 +50,8 @@ serve(async (req) => {
 
     const results: { id: string; status: 'active' | 'disconnected' | 'banned' | 'frozen'; reason: string }[] = [];
 
-    for (const account of accounts || []) {
+    // Validate session and determine status
+    const validateSession = (account: any): { status: 'active' | 'disconnected' | 'banned' | 'frozen'; reason: string; updateData: Record<string, unknown> } => {
       let newStatus: 'active' | 'disconnected' | 'banned' | 'frozen' = 'disconnected';
       let reason = 'No session data';
 
@@ -90,7 +96,6 @@ serve(async (req) => {
       }
 
       // Check if account has a ban_reason that indicates frozen status
-      // This catches cases where session is valid but account is frozen
       if (account.ban_reason) {
         const banReasonLower = account.ban_reason.toLowerCase();
         if (banReasonLower.includes('frozen')) {
@@ -99,22 +104,23 @@ serve(async (req) => {
         }
       }
 
-      results.push({ 
-        id: account.id, 
-        status: newStatus, 
-        reason
-      });
-
       // PRESERVE important statuses - don't overwrite banned/restricted/frozen/cooldown
       const preserveStatuses = ['banned', 'restricted', 'frozen', 'cooldown'];
       const shouldPreserveStatus = preserveStatuses.includes(account.status);
       
-      // Only update status - profile data should be fetched via Python runner
       const updateData: Record<string, unknown> = { 
-        // Only update status if not a preserved status, or if going from active to disconnected
         ...(shouldPreserveStatus ? {} : { status: newStatus }),
         last_active: newStatus === 'active' ? new Date().toISOString() : null
       };
+
+      return { status: newStatus, reason, updateData };
+    };
+
+    // Process accounts in parallel batches for maximum efficiency
+    const processAccount = async (account: any) => {
+      const { status, reason, updateData } = validateSession(account);
+      
+      results.push({ id: account.id, status, reason });
 
       // Update account in database
       const { error: updateError } = await supabase
@@ -125,12 +131,19 @@ serve(async (req) => {
       if (updateError) {
         console.error(`Error updating account ${account.id}:`, updateError);
       }
+    };
+
+    // Process in batches with bounded concurrency
+    const accountList = accounts || [];
+    for (let i = 0; i < accountList.length; i += BATCH_SIZE) {
+      const batch = accountList.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(processAccount));
     }
 
     const validCount = results.filter(r => r.status === 'active').length;
     const invalidCount = results.filter(r => r.status !== 'active').length;
 
-    console.log(`Verification complete: ${validCount} valid, ${invalidCount} invalid`);
+    console.log(`[verify-sessions] Complete: ${validCount} valid, ${invalidCount} invalid`);
 
     return new Response(
       JSON.stringify({ 
