@@ -520,10 +520,10 @@ serve(async (req) => {
       }
 
       const campaignIds = runningCampaigns.map(c => c.id);
-      // ========== DYNAMIC API SYSTEM ==========
-      // Each message/task gets a completely fresh, unique api_id and api_hash
-      // No API tracking, no limits, no reuse - every request is unique
-      console.log(`[get-batch-tasks] DYNAMIC API SYSTEM: Each message gets unique credentials (no tracking/limits)`);
+      // ========== ROUND-ROBIN API SYSTEM ==========
+      // Each task gets an API from the credential pool using round-robin rotation
+      // APIs are selected by lowest usage_count for even distribution
+      console.log(`[get-batch-tasks] ROUND-ROBIN API: Even distribution across credential pool`);
 
       // ========== CAMPAIGN-SPECIFIC DAILY LIMIT PER ACCOUNT ==========
       // Count how many campaign messages each account has sent TODAY (UTC)

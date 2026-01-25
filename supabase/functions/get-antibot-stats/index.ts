@@ -19,14 +19,14 @@ serve(async (req) => {
 
     console.log("[get-antibot-stats] Fetching anti-ban system statistics");
 
-    // Phase 1: Dynamic API System (no stored credentials needed)
-    // The system now generates unique api_id + api_hash per request
+    // Phase 1: Round-Robin API Rotation System
+    // Real API credentials from telegram_api_credentials table rotated evenly across tasks
     const dynamicApiStatus = {
-      system: "Dynamic Per-Request API",
+      system: "Round-Robin API Rotation",
       status: "active",
-      description: "Each task gets unique api_id (8-digit) + api_hash (32-char hex)",
-      capacity: "90M+ unique combinations",
-      rate_limits: "None (no API reuse)",
+      description: "Tasks use real APIs from credential pool with even distribution",
+      capacity: "Based on configured API count",
+      rate_limits: "Even load across all APIs",
     };
 
     // Phase 2: Proxy Mapping Stats
