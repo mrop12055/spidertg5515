@@ -1508,11 +1508,21 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                 else:
                     success, error, meta = False, f"Unexpected return: {type(send_res)}", None
                 
-                # Check if this is a sender-side issue (should retry with different account)
-                # PeerFlood = too many messages to new users, sender needs 12h cooldown but can chat with existing contacts
-                is_sender_error = error and any(x in error.lower() for x in [
+                # SEPARATE classification of errors:
+                # 1. Rate limits (PeerFlood, Too Many Requests) = sender issue, restrict account 12h
+                # 2. Privacy restrictions = recipient blocks sender, retry different account but DON'T restrict
+                # 3. Connection errors = network/proxy issue, DON'T restrict
+                error_lower = (error or "").lower()
+                
+                # Rate limit errors - sender needs 12h cooldown (Telegram anti-spam)
+                is_rate_limit = any(x in error_lower for x in [
+                    "too many requests", "peerflood", "flood"
+                ])
+                
+                # Privacy errors - recipient blocks sender, but sender is NOT rate limited
+                is_privacy_error = any(x in error_lower for x in [
                     "privacyrestricted", "privacy restricted", "userprivacyrestricted",
-                    "too many requests", "sendmessagerequest", "peerflood"
+                    "privacy_restricted", "user_privacy_restricted"
                 ])
                 
                 # Get API credential ID
@@ -1534,10 +1544,18 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                     "campaign_name": campaign_name,
                 }
                 
-                if is_sender_error:
+                # Set appropriate flags based on error type
+                if is_rate_limit:
+                    # Rate limit - restrict account AND retry with different account
                     result["skip_account"] = True
                     result["retry_with_different_account"] = True
-                    print(f"    ⚠ [{account_phone}] → {recipient}: {error} (will retry with diff account)")
+                    result["is_rate_limit"] = True  # Signal to backend to restrict account
+                    print(f"    ⚠ [{account_phone}] → {recipient}: {error} (RATE LIMIT - will restrict 12h)")
+                elif is_privacy_error:
+                    # Privacy error - retry with different account but DON'T restrict
+                    result["skip_account"] = True
+                    result["retry_with_different_api"] = True  # Use API retry path (no restriction)
+                    print(f"    ⚠ [{account_phone}] → {recipient}: {error} (privacy - will try diff account)")
                 elif success:
                     print(f"    ✓ [{account_phone}] → {recipient}")
                 else:
