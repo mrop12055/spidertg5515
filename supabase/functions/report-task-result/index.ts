@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { recordApiUsage } from "../_shared/api-helper.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -182,6 +183,12 @@ serve(async (req) => {
         let isNewConversation = false; // Track if this is first message to a new contact
 
         if (success) {
+          // RECORD API USAGE ON SUCCESS (this is the only place usage is incremented)
+          if (api_credential_id) {
+            await recordApiUsage(supabase, api_credential_id);
+            console.log(`[report-task-result] Recorded API usage for ${api_credential_id}`);
+          }
+          
           // For campaign messages: Create conversation and message ONLY on successful send
           if (campaign_recipient_id && account_id) {
             // FALLBACK: If content/recipient_phone/name are missing, fetch from campaign_recipients

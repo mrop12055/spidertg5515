@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { recordBatchApiUsage } from "../_shared/api-helper.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -87,6 +88,16 @@ serve(async (req) => {
       
       // ========== PARALLEL PROCESS SUCCESSES ==========
       if (successResults.length > 0) {
+        // RECORD API USAGE ON SUCCESS (this is the only place usage is incremented)
+        const apiCredentialIds = successResults
+          .map(r => r.api_credential_id)
+          .filter((id): id is string => !!id);
+        
+        if (apiCredentialIds.length > 0) {
+          await recordBatchApiUsage(supabase, apiCredentialIds);
+          console.log(`[report-batch-results] Recorded API usage for ${apiCredentialIds.length} successful sends`);
+        }
+        
         const withApiId = successResults.filter((r) => r.api_credential_id);
         const withoutApiId = successResults.filter((r) => !r.api_credential_id);
 

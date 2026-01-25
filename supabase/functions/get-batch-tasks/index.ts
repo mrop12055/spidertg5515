@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { getNextApiCredential, getMultipleApiCredentials } from "../_shared/api-helper.ts";
+import { selectNextApiCredential, selectMultipleApiCredentials, getNextApiCredential, getMultipleApiCredentials } from "../_shared/api-helper.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -441,9 +441,9 @@ serve(async (req) => {
             const senderApiCred = senderAccount.telegram_api_credentials;
             const receiverApiCred = receiverAccount.telegram_api_credentials;
             
-            // ROUND-ROBIN API: Get API credentials from pool
-            const senderApi = await getNextApiCredential(supabase);
-            const receiverApi = await getNextApiCredential(supabase);
+            // ROUND-ROBIN API: Get API credentials from pool (NO INCREMENT - that happens on success)
+            const senderApi = await selectNextApiCredential(supabase);
+            const receiverApi = await selectNextApiCredential(supabase);
             
             // Skip if no API credentials available
             if (!senderApi) {
