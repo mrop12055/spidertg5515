@@ -517,99 +517,10 @@ serve(async (req) => {
       }
 
       const campaignIds = runningCampaigns.map(c => c.id);
-
-      // ========== SMART API DISTRIBUTION ==========
-      // Get 24h usage per API credential
-      const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-
-      // Get campaign recipients processed in last 24h with their API (sent, failed, or currently sending all count against quota)
-      const { data: recentSends } = await supabase
-        .from("campaign_recipients")
-        .select("api_credential_id, status, sent_at, scheduled_at")
-        .in("status", ["sent", "failed", "sending"])
-        .not("api_credential_id", "is", null)
-        .or(`sent_at.gte.${oneDayAgo},scheduled_at.gte.${oneDayAgo}`);
-
-      
-      // Count usage per API - use sent_at or scheduled_at for timing
-      const apiUsageCounts = new Map<string, number>();
-      (recentSends || []).forEach((r: any) => {
-        if (r.api_credential_id) {
-          const timestamp = r.sent_at || r.scheduled_at;
-          if (timestamp && new Date(timestamp) >= new Date(oneDayAgo)) {
-            apiUsageCounts.set(r.api_credential_id, (apiUsageCounts.get(r.api_credential_id) || 0) + 1);
-          }
-        }
-      });
-      // Load API daily limit from settings (default 80)
-      let apiDailyLimit = 80;
-      const apiLimitSetting = settingsData?.find((s: any) => s.key === "api_limits");
-      if (apiLimitSetting?.value?.dailyLimitPerApi) {
-        apiDailyLimit = (apiLimitSetting.value as { dailyLimitPerApi?: number }).dailyLimitPerApi || 80;
-      }
-
-      console.log(`[get-batch-tasks] API usage (24h): ${JSON.stringify(Object.fromEntries(apiUsageCounts))}, limit: ${apiDailyLimit}`);
-
-      // Get all available APIs sorted by usage (least used first)
-      const { data: allApis } = await supabase
-        .from("telegram_api_credentials")
-        .select("id, name, is_active")
-        .eq("is_active", true);
-      
-      const availableApis = (allApis || [])
-        .filter((api: any) => (apiUsageCounts.get(api.id) || 0) < apiDailyLimit)
-        .sort((a: any, b: any) => {
-          const usageA = apiUsageCounts.get(a.id) || 0;
-          const usageB = apiUsageCounts.get(b.id) || 0;
-          return usageA - usageB; // Least used first
-        });
-      
-      console.log(`[get-batch-tasks] Available APIs: ${availableApis.map((a: any) => `${a.name}:${apiUsageCounts.get(a.id) || 0}/${apiDailyLimit}`).join(', ')}`);
-      
-      // If no APIs available, skip all accounts
-      if (availableApis.length === 0) {
-        console.log(`[get-batch-tasks] No APIs available under limit - skipping all accounts`);
-        return new Response(JSON.stringify({ tasks: [], message: "All APIs at daily limit" }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // SMART API DISTRIBUTION: Assign least-used API DYNAMICALLY per account
-      // Track incremental usage so each account gets the API with lowest current+pending usage
-      const dynamicApiUsage = new Map<string, number>();
-      availableApis.forEach((api: any) => {
-        dynamicApiUsage.set(api.id, apiUsageCounts.get(api.id) || 0);
-      });
-      
-      const accountsWithAvailableApi = usableAccounts.map((a: any) => {
-        // Find the API with CURRENT lowest usage (including pending assignments from this loop)
-        let bestApi = null;
-        let lowestUsage = Infinity;
-        
-        for (const api of availableApis) {
-          const currentUsage = dynamicApiUsage.get(api.id) || 0;
-          if (currentUsage < lowestUsage && currentUsage < apiDailyLimit) {
-            lowestUsage = currentUsage;
-            bestApi = api;
-          }
-        }
-        
-        if (!bestApi) {
-          // All APIs at limit - use original account's API or first available
-          bestApi = availableApis[0];
-        }
-        
-        // Increment the dynamic usage counter for this API
-        dynamicApiUsage.set(bestApi.id, (dynamicApiUsage.get(bestApi.id) || 0) + 1);
-        
-        if (a.api_credential_id !== bestApi.id) {
-          console.log(`[get-batch-tasks] SMART ROUTE: ${a.phone_number} -> ${bestApi.name} (${lowestUsage}/${apiDailyLimit})`);
-        }
-        
-        return { ...a, api_credential_id: bestApi.id, _bestApi: bestApi };
-      });
-
-      console.log(`[get-batch-tasks] Dynamic API distribution: ${JSON.stringify(Object.fromEntries(dynamicApiUsage))}`);
+      // ========== DYNAMIC API SYSTEM ==========
+      // Each message/task gets a completely fresh, unique api_id and api_hash
+      // No API tracking, no limits, no reuse - every request is unique
+      console.log(`[get-batch-tasks] DYNAMIC API SYSTEM: Each message gets unique credentials (no tracking/limits)`);
 
       // ========== CAMPAIGN-SPECIFIC DAILY LIMIT PER ACCOUNT ==========
       // Count how many campaign messages each account has sent TODAY (UTC)
@@ -649,8 +560,8 @@ serve(async (req) => {
       console.log(`[get-batch-tasks] Campaign sends today per account: ${JSON.stringify(Object.fromEntries(accountCampaignSentToday))}, limit: ${campaignMessagesPerAccountPerDay}`);
 
       // Filter accounts for campaigns using campaign-specific per-account limit
-      // Also calculate remaining quota for each account
-      const campaignUsableAccounts = accountsWithAvailableApi.filter((a: any) => {
+      // DYNAMIC API: No API filtering needed - each message gets unique credentials
+      const campaignUsableAccounts = usableAccounts.filter((a: any) => {
         const sentTodayCampaign = accountCampaignSentToday.get(a.id) || 0;
         if (sentTodayCampaign >= campaignMessagesPerAccountPerDay) {
           console.log(`[get-batch-tasks] SKIP account ${a.phone_number} - already sent ${sentTodayCampaign}/${campaignMessagesPerAccountPerDay} campaign messages today`);
@@ -659,8 +570,7 @@ serve(async (req) => {
         return true;
       });
 
-      // Track API usage in this batch to avoid over-assigning
-      const batchApiUsage = new Map<string, number>();
+      // DYNAMIC API: No API tracking needed - each message gets unique credentials
       
       // CRITICAL: Track per-account usage WITHIN THIS BATCH to enforce daily limits
       // This prevents assigning 2 tasks to an account that only has 1 slot remaining
@@ -789,55 +699,19 @@ serve(async (req) => {
             .limit(toRelease);
 
           if (queuedToRelease && queuedToRelease.length > 0) {
-            // BATCH API ASSIGNMENT: Distribute across APIs with lowest usage
-            // Prepare batch update - group by API for efficiency
-            const recipientApiAssignments: { id: string; apiId: string | null }[] = [];
-            
-            for (const queued of queuedToRelease) {
-              // Find API with current lowest usage (including what we've assigned)
-              let bestApiId = availableApis[0]?.id || null;
-              let lowestUsage = Infinity;
-              
-              for (const api of availableApis) {
-                const currentUsage = dynamicApiUsage.get(api.id) || 0;
-                if (currentUsage < lowestUsage && currentUsage < apiDailyLimit) {
-                  lowestUsage = currentUsage;
-                  bestApiId = api.id;
-                }
-              }
-              
-              // Increment the dynamic usage counter
-              if (bestApiId) {
-                dynamicApiUsage.set(bestApiId, (dynamicApiUsage.get(bestApiId) || 0) + 1);
-              }
-              
-              recipientApiAssignments.push({ id: queued.id, apiId: bestApiId });
-            }
-            
-            // Group recipients by API for batch updates
-            const recipientsByApi = new Map<string | null, string[]>();
-            for (const assignment of recipientApiAssignments) {
-              const key = assignment.apiId;
-              if (!recipientsByApi.has(key)) {
-                recipientsByApi.set(key, []);
-              }
-              recipientsByApi.get(key)!.push(assignment.id);
-            }
-            
-            // Execute batch updates in parallel (one update per API group)
+            // DYNAMIC API: No API assignment needed - each message gets unique credentials at task time
             const nowIso = new Date().toISOString();
-            await Promise.all(Array.from(recipientsByApi.entries()).map(async ([apiId, recipientIds]) => {
-              await supabase
-                .from("campaign_recipients")
-                .update({ 
-                  status: "pending",
-                  scheduled_at: nowIso,
-                  api_credential_id: apiId
-                })
-                .in("id", recipientIds);
-            }));
+            const recipientIds = queuedToRelease.map((q: any) => q.id);
+            
+            await supabase
+              .from("campaign_recipients")
+              .update({ 
+                status: "pending",
+                scheduled_at: nowIso
+              })
+              .in("id", recipientIds);
 
-            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} in BATCH (limit: ${effectiveReleaseLimit}, in-progress: ${currentInProgress})`);
+            console.log(`[get-batch-tasks] QUEUE RELEASE: Campaign ${campaign.id} - released ${queuedToRelease.length} (limit: ${effectiveReleaseLimit}, in-progress: ${currentInProgress})`);
           }
         }
       }));
@@ -957,7 +831,7 @@ serve(async (req) => {
 
       // ========== OPTIMIZED BATCH PROCESSING ==========
       // Collect all updates to perform in single batch at the end
-      const recipientsToUpdate: { id: string; account_id: string; api_credential_id: string | null }[] = [];
+      const recipientsToUpdate: { id: string; account_id: string }[] = [];
       const recipientsToFail: { id: string; campaign_id: string; failedCount: number }[] = [];
 
       if (pendingRecipients && pendingRecipients.length > 0) {
@@ -966,10 +840,9 @@ serve(async (req) => {
 
           const campaign = recipient.campaigns;
           const failedAccountIds: string[] = recipient.failed_account_ids || [];
-          const failedApiIds: string[] = recipient.failed_api_ids || [];  // Track failed APIs
+          // DYNAMIC API: failedApiIds no longer used - each message gets unique credentials
           
           // Find eligible account - MUST check remaining quota (daily limit - sent today - batch assigned)
-          // ALSO must check that account's API is NOT in failedApiIds
           let account = null;
           
           if (recipient.sent_by_account_id) {
@@ -979,13 +852,6 @@ serve(async (req) => {
                   if (a.id !== recipient.sent_by_account_id) return false;
                   // CRITICAL: Check remaining quota instead of just usedAccountIds
                   if (getRemainingAccountQuota(a.id) <= 0) return false;
-                  // CRITICAL: Skip if this account's API already failed for this recipient
-                  if (a.api_credential_id && failedApiIds.includes(a.api_credential_id)) return false;
-                  if (a.api_credential_id) {
-                    const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
-                    const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
-                    if (totalUsage >= apiDailyLimit) return false;
-                  }
                   return true;
                 })
               : null;
@@ -995,45 +861,29 @@ serve(async (req) => {
             // ROUND-ROBIN DISTRIBUTION: Prioritize accounts with LEAST batch usage first
             // This ensures even distribution across accounts (1 message each before reusing)
             const sortedAccounts = [...campaignUsableAccounts].sort((a: any, b: any) => {
-              // PRIMARY: Sort by batch usage (least used in this batch first)
+              // Sort by batch usage (least used in this batch first)
               const batchUsageA = batchAccountUsage.get(a.id) || 0;
               const batchUsageB = batchAccountUsage.get(b.id) || 0;
-              if (batchUsageA !== batchUsageB) {
-                return batchUsageA - batchUsageB;
-              }
-              // SECONDARY: Sort by API usage for load balancing
-              const apiUsageA = (apiUsageCounts.get(a.api_credential_id) || 0) + (batchApiUsage.get(a.api_credential_id) || 0);
-              const apiUsageB = (apiUsageCounts.get(b.api_credential_id) || 0) + (batchApiUsage.get(b.api_credential_id) || 0);
-              return apiUsageA - apiUsageB;
+              return batchUsageA - batchUsageB;
             });
             
             account = sortedAccounts.find((a: any) => {
               // CRITICAL: Check remaining quota instead of just usedAccountIds
               if (getRemainingAccountQuota(a.id) <= 0) return false;
               if (failedAccountIds.includes(a.id)) return false;
-              // CRITICAL: Skip accounts whose API already failed for this recipient
-              if (a.api_credential_id && failedApiIds.includes(a.api_credential_id)) {
-                return false;
-              }
-              if (a.api_credential_id) {
-                const batchUsed = batchApiUsage.get(a.api_credential_id) || 0;
-                const totalUsage = (apiUsageCounts.get(a.api_credential_id) || 0) + batchUsed;
-                if (totalUsage >= apiDailyLimit) return false;
-              }
               return true;
             });
           }
 
           if (!account) {
-            // Check if any accounts have remaining quota (excluding failed ones AND failed APIs)
+            // DYNAMIC API: Only check if accounts have remaining quota (no API checks)
             const eligibleAccounts = campaignUsableAccounts.filter((a: any) => 
               !failedAccountIds.includes(a.id) && 
-              getRemainingAccountQuota(a.id) > 0 &&
-              (!a.api_credential_id || !failedApiIds.includes(a.api_credential_id))
+              getRemainingAccountQuota(a.id) > 0
             );
             
-            if (eligibleAccounts.length === 0 && (failedAccountIds.length > 0 || failedApiIds.length > 0)) {
-              console.log(`[get-batch-tasks] Recipient ${recipient.id} FAILED - no eligible accounts (failed accounts: ${failedAccountIds.length}, failed APIs: ${failedApiIds.length})`);
+            if (eligibleAccounts.length === 0 && failedAccountIds.length > 0) {
+              console.log(`[get-batch-tasks] Recipient ${recipient.id} FAILED - no eligible accounts (failed accounts: ${failedAccountIds.length})`);
               recipientsToFail.push({ 
                 id: recipient.id, 
                 campaign_id: recipient.campaign_id, 
@@ -1043,21 +893,10 @@ serve(async (req) => {
             continue;
           }
 
-          // Log when assigning after API retry
-          if (failedApiIds.length > 0) {
-            console.log(`[get-batch-tasks] Recipient ${recipient.id} assigned to account ${account.phone_number} with API ${account.api_credential_id} (avoiding ${failedApiIds.length} failed APIs)`);
-          }
-
-          // Use the dynamically assigned API (_bestApi) for smart distribution
-          // This overrides the account's original api_credential_id for campaign tasks
-          const dynamicApiId = account._bestApi?.id || account.api_credential_id;
-          const dynamicApiCred = account._bestApi || account.telegram_api_credentials;
-
-          // Collect for batch update
+          // Collect for batch update (no API credential tracking)
           recipientsToUpdate.push({
             id: recipient.id,
-            account_id: account.id,
-            api_credential_id: dynamicApiId
+            account_id: account.id
           });
 
           // CRITICAL: Track account usage in this batch to enforce daily limits
@@ -1065,14 +904,6 @@ serve(async (req) => {
             account.id,
             (batchAccountUsage.get(account.id) || 0) + 1
           );
-
-          // Track API usage in this batch - use the DYNAMIC API
-          if (dynamicApiId) {
-            batchApiUsage.set(
-              dynamicApiId,
-              (batchApiUsage.get(dynamicApiId) || 0) + 1
-            );
-          }
 
           // Personalize message
           const personalizedMessage = (campaign.message_template || '')
@@ -1135,14 +966,13 @@ serve(async (req) => {
       // CRITICAL: Set scheduled_at to NOW when claiming, so stuck recovery works correctly
       const claimTime = new Date().toISOString();
       if (recipientsToUpdate.length > 0) {
-        // Group by account+api combo and update in batches
+        // Update in batches (no API credential tracking)
         const updatePromises = recipientsToUpdate.map(r =>
           supabase
             .from("campaign_recipients")
             .update({ 
               status: "sending", 
-              sent_by_account_id: r.account_id, 
-              api_credential_id: r.api_credential_id,
+              sent_by_account_id: r.account_id,
               scheduled_at: claimTime  // CRITICAL: Set claim time for stuck recovery
             })
             .eq("id", r.id)
@@ -1201,8 +1031,7 @@ serve(async (req) => {
         delay_after: delayAfter,
         more_pending: morePending,
         accounts_available: campaignUsableAccounts.length,
-        api_usage: Object.fromEntries(apiUsageCounts),
-        api_limit: apiDailyLimit,
+        dynamic_api: true, // DYNAMIC API SYSTEM - no tracking/limits
         stop_signal: tasks.length === 0 && !morePending
       }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -1268,8 +1097,8 @@ serve(async (req) => {
             const account = usableAccounts.find((a: any) => a.id === accountId);
             if (!account) continue;
             
-            // Generate fresh API credentials for this batch
-            const freshApi = generateApiCredentials();
+            // DYNAMIC API: Account-level credentials for connection
+            const accountFreshApi = generateApiCredentials();
             
             batches.push({
               account: {
@@ -1281,8 +1110,8 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: freshApi.api_id,
-                api_hash: freshApi.api_hash,
+                api_id: accountFreshApi.api_id,
+                api_hash: accountFreshApi.api_hash,
                 proxy_id: account.proxy_id,
               },
               proxy: account.proxies ? {
@@ -1294,8 +1123,10 @@ serve(async (req) => {
                 proxy_type: account.proxies.proxy_type,
                 type: account.proxies.proxy_type,
               } : null,
+              // CRITICAL: Each message gets its OWN unique API credentials
               messages: msgs.map(msg => {
                 const conv = msg.conversations;
+                const messageFreshApi = generateApiCredentials();  // UNIQUE per message!
                 return {
                   id: msg.id,
                   content: msg.content,
@@ -1305,6 +1136,8 @@ serve(async (req) => {
                   recipient_username: conv.recipient_username,
                   recipient_phone: conv.recipient_phone,
                   recipient_name: conv.recipient_name,
+                  api_id: messageFreshApi.api_id,      // UNIQUE per message
+                  api_hash: messageFreshApi.api_hash,  // UNIQUE per message
                 };
               }),
             });

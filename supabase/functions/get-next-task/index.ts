@@ -148,8 +148,10 @@ serve(async (req) => {
             if (!account) continue;
             
             const proxy = Array.isArray(account.proxies) ? account.proxies[0] : account.proxies;
-            // Generate fresh API credentials for this batch
-            const freshApi = generateApiCredentials();
+            
+            // DYNAMIC API: Each MESSAGE gets its own unique api_id and api_hash
+            // Account-level credentials are for connection only (Python uses first message's API)
+            const accountFreshApi = generateApiCredentials();
             
             batches.push({
               account: {
@@ -161,8 +163,8 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: freshApi.api_id,
-                api_hash: freshApi.api_hash,
+                api_id: accountFreshApi.api_id,  // Default for connection
+                api_hash: accountFreshApi.api_hash,
                 proxy_id: account.proxy_id,
               },
               proxy: {
@@ -174,8 +176,10 @@ serve(async (req) => {
                 proxy_type: proxy.proxy_type,
                 type: proxy.proxy_type,
               },
+              // CRITICAL: Each message gets its OWN unique API credentials
               messages: msgs.map(msg => {
                 const conv = (msg as any).conversations || {};
+                const messageFreshApi = generateApiCredentials();  // UNIQUE per message!
                 return {
                   id: msg.id,
                   content: msg.content,
@@ -186,6 +190,8 @@ serve(async (req) => {
                   recipient_username: conv.recipient_username,
                   recipient_phone: conv.recipient_phone,
                   recipient_name: conv.recipient_name,
+                  api_id: messageFreshApi.api_id,      // UNIQUE per message
+                  api_hash: messageFreshApi.api_hash,  // UNIQUE per message
                 };
               }),
             });
