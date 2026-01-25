@@ -36,10 +36,10 @@ function generateRandomApiHash(): string {
 export function generateApiCredentials(): { api_id: string; api_hash: string } {
   let api_id: string;
   
-  // Generate random 8-digit api_id (10000000-99999999)
+  // Generate random 7-8 digit api_id (1000000-99999999) to match real Telegram format
   // Keep trying until we get a unique one (within this request context)
   do {
-    api_id = String(Math.floor(Math.random() * 90000000) + 10000000);
+    api_id = String(Math.floor(Math.random() * 99000000) + 1000000);
   } while (usedApiIds.has(api_id));
   
   usedApiIds.add(api_id);
