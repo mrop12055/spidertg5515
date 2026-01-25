@@ -581,6 +581,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
     # Python runners NEVER generate fingerprints locally to prevent duplicates/invalid data
     device_model = account.get("device_model")
     system_version = account.get("system_version")
+    build_id = account.get("build_id")  # Manufacturer-specific build ID
     app_version = account.get("app_version") or "10.14.2"
     lang_code = account.get("lang_code") or "en"
     system_lang_code = account.get("system_lang_code") or "en-US"
@@ -590,6 +591,16 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         print(f"  ⛔ [SKIP] {phone} - NO FINGERPRINT ASSIGNED (MANDATORY)")
         print(f"          → Generate fingerprint in Admin Dashboard → Accounts → Regenerate Fingerprints")
         return None
+    
+    # Enhance system_version with build_id for more authentic fingerprint
+    # Real Telegram clients often report build info alongside Android version
+    if build_id:
+        # Format: "SDK 34 (Android 14)" or include build for uniqueness
+        android_ver = system_version.replace("Android ", "")
+        sdk_map = {"15": "35", "14": "34", "13": "33", "12": "32", "11": "30", "10": "29"}
+        sdk = sdk_map.get(android_ver, "34")
+        system_version = f"SDK {sdk} ({build_id})"
+        print(f"  ✓ [FP] Using: {device_model} | {system_version}")
     else:
         print(f"  ✓ [FP] Using: {device_model} ({system_version})")
     

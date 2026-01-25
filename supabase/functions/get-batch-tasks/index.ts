@@ -345,7 +345,7 @@ serve(async (req) => {
           *,
           warmup_pairs(*),
           sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)),
-          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(id, phone_number, telegram_id, username, first_name, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status))
+          receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(id, phone_number, telegram_id, username, first_name, session_data, device_model, system_version, build_id, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(*), proxies!fk_proxy(id, host, port, username, password, proxy_type, status))
         `)
         .eq("status", "pending")
         .lte("scheduled_at", new Date().toISOString())

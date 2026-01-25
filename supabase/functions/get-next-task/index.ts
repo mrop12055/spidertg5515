@@ -103,7 +103,7 @@ serve(async (req) => {
         // Fetch all accounts at once
         const { data: accountsData } = await supabase
           .from("telegram_accounts")
-          .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)")
+          .select("id, phone_number, session_data, device_model, system_version, build_id, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)")
           .in("id", accountIds)
           .in("status", ["active", "restricted", "cooldown", "frozen"]);
         
@@ -160,6 +160,7 @@ serve(async (req) => {
                 session_data: account.session_data,
                 device_model: account.device_model,
                 system_version: account.system_version,
+                build_id: account.build_id,
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
@@ -202,7 +203,7 @@ serve(async (req) => {
           // Get all valid accounts for listening
           const { data: livechatAccounts } = await supabase
             .from("telegram_accounts")
-            .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)")
+            .select("id, phone_number, session_data, device_model, system_version, build_id, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)")
             .in("status", ["active", "restricted", "cooldown", "frozen"])
             .not("session_data", "is", null);
           
@@ -218,6 +219,7 @@ serve(async (req) => {
                 session_data: acc.session_data,
                 device_model: acc.device_model,
                 system_version: acc.system_version,
+                build_id: acc.build_id,
                 app_version: acc.app_version,
                 lang_code: acc.lang_code,
                 system_lang_code: acc.system_lang_code,
@@ -254,7 +256,7 @@ serve(async (req) => {
         for (const msg of pendingMessages) {
           const { data: account } = await supabase
             .from("telegram_accounts")
-            .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
+            .select("id, phone_number, session_data, device_model, system_version, build_id, app_version, lang_code, system_lang_code, api_id, api_hash, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(host, port, username, password, proxy_type, status)")
             .eq("id", msg.account_id)
             .in("status", ["active", "restricted", "cooldown", "frozen"])
             .single();
@@ -293,6 +295,7 @@ serve(async (req) => {
                 session_data: account.session_data,
                 device_model: account.device_model,
                 system_version: account.system_version,
+                build_id: account.build_id,
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
@@ -318,7 +321,7 @@ serve(async (req) => {
       // Get accounts for listening to replies
       const { data: livechatAccounts } = await supabase
         .from("telegram_accounts")
-        .select("id, phone_number, session_data, device_model, system_version, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)")
+        .select("id, phone_number, session_data, device_model, system_version, build_id, app_version, lang_code, system_lang_code, api_id, api_hash, proxy_id, telegram_api_credentials(api_id, api_hash), proxies!fk_proxy(id, host, port, username, password, proxy_type, status)")
         .in("status", ["active", "restricted", "cooldown", "frozen"])
         .not("session_data", "is", null);
 
@@ -334,6 +337,7 @@ serve(async (req) => {
             session_data: acc.session_data,
             device_model: acc.device_model,
             system_version: acc.system_version,
+            build_id: acc.build_id,
             app_version: acc.app_version,
             lang_code: acc.lang_code,
             system_lang_code: acc.system_lang_code,
@@ -445,7 +449,7 @@ serve(async (req) => {
     // OPTIMIZED: Single query for ALL account statuses instead of 4 separate queries
     // This reduces DB round-trips from 4 to 1, dramatically improving response time
     const ACCOUNT_WITH_JOINS_SELECT =
-      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,last_campaign_send_at,auto_disabled,success_rate,proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
+      "id,phone_number,status,proxy_id,session_data,api_id,api_hash,device_model,system_version,build_id,app_version,lang_code,system_lang_code,first_name,last_name,username,telegram_id,created_at,last_active,messages_sent_today,daily_limit,restricted_until,ban_reason,last_campaign_send_at,auto_disabled,success_rate,proxies!fk_proxy(id,host,port,username,password,proxy_type,status,country,detected_country,response_time,last_checked)" as const;
 
     // Single query for all statuses - much faster than 4 separate queries
     const { data: allAccountsRaw, error: allAccountsError } = await supabase
