@@ -1,7 +1,9 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
+import { useAccounts } from '@/hooks/useAccounts';
+import { useProxies } from '@/hooks/useProxies';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -37,6 +39,7 @@ import { Progress } from '@/components/ui/progress';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { CountdownTimer } from '@/components/ui/countdown-timer';
+import { Skeleton } from '@/components/ui/skeleton';
 
 // Status options for stat cards (merged categories)
 const statCardOptions: { value: string; label: string; color: string; icon: React.ReactNode }[] = [
@@ -79,8 +82,12 @@ const GROUP_COLORS = [
 ];
 
 const Accounts: React.FC = () => {
+  // Use cached hooks for fast data loading
+  const { accounts, isLoading, isFetching, refetch: refetchAccounts } = useAccounts();
+  const { proxies, refetch: refetchProxies } = useProxies();
+  
   const { 
-    accounts, proxies, refreshData, isLoading, 
+    refreshData,
     accountTasksProgress, setAccountTasksProgress, isAccountTaskRunning, setIsAccountTaskRunning, 
     setShowAccountTaskLogs, accountTaskHistory, setAccountTaskHistory
   } = useTelegram();
@@ -186,48 +193,8 @@ const Accounts: React.FC = () => {
   const [proxyErrors, setProxyErrors] = useState<Map<string, { error_type: string; error_message: string; created_at: string }>>(new Map());
   const [proxyErrorFilter, setProxyErrorFilter] = useState<string>('all'); // 'all' | 'with_error' | 'no_error'
   
-  // Realtime subscription for instant account updates - debounced to prevent flickering
-  const realtimeRefreshRef = useRef<NodeJS.Timeout | null>(null);
-  const isInitialMount = useRef(true);
-  
-  useEffect(() => {
-    const channel = supabase
-      .channel('accounts-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'telegram_accounts' },
-        (payload) => {
-          // Skip refresh on initial subscription sync
-          if (isInitialMount.current) {
-            isInitialMount.current = false;
-            return;
-          }
-          
-          console.log('Account change detected:', payload.eventType);
-          
-          // Debounce refresh calls to prevent rapid fire
-          if (realtimeRefreshRef.current) {
-            clearTimeout(realtimeRefreshRef.current);
-          }
-          realtimeRefreshRef.current = setTimeout(() => {
-            refreshData();
-          }, 500); // Wait 500ms before refreshing
-        }
-      )
-      .subscribe();
-
-    // Mark initial mount complete after a short delay
-    setTimeout(() => {
-      isInitialMount.current = false;
-    }, 1000);
-
-    return () => {
-      if (realtimeRefreshRef.current) {
-        clearTimeout(realtimeRefreshRef.current);
-      }
-      supabase.removeChannel(channel);
-    };
-  }, [refreshData]);
+  // NOTE: Realtime subscription for accounts is now handled by useAccounts hook
+  // which provides optimistic updates directly to the cache
 
   
   // Realtime subscription for SpamBot check tasks
@@ -2571,8 +2538,14 @@ const Accounts: React.FC = () => {
           description={`Manage your ${stats.total} Telegram accounts`}
           icon={Phone}
           action={
-            <div className="flex gap-2">
-              <Button variant="outline" onClick={refreshData} disabled={isLoading} size="sm" className="gap-2">
+            <div className="flex items-center gap-2">
+              {isFetching && !isLoading && (
+                <span className="text-xs text-muted-foreground flex items-center gap-1">
+                  <Loader2 className="w-3 h-3 animate-spin" />
+                  Syncing...
+                </span>
+              )}
+              <Button variant="outline" onClick={() => { refetchAccounts(); refetchProxies(); }} disabled={isLoading} size="sm" className="gap-2">
                 <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
                 Refresh
               </Button>
@@ -2730,54 +2703,70 @@ const Accounts: React.FC = () => {
 
         {/* Stats Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <Card className="cursor-pointer hover:border-primary/30 transition-colors" onClick={() => setStatusFilter('all')}>
-            <CardContent className="p-3">
-              <div className="text-2xl font-bold">{stats.total}</div>
-              <div className="text-xs text-muted-foreground">Total</div>
-            </CardContent>
-          </Card>
-          {statCardOptions.map(opt => (
-            <Card 
-              key={opt.value} 
-              className={cn(
-                "cursor-pointer hover:border-primary/30 transition-colors",
-                statusFilter === opt.value && "border-primary"
-              )}
-              onClick={() => setStatusFilter(statusFilter === opt.value ? 'all' : opt.value)}
-            >
-              <CardContent className="p-3">
-                <div className="flex items-center justify-between">
-                  <div className="text-2xl font-bold">{stats[opt.value as keyof typeof stats]}</div>
-                  <span className={cn("p-1.5 rounded-md", opt.color)}>{opt.icon}</span>
-                </div>
-                <div className="text-xs text-muted-foreground">{opt.label}</div>
-              </CardContent>
-            </Card>
-          ))}
-          {/* Proxy Error Stat Card */}
-          {(() => {
-            const accountsWithProxyError = accounts.filter(a => a.proxyId && proxyErrors.has(a.proxyId)).length;
-            if (accountsWithProxyError === 0) return null;
-            return (
-              <Card 
-                className={cn(
-                  "cursor-pointer hover:border-status-banned/50 transition-colors border-status-banned/30",
-                  proxyErrorFilter === 'with_error' && "border-status-banned ring-1 ring-status-banned/30"
-                )}
-                onClick={() => setProxyErrorFilter(proxyErrorFilter === 'with_error' ? 'all' : 'with_error')}
-              >
+          {isLoading ? (
+            // Skeleton loading for stats cards
+            <>
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Card key={i}>
+                  <CardContent className="p-3">
+                    <Skeleton className="h-8 w-16 mb-1" />
+                    <Skeleton className="h-3 w-12" />
+                  </CardContent>
+                </Card>
+              ))}
+            </>
+          ) : (
+            <>
+              <Card className="cursor-pointer hover:border-primary/30 transition-colors" onClick={() => setStatusFilter('all')}>
                 <CardContent className="p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-2xl font-bold text-status-banned">{accountsWithProxyError}</div>
-                    <span className="p-1.5 rounded-md bg-status-banned/15 text-status-banned">
-                      <AlertTriangle className="w-3 h-3" />
-                    </span>
-                  </div>
-                  <div className="text-xs text-status-banned">Proxy Errors</div>
+                  <div className="text-2xl font-bold">{stats.total}</div>
+                  <div className="text-xs text-muted-foreground">Total</div>
                 </CardContent>
               </Card>
-            );
-          })()}
+              {statCardOptions.map(opt => (
+                <Card 
+                  key={opt.value} 
+                  className={cn(
+                    "cursor-pointer hover:border-primary/30 transition-colors",
+                    statusFilter === opt.value && "border-primary"
+                  )}
+                  onClick={() => setStatusFilter(statusFilter === opt.value ? 'all' : opt.value)}
+                >
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-2xl font-bold">{stats[opt.value as keyof typeof stats]}</div>
+                      <span className={cn("p-1.5 rounded-md", opt.color)}>{opt.icon}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">{opt.label}</div>
+                  </CardContent>
+                </Card>
+              ))}
+              {/* Proxy Error Stat Card */}
+              {(() => {
+                const accountsWithProxyError = accounts.filter(a => a.proxyId && proxyErrors.has(a.proxyId)).length;
+                if (accountsWithProxyError === 0) return null;
+                return (
+                  <Card 
+                    className={cn(
+                      "cursor-pointer hover:border-status-banned/50 transition-colors border-status-banned/30",
+                      proxyErrorFilter === 'with_error' && "border-status-banned ring-1 ring-status-banned/30"
+                    )}
+                    onClick={() => setProxyErrorFilter(proxyErrorFilter === 'with_error' ? 'all' : 'with_error')}
+                  >
+                    <CardContent className="p-3">
+                      <div className="flex items-center justify-between">
+                        <div className="text-2xl font-bold text-status-banned">{accountsWithProxyError}</div>
+                        <span className="p-1.5 rounded-md bg-status-banned/15 text-status-banned">
+                          <AlertTriangle className="w-3 h-3" />
+                        </span>
+                      </div>
+                      <div className="text-xs text-status-banned">Proxy Errors</div>
+                    </CardContent>
+                  </Card>
+                );
+              })()}
+            </>
+          )}
         </div>
 
         {/* Bulk Actions Bar - Always visible */}
