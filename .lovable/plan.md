@@ -1,152 +1,225 @@
 
-# Plan: Remove Legacy API Generator System
+# Plan: Upgrade Campaign Runner with Advanced Telethon Code
 
-## Overview
-Clean up the codebase by removing all references to the old random API generator system. The round-robin rotation system using real API credentials from `telegram_api_credentials` table is already implemented - this cleanup removes legacy code, comments, and files.
+## Problem Analysis
 
-## Current State
-- **Database**: Contains 10 valid API credentials with round-robin columns (usage_count, last_used_at)
-- **Edge Functions**: Already using `getNextApiCredential()` from `api-helper.ts`
-- **Legacy file exists**: `supabase/functions/_shared/api-generator.ts` (should be deleted)
-- **Outdated comments**: Multiple files still describe "random generation" system
+The current Python runner in `SetupGuide.tsx` is experiencing "Contact not found on Telegram" errors. The root cause appears to be the reliance on basic `ImportContactsRequest` which:
+1. Adds contacts to the account's contact list unnecessarily
+2. Can trigger rate limits from excessive contact imports
+3. Uses basic `send_message(entity, ...)` which triggers internal peer resolution overhead
+4. Doesn't cache the `access_hash` for efficient messaging
+
+## Solution Overview
+
+Upgrade all Python templates to use **modern Telethon 2026 best practices**:
+
+1. **ResolvePhoneRequest** - Check if phone exists on Telegram WITHOUT adding to contacts
+2. **InputPeerUser with access_hash** - Direct peer addressing for maximum efficiency
+3. **Proper retry_contacts handling** - Wait and retry on soft rate limits
+4. **GetFullUserRequest** - For comprehensive user validation when needed
+
+---
+
+## Technical Changes
+
+### 1. Update `send_message_to_recipient()` Function (Lines ~960-1118)
+
+**Current Code:**
+```python
+contact = InputPhoneContact(client_id=random.randint(0, 2**31 - 1), phone=phone, ...)
+result = await client(ImportContactsRequest([contact]))
+if result.users:
+    entity = result.users[0]
+```
+
+**New Code - Multi-Strategy Resolution:**
+```python
+from telethon.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
+from telethon.tl.types import InputPeerUser
+
+# Strategy 1: Try cached entity (fastest)
+try:
+    entity = await client.get_input_entity(phone)
+except:
+    pass
+
+# Strategy 2: ResolvePhoneRequest (no contact add)
+if not entity:
+    try:
+        result = await client(ResolvePhoneRequest(phone=phone))
+        if result.users:
+            user = result.users[0]
+            entity = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+    except Exception as e:
+        if "PHONE_NOT_OCCUPIED" in str(e):
+            return False, "User not found on Telegram"
+
+# Strategy 3: ImportContactsRequest fallback (with retry_contacts handling)
+if not entity:
+    result = await client(ImportContactsRequest([contact]))
+    if result.users:
+        user = result.users[0]
+        entity = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+    elif result.retry_contacts:
+        # Telegram says "wait and retry"
+        await asyncio.sleep(30)
+        result = await client(ImportContactsRequest([contact]))
+        if result.users:
+            user = result.users[0]
+            entity = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+```
+
+### 2. Update `bulk_import_contacts()` Function (Lines ~1165-1255)
+
+**Current Code:**
+```python
+result = await client(ImportContactsRequest([contact]))
+if result.users:
+    return (account_id, recipient), result.users[0]
+```
+
+**New Code - With InputPeerUser caching:**
+```python
+from telethon.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
+from telethon.tl.types import InputPeerUser
+
+async def import_one(account_id, client, recipient, recipient_name):
+    # Try ResolvePhoneRequest first (doesn't add to contacts)
+    try:
+        result = await asyncio.wait_for(
+            client(ResolvePhoneRequest(phone=phone)), timeout=10
+        )
+        if result.users:
+            user = result.users[0]
+            # Return InputPeerUser for direct messaging (most efficient)
+            return (account_id, recipient), InputPeerUser(
+                user_id=user.id, 
+                access_hash=user.access_hash
+            )
+    except Exception as e:
+        if "PHONE_NOT_OCCUPIED" in str(e):
+            return (account_id, recipient), None
+    
+    # Fallback: ImportContactsRequest with retry_contacts handling
+    result = await client(ImportContactsRequest([contact]))
+    if result.users:
+        user = result.users[0]
+        return (account_id, recipient), InputPeerUser(
+            user_id=user.id, 
+            access_hash=user.access_hash
+        )
+    elif result.retry_contacts:
+        await asyncio.sleep(30)
+        result = await client(ImportContactsRequest([contact]))
+        if result.users:
+            user = result.users[0]
+            return (account_id, recipient), InputPeerUser(
+                user_id=user.id, 
+                access_hash=user.access_hash
+            )
+    
+    return (account_id, recipient), None
+```
+
+### 3. Update `validate_contact()` Function (Lines ~1120-1145)
+
+**Current Code:**
+```python
+result = await client(ImportContactsRequest([contact]))
+if result.users:
+    user = result.users[0]
+    return True, name, user.id
+```
+
+**New Code - Using ResolvePhoneRequest:**
+```python
+from telethon.functions.contacts import ResolvePhoneRequest
+
+async def validate_contact(client, phone):
+    """Validate contact using ResolvePhoneRequest (doesn't add to contacts)."""
+    try:
+        result = await asyncio.wait_for(
+            client(ResolvePhoneRequest(phone=phone)), timeout=15
+        )
+        if result.users:
+            user = result.users[0]
+            name = f"{user.first_name or ''} {user.last_name or ''}".strip()
+            return True, name, user.id
+        return False, None, None
+    except Exception as e:
+        if "PHONE_NOT_OCCUPIED" in str(e):
+            return False, None, None
+        # Fallback to ImportContactsRequest for compatibility
+        # ... existing code ...
+```
+
+### 4. Update `bulk_send_messages()` Function (Lines ~1258-1397)
+
+**Current Code:**
+```python
+await client.send_message(entity, varied_content, link_preview=True)
+```
+
+**New Code - Using SendMessageRequest directly:**
+```python
+from telethon.functions.messages import SendMessageRequest
+from telethon.tl.types import InputPeerUser
+
+# If entity is InputPeerUser (from our improved import), use it directly
+if isinstance(entity, InputPeerUser):
+    await asyncio.wait_for(
+        client(SendMessageRequest(
+            peer=entity,
+            message=varied_content,
+            no_webpage=False,  # Enable link preview
+            random_id=random.randint(0, 2**63 - 1)
+        )),
+        timeout=10
+    )
+else:
+    # Fallback for User objects
+    await client.send_message(entity, varied_content, link_preview=True)
+```
+
+### 5. Add New Imports to Client Manager
+
+Add these imports to the top of `client_manager.py`:
+```python
+from telethon.functions.contacts import ResolvePhoneRequest
+from telethon.functions.messages import SendMessageRequest
+from telethon.tl.types import InputPeerUser
+```
+
+### 6. Update Warmup Chat Code
+
+Apply similar changes to the warmup-related functions that import contacts.
 
 ---
 
 ## Files to Modify
 
-### 1. DELETE: `supabase/functions/_shared/api-generator.ts`
-This file generates random fake API credentials and is no longer used. Delete entirely.
+| File | Changes |
+|------|---------|
+| `src/pages/SetupGuide.tsx` | Update all Python templates: `client_manager.py`, `campaign_runner.py`, `send_message_to_recipient()`, `bulk_import_contacts()`, `bulk_send_messages()`, `validate_contact()` |
+| `supabase/functions/get-batch-tasks/index.ts` | No changes needed - backend is already correct |
+| `supabase/functions/validate-first-message/index.ts` | No changes needed |
 
 ---
 
-### 2. UPDATE: `supabase/functions/get-antibot-stats/index.ts`
-Update the API system description to reflect round-robin rotation.
+## Benefits
 
-**Lines 22-30** - Change from:
-```typescript
-const dynamicApiStatus = {
-  system: "Dynamic Per-Request API",
-  description: "Each task gets unique api_id (8-digit) + api_hash (32-char hex)",
-  capacity: "90M+ unique combinations",
-  rate_limits: "None (no API reuse)",
-};
-```
-
-To:
-```typescript
-const dynamicApiStatus = {
-  system: "Round-Robin API Rotation",
-  status: "active",
-  description: "Tasks use real APIs from credential pool with even distribution",
-  capacity: "Based on configured API count",
-  rate_limits: "Even load across all APIs",
-};
-```
+1. **Faster Contact Resolution**: `ResolvePhoneRequest` is lighter than `ImportContactsRequest`
+2. **Cleaner Contact List**: Doesn't add every recipient to account's contacts
+3. **Better Rate Limit Handling**: Proper `retry_contacts` response handling with 30s wait
+4. **Efficient Messaging**: `InputPeerUser` with cached `access_hash` avoids peer resolution overhead
+5. **Reduced API Calls**: Direct peer addressing instead of internal Telethon resolution
+6. **Improved Success Rate**: Multi-strategy fallback ensures best possible contact resolution
 
 ---
 
-### 3. UPDATE: `supabase/functions/get-next-task/index.ts`
-Update outdated comments about "dynamic API generation".
+## Implementation Notes
 
-**Lines 572-577** - Update comment block to describe round-robin:
-```typescript
-// ========== ROUND-ROBIN API SYSTEM: Real APIs rotated evenly across tasks ==========
-// APIs are selected from telegram_api_credentials table with lowest usage_count
-// This ensures: even distribution, no overloading single API, usage tracking
-const accounts = accountsUnderDailyCampaignLimit;
-
-console.log(`[get-next-task] Using round-robin API rotation from credential pool`);
-```
-
----
-
-### 4. UPDATE: `supabase/functions/get-batch-tasks/index.ts`
-Update outdated comments.
-
-**Lines 523-526** - Update comment block:
-```typescript
-// ========== ROUND-ROBIN API SYSTEM ==========
-// Each task gets an API from the credential pool using round-robin rotation
-// APIs are selected by lowest usage_count for even distribution
-console.log(`[get-batch-tasks] ROUND-ROBIN API: Even distribution across credential pool`);
-```
-
----
-
-### 5. UPDATE: `supabase/functions/process-account-upload/index.ts`
-Update outdated comments.
-
-**Lines 552-554** - Update comment:
-```typescript
-// Round-Robin API System: API credentials are assigned per-task from the pool
-// No need to assign APIs to accounts - backend handles rotation during task dispatch
-console.log(`[process-account-upload] Using round-robin API rotation (credentials from pool)`);
-```
-
----
-
-### 6. UPDATE: `src/pages/SetupGuide.tsx` (Python Templates)
-Update comments in Python code templates to reflect round-robin system.
-
-**config.py section (Lines 15-22)** - Update docstring:
-```python
-"""
-TelegramCRM - Configuration
-
-ROUND-ROBIN API SYSTEM: Each request receives API credentials from the pool.
-The backend rotates through all APIs evenly (lowest usage_count first).
-API credentials come in the task payload from get-next-task / get-batch-tasks.
-"""
-```
-
-**client_manager.py section (Lines 30-40)** - Update docstring:
-```python
-"""
-TelegramCRM - Client Manager (ROUND-ROBIN API SYSTEM)
-
-BUILD: 2026-01-25-round-robin-v1
-
-ROUND-ROBIN API CREDENTIALS:
-- Each task gets API credentials from the backend pool
-- APIs are rotated evenly (lowest usage first)
-- API credentials come in task payload (api_id, api_hash)
-- All configured APIs get equal usage distribution
-```
-
-**Lines 608-618** - Update comments in get_or_create_client:
-```python
-# ROUND-ROBIN API: Credentials come from backend pool (rotated evenly)
-# Backend assigns API with lowest usage_count from telegram_api_credentials table
-api_id = account.get("api_id")
-api_hash = account.get("api_hash")
-
-# API credentials come from task payload via round-robin selection
-if not api_id or not api_hash:
-    print(f"  [SKIP] {phone} - NO API CREDENTIALS IN TASK PAYLOAD")
-    print(f"          -> Check API credentials exist in Settings -> API Keys")
-    return None
-
-print(f"  [API] Using pool credentials: {api_id[:4]}...{api_id[-2:]}")
-```
-
----
-
-## Summary of Changes
-
-| File | Action | Description |
-|------|--------|-------------|
-| `_shared/api-generator.ts` | DELETE | Remove legacy random generator |
-| `get-antibot-stats/index.ts` | UPDATE | Change API system description |
-| `get-next-task/index.ts` | UPDATE | Fix comments (lines 572-577) |
-| `get-batch-tasks/index.ts` | UPDATE | Fix comments (lines 523-526) |
-| `process-account-upload/index.ts` | UPDATE | Fix comments (lines 552-554) |
-| `SetupGuide.tsx` | UPDATE | Fix Python template comments |
-
----
-
-## Technical Notes
-
-- No database changes needed - the 10 real API credentials are already in place
-- No functional code changes - only removing dead code and updating comments
-- Edge functions will be redeployed after changes
-- Python runner template changes require users to re-download the runner
+- All changes are in the Python code embedded as strings in `SetupGuide.tsx`
+- The Python runner will need to be re-downloaded after these changes
+- Existing sessions will continue to work - changes are backwards compatible
+- `ResolvePhoneRequest` requires the phone to be in international format (with `+`)
