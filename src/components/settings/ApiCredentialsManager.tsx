@@ -12,7 +12,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Plus, Trash2, Upload, Key, Users, CheckCircle2, XCircle, Loader2, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Upload, Key, RotateCcw, RefreshCw, Loader2, Activity } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 
 interface ApiCredential {
   id: string;
@@ -23,8 +24,9 @@ interface ApiCredential {
   accounts_count: number;
   is_active: boolean;
   created_at: string;
-  last_validated_at: string | null;
-  validation_error: string | null;
+  usage_count: number;
+  last_used_at: string | null;
+  daily_usage: number;
 }
 
 export const ApiCredentialsManager: React.FC = () => {
@@ -32,8 +34,6 @@ export const ApiCredentialsManager: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
-  const [isAssignDialogOpen, setIsAssignDialogOpen] = useState(false);
-  const [selectedCredential, setSelectedCredential] = useState<ApiCredential | null>(null);
   
   // Form state for single add
   const [formData, setFormData] = useState({
@@ -46,10 +46,6 @@ export const ApiCredentialsManager: React.FC = () => {
   // Bulk add state
   const [bulkInput, setBulkInput] = useState('');
   const [isSaving, setIsSaving] = useState(false);
-  
-  // Assignment state
-  const [unassignedAccounts, setUnassignedAccounts] = useState<{ id: string; phone_number: string }[]>([]);
-  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
 
   const fetchCredentials = async () => {
     setIsLoading(true);
@@ -57,31 +53,19 @@ export const ApiCredentialsManager: React.FC = () => {
       const { data, error } = await supabase
         .from('telegram_api_credentials')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('usage_count', { ascending: false });
       
       if (error) throw error;
-      setCredentials(data || []);
+      setCredentials((data || []).map(d => ({
+        ...d,
+        usage_count: d.usage_count || 0,
+        daily_usage: d.daily_usage || 0,
+      })));
     } catch (error) {
       console.error('Failed to fetch API credentials:', error);
       toast.error('Failed to load API credentials');
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const fetchUnassignedAccounts = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('telegram_accounts')
-        .select('id, phone_number')
-        .is('api_credential_id', null)
-        .eq('status', 'active')
-        .limit(500);
-      
-      if (error) throw error;
-      setUnassignedAccounts(data || []);
-    } catch (error) {
-      console.error('Failed to fetch unassigned accounts:', error);
     }
   };
 
@@ -104,7 +88,9 @@ export const ApiCredentialsManager: React.FC = () => {
           api_id: formData.api_id,
           api_hash: formData.api_hash,
           client_type: formData.client_type,
-          is_active: true
+          is_active: true,
+          usage_count: 0,
+          daily_usage: 0
         });
       
       if (error) throw error;
@@ -141,6 +127,8 @@ export const ApiCredentialsManager: React.FC = () => {
         api_hash: string;
         client_type: string;
         is_active: boolean;
+        usage_count: number;
+        daily_usage: number;
       }> = [];
       
       for (const line of lines) {
@@ -176,7 +164,9 @@ export const ApiCredentialsManager: React.FC = () => {
             api_id,
             api_hash,
             client_type: 'android',
-            is_active: true
+            is_active: true,
+            usage_count: 0,
+            daily_usage: 0
           });
         }
       }
@@ -206,12 +196,6 @@ export const ApiCredentialsManager: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     try {
-      // First unassign any accounts using this API
-      await supabase
-        .from('telegram_accounts')
-        .update({ api_credential_id: null, api_id: null, api_hash: null })
-        .eq('api_credential_id', id);
-      
       const { error } = await supabase
         .from('telegram_api_credentials')
         .delete()
@@ -245,113 +229,28 @@ export const ApiCredentialsManager: React.FC = () => {
     }
   };
 
-  const handleOpenAssignDialog = async (credential: ApiCredential) => {
-    setSelectedCredential(credential);
-    await fetchUnassignedAccounts();
-    setSelectedAccountIds([]);
-    setIsAssignDialogOpen(true);
-  };
-
-  const handleAssignAccounts = async () => {
-    if (!selectedCredential || selectedAccountIds.length === 0) {
-      toast.error('Please select accounts to assign');
-      return;
-    }
-    
+  const handleResetUsage = async () => {
     setIsSaving(true);
     try {
-      // Update accounts with this API credential
       const { error } = await supabase
-        .from('telegram_accounts')
-        .update({ 
-          api_credential_id: selectedCredential.id,
-          api_id: selectedCredential.api_id,
-          api_hash: selectedCredential.api_hash
-        })
-        .in('id', selectedAccountIds);
+        .from('telegram_api_credentials')
+        .update({ usage_count: 0 })
+        .eq('is_active', true);
       
       if (error) throw error;
       
-      toast.success(`Assigned ${selectedAccountIds.length} accounts`);
-      setIsAssignDialogOpen(false);
+      toast.success('Usage counts reset');
       fetchCredentials();
     } catch (error: any) {
-      console.error('Failed to assign:', error);
-      toast.error(error.message || 'Failed to assign accounts');
+      console.error('Failed to reset usage:', error);
+      toast.error(error.message || 'Failed to reset');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleAutoAssign = async () => {
-    // Auto-assign unassigned accounts to APIs with least usage
-    setIsSaving(true);
-    try {
-      // Get unassigned accounts
-      const { data: unassigned, error: fetchError } = await supabase
-        .from('telegram_accounts')
-        .select('id')
-        .is('api_credential_id', null)
-        .eq('status', 'active');
-      
-      if (fetchError) throw fetchError;
-      if (!unassigned || unassigned.length === 0) {
-        toast.info('No unassigned accounts found');
-        setIsSaving(false);
-        return;
-      }
-      
-      // Get active APIs sorted by usage
-      const activeApis = credentials.filter(c => c.is_active).sort((a, b) => a.accounts_count - b.accounts_count);
-      
-      if (activeApis.length === 0) {
-        toast.error('No active APIs available');
-        setIsSaving(false);
-        return;
-      }
-      
-      // Distribute accounts across APIs
-      let assigned = 0;
-      const apiUsage = new Map(activeApis.map(api => [api.id, api.accounts_count]));
-      
-      for (const account of unassigned) {
-        // Find API with least usage
-        let minApi = activeApis[0];
-        let minCount = apiUsage.get(minApi.id) || 0;
-        
-        for (const api of activeApis) {
-          const count = apiUsage.get(api.id) || 0;
-          if (count < minCount) {
-            minCount = count;
-            minApi = api;
-          }
-        }
-        
-        // Assign account to this API
-        const { error } = await supabase
-          .from('telegram_accounts')
-          .update({ 
-            api_credential_id: minApi.id,
-            api_id: minApi.api_id,
-            api_hash: minApi.api_hash
-          })
-          .eq('id', account.id);
-        
-        if (!error) {
-          assigned++;
-          apiUsage.set(minApi.id, (apiUsage.get(minApi.id) || 0) + 1);
-        }
-      }
-      
-      toast.success(`Auto-assigned ${assigned} accounts`);
-      fetchCredentials();
-    } catch (error: any) {
-      console.error('Failed to auto-assign:', error);
-      toast.error(error.message || 'Failed to auto-assign');
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  const totalUsage = credentials.reduce((sum, c) => sum + (c.usage_count || 0), 0);
+  const activeCount = credentials.filter(c => c.is_active).length;
 
   return (
     <Card>
@@ -360,10 +259,10 @@ export const ApiCredentialsManager: React.FC = () => {
           <div className="space-y-1">
             <CardTitle className="text-lg flex items-center gap-3">
               <Key className="w-5 h-5" />
-              API Credentials
+              API Credentials (Round-Robin)
             </CardTitle>
             <CardDescription>
-              Manage Telegram API credentials and assign them to accounts
+              APIs are rotated evenly across all tasks. Each task gets the least-used API.
             </CardDescription>
           </div>
           <div className="flex gap-2">
@@ -371,9 +270,9 @@ export const ApiCredentialsManager: React.FC = () => {
               <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
-            <Button variant="outline" size="sm" onClick={handleAutoAssign} disabled={isSaving}>
-              <Users className="w-4 h-4 mr-2" />
-              Auto-Assign
+            <Button variant="outline" size="sm" onClick={handleResetUsage} disabled={isSaving}>
+              <RotateCcw className="w-4 h-4 mr-2" />
+              Reset Usage
             </Button>
           </div>
         </div>
@@ -498,16 +397,23 @@ export const ApiCredentialsManager: React.FC = () => {
             <p className="text-xs text-muted-foreground">Total APIs</p>
           </div>
           <div className="p-3 rounded-lg border bg-card">
-            <p className="text-2xl font-bold text-green-500">
-              {credentials.filter(c => c.is_active).length}
-            </p>
-            <p className="text-xs text-muted-foreground">Active</p>
+            <p className="text-2xl font-bold text-green-500">{activeCount}</p>
+            <p className="text-xs text-muted-foreground">Active (In Rotation)</p>
           </div>
           <div className="p-3 rounded-lg border bg-card">
-            <p className="text-2xl font-bold">
-              {credentials.reduce((sum, c) => sum + (c.accounts_count || 0), 0)}
-            </p>
-            <p className="text-xs text-muted-foreground">Assigned Accounts</p>
+            <p className="text-2xl font-bold text-blue-500">{totalUsage}</p>
+            <p className="text-xs text-muted-foreground">Total Tasks</p>
+          </div>
+        </div>
+
+        {/* Round-Robin Explanation */}
+        <div className="p-3 rounded-lg border bg-muted/50 text-sm">
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <Activity className="w-4 h-4" />
+            <span>
+              <strong>Round-Robin:</strong> Each task uses the API with the lowest usage count. 
+              With {activeCount} active APIs and {totalUsage} tasks, each API handles ~{activeCount > 0 ? Math.round(totalUsage / activeCount) : 0} tasks evenly.
+            </span>
           </div>
         </div>
 
@@ -520,7 +426,7 @@ export const ApiCredentialsManager: React.FC = () => {
           <div className="text-center py-8 text-muted-foreground">
             <Key className="w-12 h-12 mx-auto mb-3 opacity-50" />
             <p>No API credentials added yet</p>
-            <p className="text-sm">Add credentials from my.telegram.org</p>
+            <p className="text-sm">Add credentials from my.telegram.org to enable messaging</p>
           </div>
         ) : (
           <div className="border rounded-lg overflow-hidden">
@@ -530,8 +436,9 @@ export const ApiCredentialsManager: React.FC = () => {
                   <TableHead>Name</TableHead>
                   <TableHead>API ID</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead className="text-center">Accounts</TableHead>
-                  <TableHead className="text-center">Status</TableHead>
+                  <TableHead className="text-center">Usage</TableHead>
+                  <TableHead className="text-center">Last Used</TableHead>
+                  <TableHead className="text-center">Active</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -544,7 +451,14 @@ export const ApiCredentialsManager: React.FC = () => {
                       <Badge variant="outline">{cred.client_type}</Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      <Badge variant="secondary">{cred.accounts_count || 0}</Badge>
+                      <Badge variant={cred.usage_count > 0 ? "default" : "secondary"}>
+                        {cred.usage_count || 0}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-center text-xs text-muted-foreground">
+                      {cred.last_used_at 
+                        ? formatDistanceToNow(new Date(cred.last_used_at), { addSuffix: true })
+                        : 'Never'}
                     </TableCell>
                     <TableCell className="text-center">
                       <Switch
@@ -553,36 +467,27 @@ export const ApiCredentialsManager: React.FC = () => {
                       />
                     </TableCell>
                     <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleOpenAssignDialog(cred)}
-                        >
-                          <Users className="w-4 h-4" />
-                        </Button>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Delete API Credential?</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                This will unassign {cred.accounts_count || 0} accounts from this API.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => handleDelete(cred.id)}>
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </div>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="sm" className="text-destructive hover:text-destructive">
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Delete API Credential?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              This API has been used {cred.usage_count || 0} times. Deleting will remove it from the rotation pool.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => handleDelete(cred.id)}>
+                              Delete
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -590,78 +495,6 @@ export const ApiCredentialsManager: React.FC = () => {
             </Table>
           </div>
         )}
-
-        {/* Assign Dialog */}
-        <Dialog open={isAssignDialogOpen} onOpenChange={setIsAssignDialogOpen}>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Assign Accounts to {selectedCredential?.name}</DialogTitle>
-              <DialogDescription>
-                Select accounts to assign to this API credential
-              </DialogDescription>
-            </DialogHeader>
-            <div className="py-4">
-              {unassignedAccounts.length === 0 ? (
-                <p className="text-center text-muted-foreground py-4">
-                  No unassigned accounts available
-                </p>
-              ) : (
-                <div className="space-y-2 max-h-60 overflow-y-auto">
-                  <div className="flex items-center gap-2 pb-2 border-b">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setSelectedAccountIds(unassignedAccounts.map(a => a.id))}
-                    >
-                      Select All ({unassignedAccounts.length})
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setSelectedAccountIds([])}
-                    >
-                      Clear
-                    </Button>
-                  </div>
-                  {unassignedAccounts.map((account) => (
-                    <div 
-                      key={account.id}
-                      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer hover:bg-muted/50 ${
-                        selectedAccountIds.includes(account.id) ? 'bg-primary/10 border border-primary/30' : ''
-                      }`}
-                      onClick={() => {
-                        setSelectedAccountIds(prev => 
-                          prev.includes(account.id) 
-                            ? prev.filter(id => id !== account.id)
-                            : [...prev, account.id]
-                        );
-                      }}
-                    >
-                      <div className={`w-4 h-4 rounded border flex items-center justify-center ${
-                        selectedAccountIds.includes(account.id) ? 'bg-primary border-primary' : 'border-muted-foreground'
-                      }`}>
-                        {selectedAccountIds.includes(account.id) && (
-                          <CheckCircle2 className="w-3 h-3 text-primary-foreground" />
-                        )}
-                      </div>
-                      <span className="font-mono text-sm">{account.phone_number}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsAssignDialogOpen(false)}>Cancel</Button>
-              <Button 
-                onClick={handleAssignAccounts} 
-                disabled={isSaving || selectedAccountIds.length === 0}
-              >
-                {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                Assign {selectedAccountIds.length} Accounts
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
       </CardContent>
     </Card>
   );
