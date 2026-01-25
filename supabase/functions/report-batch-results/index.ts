@@ -514,14 +514,15 @@ serve(async (req) => {
           }
         }
 
-        // Handle API retry (privacy errors) - track failed_api_ids AND failed_account_ids
-        // UNIFIED: max 1 retry (2 total attempts) - consistent with report-task-result
+        // Handle API retry (privacy errors) - this is usually SENDER account issue, not recipient
+        // Privacy restricted = sender account can't message new users
+        // Reset recipient for pickup by different account (no retry count penalty)
         for (const r of retryWithDifferentApi) {
           failPromises.push(
             (async () => {
               const { data: current } = await supabase
                 .from("campaign_recipients")
-                .select("failed_api_ids, failed_account_ids, retry_count")
+                .select("failed_api_ids, failed_account_ids")
                 .eq("id", r.campaign_recipient_id)
                 .single();
 
@@ -530,45 +531,28 @@ serve(async (req) => {
                 failedApiIds.push(r.api_credential_id);
               }
               
-              // ALSO track failed account (unified with report-task-result)
+              // Track failed account
               const failedAccountIds: string[] = current?.failed_account_ids || [];
               if (r.account_id && !failedAccountIds.includes(r.account_id)) {
                 failedAccountIds.push(r.account_id);
               }
 
-              const retryCount = (current?.retry_count || 0) + 1;
-              const maxRetries = 1;  // UNIFIED: 1 retry = 2 total attempts (matches report-task-result)
-
-              if (retryCount >= maxRetries) {
-                // Exhausted retries - mark as failed
-                await supabase
-                  .from("campaign_recipients")
-                  .update({
-                    status: "failed",
-                    failed_reason: `Privacy restricted after ${retryCount + 1} attempts`,
-                    sent_at: now,
-                    failed_api_ids: failedApiIds,
-                    failed_account_ids: failedAccountIds,
-                  })
-                  .eq("id", r.campaign_recipient_id);
-                console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} FAILED after ${retryCount + 1} attempts (privacy)`);
-              } else {
-                // Retry with different account AND API
-                await supabase
-                  .from("campaign_recipients")
-                  .update({
-                    status: "pending",
-                    sent_by_account_id: null,  // Clear for fresh account
-                    api_credential_id: null,   // Clear for fresh API
-                    failed_api_ids: failedApiIds,
-                    failed_account_ids: failedAccountIds,
-                    failed_reason: null,
-                    retry_count: retryCount,
-                    scheduled_at: null,
-                  })
-                  .eq("id", r.campaign_recipient_id);
-                console.log(`[report-batch-results] Privacy error - retry with different account+API (attempt ${retryCount + 1}/2, failed: ${failedAccountIds.length} accounts, ${failedApiIds.length} APIs)`);
-              }
+              // Privacy restricted is a SENDER issue, NOT recipient issue
+              // Reset for pickup by different account (no retry_count penalty)
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  failed_reason: null,
+                  failed_api_ids: failedApiIds,
+                  failed_account_ids: failedAccountIds,
+                  sent_by_account_id: null,
+                  api_credential_id: null,
+                  scheduled_at: null,
+                })
+                .eq("id", r.campaign_recipient_id);
+              
+              console.log(`[report-batch-results] Privacy error (sender issue) - reset for different account (${failedAccountIds.length} accounts tried)`);
             })()
           );
         }
