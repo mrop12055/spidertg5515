@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StatCard } from '@/components/ui/stat-card';
@@ -6,7 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { useTelegram } from '@/context/TelegramContext';
-import { supabase } from '@/integrations/supabase/client';
+import { useDashboardStats } from '@/hooks/useDashboardStats';
+import { useCampaigns } from '@/hooks/useCampaigns';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
 import { 
   LayoutDashboard, 
@@ -19,93 +20,23 @@ import {
   Users,
   TrendingUp,
   Clock,
-  Infinity,
-  Reply
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-interface DashboardStats {
-  totalAccounts: number;
-  activeAccounts: number;
-  activeProxies: number;
-  messagesToday: number;
-  messagesLifetime: number;
-  repliesLifetime: number;
-}
-
 const Dashboard: React.FC = () => {
-  const { campaigns, proxies, refreshData } = useTelegram();
+  const { refreshData } = useTelegram();
+  const { stats, isFetching: isStatsFetching, refetch: refetchStats } = useDashboardStats();
+  const { campaigns, isFetching: isCampaignsFetching, refetch: refetchCampaigns } = useCampaigns();
   const navigate = useNavigate();
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [stats, setStats] = useState<DashboardStats>({
-    totalAccounts: 0,
-    activeAccounts: 0,
-    activeProxies: 0,
-    messagesToday: 0,
-    messagesLifetime: 0,
-    repliesLifetime: 0,
-  });
-
-  const fetchStats = async () => {
-    try {
-      // Fetch account stats using COUNT to bypass 1000 row limit
-      const [
-        { count: totalAccounts },
-        { count: activeAccounts },
-        { count: activeProxies }
-      ] = await Promise.all([
-        supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }),
-        supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }).eq('status', 'active'),
-        supabase.from('proxies').select('id', { count: 'exact', head: true }).eq('status', 'active')
-      ]);
-
-      // Fetch message stats - today
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      
-      const { count: messagesToday } = await supabase
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('direction', 'outgoing')
-        .gte('created_at', today.toISOString());
-
-      // Fetch lifetime message stats
-      const { count: messagesLifetime } = await supabase
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('direction', 'outgoing');
-
-      // Fetch lifetime replies
-      const { count: repliesLifetime } = await supabase
-        .from('messages')
-        .select('id', { count: 'exact', head: true })
-        .eq('direction', 'incoming');
-
-      setStats({
-        totalAccounts: totalAccounts || 0,
-        activeAccounts: activeAccounts || 0,
-        activeProxies: activeProxies || 0,
-        messagesToday: messagesToday || 0,
-        messagesLifetime: messagesLifetime || 0,
-        repliesLifetime: repliesLifetime || 0,
-      });
-    } catch (error) {
-      console.error('Error fetching stats:', error);
-    }
-  };
-
-  useEffect(() => {
-    fetchStats();
-    const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
-  }, []);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
-    await Promise.all([refreshData(), fetchStats()]);
+    await Promise.all([refreshData(), refetchStats(), refetchCampaigns()]);
     setIsRefreshing(false);
   };
 
+  const isSyncing = isStatsFetching || isCampaignsFetching;
   const runningCampaigns = campaigns.filter(c => c.status === 'running').length;
 
   return (
@@ -115,14 +46,22 @@ const Dashboard: React.FC = () => {
         description="Monitor your TGxOP bulk messaging system"
         icon={LayoutDashboard}
         action={
-          <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-            {isRefreshing ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <RefreshCw className="w-4 h-4" />
+          <div className="flex items-center gap-2">
+            {isSyncing && !isRefreshing && (
+              <span className="text-xs text-muted-foreground flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Syncing...
+              </span>
             )}
-            <span className="ml-2">Refresh</span>
-          </Button>
+            <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
+              {isRefreshing ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <RefreshCw className="w-4 h-4" />
+              )}
+              <span className="ml-2">Refresh</span>
+            </Button>
+          </div>
         }
       />
       
