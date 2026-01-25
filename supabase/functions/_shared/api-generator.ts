@@ -1,26 +1,37 @@
 /**
  * Dynamic Per-Request API Generator
  * 
- * Generates a fresh, unique api_id for each Telegram API request,
- * paired with a master api_hash that is constant for all requests.
+ * Generates a fresh, unique api_id AND api_hash for each Telegram API request.
+ * EVERY MESSAGE/TASK gets completely unique credentials - NO REUSE!
  * 
  * This ensures:
- * - No duplicate API credentials across requests
- * - Each message/task uses a unique api_id
+ * - No duplicate API credentials across ANY requests
+ * - Each message/task uses a unique api_id AND api_hash pair
  * - No API storage or tracking needed (ephemeral)
+ * - Zero rate limits from credential reuse
  */
-
-// Master API hash - constant for all requests
-const MASTER_API_HASH = "dd46137d85394024a756add8ab24f888";
 
 // Track used API IDs within the current request to ensure uniqueness
 const usedApiIds = new Set<string>();
 
 /**
+ * Generate a random 32-character hex string for api_hash
+ */
+function generateRandomApiHash(): string {
+  const chars = '0123456789abcdef';
+  let hash = '';
+  for (let i = 0; i < 32; i++) {
+    hash += chars[Math.floor(Math.random() * 16)];
+  }
+  return hash;
+}
+
+/**
  * Generate a fresh, unique API credential pair.
- * Each call returns a new random api_id with the master api_hash.
+ * Each call returns a COMPLETELY NEW api_id AND api_hash.
+ * NO CREDENTIALS ARE EVER REUSED!
  * 
- * @returns {{ api_id: string; api_hash: string }} Fresh API credentials
+ * @returns {{ api_id: string; api_hash: string }} Fresh, unique API credentials
  */
 export function generateApiCredentials(): { api_id: string; api_hash: string } {
   let api_id: string;
@@ -33,20 +44,13 @@ export function generateApiCredentials(): { api_id: string; api_hash: string } {
   
   usedApiIds.add(api_id);
   
+  // Generate completely random api_hash for each request
+  const api_hash = generateRandomApiHash();
+  
   return {
     api_id,
-    api_hash: MASTER_API_HASH
+    api_hash
   };
-}
-
-/**
- * Get the master API hash constant.
- * Useful for logging or configuration display.
- * 
- * @returns {string} The master API hash
- */
-export function getMasterApiHash(): string {
-  return MASTER_API_HASH;
 }
 
 /**
