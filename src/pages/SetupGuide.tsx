@@ -1374,8 +1374,8 @@ async def bulk_send_messages(
             result["skip_account"] = True
         except UserPrivacyRestrictedError:
             result["error"] = "Privacy restricted"
+            result["is_rate_limit"] = True  # Treat like PeerFlood - 12h sender cooldown
             result["skip_account"] = True
-            result["retry_with_different_api"] = True
         except UserBlockedError:
             result["error"] = "User blocked"
         except ChatWriteForbiddenError:
