@@ -199,13 +199,8 @@ function randomChoice<T>(arr: T[]): T {
 // Track used fingerprints to ensure uniqueness within batch
 const usedFingerprints = new Set<string>();
 
-interface ApiCredential {
-  id: string;
-  api_id: string;
-  api_hash: string;
-  client_type: string;
-  accounts_count: number;
-}
+// Dynamic API System: No stored API credentials needed
+// Each task gets fresh unique api_id + api_hash generated at runtime
 
 // Generate realistic manufacturer-specific build IDs
 function generateBuildId(deviceModel: string, systemVersion: string): string {
@@ -420,31 +415,8 @@ function generateUniqueFingerprint(existingFingerprints: Set<string>, preferredC
   };
 }
 
-// STRICT 1:1 API ASSIGNMENT - No load balancing, each account gets unique API
-// This function is no longer used - replaced by queue-based assignment
-function selectApiCredentialFromQueue(
-  apiQueue: ApiCredential[], 
-  deviceModel: string
-): ApiCredential | null {
-  if (apiQueue.length === 0) return null;
-  
-  // Determine device type from fingerprint
-  const isIos = deviceModel.toLowerCase().includes('iphone');
-  
-  // Try to find matching client type first
-  const matchingIndex = apiQueue.findIndex(c => {
-    if (isIos) return c.client_type === 'ios' || c.client_type === 'macos';
-    return c.client_type === 'android' || c.client_type === 'desktop';
-  });
-  
-  if (matchingIndex !== -1) {
-    // Remove and return the matching API
-    return apiQueue.splice(matchingIndex, 1)[0];
-  }
-  
-  // Fallback: take the first available API
-  return apiQueue.shift() || null;
-}
+// Dynamic API System: selectApiCredentialFromQueue function removed
+// Each task now gets a fresh unique api_id + api_hash generated at runtime
 
 // Extract country code from phone number
 function extractPhoneCountry(phoneNumber: string): string | null {
@@ -577,17 +549,9 @@ serve(async (req) => {
 
     console.log(`[process-account-upload] Processing ${accounts.length} accounts`);
 
-    // Fetch API credentials for STRICT 1:1 distribution (only unassigned APIs)
-    const { data: apiCredentials } = await supabase
-      .from('telegram_api_credentials')
-      .select('*')
-      .eq('is_active', true)
-      .eq('accounts_count', 0)  // STRICT: Only APIs with NO accounts assigned
-      .order('created_at', { ascending: true });
-    
-    // Create a queue of available APIs (like proxies)
-    const apiQueue: ApiCredential[] = [...(apiCredentials || [])];
-    console.log(`[process-account-upload] Found ${apiQueue.length} unassigned API credentials for 1:1 distribution`);
+    // Dynamic API System: No need to fetch/assign API credentials
+    // Each task will get a fresh unique api_id + api_hash generated at runtime
+    console.log(`[process-account-upload] Using dynamic per-request API system (no stored credentials needed)`);
 
     // Fetch existing fingerprints to ensure uniqueness
     const { data: existingAccounts } = await supabase
@@ -622,8 +586,6 @@ serve(async (req) => {
       account_ids: [] as string[],
       proxies_assigned: 0,
       proxies_unavailable: 0,
-      apis_assigned: 0,
-      apis_unavailable: 0
     };
 
     // Fetch all existing accounts in one query for faster lookup
@@ -661,22 +623,13 @@ serve(async (req) => {
         // Check if account already exists
         const existing = existingAccountsMap.get(account.phone_number);
         
-        // STRICT 1:1 API assignment from queue (like proxies) - NEW accounts only
-        let selectedApiCredential: ApiCredential | null = null;
-        if (!existing && apiQueue.length > 0) {
-          const preferredType = Math.random() < 0.8 ? 'android' : 'ios';
-          selectedApiCredential = selectApiCredentialFromQueue(apiQueue, preferredType === 'ios' ? 'iPhone' : 'Samsung');
-          if (selectedApiCredential) {
-            results.apis_assigned++;
-          }
-        } else if (!existing && apiQueue.length === 0) {
-          results.apis_unavailable++;
-        }
+        // Dynamic API System: No API credential assignment needed
+        // Each task will get a fresh unique api_id + api_hash generated at runtime
         
-        // Generate UNIQUE device fingerprint matching the API type
+        // Generate UNIQUE device fingerprint
         const fingerprint = generateUniqueFingerprint(
           existingFingerprints, 
-          selectedApiCredential?.client_type
+          undefined
         );
         
         // Extract phone country
@@ -712,7 +665,6 @@ serve(async (req) => {
           last_active: extracted.isValid ? new Date().toISOString() : null,
           phone_country: phoneCountry,
           ...(existing ? {} : {
-            api_credential_id: selectedApiCredential?.id || null,
             warmup_phase: 0,
             warmup_started_at: new Date().toISOString(),
           }),

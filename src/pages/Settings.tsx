@@ -3,54 +3,27 @@ import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
-import { Progress } from '@/components/ui/progress';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAppSettings } from '@/hooks/useAppSettings';
-import { cn } from '@/lib/utils';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   Bell, 
   Calendar,
   Loader2,
-  Smartphone,
-  Monitor,
-  Key,
-  Plus,
-  X,
   Trash2,
   Save,
   Settings as SettingsIcon,
-  Upload,
-  RefreshCw,
-  MessageSquare
+  MessageSquare,
+  Zap,
+  CheckCircle2
 } from 'lucide-react';
-import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogDescription } from '@/components/ui/dialog';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-
-interface ApiCredential {
-  id: string;
-  name: string;
-  api_id: string;
-  api_hash: string;
-  client_type: string;
-  accounts_count: number;
-  is_active: boolean;
-  sent_24h?: number; // Dynamic: messages sent in last 24h
-  success_rate_24h?: number; // Dynamic: success rate over last 24 hours
-  sent_count_24h?: number; // Dynamic: successful sends in last 24 hours
-  failed_count_24h?: number; // Dynamic: fails in last 24 hours
-}
-
-const API_DAILY_LIMIT = 80; // Max messages per API per 24 hours
 
 const Settings: React.FC = () => {
   const { toast: showToast } = useToast();
@@ -70,261 +43,6 @@ const Settings: React.FC = () => {
     notifyOnReply: true,
     notifyOnBan: true,
   });
-
-  // API credentials
-  const [apiCredentials, setApiCredentials] = useState<ApiCredential[]>([]);
-  const [isLoadingCredentials, setIsLoadingCredentials] = useState(true);
-  
-  
-  // Bulk API import
-  const [isBulkApiOpen, setIsBulkApiOpen] = useState(false);
-  const [bulkApiInput, setBulkApiInput] = useState('');
-  const [isImportingBulk, setIsImportingBulk] = useState(false);
-  
-  // Manual redistribute
-  const [isRedistributing, setIsRedistributing] = useState(false);
-
-  // Fetch API credentials with 24h send counts and success rates
-  const fetchApiCredentials = async () => {
-    setIsLoadingCredentials(true);
-    try {
-      const { data, error } = await supabase
-        .from('telegram_api_credentials')
-        .select('*')
-        .order('client_type');
-      
-      if (error) throw error;
-
-      // Get 24h timestamp
-      const yesterday = new Date();
-      yesterday.setHours(yesterday.getHours() - 24);
-      
-      // Get campaign recipients from last 24 hours WITH api_credential_id
-      // This is the CORRECT source - matches what get-batch-tasks uses for rate limiting
-      const { data: recipientsData } = await supabase
-        .from('campaign_recipients')
-        .select('api_credential_id, status')
-        .in('status', ['sent', 'failed'])
-        .not('api_credential_id', 'is', null)
-        .gte('sent_at', yesterday.toISOString());
-      
-      // Count 24h sends per API (using campaign_recipients - matches backend logic)
-      const apiSentCounts = new Map<string, number>();
-      const apiFailed = new Map<string, number>();
-      (recipientsData || []).forEach((rec: any) => {
-        if (rec.api_credential_id) {
-          if (rec.status === 'sent') {
-            apiSentCounts.set(rec.api_credential_id, (apiSentCounts.get(rec.api_credential_id) || 0) + 1);
-          } else if (rec.status === 'failed') {
-            apiFailed.set(rec.api_credential_id, (apiFailed.get(rec.api_credential_id) || 0) + 1);
-          }
-        }
-      });
-      
-      // Merge counts into credentials
-      const credentialsWithCounts = (data || []).map((cred: ApiCredential) => {
-        const sent = apiSentCounts.get(cred.id) || 0;
-        const failed = apiFailed.get(cred.id) || 0;
-        const total = sent + failed;
-        const successRate = total > 0 ? (sent / total) * 100 : null;
-        
-        return {
-          ...cred,
-          sent_24h: sent,  // Use campaign_recipients count (matches backend rate limiting)
-          success_rate_24h: successRate,
-          sent_count_24h: sent,
-          failed_count_24h: failed,
-        };
-      });
-      
-      setApiCredentials(credentialsWithCounts);
-    } catch (error) {
-      console.error('Failed to fetch API credentials:', error);
-    } finally {
-      setIsLoadingCredentials(false);
-    }
-  };
-
-
-  // Delete API credential
-  const handleDeleteApiCredential = async (id: string) => {
-    try {
-      // First unassign accounts from this credential
-      await supabase
-        .from('telegram_accounts')
-        .update({ api_credential_id: null })
-        .eq('api_credential_id', id);
-      
-      const { error } = await supabase
-        .from('telegram_api_credentials')
-        .delete()
-        .eq('id', id);
-      
-      if (error) throw error;
-      
-      toast.success('API credential deleted');
-      fetchApiCredentials();
-    } catch (error) {
-      console.error('Failed to delete API credential:', error);
-      toast.error('Failed to delete API credential');
-    }
-  };
-
-  // Generate random name for API
-  const generateRandomName = (index: number) => {
-    const adjectives = ['Swift', 'Rapid', 'Quick', 'Fast', 'Prime', 'Ultra', 'Super', 'Mega', 'Turbo', 'Hyper'];
-    const nouns = ['Thunder', 'Storm', 'Wave', 'Flash', 'Bolt', 'Star', 'Nova', 'Pulse', 'Stream', 'Flow'];
-    const adj = adjectives[Math.floor(Math.random() * adjectives.length)];
-    const noun = nouns[Math.floor(Math.random() * nouns.length)];
-    const num = Math.floor(Math.random() * 900) + 100;
-    return `${adj}${noun}_${num}`;
-  };
-
-  // REMOVED: Predefined API credentials - DO NOT USE HARDCODED API CREDENTIALS
-  // Each account MUST have its own unique API credentials to prevent bans
-  // Users must provide their own api_id:api_hash pairs
-
-  // Generate random device type for labeling only
-  const getRandomDeviceType = () => {
-    const types = ['android', 'ios', 'desktop', 'macos'];
-    return types[Math.floor(Math.random() * types.length)];
-  };
-
-  // Generate random API ID (8-digit number)
-  const generateRandomApiId = () => {
-    return String(Math.floor(10000000 + Math.random() * 90000000));
-  };
-
-  // Bulk import API credentials - ONLY requires API hashes, auto-generates API ID
-  const handleBulkImport = async () => {
-    const lines = bulkApiInput.trim().split('\n').filter(line => line.trim());
-    if (lines.length === 0) {
-      toast.error('Please enter at least one API hash (one per line)');
-      return;
-    }
-    
-    setIsImportingBulk(true);
-    
-    try {
-      // Parse all hashes first
-      const validCredentials: Array<{
-        name: string;
-        api_id: string;
-        api_hash: string;
-        client_type: string;
-        is_active: boolean;
-        accounts_count: number;
-      }> = [];
-      const invalidLines: number[] = [];
-      
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        let apiHash: string | null = null;
-        
-        // Try UUID format first (8-4-4-4-12 with dashes)
-        const uuidMatch = line.match(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/i);
-        if (uuidMatch) {
-          apiHash = uuidMatch[0].replace(/-/g, '');
-        } else {
-          // Try plain 32-char hex
-          const hexMatch = line.match(/[a-f0-9]{32}/i);
-          if (hexMatch) {
-            apiHash = hexMatch[0];
-          }
-        }
-        
-        if (apiHash && apiHash.length === 32) {
-          validCredentials.push({
-            name: generateRandomName(i),
-            api_id: generateRandomApiId(),
-            api_hash: apiHash,
-            client_type: getRandomDeviceType(),
-            is_active: true,
-            accounts_count: 0,
-          });
-        } else {
-          invalidLines.push(i + 1);
-        }
-      }
-      
-      if (validCredentials.length === 0) {
-        toast.error('No valid API hashes found');
-        setIsImportingBulk(false);
-        return;
-      }
-      
-      // Bulk insert in batches of 100 for speed
-      const BATCH_SIZE = 100;
-      let successCount = 0;
-      let failCount = invalidLines.length;
-      
-      for (let i = 0; i < validCredentials.length; i += BATCH_SIZE) {
-        const batch = validCredentials.slice(i, i + BATCH_SIZE);
-        const { error, data } = await supabase
-          .from('telegram_api_credentials')
-          .insert(batch)
-          .select('id');
-        
-        if (error) {
-          console.error('Batch insert failed:', error);
-          failCount += batch.length;
-        } else {
-          successCount += data?.length || batch.length;
-        }
-      }
-      
-      if (successCount > 0) {
-        toast.success(`Added ${successCount} API credentials${failCount > 0 ? `, ${failCount} failed/invalid` : ''}`);
-        setBulkApiInput('');
-        setIsBulkApiOpen(false);
-        toast.info('Use "Redistribute" button to assign APIs to accounts.');
-        fetchApiCredentials();
-      } else {
-        toast.error('Failed to add any API credentials');
-      }
-    } catch (error) {
-      console.error('Bulk import error:', error);
-      toast.error('Bulk import failed');
-    } finally {
-      setIsImportingBulk(false);
-    }
-  };
-
-  // Manual redistribute
-  const handleManualRedistribute = async () => {
-    setIsRedistributing(true);
-    toast.info('Redistributing accounts... This may take up to 60 seconds for large account sets.');
-    try {
-      // Use fetch with longer timeout for large account sets
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/redistribute-api-credentials`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-            'Content-Type': 'application/json',
-          },
-        }
-      );
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
-      }
-      
-      const data = await response.json();
-      toast.success(`Redistributed! ${data?.assigned || 0} accounts assigned across ${data?.distribution?.length || 0} APIs.`);
-      await fetchApiCredentials();
-    } catch (error) {
-      console.error('Redistribute failed:', error);
-      toast.error(`Failed to redistribute: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setIsRedistributing(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchApiCredentials();
-  }, []);
 
   // Load local settings from localStorage
   useEffect(() => {
@@ -407,8 +125,8 @@ const Settings: React.FC = () => {
         <Tabs defaultValue="api" className="space-y-6">
           <TabsList className="grid w-full grid-cols-4 h-11">
             <TabsTrigger value="api" className="gap-2">
-              <Key className="w-4 h-4" />
-              API Credentials
+              <Zap className="w-4 h-4" />
+              API System
             </TabsTrigger>
             <TabsTrigger value="livechat" className="gap-2">
               <MessageSquare className="w-4 h-4" />
@@ -424,195 +142,98 @@ const Settings: React.FC = () => {
             </TabsTrigger>
           </TabsList>
 
-          {/* API Credentials Tab */}
+          {/* Dynamic API System Tab */}
           <TabsContent value="api" className="space-y-4 mt-0">
-
-        <Card>
-          <CardHeader className="pb-4">
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <CardTitle className="text-lg flex items-center gap-3">
-                  API Credentials Distribution
-                  <div className="flex gap-2">
-                    <Badge variant="outline" className="font-normal">
-                      Total: {apiCredentials.length}
-                    </Badge>
-                    <Badge variant="secondary" className="font-normal">
-                      Unassigned: {apiCredentials.filter(api => api.accounts_count === 0).length}
-                    </Badge>
+            <Card>
+              <CardHeader className="pb-4">
+                <div className="flex items-center justify-between">
+                  <div className="space-y-1">
+                    <CardTitle className="text-lg flex items-center gap-3">
+                      Dynamic Per-Request API System
+                      <Badge variant="default" className="font-normal bg-green-500/20 text-green-500 border-green-500/30">
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
+                        Active
+                      </Badge>
+                    </CardTitle>
+                    <CardDescription>
+                      Every Telegram interaction uses a unique, randomly generated API credential
+                    </CardDescription>
                   </div>
-                </CardTitle>
-                <CardDescription>
-                  Distribute accounts across multiple API IDs to reduce ban risk (1:1 mapping)
-                </CardDescription>
-              </div>
-              <div className="flex gap-2">
-                {/* Manual Redistribute Button */}
-                <Button 
-                  size="sm" 
-                  variant="outline" 
-                  className="gap-2"
-                  onClick={handleManualRedistribute}
-                  disabled={isRedistributing}
-                >
-                  {isRedistributing ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="w-4 h-4" />
-                  )}
-                  Redistribute
-                </Button>
-
-                {/* Bulk Import Dialog */}
-                <Dialog open={isBulkApiOpen} onOpenChange={setIsBulkApiOpen}>
-                  <DialogTrigger asChild>
-                    <Button size="sm" variant="outline" className="gap-2">
-                      <Upload className="w-4 h-4" />
-                      Bulk Import
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent>
-                    <DialogHeader>
-                      <DialogTitle>Bulk Import API Credentials</DialogTitle>
-                      <DialogDescription>
-                        Enter API hashes (one per line). API ID and device type are auto-generated.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="space-y-4 pt-4">
-                      <div className="space-y-2">
-                        <Label>API Hashes</Label>
-                        <Textarea
-                          placeholder="a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6&#10;q7r8s9t0u1v2w3x4y5z6a7b8c9d0e1f2&#10;or paste UUID format with dashes"
-                          value={bulkApiInput}
-                          onChange={(e) => setBulkApiInput(e.target.value)}
-                          rows={8}
-                          className="font-mono text-sm"
-                        />
-                        <p className="text-xs text-muted-foreground">
-                          Enter one API hash per line (32 hex characters). UUID format with dashes is also accepted.
-                        </p>
+                </div>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div className="space-y-6">
+                  {/* Status Overview */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="p-4 rounded-xl border bg-card">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 rounded-lg bg-green-500/10">
+                          <Zap className="w-4 h-4 text-green-500" />
+                        </div>
+                        <p className="font-medium text-sm">Unique Per Message</p>
                       </div>
-                      
-                      <Button 
-                        onClick={handleBulkImport} 
-                        disabled={isImportingBulk}
-                        className="w-full"
-                      >
-                        {isImportingBulk ? (
-                          <>
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                            Adding...
-                          </>
-                        ) : (
-                          <>
-                            <Upload className="w-4 h-4 mr-2" />
-                            Import API Hashes
-                          </>
-                        )}
-                      </Button>
+                      <p className="text-xs text-muted-foreground">
+                        Each message gets a fresh api_id + api_hash pair
+                      </p>
                     </div>
-                  </DialogContent>
-                </Dialog>
-
-              </div>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            {isLoadingCredentials ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : apiCredentials.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Key className="w-12 h-12 text-muted-foreground/50 mb-3" />
-                <p className="text-muted-foreground">No API credentials configured</p>
-                <p className="text-sm text-muted-foreground/70">Add your first API to get started</p>
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {apiCredentials.map((cred) => {
-                    const iconMap: Record<string, React.ReactNode> = {
-                      android: <Smartphone className="w-4 h-4 text-green-500" />,
-                      ios: <Smartphone className="w-4 h-4 text-blue-500" />,
-                      desktop: <Monitor className="w-4 h-4 text-purple-500" />,
-                      macos: <Monitor className="w-4 h-4 text-gray-500" />,
-                    };
                     
-                    return (
-                      <div 
-                        key={cred.id} 
-                        className="p-4 rounded-xl border bg-card hover:bg-accent/5 transition-colors group relative"
-                      >
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="absolute top-3 right-3 h-7 w-7 p-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                          onClick={() => handleDeleteApiCredential(cred.id)}
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                        <div className="flex items-center gap-3 mb-3">
-                          <div className="p-2 rounded-lg bg-muted">
-                            {iconMap[cred.client_type] || <Smartphone className="w-4 h-4" />}
-                          </div>
-                          <div className="flex-1 min-w-0 pr-6">
-                            <p className="font-medium text-sm truncate">{cred.name}</p>
-                            <p className="text-xs text-muted-foreground">{cred.accounts_count} accounts</p>
-                          </div>
-                          <Badge variant="secondary" className="text-xs capitalize shrink-0">
-                            {cred.client_type}
-                          </Badge>
+                    <div className="p-4 rounded-xl border bg-card">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 rounded-lg bg-blue-500/10">
+                          <CheckCircle2 className="w-4 h-4 text-blue-500" />
                         </div>
-                        <div className="space-y-3">
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between text-xs">
-                              <span className="text-muted-foreground">24h Usage</span>
-                              <span className={cn(
-                                "font-medium",
-                                (cred.sent_24h || 0) >= API_DAILY_LIMIT ? "text-destructive" : 
-                                (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "text-yellow-500" : "text-muted-foreground"
-                              )}>
-                                {cred.sent_24h || 0}/{API_DAILY_LIMIT}
-                              </span>
-                            </div>
-                            <Progress 
-                              value={Math.min(((cred.sent_24h || 0) / API_DAILY_LIMIT) * 100, 100)} 
-                              className={cn(
-                                "h-1.5",
-                                (cred.sent_24h || 0) >= API_DAILY_LIMIT ? "[&>div]:bg-destructive" : 
-                                (cred.sent_24h || 0) >= API_DAILY_LIMIT * 0.8 ? "[&>div]:bg-yellow-500" : "[&>div]:bg-primary"
-                              )}
-                            />
-                          </div>
-                          {cred.success_rate_24h !== null && cred.success_rate_24h !== undefined && (
-                            <div className="flex items-center justify-between text-xs pt-1">
-                              <span className="text-muted-foreground">Success Rate</span>
-                              <span className={cn(
-                                "font-medium",
-                                cred.success_rate_24h >= 90 ? "text-green-500" : 
-                                cred.success_rate_24h >= 70 ? "text-yellow-500" : "text-destructive"
-                              )}>
-                                {cred.success_rate_24h.toFixed(0)}%
-                              </span>
-                            </div>
-                          )}
-                        </div>
+                        <p className="font-medium text-sm">No Rate Limits</p>
                       </div>
-                    );
-                  })}
-                </div>
+                      <p className="text-xs text-muted-foreground">
+                        APIs are never reused, eliminating rate limiting
+                      </p>
+                    </div>
+                    
+                    <div className="p-4 rounded-xl border bg-card">
+                      <div className="flex items-center gap-3 mb-2">
+                        <div className="p-2 rounded-lg bg-purple-500/10">
+                          <Zap className="w-4 h-4 text-purple-500" />
+                        </div>
+                        <p className="font-medium text-sm">90M+ Capacity</p>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Random 8-digit IDs = virtually unlimited APIs
+                      </p>
+                    </div>
+                  </div>
 
-                <div className="pt-4 mt-4 border-t">
-                  <p className="text-xs text-muted-foreground text-center">
-                    Daily limit: {API_DAILY_LIMIT} messages per API • System auto-selects least-used APIs
-                  </p>
+                  {/* How It Works */}
+                  <div className="p-4 rounded-xl border bg-muted/30">
+                    <h4 className="font-medium text-sm mb-3">How It Works</h4>
+                    <ul className="space-y-2 text-sm text-muted-foreground">
+                      <li className="flex items-start gap-2">
+                        <span className="text-primary font-bold">1.</span>
+                        <span>When a task (message, warmup, spambot check, etc.) is fetched, the system generates a random 8-digit api_id</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-primary font-bold">2.</span>
+                        <span>A random 32-character hex api_hash is also generated</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-primary font-bold">3.</span>
+                        <span>These credentials are included in the task payload and used by the Python runner</span>
+                      </li>
+                      <li className="flex items-start gap-2">
+                        <span className="text-primary font-bold">4.</span>
+                        <span>After use, the credentials are discarded (ephemeral, not stored)</span>
+                      </li>
+                    </ul>
+                  </div>
+
+                  <div className="pt-4 border-t">
+                    <p className="text-xs text-muted-foreground text-center">
+                      ✨ No configuration needed • Fully automatic • Zero maintenance
+                    </p>
+                  </div>
                 </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-      </TabsContent>
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           {/* Livechat Tab */}
           <TabsContent value="livechat" className="mt-0">

@@ -738,15 +738,14 @@ const Accounts: React.FC = () => {
 
   const handleDeleteAccount = async (id: string) => {
     try {
-      // First, get the account to find its assigned proxy and API credential
+      // First, get the account to find its assigned proxy
       const { data: account } = await supabase
         .from('telegram_accounts')
-        .select('proxy_id, api_credential_id')
+        .select('proxy_id')
         .eq('id', id)
         .single();
       
       const proxyId = account?.proxy_id;
-      const apiCredentialId = account?.api_credential_id;
       
       // Clear warmup pair references
       await supabase
@@ -772,12 +771,7 @@ const Accounts: React.FC = () => {
         await supabase.from('proxies').delete().eq('id', proxyId);
       }
       
-      // Delete the assigned API credential if it exists
-      if (apiCredentialId) {
-        await supabase.from('telegram_api_credentials').delete().eq('id', apiCredentialId);
-      }
-      
-      toast.success('Account deleted (proxy & API also removed)');
+      toast.success('Account deleted (proxy also removed)');
       refreshData();
     } catch (error) {
       console.error('Error deleting account:', error);

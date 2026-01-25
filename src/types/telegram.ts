@@ -31,7 +31,6 @@ export interface TelegramAccount {
   spambotStatus?: 'unknown' | 'clean' | 'limited' | 'restricted';
   phoneCountry?: string;
   geoMismatch?: boolean;
-  apiCredentialId?: string;
   telegramId?: number;
   // Tags for organization
   tags?: string[];
