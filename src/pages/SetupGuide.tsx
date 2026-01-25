@@ -30,7 +30,7 @@ SUPABASE_KEY = "${supabaseKey}"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (DYNAMIC API SYSTEM)
 
-BUILD: 2026-01-25-dynamic-api
+BUILD: 2026-01-25-bulk-parallel-v1
 
 DYNAMIC API CREDENTIALS:
 - Each request gets a FRESH api_id from the backend
