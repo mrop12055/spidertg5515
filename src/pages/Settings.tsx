@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ApiCredentialsManager } from '@/components/settings/ApiCredentialsManager';
 import { 
   Bell, 
   Calendar,
@@ -21,8 +22,7 @@ import {
   Save,
   Settings as SettingsIcon,
   MessageSquare,
-  Zap,
-  CheckCircle2
+  Key
 } from 'lucide-react';
 
 const Settings: React.FC = () => {
@@ -125,8 +125,8 @@ const Settings: React.FC = () => {
         <Tabs defaultValue="api" className="space-y-6">
           <TabsList className="grid w-full grid-cols-4 h-11">
             <TabsTrigger value="api" className="gap-2">
-              <Zap className="w-4 h-4" />
-              API System
+              <Key className="w-4 h-4" />
+              API Keys
             </TabsTrigger>
             <TabsTrigger value="livechat" className="gap-2">
               <MessageSquare className="w-4 h-4" />
@@ -142,97 +142,9 @@ const Settings: React.FC = () => {
             </TabsTrigger>
           </TabsList>
 
-          {/* Dynamic API System Tab */}
+          {/* API Credentials Tab */}
           <TabsContent value="api" className="space-y-4 mt-0">
-            <Card>
-              <CardHeader className="pb-4">
-                <div className="flex items-center justify-between">
-                  <div className="space-y-1">
-                    <CardTitle className="text-lg flex items-center gap-3">
-                      Dynamic Per-Request API System
-                      <Badge variant="default" className="font-normal bg-green-500/20 text-green-500 border-green-500/30">
-                        <CheckCircle2 className="w-3 h-3 mr-1" />
-                        Active
-                      </Badge>
-                    </CardTitle>
-                    <CardDescription>
-                      Every Telegram interaction uses a unique, randomly generated API credential
-                    </CardDescription>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div className="space-y-6">
-                  {/* Status Overview */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="p-4 rounded-xl border bg-card">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 rounded-lg bg-green-500/10">
-                          <Zap className="w-4 h-4 text-green-500" />
-                        </div>
-                        <p className="font-medium text-sm">Unique Per Message</p>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Each message gets a fresh api_id + api_hash pair
-                      </p>
-                    </div>
-                    
-                    <div className="p-4 rounded-xl border bg-card">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 rounded-lg bg-blue-500/10">
-                          <CheckCircle2 className="w-4 h-4 text-blue-500" />
-                        </div>
-                        <p className="font-medium text-sm">No Rate Limits</p>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        APIs are never reused, eliminating rate limiting
-                      </p>
-                    </div>
-                    
-                    <div className="p-4 rounded-xl border bg-card">
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 rounded-lg bg-purple-500/10">
-                          <Zap className="w-4 h-4 text-purple-500" />
-                        </div>
-                        <p className="font-medium text-sm">90M+ Capacity</p>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        Random 8-digit IDs = virtually unlimited APIs
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* How It Works */}
-                  <div className="p-4 rounded-xl border bg-muted/30">
-                    <h4 className="font-medium text-sm mb-3">How It Works</h4>
-                    <ul className="space-y-2 text-sm text-muted-foreground">
-                      <li className="flex items-start gap-2">
-                        <span className="text-primary font-bold">1.</span>
-                        <span>When a task (message, warmup, spambot check, etc.) is fetched, the system generates a random 8-digit api_id</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-primary font-bold">2.</span>
-                        <span>A random 32-character hex api_hash is also generated</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-primary font-bold">3.</span>
-                        <span>These credentials are included in the task payload and used by the Python runner</span>
-                      </li>
-                      <li className="flex items-start gap-2">
-                        <span className="text-primary font-bold">4.</span>
-                        <span>After use, the credentials are discarded (ephemeral, not stored)</span>
-                      </li>
-                    </ul>
-                  </div>
-
-                  <div className="pt-4 border-t">
-                    <p className="text-xs text-muted-foreground text-center">
-                      ✨ No configuration needed • Fully automatic • Zero maintenance
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+            <ApiCredentialsManager />
           </TabsContent>
 
           {/* Livechat Tab */}

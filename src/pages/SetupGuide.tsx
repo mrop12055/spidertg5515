@@ -80,13 +80,8 @@ import threading
 import random
 import string
 
-# ========== DYNAMIC API CREDENTIAL GENERATOR ==========
-# Matches backend logic - generates fresh credentials for retry attempts
-def generate_api_credentials():
-    """Generate fresh unique API credentials for retry attempts (dynamic system)."""
-    api_id = str(random.randint(1000000, 99999999))  # 7-8 digit number
-    api_hash = ''.join(random.choices(string.hexdigits.lower()[:16], k=32))  # 32-char hex
-    return api_id, api_hash
+# API credentials come from task payload - accounts MUST have api_id/api_hash assigned
+# NO random generation - use stored credentials only
 from typing import Dict, Optional
 
 # ========== PER-ACCOUNT CONNECTION LOCKS (prevents SQLite "database is locked") ==========
@@ -311,18 +306,18 @@ async def retry_proxy_error_accounts():
             print(f"    [{phone}] Retry attempt {retry_count}/{PROXY_MAX_RETRIES}...")
             
             try:
-                # Generate fresh API credentials for retry (dynamic system)
-                fresh_api_id, fresh_api_hash = generate_api_credentials()
-                acc["api_id"] = fresh_api_id
-                acc["api_hash"] = fresh_api_hash
+                # Use stored API credentials from account (NO random generation)
+                if not acc.get("api_id") or not acc.get("api_hash"):
+                    print(f"    [{phone}] ✗ No API credentials assigned - skipping")
+                    continue
                 
                 # Add proxy data to account for connection
                 acc["proxy"] = proxy
                 
-                print(f"    [{phone}] Using fresh API credentials: {fresh_api_id[:4]}...")
+                print(f"    [{phone}] Using stored API credentials: {acc['api_id'][:4]}...")
                 
                 client = await get_or_create_client(
-                    acc, 
+                    acc,
                     task_proxy=proxy, 
                     skip_avatar=True,
                     no_cache=True

@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { generateApiCredentials, resetUsedApiIds, getGeneratedCount } from "../_shared/api-generator.ts";
+import { getAccountApiCredentials, hasApiCredentials } from "../_shared/api-helper.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -22,9 +22,6 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
-
-    // Reset API ID tracker for this request
-    resetUsedApiIds();
 
     const body = await req.json().catch(() => ({}));
     const { runner, batch_size = 100 } = body;
@@ -373,10 +370,16 @@ serve(async (req) => {
             const senderApiCred = senderAccount.telegram_api_credentials;
             const receiverApiCred = receiverAccount.telegram_api_credentials;
             
-            // Generate fresh API credentials for sender
-            const senderFreshApi = generateApiCredentials();
-            // Generate fresh API credentials for receiver (partner)
-            const receiverFreshApi = generateApiCredentials();
+            // Get API credentials from stored account data
+            const senderApi = getAccountApiCredentials(senderAccount);
+            const receiverApi = getAccountApiCredentials(receiverAccount);
+            
+            // Skip if no API credentials
+            if (!senderApi) {
+              console.log(`[get-batch-tasks] SKIP warmup msg ${msg.id}: sender ${senderAccount.phone_number} has no API assigned`);
+              continue;
+            }
+            
             const contactsExchanged = warmupPair?.contacts_exchanged || false;
 
             // Mark as "sending" with claim info (task leasing)
@@ -417,8 +420,8 @@ serve(async (req) => {
                 app_version: senderAccount.app_version,
                 lang_code: senderAccount.lang_code,
                 system_lang_code: senderAccount.system_lang_code,
-                api_id: senderFreshApi.api_id,
-                api_hash: senderFreshApi.api_hash,
+                api_id: senderApi.api_id,
+                api_hash: senderApi.api_hash,
                 proxy: senderProxy,
               },
               proxy: senderProxy,
@@ -433,8 +436,8 @@ serve(async (req) => {
                 app_version: receiverAccount.app_version,
                 lang_code: receiverAccount.lang_code,
                 system_lang_code: receiverAccount.system_lang_code,
-                api_id: receiverFreshApi.api_id,
-                api_hash: receiverFreshApi.api_hash,
+                api_id: receiverApi?.api_id || receiverAccount.api_id,
+                api_hash: receiverApi?.api_hash || receiverAccount.api_hash,
               },
               partner_proxy: contactsExchanged ? null : receiverProxy,
             });
@@ -910,8 +913,13 @@ serve(async (req) => {
             .replace(/{name}/g, recipient.name || 'there')
             .replace(/{phone}/g, recipient.phone_number);
 
-          // Generate fresh API credentials for this campaign message
-          const freshApi = generateApiCredentials();
+          // Get API credentials from stored account data
+          const accountApi = getAccountApiCredentials(account);
+          if (!accountApi) {
+            console.log(`[get-batch-tasks] SKIP recipient ${recipient.id}: account ${account.phone_number} has no API assigned`);
+            continue;
+          }
+          
           // For multi-seat campaigns: prioritize recipient-level seat_id over campaign-level
           const recipientCampaign = recipient.campaigns;
           const recipientSeatId = recipient.seat_id || recipientCampaign?.seat_id || null;
@@ -937,8 +945,8 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: freshApi.api_id,
-              api_hash: freshApi.api_hash,
+              api_id: accountApi.api_id,
+              api_hash: accountApi.api_hash,
               proxy_id: account.proxy_id,
             },
             proxy: account.proxies
@@ -1097,8 +1105,12 @@ serve(async (req) => {
             const account = usableAccounts.find((a: any) => a.id === accountId);
             if (!account) continue;
             
-            // DYNAMIC API: Account-level credentials for connection
-            const accountFreshApi = generateApiCredentials();
+            // Get API credentials from stored account data
+            const accountApi = getAccountApiCredentials(account);
+            if (!accountApi) {
+              console.log(`[get-batch-tasks] SKIP livechat account ${account.phone_number}: no API assigned`);
+              continue;
+            }
             
             batches.push({
               account: {
@@ -1110,8 +1122,8 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: accountFreshApi.api_id,
-                api_hash: accountFreshApi.api_hash,
+                api_id: accountApi.api_id,
+                api_hash: accountApi.api_hash,
                 proxy_id: account.proxy_id,
               },
               proxy: account.proxies ? {
@@ -1123,10 +1135,9 @@ serve(async (req) => {
                 proxy_type: account.proxies.proxy_type,
                 type: account.proxies.proxy_type,
               } : null,
-              // CRITICAL: Each message gets its OWN unique API credentials
+              // Messages use the same API credentials as the account
               messages: msgs.map(msg => {
                 const conv = msg.conversations;
-                const messageFreshApi = generateApiCredentials();  // UNIQUE per message!
                 return {
                   id: msg.id,
                   content: msg.content,
@@ -1136,8 +1147,8 @@ serve(async (req) => {
                   recipient_username: conv.recipient_username,
                   recipient_phone: conv.recipient_phone,
                   recipient_name: conv.recipient_name,
-                  api_id: messageFreshApi.api_id,      // UNIQUE per message
-                  api_hash: messageFreshApi.api_hash,  // UNIQUE per message
+                  api_id: accountApi.api_id,
+                  api_hash: accountApi.api_hash,
                 };
               }),
             });
@@ -1146,32 +1157,33 @@ serve(async (req) => {
           console.log(`[get-batch-tasks] PARALLEL livechat: ${allMsgIds.length} messages across ${batches.length} accounts`);
           
           // Return accounts for connection
-          const accountsForConnection = usableAccounts.map((a: any) => {
-            // Generate fresh API credentials for each account
-            const freshApi = generateApiCredentials();
-            return {
-              id: a.id,
-              phone_number: a.phone_number,
-              session_data: a.session_data,
-              device_model: a.device_model,
-              system_version: a.system_version,
-              app_version: a.app_version,
-              lang_code: a.lang_code,
-              system_lang_code: a.system_lang_code,
-              api_id: freshApi.api_id,
-              api_hash: freshApi.api_hash,
-              proxy_id: a.proxy_id,
-              proxy: a.proxies ? {
-                id: a.proxies.id,
-                host: a.proxies.host,
-                port: a.proxies.port,
-                username: a.proxies.username,
-                password: a.proxies.password,
-                proxy_type: a.proxies.proxy_type,
-                type: a.proxies.proxy_type,
-              } : null,
-            };
-          });
+          const accountsForConnection = usableAccounts
+            .filter((a: any) => hasApiCredentials(a))
+            .map((a: any) => {
+              const api = getAccountApiCredentials(a)!;
+              return {
+                id: a.id,
+                phone_number: a.phone_number,
+                session_data: a.session_data,
+                device_model: a.device_model,
+                system_version: a.system_version,
+                app_version: a.app_version,
+                lang_code: a.lang_code,
+                system_lang_code: a.system_lang_code,
+                api_id: api.api_id,
+                api_hash: api.api_hash,
+                proxy_id: a.proxy_id,
+                proxy: a.proxies ? {
+                  id: a.proxies.id,
+                  host: a.proxies.host,
+                  port: a.proxies.port,
+                  username: a.proxies.username,
+                  password: a.proxies.password,
+                  proxy_type: a.proxies.proxy_type,
+                  type: a.proxies.proxy_type,
+                } : null,
+              };
+            });
           
           return new Response(JSON.stringify({
             task: "send_parallel",
@@ -1187,31 +1199,32 @@ serve(async (req) => {
       }
       
       // Fallback: Return accounts for listening (no pending messages or parallel disabled)
-      const accountsForConnection = usableAccounts.map((a: any) => {
-        // Generate fresh API credentials for each account
-        const freshApi = generateApiCredentials();
-        return {
-          id: a.id,
-          phone_number: a.phone_number,
-          session_data: a.session_data,
-          device_model: a.device_model,
-          system_version: a.system_version,
-          app_version: a.app_version,
-          lang_code: a.lang_code,
-          system_lang_code: a.system_lang_code,
-          api_id: freshApi.api_id,
-          api_hash: freshApi.api_hash,
-          proxy_id: a.proxy_id,
-          proxy: a.proxies ? {
-            host: a.proxies.host,
-            port: a.proxies.port,
-            username: a.proxies.username,
-            password: a.proxies.password,
-            proxy_type: a.proxies.proxy_type,
-            type: a.proxies.proxy_type,
-          } : null,
-        };
-      });
+      const accountsForConnection = usableAccounts
+        .filter((a: any) => hasApiCredentials(a))
+        .map((a: any) => {
+          const api = getAccountApiCredentials(a)!;
+          return {
+            id: a.id,
+            phone_number: a.phone_number,
+            session_data: a.session_data,
+            device_model: a.device_model,
+            system_version: a.system_version,
+            app_version: a.app_version,
+            lang_code: a.lang_code,
+            system_lang_code: a.system_lang_code,
+            api_id: api.api_id,
+            api_hash: api.api_hash,
+            proxy_id: a.proxy_id,
+            proxy: a.proxies ? {
+              host: a.proxies.host,
+              port: a.proxies.port,
+              username: a.proxies.username,
+              password: a.proxies.password,
+              proxy_type: a.proxies.proxy_type,
+              type: a.proxies.proxy_type,
+            } : null,
+          };
+        });
       
       return new Response(JSON.stringify({
         tasks: [],
@@ -1283,8 +1296,12 @@ serve(async (req) => {
 
           claimIds.push(task.id);
           
-          // Generate fresh API credentials for this account task
-          const freshApi = generateApiCredentials();
+          // Get API credentials from stored account data
+          const accountApi = getAccountApiCredentials(accountData);
+          if (!accountApi) {
+            console.log(`[get-batch-tasks] SKIP account task ${task.id}: ${accountData.phone_number} has no API assigned`);
+            continue;
+          }
           
           tasks.push({
             task: task.task_type,
@@ -1299,8 +1316,8 @@ serve(async (req) => {
               app_version: accountData.app_version,
               lang_code: accountData.lang_code,
               system_lang_code: accountData.system_lang_code,
-              api_id: freshApi.api_id,
-              api_hash: freshApi.api_hash,
+              api_id: accountApi.api_id,
+              api_hash: accountApi.api_hash,
               proxy_id: accountData.proxy_id,
             },
             proxy: {
