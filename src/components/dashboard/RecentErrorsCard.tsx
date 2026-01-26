@@ -157,7 +157,7 @@ export const RecentErrorsCard: React.FC = () => {
         allErrors.push({
           id: a.id,
           phone: a.phone_number,
-          reason: `[${a.status?.toUpperCase()}] ${a.ban_reason}`,
+          reason: a.ban_reason || 'Unknown error',
           timestamp: a.restricted_until || a.created_at || new Date().toISOString(),
           source: 'Account'
         });
