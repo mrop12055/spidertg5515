@@ -1146,9 +1146,9 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
         return False, f"FloodWait:{e.seconds}s"
     except UserPrivacyRestrictedError:
         return False, "Privacy restricted"
-    except PeerFloodError:
-        # Too many messages to new users - temporary restriction
-        return False, "PeerFlood - too many messages to new users"
+    except PeerFloodError as e:
+        # Too many messages to new users - capture full error for diagnosis
+        return False, f"PeerFlood: {str(e)}"
     except ChatWriteForbiddenError:
         return False, "Cannot write to this chat"
     except UserBlockedError:
@@ -1507,8 +1507,8 @@ async def bulk_send_messages(
             result["error"] = f"FloodWait:{e.seconds}s"
             result["is_rate_limit"] = True
             result["skip_account"] = True
-        except PeerFloodError:
-            result["error"] = "PeerFlood"
+        except PeerFloodError as e:
+            result["error"] = f"PeerFlood: {str(e)}"
             result["is_rate_limit"] = True
             result["skip_account"] = True
         except UserPrivacyRestrictedError:
@@ -4549,8 +4549,8 @@ async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_
         return False, f"FloodWait:{e.seconds}s"
     except UserPrivacyRestrictedError:
         return False, "Privacy restricted"
-    except PeerFloodError:
-        return False, "PeerFlood - too many messages"
+    except PeerFloodError as e:
+        return False, f"PeerFlood: {str(e)}"
     except UserBlockedError:
         return False, "User blocked you"
     except AuthKeyUnregisteredError:
