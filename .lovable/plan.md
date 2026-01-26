@@ -1,96 +1,77 @@
 
 
-# Plan: Fix Missing Import for check_client_health in LiveChat Runner
+# Plan: Fix Misleading Startup Log in LiveChat Runner
 
 ## Problem Identified
 
-The error `name 'check_client_health' is not defined` occurs because:
+The startup banner in `main_loop()` displays an **outdated** message that doesn't match the actual retry logic:
 
-1. **`check_client_health`** function is defined in **`client_manager.py`** (clientManagerPy template, lines 281-303)
-2. **`live_chat_listener.py`** (livechatRunnerPy template) calls this function at line 3404 inside `keep_clients_alive()`
-3. **BUT** - the import statement in livechatRunnerPy (lines 2579-2584) does NOT include `check_client_health`:
+| What's Displayed | Actual Code |
+|------------------|-------------|
+| `🔄 Failed connections retry after 60s cooldown` | `FAILED_RETRY_DELAY = 180` (3 minutes) |
 
-```python
-from client_manager import (
-    get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
-    retry_proxy_error_accounts, log_error,
-    HTTP_TIMEOUT_UPLOAD
-)
-# MISSING: check_client_health
-```
+This creates confusion because:
+1. **Network/Proxy errors** → go to `add_to_proxy_retry_queue` → 3-minute delay between attempts
+2. **Non-proxy errors** → go to `failed_connection_accounts[acc_id] = time.time() + 180` → 3-minute delay
+
+The "60s" mentioned in the log is a **stale reference** from a previous version. There's also `SYNC_RETRY_INTERVAL = 60` but that's for message synchronization, not connection retries.
 
 ## Solution
 
-Add `check_client_health` to the import statement in `livechatRunnerPy`.
+Update the startup log message to accurately reflect the 3-minute retry logic.
 
 ### Change Required
 
 **File**: `src/pages/SetupGuide.tsx`
 
-**Location**: Lines 2579-2584 (the import from client_manager in livechatRunnerPy)
+**Location**: Line 3478 (inside livechatRunnerPy template)
 
 **Before**:
 ```python
-from client_manager import (
-    get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
-    retry_proxy_error_accounts, log_error,
-    HTTP_TIMEOUT_UPLOAD
-)
+print("  🔄 Failed connections retry after 60s cooldown")
 ```
 
 **After**:
 ```python
-from client_manager import (
-    get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
-    retry_proxy_error_accounts, log_error, check_client_health,
-    HTTP_TIMEOUT_UPLOAD
-)
+print("  🔄 Failed connections retry after 3 min cooldown")
 ```
 
-Also need to add the import of `add_to_proxy_retry_queue` (also called at line 3414) which is defined in client_manager.py:
+### Additional Fix
 
+Also update the comment at line 3523 that incorrectly says "60s":
+
+**Before**:
 ```python
-from client_manager import (
-    get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
-    retry_proxy_error_accounts, log_error, check_client_health, add_to_proxy_retry_queue,
-    HTTP_TIMEOUT_UPLOAD
-)
+# Allow failed accounts to retry after their cooldown expires (60s from failure)
 ```
 
-Also need to add `force_disconnect_session` to the import (called at line 3413):
-
+**After**:
 ```python
-from client_manager import (
-    get_or_create_client, get_next_task, report_result,
-    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
-    retry_proxy_error_accounts, log_error, check_client_health, add_to_proxy_retry_queue,
-    force_disconnect_session,
-    HTTP_TIMEOUT_UPLOAD
-)
+# Allow failed accounts to retry after their cooldown expires (180s/3min from failure)
 ```
 
-## Technical Details
+## Summary of Retry Logic (No Change Needed)
 
-| Missing Function | Defined In | Called At |
-|-----------------|------------|-----------|
-| `check_client_health` | client_manager.py line 281 | live_chat_listener.py line 3404 |
-| `add_to_proxy_retry_queue` | client_manager.py line 306 | live_chat_listener.py line 3414, 3365 |
-| `force_disconnect_session` | client_manager.py line 198 | live_chat_listener.py line 3413 |
+The actual code is **correct**:
+
+| Error Type | Handler | Delay | Max Attempts |
+|------------|---------|-------|--------------|
+| Proxy/Network errors | `add_to_proxy_retry_queue()` | 3 minutes | 3 attempts then disable |
+| Other connection errors | `failed_connection_accounts` | 3 minutes (180s) | Unlimited |
+| Health check failures | `add_to_proxy_retry_queue()` | 3 minutes | 3 attempts then disable |
+
+The **only issue** is the misleading log message - the retry logic itself is working correctly.
 
 ## Files to Modify
 
 1. **`src/pages/SetupGuide.tsx`**:
-   - Update the import statement in livechatRunnerPy (around line 2579-2584)
-   - Add: `check_client_health`, `add_to_proxy_retry_queue`, `force_disconnect_session`
+   - Line 3478: Update startup log from "60s" to "3 min"
+   - Line 3523: Update comment from "60s" to "180s/3min"
 
 ## Expected Outcome
 
 After this fix:
-- The `NameError: name 'check_client_health' is not defined` error will be resolved
-- The health check system will work correctly, detecting zombie connections every 60 seconds
-- Failed connections will be properly routed to the 3-attempt retry queue
+- The startup banner will correctly show "3 min cooldown"
+- Comments will match the actual `FAILED_RETRY_DELAY = 180` constant
+- No confusion between the two different 60s values (SYNC_RETRY_INTERVAL vs FAILED_RETRY_DELAY)
 
