@@ -2579,8 +2579,8 @@ from telethon import events
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
-    retry_proxy_error_accounts, log_error,
-    HTTP_TIMEOUT_UPLOAD
+    retry_proxy_error_accounts, log_error, check_client_health, add_to_proxy_retry_queue,
+    force_disconnect_session, HTTP_TIMEOUT_UPLOAD
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
