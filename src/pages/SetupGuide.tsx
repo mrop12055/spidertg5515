@@ -199,7 +199,9 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
     """
     IMMEDIATELY disconnect and clear session from memory.
     Called the MOMENT a proxy failure is detected - before any retry logic.
-    This ensures no stale sessions remain in memory.
+    
+    FIX: Properly cancels pending tasks and allows receive loop to exit gracefully
+    to prevent "coroutine ignored GeneratorExit" RuntimeError.
     """
     global active_clients, message_queues
     
@@ -208,23 +210,42 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
     # Step 1: Remove from active clients FIRST (prevents any further operations)
     client = active_clients.pop(account_id, None)
     
-    # Step 2: Force disconnect if client exists
+    # Step 2: Force disconnect if client exists with PROPER CLEANUP
     if client:
         try:
+            # Cancel any pending updates/listeners BEFORE disconnect
+            if hasattr(client, '_updates_handle') and client._updates_handle:
+                client._updates_handle.cancel()
+            
+            # Try graceful disconnect first
             if client.is_connected():
-                await asyncio.wait_for(client.disconnect(), timeout=3)
-            # CRITICAL: Allow pending asyncio tasks to complete (prevents "Task was destroyed" warnings)
-            await asyncio.sleep(0.1)
+                try:
+                    # Use asyncio.shield to prevent cancellation during disconnect
+                    await asyncio.wait_for(
+                        asyncio.shield(client.disconnect()), 
+                        timeout=5
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    pass
+            
+            # CRITICAL: Allow event loop to process pending callbacks
+            # This prevents "coroutine ignored GeneratorExit" by letting
+            # the _recv_loop coroutine exit cleanly
+            await asyncio.sleep(0.2)
+            
+            # Force garbage collection to clean up any remaining references
+            del client
+            
             print(f"  [FORCE DISCONNECT] {phone} - Session terminated: {reason}")
-        except asyncio.TimeoutError:
-            print(f"  [FORCE DISCONNECT] {phone} - Disconnect timeout, force cleared")
         except Exception as e:
             print(f"  [FORCE DISCONNECT] {phone} - Force cleared (error: {str(e)[:30]})")
     else:
         print(f"  [FORCE DISCONNECT] {phone} - No active client found, cleared tracking")
     
     # Step 3: Clear from message queue tracking if exists
-    if 'message_queues' in dir() and account_id in message_queues:
+    if account_id in message_queues:
         del message_queues[account_id]
     
     return True
@@ -571,11 +592,15 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         try:
             old_client = active_clients.pop(account_id)
             try:
+                # Cancel any pending updates/listeners BEFORE disconnect
+                if hasattr(old_client, '_updates_handle') and old_client._updates_handle:
+                    old_client._updates_handle.cancel()
                 if old_client.is_connected():
                     print(f"  [NO_CACHE] Disconnecting cached client for {phone}")
-                    await asyncio.wait_for(old_client.disconnect(), timeout=5)
-                # Small delay to ensure SQLite file is fully released
+                    await asyncio.wait_for(asyncio.shield(old_client.disconnect()), timeout=5)
+                # Allow event loop to process pending callbacks
                 await asyncio.sleep(0.2)
+                del old_client
             except Exception:
                 pass
         except Exception:
@@ -596,11 +621,15 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                 print(f"  [CLEANUP] Removing disconnected client for {phone}")
                 old_client = active_clients.pop(account_id)
                 try:
-                    await asyncio.wait_for(old_client.disconnect(), timeout=3)
+                    # Cancel any pending updates/listeners BEFORE disconnect
+                    if hasattr(old_client, '_updates_handle') and old_client._updates_handle:
+                        old_client._updates_handle.cancel()
+                    await asyncio.wait_for(asyncio.shield(old_client.disconnect()), timeout=3)
                 except Exception:
                     pass
-                # Delay to release SQLite file
+                # Delay to allow event loop cleanup
                 await asyncio.sleep(0.2)
+                del old_client
         except Exception:
             del active_clients[account_id]
 
@@ -3201,10 +3230,9 @@ FAILED_RETRY_DELAY = 180  # 3 MINUTES to wait before retrying failed connection
 async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected"):
     """
     Properly disconnect a session and schedule it for retry after 3 MINUTES.
-    This ensures clean session release before retry.
     
-    FIX (2026-01-22): Added proper task cleanup to prevent "Task was destroyed but it is pending!" warnings.
-    UPDATED (2026-01-26): Changed to 3-minute retry delay for proxy errors.
+    FIX: Properly cancels pending tasks and allows receive loop to exit gracefully
+    to prevent "coroutine ignored GeneratorExit" RuntimeError.
     """
     global failed_connection_accounts
     
@@ -3214,18 +3242,32 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
     if acc_id in active_clients:
         try:
             client = active_clients.pop(acc_id)
+            
+            # Cancel any pending updates/listeners BEFORE disconnect
+            if hasattr(client, '_updates_handle') and client._updates_handle:
+                client._updates_handle.cancel()
+            
             if client.is_connected():
                 try:
-                    await asyncio.wait_for(client.disconnect(), timeout=5)
+                    # Use asyncio.shield to prevent cancellation during disconnect
+                    await asyncio.wait_for(
+                        asyncio.shield(client.disconnect()), 
+                        timeout=5
+                    )
                 except asyncio.TimeoutError:
                     print(f"  [TIMEOUT] Disconnect timeout for {phone} - forcing cleanup")
                 except Exception:
                     pass
-                # CRITICAL: Allow pending asyncio tasks to complete (prevents "Task was destroyed" warnings)
-                await asyncio.sleep(0.1)
+                
+                # CRITICAL: Allow event loop to process pending callbacks
+                await asyncio.sleep(0.2)
                 print(f"  [DISCONNECT] {phone} - {reason} - will retry in 3 min")
             else:
                 print(f"  [CLEANUP] {phone} - already disconnected - will retry in 3 min")
+            
+            # Force cleanup of client reference
+            del client
+            
         except Exception as e:
             print(f"  [CLEANUP] {phone} - force cleanup ({e}) - will retry in 3 min")
     
