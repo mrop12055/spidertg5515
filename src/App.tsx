@@ -19,7 +19,6 @@ import Reports from "./pages/Reports";
 import Material from "./pages/Material";
 import Seats from "./pages/Seats";
 import SeatChat from "./pages/SeatChat";
-import DatabaseHealth from "./pages/DatabaseHealth";
 import Warmup from "./pages/Warmup";
 import Logs from "./pages/Logs";
 import NotFound from "./pages/NotFound";
@@ -52,7 +51,6 @@ const App = () => (
                 <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                 <Route path="/material" element={<ProtectedRoute><Material /></ProtectedRoute>} />
                 <Route path="/seats" element={<ProtectedRoute><Seats /></ProtectedRoute>} />
-                <Route path="/database" element={<ProtectedRoute><DatabaseHealth /></ProtectedRoute>} />
                 <Route path="/warmup" element={<ProtectedRoute><Warmup /></ProtectedRoute>} />
                 <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />

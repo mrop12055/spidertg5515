@@ -12,7 +12,6 @@ import {
   Phone,
   BookOpen,
   Globe,
-  Database,
   Flame,
   Package,
   ClipboardList
@@ -41,7 +40,6 @@ const navItems: NavItem[] = [
   { icon: Users, label: 'Seats', path: '/seats' },
   { icon: Package, label: 'Material', path: '/material' },
   { icon: ClipboardList, label: 'Logs', path: '/logs' },
-  { icon: Database, label: 'Database', path: '/database' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
