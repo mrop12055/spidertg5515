@@ -157,18 +157,8 @@ serve(async (req) => {
 
       if (error) throw error;
 
-      // Update campaign recipient count (add to existing)
-      const { data: campaign } = await supabase
-        .from('campaigns')
-        .select('recipient_count')
-        .eq('id', campaign_id)
-        .single();
-
-      const newCount = (campaign?.recipient_count || 0) + data.length;
-      await supabase
-        .from('campaigns')
-        .update({ recipient_count: newCount })
-        .eq('id', campaign_id);
+      // NOTE: recipient_count is automatically updated by sync_campaign_recipient_count trigger
+      // No manual update needed here - the trigger fires on INSERT to campaign_recipients
 
       return new Response(
         JSON.stringify({ 
