@@ -673,9 +673,9 @@ serve(async (req) => {
             await supabase
               .from("telegram_accounts")
               .update({
-                status: "cooldown",  // Use cooldown status for rate limiting
+                status: "cooldown",
                 restricted_until: restrictedUntil,
-                ban_reason: `Rate limited for new campaign messages. Can still reply to existing chats. Auto-restores after 12h. Error: ${error}`,
+                ban_reason: error || "Too many requests",
               })
               .eq("id", account_id);
             
@@ -1633,11 +1633,11 @@ serve(async (req) => {
           }
         } else if (status === "banned") {
           updateData.status = "banned";
-          updateData.ban_reason = error || "Session revoked or account banned";
+          updateData.ban_reason = error || "banned";
         } else if (status === "frozen") {
           // FROZEN: Account is temporarily restricted by Telegram
           updateData.status = "frozen";
-          updateData.ban_reason = error || "Account frozen by Telegram";
+          updateData.ban_reason = error || "frozen";
           updateData.restricted_until = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(); // 7 days
           // Keep user data if provided
           if (user_data) {
@@ -1648,7 +1648,7 @@ serve(async (req) => {
           }
         } else {
           updateData.status = "disconnected";
-          updateData.ban_reason = error || "Session invalid or connection failed";
+          updateData.ban_reason = error || "disconnected";
         }
 
         await supabase

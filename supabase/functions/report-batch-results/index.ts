@@ -435,7 +435,7 @@ serve(async (req) => {
                   .update({
                     status: "restricted",
                     restricted_until: restrictedUntil,
-                    ban_reason: `Rate limited (Too many requests). Can still reply to existing chats.`,
+                    ban_reason: r.error || "Too many requests",
                   })
                   .eq("id", r.account_id);
                 console.log(`[report-batch-results] Account ${r.account_id} IMMEDIATELY RESTRICTED for 12h (Too many requests)`);
@@ -623,7 +623,7 @@ serve(async (req) => {
                   .update({
                     status: "restricted",
                     restricted_until: restrictedUntil,
-                    ban_reason: `Rate limited for new campaign messages. Can still reply to existing chats. Error: ${r.error || "Too many requests"}`,
+                    ban_reason: r.error || "Rate limited",
                   })
                   .eq("id", r.account_id);
                 console.log(`[report-batch-results] Account ${r.account_id} RESTRICTED 12h (rate limit): ${r.error}`);

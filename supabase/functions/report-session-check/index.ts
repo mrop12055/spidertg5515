@@ -39,7 +39,7 @@ serve(async (req) => {
     if (frozenInAnyMessage) {
       // Account is FROZEN - mark it regardless of success/error
       newStatus = "frozen";
-      banReason = `Frozen account detected in message: ${error || "success response contained frozen"}`;
+      banReason = error || "frozen account";
       
       const updateData: any = {
         status: "frozen",
