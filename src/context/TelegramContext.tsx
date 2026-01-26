@@ -141,173 +141,37 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [accountTaskHistory, setAccountTaskHistory] = useState<AccountTaskLog[]>([]);
 
   // Fetch data from Supabase
+  // OPTIMIZED: Accounts and Proxies are now handled by dedicated cached hooks (useAccounts, useProxies)
+  // This only fetches campaigns, conversations, and messages
   const refreshData = useCallback(async () => {
     try {
       setIsLoading(true);
       
-      // Run ALL queries in parallel for maximum speed
-      // NOTE: PostgREST enforces a default max of 1000 rows per request, so we page large tables.
-      
-      // OPTIMIZED: Parallel paged fetcher - fetches multiple pages simultaneously
-      const fetchPagedParallel = async (
-        tableName: string,
-        selectColumns: string,
-        orderColumn: string = 'created_at',
-        filters?: (query: any) => any,
-        maxRows: number = 10000 // Safety limit
-      ): Promise<{ data: any[] | null; error: any | null }> => {
-        const PAGE_SIZE = 1000;
-        const MAX_PARALLEL_PAGES = Math.ceil(maxRows / PAGE_SIZE);
-
-        try {
-          // First, get a count estimate by fetching first page
-          let firstQuery = (supabase.from as any)(tableName)
-            .select(selectColumns)
-            .order(orderColumn, { ascending: false })
-            .range(0, PAGE_SIZE - 1);
-          
-          if (filters) firstQuery = filters(firstQuery);
-          
-          const { data: firstPage, error: firstError } = await firstQuery;
-          
-          if (firstError) throw firstError;
-          if (!firstPage || firstPage.length === 0) return { data: [], error: null };
-          if (firstPage.length < PAGE_SIZE) return { data: firstPage, error: null };
-          
-          // Need more pages - fetch remaining in parallel
-          const pagePromises: Promise<any>[] = [];
-          for (let page = 1; page < MAX_PARALLEL_PAGES; page++) {
-            const from = page * PAGE_SIZE;
-            const to = from + PAGE_SIZE - 1;
-            
-            let query = (supabase.from as any)(tableName)
-              .select(selectColumns)
-              .order(orderColumn, { ascending: false })
-              .range(from, to);
-            
-            if (filters) query = filters(query);
-            pagePromises.push(query);
-          }
-          
-          const results = await Promise.all(pagePromises);
-          const all = [...firstPage];
-          
-          for (const result of results) {
-            if (result.data && result.data.length > 0) {
-              all.push(...result.data);
-            }
-            if (!result.data || result.data.length < PAGE_SIZE) break;
-          }
-          
-          return { data: all, error: null };
-        } catch (e) {
-          return { data: null, error: e };
-        }
-      };
-
-      const [accountsResult, proxiesResult, campaignsResult, conversationsResult, messagesResult] = await Promise.all([
-        // Fetch accounts - PARALLEL PAGED (UNLIMITED - supports 100K+ accounts)
-        fetchPagedParallel(
-          'telegram_accounts',
-          'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, telegram_id, last_spambot_check, tags, interaction_pair_id',
-          'created_at',
-          undefined,
-          100000 // Max 100K accounts
-        ),
-
-        // Fetch proxies - PARALLEL PAGED (UNLIMITED - supports 100K+ proxies)
-        fetchPagedParallel(
-          'proxies',
-          'id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country',
-          'created_at',
-          undefined,
-          100000 // Max 100K proxies
-        ),
-
+      // Only fetch what's NOT handled by cached hooks
+      const [campaignsResult, conversationsResult, messagesResult] = await Promise.all([
         // Fetch campaigns (usually small, no paging needed)
         supabase
           .from('campaigns')
           .select('*, campaign_accounts(account_id)')
           .order('created_at', { ascending: false }),
 
-        // Fetch conversations - PARALLEL PAGED with filters (UNLIMITED)
-        fetchPagedParallel(
-          'conversations',
-          'id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id',
-          'created_at',
-          (q: any) => q.eq('first_message_sent', true).not('last_message_at', 'is', null),
-          100000 // Max 100K conversations
-        ),
+        // Fetch conversations - limit for performance
+        supabase
+          .from('conversations')
+          .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
+          .eq('first_message_sent', true)
+          .not('last_message_at', 'is', null)
+          .order('last_message_at', { ascending: false })
+          .limit(5000), // Limit to most recent conversations
 
-        // Fetch messages - LIMIT to last 7 days for performance (admin doesn't need all history)
+        // Fetch messages - LIMIT to last 3 days for performance
         supabase
           .from('messages')
           .select('*, conversations(recipient_phone)')
-          .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+          .gte('created_at', new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())
           .order('created_at', { ascending: false })
-          .limit(10000),
+          .limit(5000),
       ]);
-
-      // Process accounts
-      if (accountsResult.data) {
-        setAccounts(accountsResult.data.map(acc => ({
-          id: acc.id,
-          phoneNumber: acc.phone_number,
-          username: acc.username || undefined,
-          firstName: acc.first_name || undefined,
-          lastName: acc.last_name || undefined,
-          status: acc.status as TelegramAccount['status'],
-          proxyId: acc.proxy_id || undefined,
-          sessionFile: undefined, // Not fetched for performance
-          createdAt: new Date(acc.created_at),
-          lastActive: acc.last_active ? new Date(acc.last_active) : undefined,
-          messagesSentToday: acc.messages_sent_today || 0,
-          dailyLimit: acc.daily_limit || 25,
-          maturityScore: acc.maturity_score || 0,
-          maturityDays: acc.maturity_days || 0,
-          restrictedUntil: acc.restricted_until ? new Date(acc.restricted_until) : undefined,
-          banReason: acc.ban_reason || undefined,
-          avatar: acc.avatar_url || undefined,
-          // Device fingerprint
-          deviceModel: acc.device_model || undefined,
-          systemVersion: acc.system_version || undefined,
-          appVersion: acc.app_version || undefined,
-          langCode: acc.lang_code || undefined,
-          systemLangCode: acc.system_lang_code || undefined,
-          // Anti-ban features
-          warmupPhase: (acc as any).warmup_phase ?? 0,
-          warmupStartedAt: (acc as any).warmup_started_at ? new Date((acc as any).warmup_started_at) : undefined,
-          spambotStatus: (acc as any).spambot_status || 'unknown',
-          phoneCountry: (acc as any).phone_country || undefined,
-          geoMismatch: (acc as any).geo_mismatch || false,
-          telegramId: (acc as any).telegram_id || undefined,
-          // Tags
-          tags: (acc as any).tags || [],
-          // Health tracking
-          successCount: (acc as any).success_count ?? 0,
-          failureCount: (acc as any).failure_count ?? 0,
-          successRate: (acc as any).success_rate ?? 100,
-          autoDisabled: (acc as any).auto_disabled ?? false,
-          disabledReason: (acc as any).disabled_reason || undefined,
-        })));
-      }
-
-      // Process proxies
-      if (proxiesResult.data) {
-        setProxies(proxiesResult.data.map(p => ({
-          id: p.id,
-          host: p.host,
-          port: p.port,
-          username: p.username || undefined,
-          password: p.password || undefined,
-          type: p.proxy_type as Proxy['type'],
-          status: p.status as Proxy['status'],
-          assignedAccountId: p.assigned_account_id || undefined,
-          lastChecked: p.last_checked ? new Date(p.last_checked) : undefined,
-          responseTime: p.response_time || undefined,
-          country: p.detected_country || p.country || undefined,
-        })));
-      }
 
       // Process campaigns
       if (campaignsResult.data) {

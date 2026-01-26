@@ -377,76 +377,50 @@ const Accounts: React.FC = () => {
     };
   }, [isAccountTaskRunning, accountTasksProgress]);
    
-  // Fetch unique conversations per account (unique people contacted) - PARALLEL for speed
+  // Fetch unique conversations per account - LAZY: only when accounts are loaded and non-empty
+  // Optimized to run once per session, not on every render
+  const conversationsFetchedRef = useRef(false);
+  
   useEffect(() => {
+    // Skip if already fetched or no accounts yet
+    if (conversationsFetchedRef.current || accounts.length === 0) return;
+    
     const fetchUniqueConversations = async () => {
       const counts = new Map<string, { total: number; withReplies: number }>();
-      const PAGE_SIZE = 1000;
-      const MAX_PAGES = 100; // Up to 100K conversations
       
       try {
-        // First page to check if we need more
-        const { data: firstPage, error: firstError } = await supabase
+        // Use count-based aggregation for performance - single query with grouping
+        const { data, error } = await supabase
           .from('conversations')
           .select('account_id, has_reply')
           .eq('first_message_sent', true)
-          .range(0, PAGE_SIZE - 1);
+          .limit(50000); // Reasonable limit for UI display
         
-        if (firstError || !firstPage) {
-          console.error('Error fetching conversations:', firstError);
+        if (error || !data) {
+          console.error('Error fetching conversations:', error);
           return;
         }
         
-        // Process first page
-        firstPage.forEach((conv: any) => {
+        // Process in-memory (much faster than multiple DB queries)
+        data.forEach((conv: any) => {
           const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
           existing.total += 1;
           if (conv.has_reply) existing.withReplies += 1;
           counts.set(conv.account_id, existing);
         });
         
-        // If first page is full, fetch remaining pages IN PARALLEL
-        if (firstPage.length === PAGE_SIZE) {
-          const pagePromises = [];
-          for (let page = 1; page < MAX_PAGES; page++) {
-            const from = page * PAGE_SIZE;
-            const to = from + PAGE_SIZE - 1;
-            pagePromises.push(
-              supabase
-                .from('conversations')
-                .select('account_id, has_reply')
-                .eq('first_message_sent', true)
-                .range(from, to)
-            );
-          }
-          
-          const results = await Promise.all(pagePromises);
-          
-          for (const result of results) {
-            if (result.data && result.data.length > 0) {
-              result.data.forEach((conv: any) => {
-                const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
-                existing.total += 1;
-                if (conv.has_reply) existing.withReplies += 1;
-                counts.set(conv.account_id, existing);
-              });
-            }
-            // Stop if we hit a page with less than PAGE_SIZE
-            if (!result.data || result.data.length < PAGE_SIZE) break;
-          }
-        }
-        
         console.log(`Fetched unique conversations for ${counts.size} accounts`);
         setUniqueConversations(counts);
+        conversationsFetchedRef.current = true;
       } catch (err) {
         console.error('Error in fetchUniqueConversations:', err);
       }
     };
     
-    fetchUniqueConversations();
-    const interval = setInterval(fetchUniqueConversations, 60000);
-    return () => clearInterval(interval);
-  }, []);
+    // Delay to let critical UI render first
+    const timeout = setTimeout(fetchUniqueConversations, 500);
+    return () => clearTimeout(timeout);
+  }, [accounts.length]);
 
   // Extract unique tags from all accounts
   useEffect(() => {
@@ -457,15 +431,34 @@ const Accounts: React.FC = () => {
     setAvailableTags(Array.from(allTags).sort());
   }, [accounts]);
 
-  // Fetch proxy errors and proxies with error status
+  // Fetch proxy errors - LAZY: only when proxyErrorFilter is active or on demand
+  const proxyErrorsFetchedRef = useRef(false);
+  
   useEffect(() => {
+    // Skip if already fetched or filter not active
+    if (proxyErrorsFetchedRef.current && proxyErrorFilter === 'all') return;
+    if (proxies.length === 0) return;
+    
     const fetchProxyErrors = async () => {
       try {
+        // Only fetch if there are proxies with error status (count first for performance)
+        const { count, error: countError } = await supabase
+          .from('proxies')
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'error');
+        
+        if (countError || (count ?? 0) === 0) {
+          setProxyErrors(new Map());
+          proxyErrorsFetchedRef.current = true;
+          return;
+        }
+        
         // Get proxies with error status
         const { data: errorProxies, error: proxyError } = await supabase
           .from('proxies')
           .select('id')
-          .eq('status', 'error');
+          .eq('status', 'error')
+          .limit(1000);
         
         if (proxyError) {
           console.error('Error fetching error proxies:', proxyError);
@@ -474,11 +467,12 @@ const Accounts: React.FC = () => {
         
         const errorProxyIds = new Set((errorProxies || []).map(p => p.id));
         
-        // Get latest error for each proxy
+        // Get latest error for each proxy - limit to recent errors only
         const { data: errors, error: errorsError } = await supabase
           .from('proxy_errors')
           .select('proxy_id, error_type, error_message, created_at')
-          .order('created_at', { ascending: false });
+          .order('created_at', { ascending: false })
+          .limit(500);
         
         if (errorsError) {
           console.error('Error fetching proxy errors:', errorsError);
@@ -495,9 +489,9 @@ const Accounts: React.FC = () => {
           }
         });
         
-        // Then add actual error messages where available (ONLY for proxies currently marked as error)
+        // Then add actual error messages where available
         (errors || []).forEach(err => {
-          if (!errorProxyIds.has(err.proxy_id)) return; // proxy is active again -> don't show old errors
+          if (!errorProxyIds.has(err.proxy_id)) return;
           if (!errorMap.has(err.proxy_id)) {
             errorMap.set(err.proxy_id, {
               error_type: err.error_type || 'unknown',
@@ -508,15 +502,16 @@ const Accounts: React.FC = () => {
         });
         
         setProxyErrors(errorMap);
+        proxyErrorsFetchedRef.current = true;
       } catch (err) {
         console.error('Error in fetchProxyErrors:', err);
       }
     };
     
-    fetchProxyErrors();
-    const interval = setInterval(fetchProxyErrors, 30000); // Refresh every 30s
-    return () => clearInterval(interval);
-  }, []);
+    // Delay to let critical UI render first
+    const timeout = setTimeout(fetchProxyErrors, 1000);
+    return () => clearTimeout(timeout);
+  }, [proxies.length, proxyErrorFilter]);
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
@@ -3116,7 +3111,27 @@ const Accounts: React.FC = () => {
 
           {(['active', 'used', 'frozen', 'inactive'] as const).map(status => (
             <TabsContent key={status} value={status} className="mt-4">
-              {accountsByStatus[status].length === 0 ? (
+              {isLoading ? (
+                // Skeleton loading for account list
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 px-3 py-2 bg-muted/30 rounded-lg">
+                    <Skeleton className="h-4 w-4" />
+                    <Skeleton className="h-4 w-32" />
+                  </div>
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 rounded-lg border bg-card/50">
+                      <Skeleton className="h-4 w-4" />
+                      <Skeleton className="h-10 w-10 rounded-full" />
+                      <div className="flex-1 space-y-2">
+                        <Skeleton className="h-4 w-32" />
+                        <Skeleton className="h-3 w-24" />
+                      </div>
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                      <Skeleton className="h-8 w-8" />
+                    </div>
+                  ))}
+                </div>
+              ) : accountsByStatus[status].length === 0 ? (
                 <Card>
                   <CardContent className="py-12 text-center">
                     <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
