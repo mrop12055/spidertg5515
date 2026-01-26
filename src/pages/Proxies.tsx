@@ -295,12 +295,33 @@ const Proxies: React.FC = () => {
     }
   };
 
-  // Parse and preview bulk proxies
+  // Parse and preview bulk proxies - supports URL and colon formats
   const parseBulkProxies = () => {
     const lines = bulkProxies.split('\n').filter(l => l.trim());
     const parsed: ProxyToAdd[] = lines.map(line => {
-      const parts = line.trim().split(':');
-      // Support format: host:port:user:pass:type OR host:port:user:pass OR host:port
+      const trimmed = line.trim();
+      
+      // Check if it's URL format: protocol://user:pass@host:port
+      const urlMatch = trimmed.match(
+        /^(https?|socks[45]):\/\/(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/i
+      );
+      
+      if (urlMatch) {
+        const [, protocol, username, password, host, port] = urlMatch;
+        const normalizedType = protocol.toLowerCase() === 'socks4' ? 'socks4' : 
+                               protocol.toLowerCase() === 'socks5' ? 'socks5' :
+                               protocol.toLowerCase() === 'https' ? 'https' : 'http';
+        return {
+          host,
+          port: parseInt(port) || 8080,
+          username: username || undefined,
+          password: password || undefined,
+          type: normalizedType,
+        };
+      }
+      
+      // Fallback to colon format: host:port:user:pass:type
+      const parts = trimmed.split(':');
       const specifiedType = parts[4]?.toLowerCase();
       const validTypes = ['http', 'https', 'socks4', 'socks5'];
       return {
