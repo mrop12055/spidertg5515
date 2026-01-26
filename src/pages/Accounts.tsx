@@ -2539,16 +2539,6 @@ const Accounts: React.FC = () => {
           icon={Phone}
           action={
             <div className="flex items-center gap-2">
-              {isFetching && !isLoading && (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Loader2 className="w-3 h-3 animate-spin" />
-                  Syncing...
-                </span>
-              )}
-              <Button variant="outline" onClick={() => { refetchAccounts(); refetchProxies(); }} disabled={isLoading} size="sm" className="gap-2">
-                <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-                Refresh
-              </Button>
               <Dialog open={isAddOpen} onOpenChange={(open) => {
                 setIsAddOpen(open);
                 if (!open) {

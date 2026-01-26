@@ -16,9 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ApiCredentialsManager } from '@/components/settings/ApiCredentialsManager';
 import { 
   Bell, 
-  Calendar,
   Loader2,
-  Trash2,
   Save,
   Settings as SettingsIcon,
   MessageSquare,
@@ -27,7 +25,6 @@ import {
 
 const Settings: React.FC = () => {
   const { toast: showToast } = useToast();
-  const [isCleaningUp, setIsCleaningUp] = useState(false);
   
   // Use database settings hook
   const { 
@@ -56,11 +53,6 @@ const Settings: React.FC = () => {
     }
   }, []);
 
-  // Helper to update cleanup settings
-  const updateCleanupSettings = (updates: Partial<typeof dbSettings.cleanup>) => {
-    updateDbSettings('cleanup', updates);
-  };
-
   // Helper to update livechat settings
   const updateLivechatSettings = (updates: Partial<typeof dbSettings.livechat>) => {
     updateDbSettings('livechat', updates);
@@ -71,23 +63,6 @@ const Settings: React.FC = () => {
     const newSettings = { ...localSettings, ...updates };
     setLocalSettings(newSettings);
     localStorage.setItem('local_ui_settings', JSON.stringify(newSettings));
-  };
-
-  // Manual cleanup trigger
-  const handleManualCleanup = async () => {
-    setIsCleaningUp(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('cleanup-old-chats');
-      
-      if (error) throw error;
-      
-      toast.success(`Cleanup complete: ${data.deleted?.conversations || 0} chats deleted`);
-    } catch (error) {
-      console.error('Cleanup failed:', error);
-      toast.error('Cleanup failed');
-    } finally {
-      setIsCleaningUp(false);
-    }
   };
 
   const handleSave = async () => {
@@ -123,7 +98,7 @@ const Settings: React.FC = () => {
         )}
 
         <Tabs defaultValue="api" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4 h-11">
+          <TabsList className="grid w-full grid-cols-3 h-11">
             <TabsTrigger value="api" className="gap-2">
               <Key className="w-4 h-4" />
               API Keys
@@ -131,10 +106,6 @@ const Settings: React.FC = () => {
             <TabsTrigger value="livechat" className="gap-2">
               <MessageSquare className="w-4 h-4" />
               Livechat
-            </TabsTrigger>
-            <TabsTrigger value="cleanup" className="gap-2">
-              <Calendar className="w-4 h-4" />
-              Cleanup
             </TabsTrigger>
             <TabsTrigger value="notifications" className="gap-2">
               <Bell className="w-4 h-4" />
@@ -226,67 +197,6 @@ const Settings: React.FC = () => {
               </CardContent>
             </Card>
           </TabsContent>
-
-      {/* Cleanup Tab */}
-      <TabsContent value="cleanup" className="mt-0">
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Auto Cleanup</CardTitle>
-            <CardDescription>
-              Automatically delete old conversations to reduce storage and ban risk
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <Label className="text-base">Delete chats older than</Label>
-                <Badge variant="secondary" className="text-sm font-medium">
-                  {dbSettings.cleanup.retentionDays} days
-                </Badge>
-              </div>
-              <Slider
-                value={[dbSettings.cleanup.retentionDays]}
-                onValueChange={([value]) => updateCleanupSettings({ retentionDays: value })}
-                min={3}
-                max={30}
-                step={1}
-                className="py-2"
-              />
-              <div className="flex justify-between text-xs text-muted-foreground">
-                <span>3 days</span>
-                <span>30 days</span>
-              </div>
-            </div>
-            
-            <Separator />
-            
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">Manual Cleanup</p>
-                <p className="text-sm text-muted-foreground">Run cleanup immediately</p>
-              </div>
-              <Button 
-                variant="outline" 
-                onClick={handleManualCleanup}
-                disabled={isCleaningUp}
-                className="gap-2"
-              >
-                {isCleaningUp ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Cleaning...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-4 h-4" />
-                    Run Now
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </TabsContent>
 
       {/* Notifications Tab */}
       <TabsContent value="notifications" className="mt-0">
