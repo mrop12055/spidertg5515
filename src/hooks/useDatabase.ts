@@ -222,8 +222,30 @@ export const useDatabase = () => {
   const addProxiesBulk = async (proxyText: string) => {
     const lines = proxyText.split('\n').filter(l => l.trim());
     const proxiesToAdd = lines.map((line) => {
-      const parts = line.split(':');
-      // Detect proxy type from 5th part or default to http
+      const trimmed = line.trim();
+      
+      // Check if it's URL format: protocol://user:pass@host:port
+      const urlMatch = trimmed.match(
+        /^(https?|socks[45]):\/\/(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/i
+      );
+      
+      if (urlMatch) {
+        const [, protocol, username, password, host, port] = urlMatch;
+        const normalizedType = protocol.toLowerCase() === 'socks4' ? 'socks4' : 
+                               protocol.toLowerCase() === 'socks5' ? 'socks5' :
+                               protocol.toLowerCase() === 'https' ? 'https' : 'http';
+        return {
+          host,
+          port: parseInt(port) || 8080,
+          username: username || null,
+          password: password || null,
+          proxy_type: normalizedType as 'http' | 'https' | 'socks4' | 'socks5',
+          status: 'active' as const,
+        };
+      }
+      
+      // Fallback to colon format: host:port:user:pass:type
+      const parts = trimmed.split(':');
       const typeStr = parts[4]?.toLowerCase().trim() || 'http';
       let proxyType: 'http' | 'https' | 'socks4' | 'socks5' = 'http';
       if (typeStr === 'socks5' || typeStr === 's5') proxyType = 'socks5';
@@ -238,7 +260,7 @@ export const useDatabase = () => {
         proxy_type: proxyType,
         status: 'active' as const,
       };
-    });
+    }).filter(p => p.host);
 
     const { error } = await supabase
       .from('proxies')
