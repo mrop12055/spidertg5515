@@ -2043,15 +2043,17 @@ const Accounts: React.FC = () => {
       a.status === 'active' && 
       !isAccountTemporarilyRestricted(a)
     ).length,
-    restricted: accounts.filter(a => 
+    used: accounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' ||
       (a.status === 'active' && isAccountTemporarilyRestricted(a))
     ).length,
+    frozen: accounts.filter(a => 
+      a.status === 'frozen'
+    ).length,
     inactive: accounts.filter(a => 
       a.status === 'banned' || 
-      a.status === 'disconnected' ||
-      a.status === 'frozen'
+      a.status === 'disconnected'
     ).length,
   };
 
