@@ -1260,16 +1260,19 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
     
     entities_map = {}
     
-    async def import_one(account_id, client, recipient, recipient_name):
+    async def import_one(account_id, client, recipient, recipient_name, idx, total):
         """Import a single contact using multi-strategy resolution (Telethon 2026 best practices)."""
         try:
             recipient_str = str(recipient) if recipient else ""
+            account_short = account_id[:8] if account_id else "????"
+            recipient_display = recipient_str[-8:] if len(recipient_str) > 8 else recipient_str
             
             # Priority 1: Try cached entity first (no API call - fastest)
             try:
                 entity = await asyncio.wait_for(
                     client.get_input_entity(recipient_str), timeout=3
                 )
+                print(f"    [{idx+1}/{total}] ✓ [{account_short}] → {recipient_display} (cached)")
                 return (account_id, recipient), entity
             except (ValueError, KeyError):
                 pass
@@ -1280,6 +1283,7 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
                     entity = await asyncio.wait_for(
                         client.get_entity(int(recipient_str)), timeout=5
                     )
+                    print(f"    [{idx+1}/{total}] ✓ [{account_short}] → {recipient_display} (ID)")
                     return (account_id, recipient), entity
                 except Exception:
                     pass
@@ -1290,6 +1294,7 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
                     entity = await asyncio.wait_for(
                         client.get_input_entity(recipient_str), timeout=5
                     )
+                    print(f"    [{idx+1}/{total}] ✓ [{account_short}] → {recipient_display} (username)")
                     return (account_id, recipient), entity
                 except Exception:
                     pass
@@ -1306,6 +1311,7 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
                     )
                     if result.users:
                         user = result.users[0]
+                        print(f"    [{idx+1}/{total}] ✓ [{account_short}] → {recipient_display} (resolved)")
                         # Return InputPeerUser for direct messaging (most efficient)
                         return (account_id, recipient), InputPeerUser(
                             user_id=user.id, 
@@ -1314,6 +1320,7 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
                 except Exception as e:
                     err_str = str(e).upper()
                     if "PHONE_NOT_OCCUPIED" in err_str:
+                        print(f"    [{idx+1}/{total}] ✗ [{account_short}] → {recipient_display} (not on Telegram)")
                         return (account_id, recipient), None
                     # Fall through to ImportContactsRequest fallback
                 
@@ -1329,32 +1336,38 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
                 )
                 if result.users:
                     user = result.users[0]
+                    print(f"    [{idx+1}/{total}] ✓ [{account_short}] → {recipient_display} (imported)")
                     return (account_id, recipient), InputPeerUser(
                         user_id=user.id, 
                         access_hash=user.access_hash
                     )
                 elif result.retry_contacts:
                     # Telegram says "wait and retry" - soft rate limit
+                    print(f"    [{idx+1}/{total}] ⏳ [{account_short}] → {recipient_display} (retry wait 30s)")
                     await asyncio.sleep(30)
                     result = await asyncio.wait_for(
                         client(ImportContactsRequest([contact])), timeout=10
                     )
                     if result.users:
                         user = result.users[0]
+                        print(f"    [{idx+1}/{total}] ✓ [{account_short}] → {recipient_display} (retry ok)")
                         return (account_id, recipient), InputPeerUser(
                             user_id=user.id, 
                             access_hash=user.access_hash
                         )
+                
+                print(f"    [{idx+1}/{total}] ✗ [{account_short}] → {recipient_display} (not found)")
             
             return (account_id, recipient), None
             
         except Exception as e:
-            print(f"    ⚠ Import [{account_id[:8]}] → {recipient}: {str(e)[:100]}")
+            print(f"    [{idx+1}/{total}] ⚠ [{account_id[:8]}] → {recipient}: {str(e)[:100]}")
             return (account_id, recipient), None
     
     # Build import tasks for parallel execution
     import_tasks = []
-    for task in tasks:
+    total_contacts = len(tasks)
+    for idx, task in enumerate(tasks):
         account = task.get("account", {})
         account_id = account.get("id")
         recipient = task.get("recipient")
@@ -1363,7 +1376,7 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
         
         if client and recipient:
             import_tasks.append(
-                import_one(account_id, client, recipient, recipient_name)
+                import_one(account_id, client, recipient, recipient_name, idx, total_contacts)
             )
     
     # Execute ALL imports in parallel (official Telegram API)
