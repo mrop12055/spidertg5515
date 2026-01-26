@@ -344,6 +344,28 @@ serve(async (req) => {
     const tasks: any[] = [];
     const usedAccountIds = new Set<string>();
 
+    // ========== PRE-FETCH API POOL FOR TRUE ROUND-ROBIN ==========
+    // Get all active APIs sorted by usage for true round-robin distribution
+    // This ensures we rotate through ALL APIs even within a single batch
+    const { data: allActiveApis } = await supabase
+      .from('telegram_api_credentials')
+      .select('id, api_id, api_hash, usage_count')
+      .eq('is_active', true)
+      .order('usage_count', { ascending: true })
+      .order('last_used_at', { ascending: true, nullsFirst: true });
+    
+    const apiPool = allActiveApis || [];
+    let apiPoolIndex = 0; // Track position in round-robin rotation
+    
+    // Helper function for true in-batch round-robin
+    const getNextApiFromPool = (): { id: string; api_id: string; api_hash: string } | null => {
+      if (apiPool.length === 0) return null;
+      const api = apiPool[apiPoolIndex % apiPool.length];
+      apiPoolIndex++; // Advance for next call
+      return { id: api.id, api_id: api.api_id, api_hash: api.api_hash };
+    };
+    
+    console.log(`[get-batch-tasks] API POOL: ${apiPool.length} APIs available for round-robin distribution`);
     // WARMUP_CHAT RUNNER: Get pending warmup messages (PARALLEL BATCH)
     if (runner === "warmup_chat") {
       // Use dynamic warmup batch size from settings
@@ -441,9 +463,9 @@ serve(async (req) => {
             const senderApiCred = senderAccount.telegram_api_credentials;
             const receiverApiCred = receiverAccount.telegram_api_credentials;
             
-            // ROUND-ROBIN API: Get API credentials from pool (NO INCREMENT - that happens on success)
-            const senderApi = await selectNextApiCredential(supabase);
-            const receiverApi = await selectNextApiCredential(supabase);
+            // ROUND-ROBIN API: Get API credentials from pool (true rotation within batch)
+            const senderApi = getNextApiFromPool();
+            const receiverApi = getNextApiFromPool();
             
             // Skip if no API credentials available
             if (!senderApi) {
@@ -593,10 +615,6 @@ serve(async (req) => {
       }
 
       const campaignIds = runningCampaigns.map(c => c.id);
-      // ========== ROUND-ROBIN API SYSTEM ==========
-      // Each task gets an API from the credential pool using round-robin rotation
-      // APIs are selected by lowest usage_count for even distribution
-      console.log(`[get-batch-tasks] ROUND-ROBIN API: Even distribution across credential pool`);
 
       // ========== CAMPAIGN-SPECIFIC DAILY LIMIT PER ACCOUNT ==========
       // Count how many campaign messages each account has sent TODAY (UTC)
@@ -1003,8 +1021,8 @@ serve(async (req) => {
             .replace(/{name}/g, recipient.name || 'there')
             .replace(/{phone}/g, recipient.phone_number);
 
-          // ROUND-ROBIN API: Get API credentials from pool
-          const accountApi = await selectNextApiCredential(supabase);
+          // ROUND-ROBIN API: Get API credentials from pool (true rotation within batch)
+          const accountApi = getNextApiFromPool();
           if (!accountApi) {
             console.log(`[get-batch-tasks] SKIP recipient ${recipient.id}: No API credentials available in pool`);
             continue;
