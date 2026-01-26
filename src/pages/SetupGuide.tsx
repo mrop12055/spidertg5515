@@ -361,7 +361,7 @@ async def retry_proxy_error_accounts():
                     print(f"    [{phone}] ✗ Still failing")
                     
             except Exception as e:
-                print(f"    [{phone}] ✗ Error: {str(e)[:40]}")
+                print(f"    [{phone}] ✗ Error: {str(e)[:100]}")
         
         if reconnected > 0:
             print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(ready_accounts)} accounts")
@@ -1318,7 +1318,7 @@ async def bulk_import_contacts(clients_map: dict, tasks: list) -> dict:
             return (account_id, recipient), None
             
         except Exception as e:
-            print(f"    ⚠ Import [{account_id[:8]}] → {recipient}: {str(e)[:40]}")
+            print(f"    ⚠ Import [{account_id[:8]}] → {recipient}: {str(e)[:100]}")
             return (account_id, recipient), None
     
     # Build import tasks for parallel execution
@@ -1477,7 +1477,7 @@ async def bulk_send_messages(
         except SlowModeWaitError as e:
             result["error"] = f"SlowMode:{e.seconds}s"
         except Exception as e:
-            result["error"] = str(e)[:100]
+            result["error"] = str(e)[:150]
         
         print(f"    ✗ [{account_phone}] → {recipient}: {result['error']}")
         return result
@@ -1524,7 +1524,7 @@ async def process_batch_optimized(tasks: list, stagger_min: float, stagger_max: 
     
     # ========== PHASE 1: Connect ALL accounts (parallel) ==========
     phase1_start = time.time()
-    print(f"  🔌 Phase 1: Connecting {len(account_tasks_map)} accounts...")
+    print(f"  [1/5] 🔌 Connecting {len(account_tasks_map)} accounts...")
     
     clients_map = {}
     
@@ -1537,7 +1537,7 @@ async def process_batch_optimized(tasks: list, stagger_min: float, stagger_max: 
             )
             return acc_id, client
         except Exception as e:
-            print(f"    ⚠ Connect [{acc_id[:8]}]: {str(e)[:40]}")
+            print(f"    ⚠ Connect [{acc_id[:8]}]: {str(e)[:100]}")
             return acc_id, None
     
     connect_results = await asyncio.gather(
@@ -1555,7 +1555,7 @@ async def process_batch_optimized(tasks: list, stagger_min: float, stagger_max: 
     
     # ========== PHASE 2: Import ALL contacts (parallel) ==========
     phase2_start = time.time()
-    print(f"  📇 Phase 2: Importing contacts (official ImportContactsRequest)...")
+    print(f"  [2/5] 📇 Importing contacts (official ImportContactsRequest)...")
     
     entities_map = await bulk_import_contacts(clients_map, tasks)
     
@@ -1563,12 +1563,12 @@ async def process_batch_optimized(tasks: list, stagger_min: float, stagger_max: 
     
     # ========== PHASE 3: Safety wait (prevents rapid-fire pattern) ==========
     wait_time = random.uniform(5.0, 6.0)
-    print(f"  ⏳ Phase 3: Safety wait {wait_time:.1f}s...")
+    print(f"  [3/5] ⏳ Safety wait {wait_time:.1f}s...")
     await asyncio.sleep(wait_time)
     
     # ========== PHASE 4: Send ALL messages (parallel) ==========
     phase4_start = time.time()
-    print(f"  📤 Phase 4: Sending {len(tasks)} messages (official send_message)...")
+    print(f"  [4/5] 📤 Sending {len(tasks)} messages (official send_message)...")
     
     results = await bulk_send_messages(clients_map, entities_map, tasks)
     
@@ -1577,7 +1577,7 @@ async def process_batch_optimized(tasks: list, stagger_min: float, stagger_max: 
     
     # ========== PHASE 5: Disconnect ALL (parallel, NO session save) ==========
     phase5_start = time.time()
-    print(f"  🔌 Phase 5: Disconnecting clients...")
+    print(f"  [5/5] 🔌 Disconnecting clients...")
     
     async def disconnect_one(acc_id, client):
         try:
@@ -2047,7 +2047,7 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                 
             except Exception as e:
                 error_str = str(e)
-                print(f"    ✗ [{account_phone}] → {recipient}: {error_str[:60]}")
+                print(f"    ✗ [{account_phone}] → {recipient}: {error_str[:150]}")
                 results.append({
                     "success": False,
                     "error": error_str,
@@ -2061,7 +2061,7 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
     except Exception as e:
         # Connection failed during send - return error for remaining tasks
         error_str = str(e)
-        print(f"    ✗ [{account_phone}] Send error: {error_str[:60]}")
+        print(f"    ✗ [{account_phone}] Send error: {error_str[:150]}")
         # Return results already collected plus error for remaining
         return results
         
@@ -2617,7 +2617,7 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
         if is_telegram_server_error(error_str):
             print(f"  [{phone}] Telegram servers busy during catch_up")
         else:
-            print(f"  [{phone}] catch_up error: {str(e)[:40]}")
+            print(f"  [{phone}] catch_up error: {str(e)[:100]}")
     
     # Strategy 2: ALWAYS fetch unread messages from dialogs (this is the reliable method)
     try:
