@@ -7,6 +7,8 @@ import { Progress } from '@/components/ui/progress';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
 import { useCampaigns } from '@/hooks/useCampaigns';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
+import { TaskQueueCard } from '@/components/dashboard/TaskQueueCard';
+import { RecentErrorsCard } from '@/components/dashboard/RecentErrorsCard';
 import { 
   LayoutDashboard, 
   Phone, 
@@ -127,6 +129,12 @@ const Dashboard: React.FC = () => {
           </CardContent>
         </Card>
       )}
+
+      {/* Task Queue & Errors Section */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+        <TaskQueueCard />
+        <RecentErrorsCard />
+      </div>
     </DashboardLayout>
   );
 };
