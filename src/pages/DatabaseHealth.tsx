@@ -634,12 +634,6 @@ const DatabaseHealth = () => {
         title="Database Health"
         description="Monitor system health and manage pending tasks (real-time updates)"
         icon={Database}
-        action={
-          <Button onClick={handleRefresh} disabled={refreshing} size="sm">
-            <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
-        }
       />
 
       <AnimatePresence mode="wait">
@@ -649,101 +643,6 @@ const DatabaseHealth = () => {
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
         >
-          {/* System Overview - Main Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <StatCard
-          title="Active Accounts"
-          value={health?.active_accounts || 0}
-          icon={Users}
-          variant="success"
-          index={0}
-        />
-        <StatCard
-          title="Restricted"
-          value={restrictedAccountsCount}
-          icon={AlertCircle}
-          variant="warning"
-          index={1}
-        />
-        <StatCard
-          title="Active Proxies"
-          value={health?.active_proxies || 0}
-          icon={Shield}
-          variant="primary"
-          index={2}
-        />
-        <StatCard
-          title="Conversations"
-          value={health?.total_conversations || 0}
-          icon={MessageSquare}
-          variant="default"
-          index={3}
-        />
-      </div>
-
-      {/* Pending Tasks Summary */}
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, delay: 0.3 }}
-        className="mb-6"
-      >
-        <div className="flex items-center gap-2 mb-4">
-          <div className="p-2 rounded-xl bg-yellow-500/10">
-            <Clock className="w-5 h-5 text-yellow-500" />
-          </div>
-          <h2 className="text-lg font-semibold">Pending Queue</h2>
-          <Badge variant="outline" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/30">
-            {(health?.pending_account_tasks || 0) + (health?.pending_import_tasks || 0) + 
-             (health?.pending_recipients || 0) + (health?.pending_messages || 0)} total
-          </Badge>
-        </div>
-        
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: 'Account', value: health?.pending_account_tasks || 0, icon: UserCheck, color: 'yellow' },
-            { label: 'Import', value: health?.pending_import_tasks || 0, icon: Upload, color: 'yellow' },
-            { label: 'Recipients', value: health?.pending_recipients || 0, icon: Send, color: 'blue' },
-            { label: 'Stuck', value: health?.stuck_messages || 0, icon: AlertTriangle, color: 'red' },
-          ].map((item, idx) => (
-            <motion.div
-              key={item.label}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.3, delay: 0.4 + idx * 0.05 }}
-              className={`relative overflow-hidden rounded-xl border p-4 bg-card hover:shadow-md transition-all duration-200 ${
-                item.color === 'red' ? 'border-red-500/30' : 
-                item.color === 'blue' ? 'border-blue-500/30' : 
-                'border-yellow-500/30'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className={`text-2xl font-bold ${
-                    item.color === 'red' ? 'text-red-500' : 
-                    item.color === 'blue' ? 'text-blue-500' : 
-                    'text-yellow-500'
-                  }`}>
-                    {item.value}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">{item.label}</p>
-                </div>
-                <div className={`p-2 rounded-lg ${
-                  item.color === 'red' ? 'bg-red-500/10' : 
-                  item.color === 'blue' ? 'bg-blue-500/10' : 
-                  'bg-yellow-500/10'
-                }`}>
-                  <item.icon className={`w-4 h-4 ${
-                    item.color === 'red' ? 'text-red-500' : 
-                    item.color === 'blue' ? 'text-blue-500' : 
-                    'text-yellow-500'
-                  }`} />
-                </div>
-              </div>
-            </motion.div>
-          ))}
-        </div>
-      </motion.div>
 
       {/* Task Tables */}
       <motion.div

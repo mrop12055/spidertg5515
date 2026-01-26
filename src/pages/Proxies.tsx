@@ -1001,13 +1001,8 @@ const Proxies: React.FC = () => {
             <SelectItem value="all">All Proxies</SelectItem>
             <SelectItem value="assigned">Assigned</SelectItem>
             <SelectItem value="unassigned">Unassigned</SelectItem>
-            <SelectItem value="with_errors">With Errors</SelectItem>
           </SelectContent>
         </Select>
-        <Button variant="outline" onClick={() => refreshData()} className="gap-2">
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </Button>
       </div>
 
       {/* Error Alert Banner - Show at top if there are errors */}
@@ -1044,7 +1039,7 @@ const Proxies: React.FC = () => {
       })()}
 
       {/* Stats - Clickable to filter */}
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
         <Card 
           className={cn(
             "cursor-pointer transition-all hover:border-primary/50",
@@ -1130,90 +1125,7 @@ const Proxies: React.FC = () => {
             </div>
           </CardContent>
         </Card>
-        <Card 
-          className={cn(
-            "cursor-pointer transition-all hover:border-orange-500/50",
-            usageFilter === 'with_errors' && "ring-2 ring-orange-500"
-          )}
-          onClick={() => setUsageFilter(usageFilter === 'with_errors' ? 'all' : 'with_errors')}
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center">
-              <AlertTriangle className="w-6 h-6 text-orange-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{proxyErrors.size}</p>
-              <p className="text-sm text-muted-foreground">With Errors</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card 
-          className={cn(
-            "cursor-pointer transition-all hover:border-orange-500/50",
-            slowFilter && "ring-2 ring-orange-500"
-          )}
-          onClick={() => setSlowFilter(!slowFilter)}
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-orange-500/10 flex items-center justify-center">
-              <Clock className="w-6 h-6 text-orange-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{proxies.filter(p => p.responseTime && p.responseTime > 300).length}</p>
-              <p className="text-sm text-muted-foreground">Slow</p>
-            </div>
-          </CardContent>
-        </Card>
       </div>
-
-      {/* Health Monitoring Card */}
-      <Card className="mb-6">
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base flex items-center gap-2">
-            <Shield className="w-4 h-4" />
-            Health Monitoring
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <div className="flex flex-wrap items-center gap-6">
-            <div className="flex items-center gap-3">
-              <Switch 
-                checked={autoHealthCheck} 
-                onCheckedChange={setAutoHealthCheck}
-                id="auto-health-check"
-              />
-              <Label htmlFor="auto-health-check" className="cursor-pointer">
-                Auto health check
-              </Label>
-            </div>
-            {autoHealthCheck && (
-              <div className="flex items-center gap-2">
-                <Label className="text-sm text-muted-foreground">Every</Label>
-                <Select 
-                  value={healthCheckInterval.toString()} 
-                  onValueChange={(v) => setHealthCheckInterval(parseInt(v))}
-                >
-                  <SelectTrigger className="w-24 h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="15">15 min</SelectItem>
-                    <SelectItem value="30">30 min</SelectItem>
-                    <SelectItem value="60">1 hour</SelectItem>
-                    <SelectItem value="120">2 hours</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            {lastHealthCheck && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Clock className="w-3 h-3" />
-                Last check: {formatTimeAgo(lastHealthCheck.toISOString())}
-              </div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
 
       {/* Proxies List */}
       {isLoading ? (

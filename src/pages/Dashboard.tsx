@@ -1,11 +1,9 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { useTelegram } from '@/context/TelegramContext';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
 import { useCampaigns } from '@/hooks/useCampaigns';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
@@ -14,8 +12,6 @@ import {
   Phone, 
   MessageSquare, 
   Send,
-  RefreshCw,
-  Loader2,
   Globe,
   Users,
   TrendingUp,
@@ -24,19 +20,10 @@ import {
 import { useNavigate } from 'react-router-dom';
 
 const Dashboard: React.FC = () => {
-  const { refreshData } = useTelegram();
-  const { stats, isFetching: isStatsFetching, refetch: refetchStats } = useDashboardStats();
-  const { campaigns, isFetching: isCampaignsFetching, refetch: refetchCampaigns } = useCampaigns();
+  const { stats } = useDashboardStats();
+  const { campaigns } = useCampaigns();
   const navigate = useNavigate();
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    await Promise.all([refreshData(), refetchStats(), refetchCampaigns()]);
-    setIsRefreshing(false);
-  };
-
-  const isSyncing = isStatsFetching || isCampaignsFetching;
   const runningCampaigns = campaigns.filter(c => c.status === 'running').length;
 
   return (
@@ -45,24 +32,6 @@ const Dashboard: React.FC = () => {
         title="Dashboard" 
         description="Monitor your TGxOP bulk messaging system"
         icon={LayoutDashboard}
-        action={
-          <div className="flex items-center gap-2">
-            {isSyncing && !isRefreshing && (
-              <span className="text-xs text-muted-foreground flex items-center gap-1">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Syncing...
-              </span>
-            )}
-            <Button variant="outline" onClick={handleRefresh} disabled={isRefreshing}>
-              {isRefreshing ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <RefreshCw className="w-4 h-4" />
-              )}
-              <span className="ml-2">Refresh</span>
-            </Button>
-          </div>
-        }
       />
       
       {/* Account & Proxy Stats */}
