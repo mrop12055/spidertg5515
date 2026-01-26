@@ -2,6 +2,7 @@ import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
+import { useAccounts } from '@/hooks/useAccounts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -87,7 +88,8 @@ interface Seat {
 }
 
 const Campaigns: React.FC = () => {
-  const { campaigns, accounts, createCampaign, updateCampaign, deleteCampaign, uploadRecipients, startCampaign, isLoading, refreshData } = useTelegram();
+  const { campaigns, createCampaign, updateCampaign, deleteCampaign, uploadRecipients, startCampaign, isLoading, refreshData } = useTelegram();
+  const { accounts, isLoading: isLoadingAccounts } = useAccounts();
   const { settings: appSettings, updateSettings: updateAppSettings, saveSetting, fetchSettings, isLoading: isLoadingSettings, isSaving } = useAppSettings();
   
   const [isCreateOpen, setIsCreateOpen] = useState(false);
