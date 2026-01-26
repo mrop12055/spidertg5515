@@ -93,85 +93,104 @@ export const RecentErrorsCard: React.FC = () => {
 
       const allErrors: RecentError[] = [];
 
+      // Only add errors that have actual error messages - no custom fallbacks
       (failedRecipientsRes.data || []).forEach(r => {
-        allErrors.push({
-          id: r.id,
-          phone: r.phone_number,
-          reason: r.failed_reason || 'Unknown error',
-          timestamp: r.sent_at || new Date().toISOString(),
-          source: 'Campaign'
-        });
+        if (r.failed_reason) {
+          allErrors.push({
+            id: r.id,
+            phone: r.phone_number,
+            reason: r.failed_reason,
+            timestamp: r.sent_at || new Date().toISOString(),
+            source: 'Campaign'
+          });
+        }
       });
 
       (failedMessagesRes.data || []).forEach(m => {
-        allErrors.push({
-          id: m.id,
-          phone: m.conversation_id?.substring(0, 8) || 'Unknown',
-          reason: m.failed_reason || 'Unknown error',
-          timestamp: m.created_at || new Date().toISOString(),
-          source: 'Message'
-        });
+        if (m.failed_reason) {
+          allErrors.push({
+            id: m.id,
+            phone: m.conversation_id?.substring(0, 8) || '-',
+            reason: m.failed_reason,
+            timestamp: m.created_at || new Date().toISOString(),
+            source: 'Message'
+          });
+        }
       });
 
       (failedAccountTasksRes.data || []).forEach(t => {
-        allErrors.push({
-          id: t.id,
-          phone: t.account_id?.substring(0, 8) || 'Unknown',
-          reason: t.result || 'Account check failed',
-          timestamp: t.created_at || new Date().toISOString(),
-          source: 'Account Check'
-        });
+        if (t.result) {
+          allErrors.push({
+            id: t.id,
+            phone: t.account_id?.substring(0, 8) || '-',
+            reason: t.result,
+            timestamp: t.created_at || new Date().toISOString(),
+            source: 'Account Check'
+          });
+        }
       });
 
       (failedBlockTasksRes.data || []).forEach(t => {
-        allErrors.push({
-          id: t.id,
-          phone: t.target_phone || 'Unknown',
-          reason: t.result || 'Block task failed',
-          timestamp: t.created_at || new Date().toISOString(),
-          source: 'Block Task'
-        });
+        if (t.result) {
+          allErrors.push({
+            id: t.id,
+            phone: t.target_phone || '-',
+            reason: t.result,
+            timestamp: t.created_at || new Date().toISOString(),
+            source: 'Block Task'
+          });
+        }
       });
 
       (failedImportTasksRes.data || []).forEach(t => {
-        allErrors.push({
-          id: t.id,
-          phone: 'Import',
-          reason: t.result || 'Import failed',
-          timestamp: t.created_at || new Date().toISOString(),
-          source: 'Import'
-        });
+        if (t.result) {
+          allErrors.push({
+            id: t.id,
+            phone: 'Import',
+            reason: t.result,
+            timestamp: t.created_at || new Date().toISOString(),
+            source: 'Import'
+          });
+        }
       });
 
+      // Warmup errors - fetch from warmup_errors table instead for raw messages
       (failedWarmupRes.data || []).forEach(w => {
-        allErrors.push({
-          id: w.id,
-          phone: w.account_id?.substring(0, 8) || 'Unknown',
-          reason: `Warmup ${w.task_type} failed`,
-          timestamp: w.created_at || new Date().toISOString(),
-          source: 'Warmup'
-        });
+        // Only show if there's task_type context
+        if (w.task_type) {
+          allErrors.push({
+            id: w.id,
+            phone: w.account_id?.substring(0, 8) || '-',
+            reason: w.task_type,
+            timestamp: w.created_at || new Date().toISOString(),
+            source: 'Warmup'
+          });
+        }
       });
 
       (accountErrorsRes.data || []).forEach(a => {
-        allErrors.push({
-          id: a.id,
-          phone: a.phone_number,
-          reason: a.ban_reason || 'Unknown error',
-          timestamp: a.restricted_until || a.created_at || new Date().toISOString(),
-          source: 'Account'
-        });
+        if (a.ban_reason) {
+          allErrors.push({
+            id: a.id,
+            phone: a.phone_number,
+            reason: a.ban_reason,
+            timestamp: a.restricted_until || a.created_at || new Date().toISOString(),
+            source: 'Account'
+          });
+        }
       });
 
-      // VPS/Python runner errors
+      // VPS/Python runner errors - raw messages only
       (vpsErrorLogsRes.data || []).forEach(v => {
-        allErrors.push({
-          id: v.id,
-          phone: v.runner_name || 'Python',
-          reason: v.message || 'Unknown error',
-          timestamp: v.created_at || new Date().toISOString(),
-          source: 'Python'
-        });
+        if (v.message) {
+          allErrors.push({
+            id: v.id,
+            phone: v.runner_name || 'Python',
+            reason: v.message,
+            timestamp: v.created_at || new Date().toISOString(),
+            source: 'Python'
+          });
+        }
       });
 
       allErrors.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
