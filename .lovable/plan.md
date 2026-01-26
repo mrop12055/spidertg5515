@@ -1,138 +1,126 @@
 
-# Plan: Improved Least-Used-First Account Assignment
+# Plan: Add URL Format Support for Proxy Import
 
-## Current Behavior
+## Current Issue
 
-The `get-batch-tasks` edge function currently:
-1. Sorts accounts by `batchAccountUsage` (usage within current batch only)
-2. Assigns accounts in round-robin within the batch
-3. Does NOT prioritize accounts with 0 `messages_sent_today` globally
-
-**Problem**: If batch size is 50 and you have 100 accounts where 50 have 0 messages today and 50 have 5 messages today, the current logic might mix them instead of using all zero-message accounts first.
-
----
-
-## Proposed Changes
-
-### File: `supabase/functions/get-batch-tasks/index.ts`
-
-**Location**: Lines 936-951 (account selection logic)
-
-**Current Code**:
-```typescript
-const sortedAccounts = [...campaignUsableAccounts].sort((a: any, b: any) => {
-  // Sort by batch usage (least used in this batch first)
-  const batchUsageA = batchAccountUsage.get(a.id) || 0;
-  const batchUsageB = batchAccountUsage.get(b.id) || 0;
-  return batchUsageA - batchUsageB;
-});
+The proxy import only supports the colon-separated format:
+```text
+host:port:username:password:type
 ```
 
-**New Code** - Two-level sorting:
-```typescript
-const sortedAccounts = [...campaignUsableAccounts].sort((a: any, b: any) => {
-  // PRIMARY: Sort by total messages sent today (0 messages first)
-  const sentTodayA = accountCampaignSentToday.get(a.id) || 0;
-  const sentTodayB = accountCampaignSentToday.get(b.id) || 0;
-  
-  if (sentTodayA !== sentTodayB) {
-    return sentTodayA - sentTodayB; // Accounts with 0 messages first
-  }
-  
-  // SECONDARY: For accounts with same messages today, sort by batch usage
-  const batchUsageA = batchAccountUsage.get(a.id) || 0;
-  const batchUsageB = batchAccountUsage.get(b.id) || 0;
-  return batchUsageA - batchUsageB;
-});
+But many proxy providers supply proxies in URL format:
+```text
+socks5://username:password@host:port
+```
+
+Your example:
+```text
+socks5://99180_JBIPc_c_in_smartpath_m_speed_s_KZ43P7XRB93KEEIU:tA8YZ0MjsN@residential.pingproxies.com:8971
 ```
 
 ---
 
-## How It Works
+## Solution Overview
 
-### Example: 100 Accounts, Batch Size 50
+Create a unified proxy parser that automatically detects and handles both formats:
 
-**Account Pool**:
-- 50 accounts with 0 messages today
-- 30 accounts with 1 message today
-- 20 accounts with 2 messages today
-
-**Assignment Order**:
-
-1. **First 50 recipients**: Use all 50 accounts with `messages_sent_today = 0` (one message each)
-2. **Next 30 recipients**: Use accounts with `messages_sent_today = 1` (now they have 2)
-3. **Next 20 recipients**: Use accounts with `messages_sent_today = 2` (now they have 3)
-4. **Continue**: Cycle back to least-used accounts
-
-**Result**: Maximum distribution across accounts, minimizing risk of triggering spam detection.
+1. **URL Format**: `protocol://user:pass@host:port`
+2. **Colon Format**: `host:port:user:pass:type`
 
 ---
 
-## Visual Flow
+## Implementation Details
+
+### File 1: `src/pages/Proxies.tsx`
+
+Update the `parseBulkProxies()` function (around line 299) to:
+
+```typescript
+const parseBulkProxies = () => {
+  const lines = bulkProxies.split('\n').filter(l => l.trim());
+  const parsed: ProxyToAdd[] = lines.map(line => {
+    const trimmed = line.trim();
+    
+    // Check if it's URL format: protocol://user:pass@host:port
+    const urlMatch = trimmed.match(
+      /^(https?|socks[45]):\/\/(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/i
+    );
+    
+    if (urlMatch) {
+      const [, protocol, username, password, host, port] = urlMatch;
+      return {
+        host,
+        port: parseInt(port) || 8080,
+        username: username || undefined,
+        password: password || undefined,
+        type: protocol.toLowerCase().replace('socks', 'socks') as string,
+      };
+    }
+    
+    // Fallback to colon format: host:port:user:pass:type
+    const parts = trimmed.split(':');
+    const specifiedType = parts[4]?.toLowerCase();
+    const validTypes = ['http', 'https', 'socks4', 'socks5'];
+    
+    return {
+      host: parts[0] || '',
+      port: parseInt(parts[1]) || 8080,
+      username: parts[2] || undefined,
+      password: parts[3] || undefined,
+      type: validTypes.includes(specifiedType) ? specifiedType : bulkProxyType,
+    };
+  }).filter(p => p.host);
+  
+  setParsedProxies(parsed);
+  return parsed;
+};
+```
+
+### File 2: `src/hooks/useDatabase.ts`
+
+Update the `addProxiesBulk()` function (around line 222) with the same URL parsing logic for consistency.
+
+---
+
+## Supported Formats After Implementation
+
+| Format | Example |
+|--------|---------|
+| URL with auth | `socks5://user:pass@host.com:8971` |
+| URL without auth | `http://proxy.example.com:8080` |
+| Colon with type | `host.com:8080:user:pass:socks5` |
+| Colon without type | `host.com:8080:user:pass` (uses selected default) |
+| Colon minimal | `host.com:8080` |
+
+---
+
+## UI Enhancement
+
+Add a hint in the bulk import dialog showing both supported formats:
 
 ```text
-Account Selection Priority:
-
-   100 Available Accounts
-           |
-           v
-   ┌───────────────────────────────┐
-   │ STEP 1: Sort by messages_sent_today │
-   │ (accounts with 0 messages FIRST)    │
-   └───────────────────────────────┘
-           |
-           v
-   ┌───────────────────────────────┐
-   │ STEP 2: For same count, sort by     │
-   │ batch usage (least used in batch)   │
-   └───────────────────────────────┘
-           |
-           v
-   ┌───────────────────────────────┐
-   │ STEP 3: Pick first eligible account │
-   │ (not failed, has remaining quota)   │
-   └───────────────────────────────┘
-           |
-           v
-   Assign to Recipient
+Supported formats:
+• socks5://user:pass@host:port
+• host:port:user:pass:type
 ```
 
 ---
 
-## Batch Size Behavior
+## Files to Modify
 
-| Batch Size | Available Accounts | Behavior |
-|------------|-------------------|----------|
-| 50 | 100 | Use 50 different accounts (1 msg each) |
-| 50 | 30 | Use 30 accounts (some get 2 msgs) |
-| 100 | 100 | Use all 100 accounts (1 msg each) |
-| 0 (unlimited) | 100 | Use all available accounts |
+| File | Change |
+|------|--------|
+| `src/pages/Proxies.tsx` | Update `parseBulkProxies()` to detect URL format |
+| `src/hooks/useDatabase.ts` | Update `addProxiesBulk()` with same parsing logic |
 
 ---
 
-## Additional Enhancement: Add Logging
+## Expected Outcome
 
-Add logging to show the distribution:
-
-```typescript
-console.log(`[get-batch-tasks] Account distribution - 0 msgs: ${
-  campaignUsableAccounts.filter(a => (accountCampaignSentToday.get(a.id) || 0) === 0).length
-}, 1+ msgs: ${
-  campaignUsableAccounts.filter(a => (accountCampaignSentToday.get(a.id) || 0) >= 1).length
-}`);
+After implementation, you can paste proxies in either format:
+```text
+socks5://99180_JBIPc_c_in_smartpath_m_speed_s_KZ43P7XRB93KEEIU:tA8YZ0MjsN@residential.pingproxies.com:8971
+residential.pingproxies.com:8971:99180_JBIPc:tA8YZ0MjsN:socks5
 ```
 
----
-
-## Summary
-
-| Change | File | Description |
-|--------|------|-------------|
-| Sorting logic | `get-batch-tasks/index.ts` | Add two-level sort: messages_sent_today first, then batch_usage |
-| Logging | `get-batch-tasks/index.ts` | Add account distribution logging |
-
-This ensures:
-1. Accounts with 0 messages today are always used first
-2. Load is evenly distributed across ALL accounts
-3. Batch size of 50 = 50 different accounts (not 10 accounts with 5 messages each)
-4. Step-by-step increase in message count per account
+Both will be correctly parsed and imported.
