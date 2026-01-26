@@ -1423,7 +1423,7 @@ async def bulk_send_messages(
         client = clients_map.get(account_id)
         entity = entities_map.get((account_id, recipient))
         
-        # Base result structure
+        # Base result structure - INCLUDE api_credential_id for usage tracking!
         result = {
             "success": False,
             "error": None,
@@ -1436,6 +1436,7 @@ async def bulk_send_messages(
             "campaign_seat_id": task.get("campaign_seat_id"),
             "campaign_id": task.get("campaign_id"),
             "campaign_name": task.get("campaign_name"),
+            "api_credential_id": account.get("api_credential_id"),  # Critical for API usage tracking
         }
         
         if not client:
