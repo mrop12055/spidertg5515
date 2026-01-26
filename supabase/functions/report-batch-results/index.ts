@@ -481,7 +481,7 @@ serve(async (req) => {
                   .from("telegram_accounts")
                   .update({
                     status: "frozen",
-                    ban_reason: r.error || "Account frozen by Telegram",
+                    ban_reason: r.error || "frozen",
                   })
                   .eq("id", r.account_id);
                 console.log(`[report-batch-results] Account ${r.account_id} FROZEN by Telegram: ${r.error}`);
@@ -517,9 +517,44 @@ serve(async (req) => {
           );
         }
 
-        // Handle permanent failures
-        if (permanent.length > 0) {
-          const permanentIds = permanent.map((r) => r.campaign_recipient_id);
+        // ========== CLASSIFY PERMANENT FAILURES ==========
+        // Distinguish between RECIPIENT errors (mark as failed) vs ACCOUNT errors (retry with different account)
+        const recipientErrorPatterns = [
+          'user not found',
+          'no user',
+          'peer_id_invalid',
+          'user was deleted',
+          'phone_number_invalid',
+          'phone_number_unoccupied',
+        ];
+
+        const accountErrorPatterns = [
+          'api_id_invalid',
+          'phone_code',
+          'type_constructor_invalid',
+          'firstname_invalid',
+          'lastname_invalid',
+          'auth_key',
+          'session',
+        ];
+
+        // Split permanent into actual recipient failures vs account errors
+        const actualRecipientFailures = permanent.filter(r => {
+          const errorLower = (r.error || '').toLowerCase();
+          const isRecipientError = recipientErrorPatterns.some(e => errorLower.includes(e));
+          const isAccountError = accountErrorPatterns.some(e => errorLower.includes(e));
+          // Only mark as failed if it's definitely a recipient issue, not an account issue
+          return isRecipientError || (!isAccountError && !errorLower.includes('session'));
+        });
+
+        const accountErrorResults = permanent.filter(r => {
+          const errorLower = (r.error || '').toLowerCase();
+          return accountErrorPatterns.some(e => errorLower.includes(e));
+        });
+
+        // Handle ACTUAL recipient failures (only recipient-related errors)
+        if (actualRecipientFailures.length > 0) {
+          const permanentIds = actualRecipientFailures.map((r) => r.campaign_recipient_id);
           failPromises.push(
             asPromise(
               supabase
@@ -529,16 +564,62 @@ serve(async (req) => {
             )
           );
 
-          for (const r of permanent) {
+          for (const r of actualRecipientFailures) {
             failPromises.push(
               asPromise(
                 supabase
                   .from("campaign_recipients")
-                  .update({ failed_reason: r.error })
+                  .update({ failed_reason: r.error })  // Raw error
                   .eq("id", r.campaign_recipient_id)
               )
             );
           }
+          console.log(`[report-batch-results] Marked ${actualRecipientFailures.length} recipients as FAILED (recipient errors)`);
+        }
+
+        // Handle ACCOUNT errors - mark account as disconnected, reset recipient for different account
+        for (const r of accountErrorResults) {
+          failPromises.push(
+            (async () => {
+              // Mark account as disconnected
+              if (r.account_id) {
+                await supabase
+                  .from("telegram_accounts")
+                  .update({
+                    status: "disconnected",
+                    ban_reason: r.error,  // Raw error
+                  })
+                  .eq("id", r.account_id);
+                console.log(`[report-batch-results] Account ${r.account_id} disconnected (session/API error): ${r.error}`);
+              }
+
+              // Reset recipient for different account
+              const { data: current } = await supabase
+                .from("campaign_recipients")
+                .select("failed_account_ids")
+                .eq("id", r.campaign_recipient_id)
+                .single();
+
+              const failedIds: string[] = current?.failed_account_ids || [];
+              if (r.account_id && !failedIds.includes(r.account_id)) {
+                failedIds.push(r.account_id);
+              }
+
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  failed_reason: null,
+                  failed_account_ids: failedIds,
+                  sent_by_account_id: null,
+                  api_credential_id: null,
+                  scheduled_at: null,
+                })
+                .eq("id", r.campaign_recipient_id);
+                
+              console.log(`[report-batch-results] Recipient ${r.campaign_recipient_id} reset for different account (account error)`);
+            })()
+          );
         }
 
         // Handle API retry (privacy errors) - this is usually SENDER account issue, not recipient

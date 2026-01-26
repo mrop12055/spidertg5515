@@ -483,7 +483,7 @@ serve(async (req) => {
           ];
           
           // Errors that should just SKIP the recipient (don't affect account status)
-          // These are recipient-related issues, NOT account problems
+          // These are RECIPIENT-related issues - mark recipient as FAILED
           // IMPORTANT: Check these FIRST before other error types!
           const skipRecipientErrors = [
             'user not found',        // Recipient doesn't have Telegram
@@ -492,6 +492,31 @@ serve(async (req) => {
             'user was deleted',      // RECIPIENT deleted their account (not sender!)
             'specified user',        // "The specified user was deleted"
             'user deleted',          // Recipient deleted their account
+            // Official Telegram RECIPIENT errors
+            'phone_number_invalid',      // Recipient phone format is wrong
+            'phone_number_unoccupied',   // Recipient is NOT on Telegram
+          ];
+          
+          // NEW: Account session/API errors - DO NOT skip recipient, retry with different account
+          const accountSessionErrors = [
+            'api_id_invalid',           // API credentials invalid
+            'phone_code_hash_empty',    // Session issue
+            'phone_code_empty',         // Session issue
+            'phone_code_expired',       // Session expired
+            'type_constructor_invalid', // Protocol/session issue
+            'firstname_invalid',        // Account setup issue
+            'lastname_invalid',         // Account setup issue
+          ];
+          
+          // Media/file errors - skip this operation, not a recipient issue
+          const mediaFileErrors = [
+            'file_part_invalid',
+            'file_parts_invalid',
+            'file_part_',  // catches FILE_PART_X_MISSING
+            'md5_checksum_invalid',
+            'photo_invalid_dimensions',
+            'field_name_invalid',
+            'field_name_empty',
           ];
           
           // Errors that should RETRY with a DIFFERENT API (not account)
@@ -508,19 +533,25 @@ serve(async (req) => {
           // Check for FROZEN account errors - these are permanent, not temporary
           const isFrozenAccount = frozenAccountErrors.some(r => errorLower.includes(r));
           
+          // Check for ACCOUNT session/API errors - should mark account as disconnected, retry recipient with different account
+          const isAccountSessionError = accountSessionErrors.some(r => errorLower.includes(r));
+          
+          // Check for media/file errors - skip operation but don't affect account or recipient
+          const isMediaError = mediaFileErrors.some(r => errorLower.includes(r));
+          
           // Check for API retry errors
-          const isApiRetryable = !isTooManyRequests && !isFrozenAccount && retryWithDifferentApiErrors.some(r => errorLower.includes(r));
+          const isApiRetryable = !isTooManyRequests && !isFrozenAccount && !isAccountSessionError && retryWithDifferentApiErrors.some(r => errorLower.includes(r));
           
           // CRITICAL: Check skip-only errors - these are recipient problems that can't be retried
-          const isSkipOnly = !isTooManyRequests && !isFrozenAccount && !isApiRetryable && skipRecipientErrors.some(r => errorLower.includes(r));
+          const isSkipOnly = !isTooManyRequests && !isFrozenAccount && !isApiRetryable && !isAccountSessionError && skipRecipientErrors.some(r => errorLower.includes(r));
           
-          // Only check account-related errors if it's NOT a recipient error, API-retryable, frozen, or too many requests
-          const isPermanentBan = !isSkipOnly && !isApiRetryable && !isTooManyRequests && !isFrozenAccount && permanentBanErrors.some(r => errorLower.includes(r));
-          const isTemporaryRestriction = !isSkipOnly && !isApiRetryable && !isTooManyRequests && !isFrozenAccount && temporaryRestrictionErrors.some(r => errorLower.includes(r));
+          // Only check account-related errors if it's NOT a recipient error, API-retryable, frozen, session error, or too many requests
+          const isPermanentBan = !isSkipOnly && !isApiRetryable && !isTooManyRequests && !isFrozenAccount && !isAccountSessionError && permanentBanErrors.some(r => errorLower.includes(r));
+          const isTemporaryRestriction = !isSkipOnly && !isApiRetryable && !isTooManyRequests && !isFrozenAccount && !isAccountSessionError && temporaryRestrictionErrors.some(r => errorLower.includes(r));
           
           // Track account failure for health monitoring (only for account-related errors, not recipient/API issues)
           // Skip-only errors are recipient problems, API-retryable are API problems - neither affects account stats
-          if (account_id && !isSkipOnly && !isApiRetryable) {
+          if (account_id && !isSkipOnly && !isApiRetryable && !isMediaError) {
             await supabase.rpc('increment_account_failure', { acc_id: account_id });
             console.log(`[report-task-result] Incremented failure count for account ${account_id}`);
           }
@@ -557,12 +588,12 @@ serve(async (req) => {
             const maxRetries = 1; // Only 1 retry (2 total attempts) - use DIFFERENT ACCOUNT with least-used API
             
             if (retryCount > maxRetries) {
-              // Already retried once - mark as failed
+              // Already retried once - mark as failed with RAW error
               await supabase
                 .from("campaign_recipients")
                 .update({
                   status: "failed",
-                  failed_reason: `Failed after ${retryCount + 1} attempts: Privacy restricted`,
+                  failed_reason: error,  // Raw error - no prefixes
                   sent_at: new Date().toISOString(),
                   failed_api_ids: failedApiIds,
                   failed_account_ids: failedAccountIds,
@@ -573,7 +604,7 @@ serve(async (req) => {
                 await supabase.rpc("increment_campaign_failed_count", { cid: currentRecipient.campaign_id });
               }
               
-              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED after 2 attempts (APIs: ${failedApiIds.join(', ')}, Accounts: ${failedAccountIds.join(', ')})`);
+              console.log(`[report-task-result] Recipient ${campaign_recipient_id} FAILED after 2 attempts: ${error}`);
             } else {
               // RETRY with DIFFERENT ACCOUNT (which will get assigned least-used API by get-batch-tasks)
               // Clear both account AND API to force complete reassignment
@@ -663,6 +694,50 @@ serve(async (req) => {
                 
               console.log(`[report-task-result] Recipient ${campaign_recipient_id} reset for pickup by different account (frozen account)`);
             }
+          } else if (isAccountSessionError && account_id) {
+            // ACCOUNT SESSION/API ERROR - mark account as disconnected, retry recipient with different account
+            // These are account-specific issues (invalid API, expired session) - NOT recipient problems
+            console.log(`[report-task-result] Account ${account_id} session/API error - marking disconnected: ${error}`);
+            
+            await supabase
+              .from("telegram_accounts")
+              .update({
+                status: "disconnected",
+                ban_reason: error,  // Raw error
+              })
+              .eq("id", account_id);
+            
+            // If this was a campaign message, retry with different account
+            if (campaign_recipient_id) {
+              const { data: currentRecipient } = await supabase
+                .from("campaign_recipients")
+                .select("failed_account_ids")
+                .eq("id", campaign_recipient_id)
+                .single();
+              
+              const failedAccountIds: string[] = currentRecipient?.failed_account_ids || [];
+              if (!failedAccountIds.includes(account_id)) {
+                failedAccountIds.push(account_id);
+              }
+              
+              await supabase
+                .from("campaign_recipients")
+                .update({
+                  status: "pending",
+                  sent_by_account_id: null,
+                  api_credential_id: null,
+                  failed_reason: null,
+                  failed_account_ids: failedAccountIds,
+                  scheduled_at: null,
+                })
+                .eq("id", campaign_recipient_id);
+                
+              console.log(`[report-task-result] Recipient ${campaign_recipient_id} reset for pickup by different account (account session error)`);
+            }
+          } else if (isMediaError) {
+            // MEDIA/FILE ERROR - just log and skip, don't affect account or recipient status
+            console.log(`[report-task-result] Media/file error - skipping operation: ${error}`);
+            // The Python runner should handle retrying without media if needed
           } else if (isTooManyRequests && campaign_recipient_id && account_id) {
             // RATE LIMIT ("Too many requests") - IMMEDIATELY restrict account for 12h and switch to different account
             // NO RETRIES - instant switch. This error only happens on NEW campaign messages (first contact)

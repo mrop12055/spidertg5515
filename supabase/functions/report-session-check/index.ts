@@ -124,6 +124,12 @@ serve(async (req) => {
         "authkeyduplicatederror",
         "unauthorized",
         "invalid session",
+        // Official Telegram session/API errors
+        "phone_code_hash_empty",
+        "phone_code_empty",
+        "phone_code_expired",
+        "type_constructor_invalid",
+        "api_id_invalid",
       ];
       const isSessionExpired = sessionExpiredPatterns.some(p => errorLower.includes(p));
 
@@ -137,23 +143,24 @@ serve(async (req) => {
       const isRestricted = !isBanned && restrictedPatterns.some(p => errorLower.includes(p));
 
       // Determine status (frozen already handled above)
+      // Use RAW error message - no prefixes
       if (isBanned) {
         newStatus = "banned";
-        banReason = `Account banned/deleted: ${error}`;
-        console.log(`[report-session-check] Account ${account_id} detected as BANNED`);
+        banReason = error;
+        console.log(`[report-session-check] Account ${account_id} detected as BANNED: ${error}`);
       } else if (isSessionExpired) {
         newStatus = "disconnected";
-        banReason = `Session expired/invalid: ${error}`;
-        console.log(`[report-session-check] Account ${account_id} session EXPIRED`);
+        banReason = error;
+        console.log(`[report-session-check] Account ${account_id} session EXPIRED: ${error}`);
       } else if (isRestricted) {
         newStatus = "restricted";
-        banReason = `Temporarily restricted: ${error}`;
-        console.log(`[report-session-check] Account ${account_id} RESTRICTED`);
+        banReason = error;
+        console.log(`[report-session-check] Account ${account_id} RESTRICTED: ${error}`);
       } else {
         // Unknown error - mark as disconnected for safety
         newStatus = "disconnected";
-        banReason = `Connection error: ${error}`;
-        console.log(`[report-session-check] Account ${account_id} DISCONNECTED (unknown error)`);
+        banReason = error;
+        console.log(`[report-session-check] Account ${account_id} DISCONNECTED (unknown error): ${error}`);
       }
 
       // Update account status
