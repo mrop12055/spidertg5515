@@ -200,8 +200,8 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
     IMMEDIATELY disconnect and clear session from memory.
     Called the MOMENT a proxy failure is detected - before any retry logic.
     
-    FIX: Properly cancels pending tasks and allows receive loop to exit gracefully
-    to prevent "coroutine ignored GeneratorExit" RuntimeError.
+    FIX V2: Cancels ALL internal Telethon tasks (not just _updates_handle) to prevent
+    "coroutine ignored GeneratorExit" and "Task was destroyed" errors.
     """
     global active_clients, message_queues
     
@@ -210,30 +210,57 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
     # Step 1: Remove from active clients FIRST (prevents any further operations)
     client = active_clients.pop(account_id, None)
     
-    # Step 2: Force disconnect if client exists with PROPER CLEANUP
+    # Step 2: Force disconnect if client exists with COMPREHENSIVE CLEANUP
     if client:
         try:
-            # Cancel any pending updates/listeners BEFORE disconnect
-            if hasattr(client, '_updates_handle') and client._updates_handle:
-                client._updates_handle.cancel()
+            # Cancel ALL internal Telethon tasks (not just _updates_handle)
+            internal_handles = ['_updates_handle', '_sender', '_borrowed_senders']
+            for handle_name in internal_handles:
+                if hasattr(client, handle_name):
+                    handle = getattr(client, handle_name)
+                    if handle:
+                        if hasattr(handle, 'cancel'):
+                            try:
+                                handle.cancel()
+                            except:
+                                pass
+                        elif isinstance(handle, dict):
+                            for sender in handle.values():
+                                if hasattr(sender, 'cancel'):
+                                    try:
+                                        sender.cancel()
+                                    except:
+                                        pass
             
-            # Try graceful disconnect first
+            # Also cancel the _sender's internal loops if they exist
+            if hasattr(client, '_sender') and client._sender:
+                sender = client._sender
+                for loop_name in ['_send_loop', '_recv_loop']:
+                    if hasattr(sender, loop_name):
+                        loop = getattr(sender, loop_name)
+                        if loop and hasattr(loop, 'cancel'):
+                            try:
+                                loop.cancel()
+                            except:
+                                pass
+            
+            # Try graceful disconnect with increased timeout
             if client.is_connected():
                 try:
                     # Use asyncio.shield to prevent cancellation during disconnect
                     await asyncio.wait_for(
                         asyncio.shield(client.disconnect()), 
-                        timeout=5
+                        timeout=10  # Increased from 5
                     )
                 except asyncio.TimeoutError:
                     pass
                 except Exception:
                     pass
             
-            # CRITICAL: Allow event loop to process pending callbacks
+            # CRITICAL: Give MORE time for event loop to process pending callbacks
             # This prevents "coroutine ignored GeneratorExit" by letting
             # the _recv_loop coroutine exit cleanly
-            await asyncio.sleep(0.2)
+            await asyncio.sleep(0.5)  # Increased from 0.2
             
             # Force garbage collection to clean up any remaining references
             del client
@@ -249,6 +276,31 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
         del message_queues[account_id]
     
     return True
+
+
+async def check_client_health(client, account_id: str) -> bool:
+    """
+    Proactively check if client connection is truly alive.
+    A simple API call that will fail fast if connection is dead.
+    Returns True if healthy, False if connection is dead.
+    
+    This detects zombie connections where is_connected() returns True
+    but the socket is actually dead (e.g., after "Server closed the connection").
+    """
+    try:
+        # get_me() is lightweight and will fail quickly if socket is dead
+        await asyncio.wait_for(client.get_me(), timeout=10)
+        return True
+    except Exception as e:
+        error_str = str(e).lower()
+        # Log detection of dead connection
+        patterns = ["semaphore timeout", "winerror 121", "connection refused", 
+                   "proxy", "socks", "timed out", "timeout", "cannot connect",
+                   "connection reset", "connection closed", "no route",
+                   "server closed", "network error", "network is unreachable"]
+        if any(p in error_str for p in patterns):
+            print(f"  [HEALTH CHECK] {account_id[:8]} - Dead connection: {str(e)[:50]}")
+        return False
 
 
 async def add_to_proxy_retry_queue(account_id: str, account_data: dict, proxy_data: dict = None):
@@ -3231,28 +3283,56 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
     """
     Properly disconnect a session and schedule it for retry after 3 MINUTES.
     
-    FIX: Properly cancels pending tasks and allows receive loop to exit gracefully
-    to prevent "coroutine ignored GeneratorExit" RuntimeError.
+    FIX V2: Routes network/proxy errors to add_to_proxy_retry_queue for 3-attempt limit.
+    Also cancels ALL internal Telethon tasks to prevent GeneratorExit errors.
     """
     global failed_connection_accounts
     
     phone = acc_id[:8]
+    reason_lower = reason.lower()
     
     # IMMEDIATE DISCONNECT - Remove from active clients and disconnect properly
     if acc_id in active_clients:
         try:
             client = active_clients.pop(acc_id)
             
-            # Cancel any pending updates/listeners BEFORE disconnect
-            if hasattr(client, '_updates_handle') and client._updates_handle:
-                client._updates_handle.cancel()
+            # Cancel ALL internal Telethon tasks (not just _updates_handle)
+            internal_handles = ['_updates_handle', '_sender', '_borrowed_senders']
+            for handle_name in internal_handles:
+                if hasattr(client, handle_name):
+                    handle = getattr(client, handle_name)
+                    if handle:
+                        if hasattr(handle, 'cancel'):
+                            try:
+                                handle.cancel()
+                            except:
+                                pass
+                        elif isinstance(handle, dict):
+                            for sender in handle.values():
+                                if hasattr(sender, 'cancel'):
+                                    try:
+                                        sender.cancel()
+                                    except:
+                                        pass
+            
+            # Also cancel the _sender's internal loops if they exist
+            if hasattr(client, '_sender') and client._sender:
+                sender = client._sender
+                for loop_name in ['_send_loop', '_recv_loop']:
+                    if hasattr(sender, loop_name):
+                        loop = getattr(sender, loop_name)
+                        if loop and hasattr(loop, 'cancel'):
+                            try:
+                                loop.cancel()
+                            except:
+                                pass
             
             if client.is_connected():
                 try:
                     # Use asyncio.shield to prevent cancellation during disconnect
                     await asyncio.wait_for(
                         asyncio.shield(client.disconnect()), 
-                        timeout=5
+                        timeout=10  # Increased from 5
                     )
                 except asyncio.TimeoutError:
                     print(f"  [TIMEOUT] Disconnect timeout for {phone} - forcing cleanup")
@@ -3260,19 +3340,32 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
                     pass
                 
                 # CRITICAL: Allow event loop to process pending callbacks
-                await asyncio.sleep(0.2)
-                print(f"  [DISCONNECT] {phone} - {reason} - will retry in 3 min")
+                await asyncio.sleep(0.5)  # Increased from 0.2
+                print(f"  [DISCONNECT] {phone} - {reason} - scheduling retry...")
             else:
-                print(f"  [CLEANUP] {phone} - already disconnected - will retry in 3 min")
+                print(f"  [CLEANUP] {phone} - already disconnected - scheduling retry...")
             
             # Force cleanup of client reference
             del client
             
         except Exception as e:
-            print(f"  [CLEANUP] {phone} - force cleanup ({e}) - will retry in 3 min")
+            print(f"  [CLEANUP] {phone} - force cleanup ({e}) - scheduling retry...")
     
-    # Schedule retry after 3 MINUTES (180 seconds)
-    failed_connection_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
+    # Check if this is a proxy/network error - use the 3-attempt retry queue
+    proxy_patterns = ["semaphore timeout", "winerror 121", "connection refused", 
+                     "proxy", "socks", "timed out", "timeout", "cannot connect",
+                     "connection reset", "connection closed", "no route",
+                     "server closed", "network error", "network is unreachable",
+                     "health_check", "zombie"]
+    is_proxy_error = any(p in reason_lower for p in proxy_patterns)
+    
+    if is_proxy_error:
+        # Use proxy retry queue with 3-attempt limit and 3-minute delay
+        print(f"  [PROXY RETRY] {phone} - Adding to 3-attempt retry queue")
+        await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
+    else:
+        # Non-proxy errors use standard retry schedule
+        failed_connection_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
 
 
 async def keep_clients_alive():
@@ -3280,11 +3373,18 @@ async def keep_clients_alive():
     Background task that keeps all clients receiving updates - with network error handling.
     
     PAUSES during batch processing to prevent SQLite lock conflicts.
-    Disconnects failed clients and schedules them for 60s retry.
+    Disconnects failed clients and schedules them for retry.
+    
+    FIX V2: Added periodic health checks (every 60s) to detect zombie connections
+    where is_connected() returns True but socket is actually dead.
     """
     global failed_connection_accounts
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 10
+    
+    # ========== HEALTH CHECK TRACKING ==========
+    last_health_check = time.time()
+    HEALTH_CHECK_INTERVAL = 60  # Check every 60 seconds
     
     while RUNNING:
         # ========== PAUSE DURING BATCH PROCESSING ==========
@@ -3295,6 +3395,28 @@ async def keep_clients_alive():
         try:
             # Balanced loop - fast but not aggressive
             await asyncio.sleep(0.1)  # 10 checks per second (less aggressive)
+            
+            # ========== PERIODIC HEALTH CHECK (every 60s) ==========
+            if time.time() - last_health_check >= HEALTH_CHECK_INTERVAL:
+                health_check_disconnects = []
+                for acc_id, client in list(active_clients.items()):
+                    try:
+                        if not await check_client_health(client, acc_id):
+                            # Connection is dead despite is_connected() returning True
+                            health_check_disconnects.append(acc_id)
+                    except Exception as health_err:
+                        print(f"  [HEALTH CHECK] {acc_id[:8]} - Error: {str(health_err)[:30]}")
+                        health_check_disconnects.append(acc_id)
+                
+                # Immediately disconnect dead connections and add to retry queue
+                for acc_id in health_check_disconnects:
+                    await force_disconnect_session(acc_id, "health_check_failed")
+                    await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
+                
+                if health_check_disconnects:
+                    print(f"  [HEALTH CHECK] Disconnected {len(health_check_disconnects)} zombie connections")
+                
+                last_health_check = time.time()
             
             # Process updates for all connected clients
             disconnected_ids = []
@@ -3316,7 +3438,7 @@ async def keep_clients_alive():
                         await asyncio.sleep(5)
                         continue
                     # Check for network errors - disconnect and schedule retry
-                    if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
+                    if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str or "server closed" in error_str:
                         consecutive_errors += 1
                         disconnected_ids.append((acc_id, f"network error: {str(e)[:30]}"))
                         if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
@@ -3326,7 +3448,7 @@ async def keep_clients_alive():
                     else:
                         disconnected_ids.append((acc_id, f"error: {str(e)[:30]}"))
             
-            # Disconnect failed clients and schedule for 60s retry
+            # Disconnect failed clients and schedule for retry (routes proxy errors to 3-attempt queue)
             for acc_id, reason in disconnected_ids:
                 await disconnect_and_schedule_retry(acc_id, reason)
             
