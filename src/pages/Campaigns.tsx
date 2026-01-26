@@ -403,12 +403,12 @@ const Campaigns: React.FC = () => {
     if (campaignsLength > 0) fetchAllCampaignReports();
   }, [campaignsLength, fetchAllCampaignReports]);
 
-  // Fast polling for RUNNING campaigns only - every 1 second
+  // Fast polling for RUNNING campaigns only - every 3 seconds (optimized from 1s)
   useEffect(() => {
     if (!hasRunningCampaigns) return;
 
-    // Poll every 1 second for running campaigns only (no immediate fetch to avoid double-fetch)
-    const interval = window.setInterval(fetchRunningCampaignStats, 1000);
+    // OPTIMIZED: Reduced polling from 1s to 3s for running campaigns
+    const interval = window.setInterval(fetchRunningCampaignStats, 3000);
 
     return () => window.clearInterval(interval);
   }, [hasRunningCampaigns, fetchRunningCampaignStats]);
