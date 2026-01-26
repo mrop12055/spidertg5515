@@ -934,14 +934,31 @@ serve(async (req) => {
           }
 
           if (!account) {
-            // ROUND-ROBIN DISTRIBUTION: Prioritize accounts with LEAST batch usage first
-            // This ensures even distribution across accounts (1 message each before reusing)
+            // LEAST-USED-FIRST DISTRIBUTION: Two-level sorting for optimal distribution
+            // 1. PRIMARY: Prioritize accounts with LOWEST messages_sent_today (0 messages first)
+            // 2. SECONDARY: For same daily count, use least used in current batch
+            // This ensures batch of 50 uses 50 different accounts (not 10 accounts x 5 messages)
             const sortedAccounts = [...campaignUsableAccounts].sort((a: any, b: any) => {
-              // Sort by batch usage (least used in this batch first)
+              // PRIMARY: Sort by total messages sent today (0 messages first)
+              const sentTodayA = accountCampaignSentToday.get(a.id) || 0;
+              const sentTodayB = accountCampaignSentToday.get(b.id) || 0;
+              
+              if (sentTodayA !== sentTodayB) {
+                return sentTodayA - sentTodayB; // Accounts with 0 messages first
+              }
+              
+              // SECONDARY: For accounts with same messages today, sort by batch usage
               const batchUsageA = batchAccountUsage.get(a.id) || 0;
               const batchUsageB = batchAccountUsage.get(b.id) || 0;
               return batchUsageA - batchUsageB;
             });
+            
+            // Log account distribution for debugging
+            const zeroMsgAccounts = campaignUsableAccounts.filter((a: any) => (accountCampaignSentToday.get(a.id) || 0) === 0).length;
+            const onePlusMsgAccounts = campaignUsableAccounts.filter((a: any) => (accountCampaignSentToday.get(a.id) || 0) >= 1).length;
+            if (tasks.length === 0) {
+              console.log(`[get-batch-tasks] Account distribution - 0 msgs today: ${zeroMsgAccounts}, 1+ msgs today: ${onePlusMsgAccounts}`);
+            }
             
             account = sortedAccounts.find((a: any) => {
               // CRITICAL: Check remaining quota instead of just usedAccountIds
