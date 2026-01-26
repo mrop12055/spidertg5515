@@ -134,8 +134,8 @@ SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 
 # ========== PROXY ERROR RETRY SETTINGS ==========
-PROXY_RETRY_DELAY = 30  # Retry proxy error accounts after 30 seconds
-PROXY_MAX_RETRIES = 3   # Max retry attempts before giving up (per session)
+PROXY_RETRY_DELAY = 180   # Retry proxy error accounts after 3 MINUTES (180 seconds)
+PROXY_MAX_RETRIES = 3     # Max retry attempts before marking account as inactive
 
 # ========== SPLIT TIMEOUTS ==========
 CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
@@ -190,190 +190,233 @@ def get_http_client() -> httpx.AsyncClient:
 
 
 # ========== PROXY ERROR RETRY FUNCTIONS ==========
-# Track retry counts per account (in-memory, resets on restart)
-_proxy_retry_counts: Dict[str, int] = {}
+# Persistent retry tracking with timestamps: {account_id: {"count": int, "next_retry_at": float, "account_data": dict, "proxy_data": dict}}
+_proxy_retry_queue: Dict[str, dict] = {}
 
 
-def add_to_proxy_retry_queue(account_id: str, account_data: dict, proxy_data: dict = None):
-    """Track proxy error for retry counting."""
-    retry_count = _proxy_retry_counts.get(account_id, 0) + 1
-    _proxy_retry_counts[account_id] = retry_count
+async def force_disconnect_session(account_id: str, reason: str = "proxy_error"):
+    """
+    IMMEDIATELY disconnect and clear session from memory.
+    Called the MOMENT a proxy failure is detected - before any retry logic.
+    This ensures no stale sessions remain in memory.
+    """
+    global active_clients, message_queues
     
-    if retry_count > PROXY_MAX_RETRIES:
-        print(f"  [PROXY RETRY] {account_id[:8]} - Max retries ({PROXY_MAX_RETRIES}) exceeded this session")
+    phone = account_id[:8]
+    
+    # Step 1: Remove from active clients FIRST (prevents any further operations)
+    client = active_clients.pop(account_id, None)
+    
+    # Step 2: Force disconnect if client exists
+    if client:
+        try:
+            if client.is_connected():
+                await asyncio.wait_for(client.disconnect(), timeout=3)
+            # CRITICAL: Allow pending asyncio tasks to complete (prevents "Task was destroyed" warnings)
+            await asyncio.sleep(0.1)
+            print(f"  [FORCE DISCONNECT] {phone} - Session terminated: {reason}")
+        except asyncio.TimeoutError:
+            print(f"  [FORCE DISCONNECT] {phone} - Disconnect timeout, force cleared")
+        except Exception as e:
+            print(f"  [FORCE DISCONNECT] {phone} - Force cleared (error: {str(e)[:30]})")
     else:
-        print(f"  [PROXY RETRY] {account_id[:8]} - Error recorded (attempt {retry_count}/{PROXY_MAX_RETRIES})")
+        print(f"  [FORCE DISCONNECT] {phone} - No active client found, cleared tracking")
+    
+    # Step 3: Clear from message queue tracking if exists
+    if 'message_queues' in dir() and account_id in message_queues:
+        del message_queues[account_id]
+    
+    return True
+
+
+async def add_to_proxy_retry_queue(account_id: str, account_data: dict, proxy_data: dict = None):
+    """
+    Schedule retry after IMMEDIATE disconnect.
+    Tracks attempt count and schedules next retry after 3 minutes.
+    After 3 failed attempts, reports to backend to mark account inactive.
+    """
+    global _proxy_retry_queue
+    
+    now = time.time()
+    phone = account_id[:8]
+    
+    if account_id not in _proxy_retry_queue:
+        _proxy_retry_queue[account_id] = {"count": 0, "next_retry_at": 0, "account_data": {}, "proxy_data": None}
+    
+    _proxy_retry_queue[account_id]["count"] += 1
+    _proxy_retry_queue[account_id]["next_retry_at"] = now + PROXY_RETRY_DELAY  # 3 minutes from now
+    _proxy_retry_queue[account_id]["account_data"] = account_data
+    _proxy_retry_queue[account_id]["proxy_data"] = proxy_data
+    
+    retry_count = _proxy_retry_queue[account_id]["count"]
+    
+    if retry_count >= PROXY_MAX_RETRIES:
+        # Max retries exceeded - mark inactive in database
+        print(f"  [PROXY MAX] {phone} - {PROXY_MAX_RETRIES} attempts failed, marking INACTIVE")
+        await report_result("proxy_max_retries_exceeded", {
+            "account_id": account_id,
+            "reason": f"Proxy failed after {PROXY_MAX_RETRIES} connection attempts (3x 3-minute retries)",
+            "retry_count": retry_count
+        })
+        # Remove from retry queue - no more retries
+        del _proxy_retry_queue[account_id]
+    else:
+        remaining = PROXY_MAX_RETRIES - retry_count
+        print(f"  [PROXY RETRY] {phone} - Attempt {retry_count}/{PROXY_MAX_RETRIES}, retry in 3 min ({remaining} left)")
 
 
 def remove_from_proxy_retry_queue(account_id: str):
-    """Clear retry count on successful connection."""
-    if account_id in _proxy_retry_counts:
-        del _proxy_retry_counts[account_id]
+    """Clear retry tracking on successful connection."""
+    global _proxy_retry_queue
+    if account_id in _proxy_retry_queue:
+        del _proxy_retry_queue[account_id]
+
+
+def get_ready_proxy_retries() -> list:
+    """Get list of account IDs ready for proxy retry (3 min passed)."""
+    global _proxy_retry_queue
+    
+    now = time.time()
+    ready = []
+    
+    for acc_id, info in list(_proxy_retry_queue.items()):
+        # Skip if already at max retries (shouldn't happen, but safety check)
+        if info.get("count", 0) >= PROXY_MAX_RETRIES:
+            continue
+        
+        # Check if enough time has passed (3 minutes)
+        if now >= info.get("next_retry_at", 0):
+            ready.append(acc_id)
+    
+    return ready
 
 
 async def retry_proxy_error_accounts():
     """
-    Fetch accounts with proxy errors from DATABASE and retry them.
-    Only retries accounts that:
-    1. Have disabled_reason containing 'Proxy error'
-    2. Have last_active older than PROXY_RETRY_DELAY seconds
-    3. Haven't exceeded max retries this session
+    Process accounts in the proxy retry queue that are ready for retry (3 min passed).
+    Uses the in-memory _proxy_retry_queue for tracking with 3-minute delays.
     """
-    http = get_http_client()
+    global _proxy_retry_queue
     
-    try:
-        # Fetch accounts with proxy errors from Supabase
-        resp = await http.get(
-            f"{SUPABASE_URL}/rest/v1/telegram_accounts",
-            params={
-                "select": "id,phone_number,session_data,device_model,system_version,app_version,lang_code,system_lang_code,proxy_id,api_id,api_hash,status,disabled_reason,last_active",
-                "disabled_reason": "ilike.*Proxy error*",
-                "status": "eq.active",
-                "limit": "10"  # Process max 10 at a time
-            },
-            headers={
-                "apikey": SUPABASE_KEY,
-                "Authorization": f"Bearer {SUPABASE_KEY}"
-            },
-            timeout=10
-        )
-        
-        if resp.status_code != 200:
-            return 0
-        
-        accounts = resp.json()
-        
-        if not accounts:
-            return 0
-        
-        # Filter accounts that are old enough for retry (>30s since last_active)
-        import time
-        from datetime import datetime
-        
-        ready_accounts = []
-        for acc in accounts:
-            account_id = acc.get("id")
-            
-            # Skip if max retries exceeded this session
-            if _proxy_retry_counts.get(account_id, 0) >= PROXY_MAX_RETRIES:
-                continue
-            
-            # Check if last_active is old enough
-            last_active = acc.get("last_active")
-            if last_active:
-                try:
-                    # Parse ISO timestamp
-                    last_ts = datetime.fromisoformat(last_active.replace("Z", "+00:00"))
-                    now = datetime.now(last_ts.tzinfo)
-                    age_seconds = (now - last_ts).total_seconds()
-                    
-                    if age_seconds >= PROXY_RETRY_DELAY:
-                        ready_accounts.append(acc)
-                except Exception:
-                    ready_accounts.append(acc)  # If can't parse, try anyway
-            else:
-                ready_accounts.append(acc)
-        
-        if not ready_accounts:
-            return 0
-        
-        print(f"\\n  [PROXY RETRY] Found {len(ready_accounts)} accounts ready for retry...")
-        
-        # Fetch proxies for these accounts
-        proxy_ids = [acc.get("proxy_id") for acc in ready_accounts if acc.get("proxy_id")]
-        proxies_map = {}
-        
-        if proxy_ids:
-            proxy_resp = await http.get(
-                f"{SUPABASE_URL}/rest/v1/proxies",
-                params={
-                    "select": "*",
-                    "id": f"in.({','.join(proxy_ids)})"
-                },
-                headers={
-                    "apikey": SUPABASE_KEY,
-                    "Authorization": f"Bearer {SUPABASE_KEY}"
-                },
-                timeout=10
-            )
-            if proxy_resp.status_code == 200:
-                for p in proxy_resp.json():
-                    proxies_map[p["id"]] = p
-        
-        # Try to reconnect each account
-        reconnected = 0
-        for acc in ready_accounts:
-            account_id = acc["id"]
-            phone = acc.get("phone_number", account_id[:8])[-4:]
-            proxy = proxies_map.get(acc.get("proxy_id"))
-            
-            retry_count = _proxy_retry_counts.get(account_id, 0) + 1
-            _proxy_retry_counts[account_id] = retry_count
-            
-            print(f"    [{phone}] Retry attempt {retry_count}/{PROXY_MAX_RETRIES}...")
-            
-            try:
-                # Use stored API credentials from account (NO random generation)
-                if not acc.get("api_id") or not acc.get("api_hash"):
-                    print(f"    [{phone}] ✗ No API credentials assigned - skipping")
-                    continue
-                
-                # Add proxy data to account for connection
-                acc["proxy"] = proxy
-                
-                print(f"    [{phone}] Using stored API credentials: {acc['api_id'][:4]}...")
-                
-                client = await get_or_create_client(
-                    acc,
-                    task_proxy=proxy, 
-                    skip_avatar=True,
-                    no_cache=True
-                )
-                
-                if client:
-                    remove_from_proxy_retry_queue(account_id)
-                    reconnected += 1
-                    
-                    # CRITICAL: Update database to clear disabled_reason so UI updates
-                    try:
-                        update_resp = await http.patch(
-                            f"{SUPABASE_URL}/rest/v1/telegram_accounts?id=eq.{account_id}",
-                            json={
-                                "disabled_reason": None,
-                                "auto_disabled": False,
-                                "last_active": datetime.now().isoformat()
-                            },
-                            headers={
-                                "apikey": SUPABASE_KEY,
-                                "Authorization": f"Bearer {SUPABASE_KEY}",
-                                "Content-Type": "application/json",
-                                "Prefer": "return=minimal"
-                            },
-                            timeout=10
-                        )
-                        if update_resp.status_code in [200, 204]:
-                            print(f"    [{phone}] ✓ Reconnected and updated in database!")
-                        else:
-                            print(f"    [{phone}] ✓ Reconnected (db update failed: {update_resp.status_code})")
-                    except Exception as db_err:
-                        print(f"    [{phone}] ✓ Reconnected (db update error: {db_err})")
-                else:
-                    print(f"    [{phone}] ✗ Still failing")
-                    
-            except Exception as e:
-                print(f"    [{phone}] ✗ Error: {str(e)[:100]}")
-        
-        if reconnected > 0:
-            print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(ready_accounts)} accounts")
-        
-        return reconnected
-        
-    except Exception as e:
-        print(f"  [PROXY RETRY] Error fetching accounts: {e}")
+    # Get accounts ready for retry
+    ready_ids = get_ready_proxy_retries()
+    
+    if not ready_ids:
         return 0
     
+    print(f"\\n  [PROXY RETRY] {len(ready_ids)} accounts ready for retry...")
+    
+    http = get_http_client()
+    from datetime import datetime
+    
+    reconnected = 0
+    for acc_id in ready_ids:
+        info = _proxy_retry_queue.get(acc_id, {})
+        account_data = info.get("account_data", {})
+        proxy_data = info.get("proxy_data")
+        retry_count = info.get("count", 0)
+        phone = acc_id[:8]
+        
+        print(f"    [{phone}] Retry attempt {retry_count + 1}/{PROXY_MAX_RETRIES}...")
+        
+        try:
+            # Check if we have account data cached
+            if not account_data.get("api_id") or not account_data.get("api_hash"):
+                # Fetch fresh account data from database
+                resp = await http.get(
+                    f"{SUPABASE_URL}/rest/v1/telegram_accounts",
+                    params={
+                        "select": "id,phone_number,session_data,device_model,system_version,app_version,lang_code,system_lang_code,proxy_id,api_id,api_hash,status",
+                        "id": f"eq.{acc_id}",
+                        "limit": "1"
+                    },
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}"
+                    },
+                    timeout=10
+                )
+                if resp.status_code == 200 and resp.json():
+                    account_data = resp.json()[0]
+                else:
+                    print(f"    [{phone}] ✗ Could not fetch account data")
+                    continue
+            
+            if not account_data.get("api_id") or not account_data.get("api_hash"):
+                print(f"    [{phone}] ✗ No API credentials assigned - skipping")
+                continue
+            
+            # Fetch proxy if not cached
+            if not proxy_data and account_data.get("proxy_id"):
+                proxy_resp = await http.get(
+                    f"{SUPABASE_URL}/rest/v1/proxies",
+                    params={
+                        "select": "*",
+                        "id": f"eq.{account_data['proxy_id']}"
+                    },
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}"
+                    },
+                    timeout=10
+                )
+                if proxy_resp.status_code == 200 and proxy_resp.json():
+                    proxy_data = proxy_resp.json()[0]
+            
+            # Add proxy data to account for connection
+            account_data["proxy"] = proxy_data
+            
+            print(f"    [{phone}] Using stored API credentials: {account_data['api_id'][:4]}...")
+            
+            client = await get_or_create_client(
+                account_data,
+                task_proxy=proxy_data,
+                skip_avatar=True,
+                no_cache=True
+            )
+            
+            if client:
+                # SUCCESS! Clear from retry queue
+                remove_from_proxy_retry_queue(acc_id)
+                reconnected += 1
+                
+                # Update database to clear disabled_reason
+                try:
+                    update_resp = await http.patch(
+                        f"{SUPABASE_URL}/rest/v1/telegram_accounts?id=eq.{acc_id}",
+                        json={
+                            "disabled_reason": None,
+                            "auto_disabled": False,
+                            "last_active": datetime.now().isoformat()
+                        },
+                        headers={
+                            "apikey": SUPABASE_KEY,
+                            "Authorization": f"Bearer {SUPABASE_KEY}",
+                            "Content-Type": "application/json",
+                            "Prefer": "return=minimal"
+                        },
+                        timeout=10
+                    )
+                    if update_resp.status_code in [200, 204]:
+                        print(f"    [{phone}] ✓ Reconnected and updated in database!")
+                    else:
+                        print(f"    [{phone}] ✓ Reconnected (db update failed: {update_resp.status_code})")
+                except Exception as db_err:
+                    print(f"    [{phone}] ✓ Reconnected (db update error: {db_err})")
+            else:
+                # FAILED - add_to_proxy_retry_queue was already called in get_or_create_client
+                print(f"    [{phone}] ✗ Still failing - will retry in 3 min")
+                
+        except Exception as e:
+            error_str = str(e).lower()
+            print(f"    [{phone}] ✗ Error: {str(e)[:100]}")
+            
+            # If proxy error, ensure it's tracked (immediate disconnect already happened)
+            if any(p in error_str for p in PROXY_ERROR_PATTERNS):
+                await add_to_proxy_retry_queue(acc_id, account_data, proxy_data)
+    
     if reconnected > 0:
-        print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(ready)} accounts")
+        print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(ready_ids)} accounts")
     
     return reconnected
 
@@ -663,16 +706,22 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         
         print(f"  [CONNECT] {account['phone_number']} (with 3 retries)...")
         if not await connect_with_retry(client, max_retries=3):
-            # PROXY FAILED after all retries - Report proxy error and add to retry queue
+            # PROXY FAILED after all retries - IMMEDIATELY DISCONNECT and schedule retry
             # We can't know session status if we can't connect via proxy
-            print(f"  [PROXY ERROR] Connection failed for {phone} after 3 attempts - will retry in {PROXY_RETRY_DELAY}s")
+            print(f"  [PROXY ERROR] Connection failed for {phone} after 3 attempts")
+            
+            # STEP 1: IMMEDIATE DISCONNECT - clear any partial session
+            await force_disconnect_session(account_id, "proxy_connection_failed")
+            
+            # STEP 2: Report proxy error to backend
             asyncio.create_task(report_result("proxy_error", {
                 "account_id": account_id,
                 "proxy_id": proxy_id,
                 "reason": "Connection failed after 3 retries - proxy may be dead or blocked"
             }))
-            # Track retry count for this session
-            add_to_proxy_retry_queue(account_id, None, None)
+            
+            # STEP 3: Add to retry queue (tracks count and schedules 3-min retry)
+            await add_to_proxy_retry_queue(account_id, account, task_proxy)
             return None
         
         # Connected via proxy - NOW we can check session status
@@ -683,13 +732,17 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
             err_str = str(auth_err).lower()
             if any(p in err_str for p in PROXY_ERROR_PATTERNS):
                 print(f"  [PROXY ERROR] Auth check failed for {phone}: {auth_err}")
+                
+                # IMMEDIATE DISCONNECT on proxy error
+                await force_disconnect_session(account_id, "proxy_auth_check_failed")
+                
                 asyncio.create_task(report_result("proxy_error", {
                     "account_id": account_id,
                     "proxy_id": proxy_id,
                     "reason": f"Auth check failed: {str(auth_err)[:100]}"
                 }))
-                # Track retry count
-                add_to_proxy_retry_queue(account_id, None, None)
+                # Add to retry queue with 3-min delay
+                await add_to_proxy_retry_queue(account_id, account, task_proxy)
             else:
                 print(f"  [SESSION ERROR] Auth check failed for {phone}: {auth_err}")
                 asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": str(auth_err)}))
@@ -3141,21 +3194,22 @@ _processing_batch = False
 # Track failed accounts with retry timestamps {account_id: retry_time}
 # Shared between keep_clients_alive and main_loop
 failed_connection_accounts = {}
-FAILED_RETRY_DELAY = 60  # Seconds to wait before retrying failed connection
+FAILED_RETRY_DELAY = 180  # 3 MINUTES to wait before retrying failed connection
 
 
 async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected"):
     """
-    Properly disconnect a session and schedule it for retry after 60 seconds.
+    Properly disconnect a session and schedule it for retry after 3 MINUTES.
     This ensures clean session release before retry.
     
     FIX (2026-01-22): Added proper task cleanup to prevent "Task was destroyed but it is pending!" warnings.
+    UPDATED (2026-01-26): Changed to 3-minute retry delay for proxy errors.
     """
     global failed_connection_accounts
     
     phone = acc_id[:8]
     
-    # Remove from active clients and disconnect properly
+    # IMMEDIATE DISCONNECT - Remove from active clients and disconnect properly
     if acc_id in active_clients:
         try:
             client = active_clients.pop(acc_id)
@@ -3168,13 +3222,13 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
                     pass
                 # CRITICAL: Allow pending asyncio tasks to complete (prevents "Task was destroyed" warnings)
                 await asyncio.sleep(0.1)
-                print(f"  [DISCONNECT] {phone} - {reason} - will retry in {FAILED_RETRY_DELAY}s")
+                print(f"  [DISCONNECT] {phone} - {reason} - will retry in 3 min")
             else:
-                print(f"  [CLEANUP] {phone} - already disconnected - will retry in {FAILED_RETRY_DELAY}s")
+                print(f"  [CLEANUP] {phone} - already disconnected - will retry in 3 min")
         except Exception as e:
-            print(f"  [CLEANUP] {phone} - force cleanup ({e}) - will retry in {FAILED_RETRY_DELAY}s")
+            print(f"  [CLEANUP] {phone} - force cleanup ({e}) - will retry in 3 min")
     
-    # Schedule retry after 60 seconds
+    # Schedule retry after 3 MINUTES (180 seconds)
     failed_connection_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
 
 

@@ -1398,6 +1398,29 @@ serve(async (req) => {
         break;
       }
 
+      case "proxy_max_retries_exceeded": {
+        // Account has failed proxy connection 3 times with 3-minute delays between each
+        // Mark as DISCONNECTED with auto_disabled so it won't be picked up until admin fixes
+        const { account_id, reason, retry_count } = result;
+
+        console.log(`[report-task-result] Account ${account_id} EXCEEDED MAX PROXY RETRIES (${retry_count}x)`);
+
+        // Mark account as disconnected with auto_disabled - requires admin intervention
+        await supabase
+          .from("telegram_accounts")
+          .update({
+            status: "disconnected",
+            disabled_reason: `Proxy error: Failed ${retry_count}x (3-min intervals) - requires admin fix`,
+            auto_disabled: true,
+            last_active: new Date().toISOString()
+          })
+          .eq("id", account_id);
+
+        console.log(`[report-task-result] Account ${account_id} marked as DISCONNECTED + auto_disabled`);
+        console.log(`[report-task-result] Admin must fix proxy and manually reactivate account`);
+        break;
+      }
+
       case "proxy_success":
       case "connection_success": {
         // Account connected successfully via proxy - mark proxy as active and clear any errors
