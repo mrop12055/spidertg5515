@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
+import { useProxies } from '@/hooks/useProxies';
+import { useAccounts } from '@/hooks/useAccounts';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,7 +23,6 @@ import { Proxy } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
-
 const proxyTypeOptions = [
   { value: 'http', label: 'HTTP' },
   { value: 'https', label: 'HTTPS' },
@@ -85,7 +86,9 @@ interface ProxyToAdd {
 }
 
 const Proxies: React.FC = () => {
-  const { proxies, accounts, refreshData, isLoading } = useTelegram();
+  const { refreshData } = useTelegram();
+  const { proxies, isLoading, refetch: refetchProxies } = useProxies();
+  const { accounts } = useAccounts();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
