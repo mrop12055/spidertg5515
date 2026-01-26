@@ -217,6 +217,8 @@ export const RecentErrorsCard: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'account_check_tasks' }, debouncedRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'telegram_accounts' }, debouncedRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'vps_logs' }, debouncedRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'warmup_errors' }, debouncedRefresh)
       .subscribe();
 
     return () => {
