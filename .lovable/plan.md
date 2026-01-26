@@ -1,196 +1,96 @@
 
 
-# Plan: Fix Network Error Detection and Proper Retry Logic in Live Chat Runner
+# Plan: Fix Missing Import for check_client_health in LiveChat Runner
 
 ## Problem Identified
 
-After analyzing the uploaded logs, I found these issues:
+The error `name 'check_client_health' is not defined` occurs because:
 
-### What's Happening
+1. **`check_client_health`** function is defined in **`client_manager.py`** (clientManagerPy template, lines 281-303)
+2. **`live_chat_listener.py`** (livechatRunnerPy template) calls this function at line 3404 inside `keep_clients_alive()`
+3. **BUT** - the import statement in livechatRunnerPy (lines 2579-2584) does NOT include `check_client_health`:
 
-1. **"Server closed the connection: [WinError 121]"** - These messages are printed by **Telethon internally**, not caught by our exception handlers
-2. **`client.is_connected()`** returns True even after socket death - Telethon's internal state lags behind
-3. **`catch_up()` doesn't raise exceptions** for connection drops - Telethon tries auto-reconnect internally
-4. **Tasks destroyed without cleanup** - When Telethon's internal reconnect fails, pending tasks are killed ungracefully
-5. **Retry queue stuck at 8** - Accounts are scheduled for retry but the retry logic isn't effective
-
-### Root Cause
-
-The `keep_clients_alive()` function relies on:
-- `client.is_connected()` - unreliable for detecting dead sockets
-- `catch_up()` raising exceptions - doesn't happen for all disconnect scenarios
-
-When network errors occur mid-session:
-1. Telethon prints "Server closed the connection" internally
-2. Our code doesn't catch this (no exception raised to us)
-3. `is_connected()` still returns True
-4. Eventually tasks are destroyed, causing the "Task was destroyed" warnings
+```python
+from client_manager import (
+    get_or_create_client, get_next_task, report_result,
+    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
+    retry_proxy_error_accounts, log_error,
+    HTTP_TIMEOUT_UPLOAD
+)
+# MISSING: check_client_health
+```
 
 ## Solution
 
-### Step 1: Add Proactive Connection Health Check
+Add `check_client_health` to the import statement in `livechatRunnerPy`.
 
-Add a health check that sends an actual Telegram API call to verify the connection is truly alive:
+### Change Required
 
+**File**: `src/pages/SetupGuide.tsx`
+
+**Location**: Lines 2579-2584 (the import from client_manager in livechatRunnerPy)
+
+**Before**:
 ```python
-async def check_client_health(client, account_id: str) -> bool:
-    """
-    Proactively check if client connection is truly alive.
-    A simple API call that will fail fast if connection is dead.
-    Returns True if healthy, False if connection is dead.
-    """
-    try:
-        # get_me() is lightweight and will fail quickly if socket is dead
-        await asyncio.wait_for(client.get_me(), timeout=10)
-        return True
-    except Exception as e:
-        error_str = str(e).lower()
-        if any(p in error_str for p in PROXY_ERROR_PATTERNS + NETWORK_ERROR_PATTERNS):
-            print(f"  [HEALTH CHECK] {account_id[:8]} - Dead connection detected: {str(e)[:50]}")
-        return False
+from client_manager import (
+    get_or_create_client, get_next_task, report_result,
+    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
+    retry_proxy_error_accounts, log_error,
+    HTTP_TIMEOUT_UPLOAD
+)
 ```
 
-### Step 2: Update keep_clients_alive with Periodic Health Checks
-
-Run health checks every 60 seconds on all clients:
-
+**After**:
 ```python
-async def keep_clients_alive():
-    # ... existing code ...
-    last_health_check = time.time()
-    HEALTH_CHECK_INTERVAL = 60  # Check every 60 seconds
-    
-    while RUNNING:
-        # ... existing loop code ...
-        
-        # ========== PERIODIC HEALTH CHECK ==========
-        if time.time() - last_health_check >= HEALTH_CHECK_INTERVAL:
-            for acc_id, client in list(active_clients.items()):
-                if not await check_client_health(client, acc_id):
-                    # Connection is dead - immediately disconnect and add to proxy retry
-                    await force_disconnect_session(acc_id, "health_check_failed")
-                    await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
-            last_health_check = time.time()
+from client_manager import (
+    get_or_create_client, get_next_task, report_result,
+    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
+    retry_proxy_error_accounts, log_error, check_client_health,
+    HTTP_TIMEOUT_UPLOAD
+)
 ```
 
-### Step 3: Use force_disconnect_session Consistently
-
-Update `disconnect_and_schedule_retry` to call `add_to_proxy_retry_queue` for network errors:
+Also need to add the import of `add_to_proxy_retry_queue` (also called at line 3414) which is defined in client_manager.py:
 
 ```python
-async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected"):
-    # ... existing cleanup code ...
-    
-    # Check if this is a proxy/network error - use the 3-attempt retry queue
-    is_proxy_error = any(p in reason.lower() for p in PROXY_ERROR_PATTERNS + NETWORK_ERROR_PATTERNS)
-    
-    if is_proxy_error:
-        # Use proxy retry queue with 3-attempt limit and 3-minute delay
-        await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
-    else:
-        # Non-proxy errors use standard retry schedule
-        failed_connection_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
+from client_manager import (
+    get_or_create_client, get_next_task, report_result,
+    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
+    retry_proxy_error_accounts, log_error, check_client_health, add_to_proxy_retry_queue,
+    HTTP_TIMEOUT_UPLOAD
+)
 ```
 
-### Step 4: Cancel All Pending Telethon Tasks on Disconnect
-
-Enhance `force_disconnect_session` to cancel ALL internal Telethon tasks:
+Also need to add `force_disconnect_session` to the import (called at line 3413):
 
 ```python
-async def force_disconnect_session(account_id: str, reason: str = "proxy_error"):
-    # ... existing code to pop client ...
-    
-    if client:
-        try:
-            # Cancel ALL internal Telethon tasks (not just _updates_handle)
-            internal_handles = ['_updates_handle', '_sender', '_borrowed_senders']
-            for handle_name in internal_handles:
-                if hasattr(client, handle_name):
-                    handle = getattr(client, handle_name)
-                    if handle:
-                        if hasattr(handle, 'cancel'):
-                            handle.cancel()
-                        elif isinstance(handle, dict):
-                            for sender in handle.values():
-                                if hasattr(sender, 'cancel'):
-                                    sender.cancel()
-            
-            # Also cancel the _sender's loops if they exist
-            if hasattr(client, '_sender') and client._sender:
-                sender = client._sender
-                for loop_name in ['_send_loop', '_recv_loop']:
-                    if hasattr(sender, loop_name):
-                        loop = getattr(sender, loop_name)
-                        if loop and hasattr(loop, 'cancel'):
-                            loop.cancel()
-            
-            # Disconnect with longer timeout for cleanup
-            if client.is_connected():
-                try:
-                    await asyncio.wait_for(
-                        asyncio.shield(client.disconnect()), 
-                        timeout=10  # Increased from 5
-                    )
-                except:
-                    pass
-            
-            # Give MORE time for event loop cleanup
-            await asyncio.sleep(0.5)  # Increased from 0.2
-            
-            del client
-        except Exception as e:
-            print(f"  [FORCE DISCONNECT] {phone} - Force cleared (error: {str(e)[:30]})")
+from client_manager import (
+    get_or_create_client, get_next_task, report_result,
+    send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
+    retry_proxy_error_accounts, log_error, check_client_health, add_to_proxy_retry_queue,
+    force_disconnect_session,
+    HTTP_TIMEOUT_UPLOAD
+)
 ```
 
-### Step 5: Add Catch for Telethon Internal Logs
+## Technical Details
 
-Add a warning filter or hook to detect Telethon's internal "Server closed" messages and trigger disconnect:
-
-```python
-# Alternative approach - wrap the keep_clients_alive iteration in a broader try-catch
-# that looks for specific patterns in the output buffer
-
-# In the main_loop, periodically check for stuck clients:
-async def check_stuck_clients():
-    """Check for clients that are in active_clients but not receiving updates."""
-    now = time.time()
-    for acc_id, client in list(active_clients.items()):
-        # If client reports connected but hasn't received updates in 5 minutes
-        # it might be a zombie connection
-        try:
-            if not client.is_connected():
-                await force_disconnect_session(acc_id, "zombie_connection")
-                await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
-        except:
-            pass
-```
+| Missing Function | Defined In | Called At |
+|-----------------|------------|-----------|
+| `check_client_health` | client_manager.py line 281 | live_chat_listener.py line 3404 |
+| `add_to_proxy_retry_queue` | client_manager.py line 306 | live_chat_listener.py line 3414, 3365 |
+| `force_disconnect_session` | client_manager.py line 198 | live_chat_listener.py line 3413 |
 
 ## Files to Modify
 
 1. **`src/pages/SetupGuide.tsx`**:
-   - Add `check_client_health()` function
-   - Update `keep_clients_alive()` to include periodic health checks
-   - Update `disconnect_and_schedule_retry()` to use proxy retry queue for network errors
-   - Enhance `force_disconnect_session()` to cancel more Telethon internal tasks
-   - Add `check_stuck_clients()` helper function
+   - Update the import statement in livechatRunnerPy (around line 2579-2584)
+   - Add: `check_client_health`, `add_to_proxy_retry_queue`, `force_disconnect_session`
 
 ## Expected Outcome
 
 After this fix:
-- Dead connections are detected proactively via health checks (not just waiting for exceptions)
-- Network errors trigger the 3-attempt retry logic with 3-minute delays
-- All Telethon internal tasks are properly cancelled before disconnect
-- The "Task was destroyed" and "GeneratorExit" warnings should be eliminated
-- Accounts with persistent proxy failures will be marked inactive after 3 failed attempts
-
-## Timeline Example
-
-| Time | Event |
-|------|-------|
-| 0:00 | Health check detects dead socket |
-| 0:00 | IMMEDIATE disconnect, add to retry queue |
-| 3:00 | Retry attempt 1 - still failing |
-| 6:00 | Retry attempt 2 - still failing |
-| 9:00 | Retry attempt 3 - still failing |
-| 9:00 | Mark account as DISCONNECTED (auto_disabled) |
+- The `NameError: name 'check_client_health' is not defined` error will be resolved
+- The health check system will work correctly, detecting zombie connections every 60 seconds
+- Failed connections will be properly routed to the 3-attempt retry queue
 
