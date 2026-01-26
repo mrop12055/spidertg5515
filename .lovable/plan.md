@@ -1,156 +1,142 @@
 
-# UI Cleanup: Remove Refresh Buttons and Simplify Various Sections
 
-## Summary of Changes
+# Remove Database Page and Move Task Queue/Recent Errors to Dashboard
 
-This plan removes refresh buttons from multiple pages, simplifies the proxy filters, removes the health monitoring section, cleans up the database page, and removes the cleanup tab from settings.
+## Overview
 
----
-
-## 1. Dashboard - Remove Refresh Button
-
-**File:** `src/pages/Dashboard.tsx`
-
-**Current:** Lines 48-65 contain a refresh button in the PageHeader action prop
-
-**Change:** Remove the entire `action` prop from PageHeader (the refresh button and syncing indicator)
+This plan removes the Database Health page entirely and moves two key components to the Dashboard bottom:
+1. **Recent Errors** - Live feed showing errors from all sources (campaigns, messages, tasks, warmup, accounts)
+2. **Task Queue Management** - Tabs for managing pending Account, Import, Recipients, and Messages tasks
 
 ---
 
-## 2. Accounts - Remove Refresh Button
+## Changes Summary
 
-**File:** `src/pages/Accounts.tsx`
+### 1. Remove Database Page and Route
 
-**Current:** Lines 2548-2551 contain a refresh button in the PageHeader action prop
+| File | Action |
+|------|--------|
+| `src/pages/DatabaseHealth.tsx` | Delete entire file |
+| `src/App.tsx` | Remove `/database` route and import |
+| `src/components/layout/Sidebar.tsx` | Remove Database nav item from navigation |
 
-**Change:** Remove the refresh button from the action div (keep the Add Accounts dialog button if present)
+### 2. Create Dashboard Components
 
----
+Extract the Task Queue and Recent Errors sections into reusable components for the Dashboard:
 
-## 3. Proxies - Simplify Error Display and Remove Health Monitoring
+| New Component | Purpose |
+|---------------|---------|
+| `src/components/dashboard/TaskQueueCard.tsx` | Task Queue Management with Account/Import/Recipients/Messages tabs |
+| `src/components/dashboard/RecentErrorsCard.tsx` | Recent Errors live feed panel |
 
-**File:** `src/pages/Proxies.tsx`
-
-### 3a. Remove "With Errors" and "Slow" stat cards, keep only "Error" status filter
-
-**Current:** There are 3 error-related stat cards:
-- Line 1082-1098: "Error" status card (proxies with status='error')
-- Line 1133-1148: "With Errors" card (proxies that had errors today)
-- Line 1150-1166: "Slow" card (proxies with response time >300ms)
-
-**Change:** Remove "With Errors" and "Slow" cards. Keep only the "Error" status card at line 1082-1098.
-
-### 3b. Remove the "with_errors" option from usage filter dropdown
-
-**Current:** Line 1004 has `<SelectItem value="with_errors">With Errors</SelectItem>`
-
-**Change:** Remove this select item
-
-### 3c. Remove Refresh button from filters
-
-**Current:** Lines 1007-1010 contain a Refresh button
-
-**Change:** Remove the refresh button
-
-### 3d. Remove Health Monitoring Card
-
-**Current:** Lines 1169-1216 contain the "Health Monitoring" card with auto health check toggle
-
-**Change:** Remove the entire Health Monitoring card component
-
----
-
-## 4. DatabaseHealth - Remove Multiple Items
-
-**File:** `src/pages/DatabaseHealth.tsx`
-
-### 4a. Remove Refresh Button from PageHeader
-
-**Current:** Lines 638-642 contain refresh button in action prop
-
-**Change:** Remove the entire `action` prop from PageHeader
-
-### 4b. Remove System Overview Stats (Active Accounts, Restricted, Active Proxies, Conversations)
-
-**Current:** Lines 653-682 contain 4 StatCards for Active Accounts, Restricted, Active Proxies, Conversations
-
-**Change:** Remove the entire grid of StatCards
-
-### 4c. Remove Pending Queue Section
-
-**Current:** Lines 684-746 contain the "Pending Queue" section showing Account, Import, Recipients, and Stuck counts
-
-**Change:** Remove the entire Pending Queue section
-
----
-
-## 5. Settings - Remove Cleanup Tab
-
-**File:** `src/pages/Settings.tsx`
-
-### 5a. Remove Cleanup Tab Trigger
-
-**Current:** Lines 135-138 contain the Cleanup tab trigger
-
-**Change:** Remove the Cleanup tab trigger
-
-### 5b. Remove Cleanup TabsContent
-
-**Current:** Lines 230-289 contain the entire Cleanup TabsContent
-
-**Change:** Remove the entire Cleanup tab content
-
-### 5c. Update TabsList Grid
-
-**Current:** Line 126 has `grid-cols-4`
-
-**Change:** Change to `grid-cols-3` since we're removing one tab
-
-### 5d. Remove Cleanup-Related State and Functions
-
-**Current:** Lines 30, 60-62, and 77-91 contain cleanup-related state and functions
-
-**Change:** Remove `isCleaningUp` state, `updateCleanupSettings` function, and `handleManualCleanup` function
-
----
-
-## Technical Details
-
-### Files to Modify
+### 3. Update Dashboard
 
 | File | Changes |
 |------|---------|
-| `src/pages/Dashboard.tsx` | Remove refresh button from PageHeader action |
-| `src/pages/Accounts.tsx` | Remove refresh button (keep Add Accounts) |
-| `src/pages/Proxies.tsx` | Remove "With Errors" card, "Slow" card, refresh button, health monitoring section |
-| `src/pages/DatabaseHealth.tsx` | Remove refresh button, system overview stats, pending queue section |
-| `src/pages/Settings.tsx` | Remove cleanup tab and related state/functions |
-
-### State/Variables to Clean Up
-
-**Dashboard.tsx:**
-- Remove `isRefreshing` state
-- Remove `handleRefresh` function
-- Remove unused imports: `RefreshCw`, `Loader2`
-
-**Proxies.tsx:**
-- Remove `slowFilter` state variable
-- Remove `autoHealthCheck`, `healthCheckInterval`, `lastHealthCheck` state variables
-- Remove health check localStorage effects
-- Remove health check interval effect
-- Remove unused imports related to health monitoring
-
-**Settings.tsx:**
-- Remove `isCleaningUp` state
-- Remove `updateCleanupSettings` helper function
-- Remove `handleManualCleanup` function
-- Remove `Calendar` and `Trash2` from imports
+| `src/pages/Dashboard.tsx` | Import and add the two new components at the bottom of the page |
 
 ---
 
-## Impact
+## Technical Implementation
 
-- Pages will still auto-refresh via React Query's background refetching and realtime subscriptions
-- Reduces visual clutter and removes redundant controls
-- Simplifies the proxy error display to show only the status-based "Error" count
-- Settings page becomes more focused with 3 tabs instead of 4
+### Step 1: Remove Database Route (App.tsx)
+
+```text
+Remove:
+- Line 14: import DatabaseHealth
+- Line 53: <Route path="/database" ...> 
+```
+
+### Step 2: Remove Database Nav Item (Sidebar.tsx)
+
+```text
+Remove from navItems array (line 44):
+- { icon: Database, label: 'Database', path: '/database' }
+Also remove Database import from lucide-react
+```
+
+### Step 3: Create TaskQueueCard Component
+
+New file: `src/components/dashboard/TaskQueueCard.tsx`
+
+This component extracts lines 653-989 from DatabaseHealth.tsx including:
+- All state for pending/completed tasks
+- Tab structure: Account | Import | Recipients | Messages
+- Table views with delete functionality
+- Real-time subscription for live updates
+- Clear pending tasks buttons
+
+### Step 4: Create RecentErrorsCard Component
+
+New file: `src/components/dashboard/RecentErrorsCard.tsx`
+
+This component extracts lines 992-1066 from DatabaseHealth.tsx including:
+- Recent errors state and fetch logic
+- ScrollArea with error list
+- Color-coded badges by source (Account, Campaign, Warmup, etc.)
+- Live feed badge indicator
+
+### Step 5: Update Dashboard
+
+Add after the Running Campaigns section:
+
+```text
+{/* Task Queue & Errors Section */}
+<div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+  <TaskQueueCard />
+  <RecentErrorsCard />
+</div>
+```
+
+### Step 6: Delete DatabaseHealth.tsx
+
+Remove the entire file since all functionality is now in the dashboard components.
+
+---
+
+## Data Flow
+
+Both new components will:
+- Fetch their own data using the same queries from DatabaseHealth.tsx
+- Set up their own real-time subscriptions
+- Handle their own loading/refresh states
+
+---
+
+## UI Layout on Dashboard
+
+```text
++------------------------------------------+
+| Dashboard Header                          |
++------------------------------------------+
+| Account Stats (3 cards)                   |
++------------------------------------------+
+| Message Stats (3 cards)                   |
++------------------------------------------+
+| Runner Status Card                        |
++------------------------------------------+
+| Running Campaigns (if any)                |
++------------------------------------------+
+| Task Queue Card    | Recent Errors Card   |
+| (Account, Import,  | (Live error feed     |
+|  Recipients, Msgs) |  from all sources)   |
++------------------------------------------+
+```
+
+---
+
+## Files to Create
+
+1. `src/components/dashboard/TaskQueueCard.tsx` - Task queue management panel
+2. `src/components/dashboard/RecentErrorsCard.tsx` - Recent errors panel
+
+## Files to Modify
+
+1. `src/App.tsx` - Remove database route
+2. `src/components/layout/Sidebar.tsx` - Remove Database nav item
+3. `src/pages/Dashboard.tsx` - Add new components
+
+## Files to Delete
+
+1. `src/pages/DatabaseHealth.tsx` - No longer needed
+
