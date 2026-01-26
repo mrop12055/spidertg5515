@@ -2095,15 +2095,7 @@ const Accounts: React.FC = () => {
               className="w-10 h-10 rounded-full object-cover"
             />
           ) : (
-            <div className={cn(
-"w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium",
-              account.status === 'active' && "bg-status-active/15 text-status-active",
-              account.status === 'banned' && "bg-status-banned/15 text-status-banned",
-              account.status === 'restricted' && "bg-status-restricted/15 text-status-restricted",
-              account.status === 'cooldown' && "bg-status-cooldown/15 text-status-cooldown",
-              account.status === 'disconnected' && "bg-status-disconnected/15 text-status-disconnected",
-              account.status === 'frozen' && "bg-blue-500/15 text-blue-500",
-            )}>
+            <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium bg-muted text-muted-foreground">
               {verifyResult?.status === 'checking' ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (account.firstName || account.lastName) ? (
