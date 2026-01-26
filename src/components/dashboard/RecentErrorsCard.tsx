@@ -23,7 +23,7 @@ export const RecentErrorsCard: React.FC = () => {
 
   const fetchData = async () => {
     try {
-      // OPTIMIZED: Reduced limits from 100 to 50 per table for faster loading
+      // Increased limits to support 1000 total errors capacity
       const [
         failedRecipientsRes,
         failedMessagesRes,
@@ -31,7 +31,8 @@ export const RecentErrorsCard: React.FC = () => {
         failedBlockTasksRes,
         failedImportTasksRes,
         failedWarmupRes,
-        accountErrorsRes
+        accountErrorsRes,
+        vpsErrorLogsRes
       ] = await Promise.all([
         supabase
           .from('campaign_recipients')
@@ -39,48 +40,55 @@ export const RecentErrorsCard: React.FC = () => {
           .eq('status', 'failed')
           .not('failed_reason', 'is', null)
           .order('sent_at', { ascending: false, nullsFirst: false })
-          .limit(50),
+          .limit(150),
         supabase
           .from('messages')
           .select('id, failed_reason, created_at, conversation_id')
           .eq('status', 'failed')
           .not('failed_reason', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(150),
         supabase
           .from('account_check_tasks')
           .select('id, account_id, result, created_at')
           .eq('status', 'failed')
           .not('result', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(150),
         supabase
           .from('block_contact_tasks')
           .select('id, target_phone, result, created_at')
           .eq('status', 'failed')
           .not('result', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(100),
         supabase
           .from('contact_import_tasks')
           .select('id, result, created_at')
           .eq('status', 'failed')
           .not('result', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(100),
         supabase
           .from('warmup_schedule')
           .select('id, account_id, task_type, created_at')
           .eq('status', 'failed')
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(100),
         supabase
           .from('telegram_accounts')
           .select('id, phone_number, status, ban_reason, restricted_until, created_at')
           .not('ban_reason', 'is', null)
           .neq('ban_reason', '')
           .order('restricted_until', { ascending: false, nullsFirst: false })
-          .limit(50)
+          .limit(150),
+        // VPS/Python runner error logs
+        supabase
+          .from('vps_logs')
+          .select('id, runner_name, message, log_level, created_at')
+          .eq('log_level', 'error')
+          .order('created_at', { ascending: false })
+          .limit(200)
       ]);
 
       const allErrors: RecentError[] = [];
@@ -155,8 +163,19 @@ export const RecentErrorsCard: React.FC = () => {
         });
       });
 
+      // VPS/Python runner errors
+      (vpsErrorLogsRes.data || []).forEach(v => {
+        allErrors.push({
+          id: v.id,
+          phone: v.runner_name || 'Python',
+          reason: v.message || 'Unknown error',
+          timestamp: v.created_at || new Date().toISOString(),
+          source: 'Python'
+        });
+      });
+
       allErrors.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      setRecentErrors(allErrors.slice(0, 300));
+      setRecentErrors(allErrors.slice(0, 1000));
 
     } catch (error) {
       console.error('Error fetching recent errors:', error);
@@ -232,6 +251,7 @@ export const RecentErrorsCard: React.FC = () => {
                           error.source === 'Account' ? 'bg-orange-500/10 text-orange-500 border-orange-500/30' :
                           error.source === 'Campaign' ? 'bg-blue-500/10 text-blue-500 border-blue-500/30' :
                           error.source === 'Warmup' ? 'bg-purple-500/10 text-purple-500 border-purple-500/30' :
+                          error.source === 'Python' ? 'bg-red-500/10 text-red-500 border-red-500/30' :
                           'bg-muted'
                         }`}
                       >
