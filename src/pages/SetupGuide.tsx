@@ -3475,7 +3475,7 @@ async def main_loop():
     print("  BUILD: 2026-01-22-no-session-check")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
-    print("  🔄 Failed connections retry after 60s cooldown")
+    print("  🔄 Failed connections retry after 3 min cooldown")
     print("  📨 Skips accounts without proxy/API")
     print("=" * 50)
     print("=" * 50)
@@ -3520,7 +3520,7 @@ async def main_loop():
                 if stale_ids:
                     print(f"  [CLEANUP] Removed {len(stale_ids)} stale IDs from connected_ids")
                 
-                # Allow failed accounts to retry after their cooldown expires (60s from failure)
+                # Allow failed accounts to retry after their cooldown expires (180s/3min from failure)
                 now = time.time()
                 expired_failures = [acc_id for acc_id, retry_time in failed_connection_accounts.items() if now > retry_time]
                 for acc_id in expired_failures:
