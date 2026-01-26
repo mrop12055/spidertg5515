@@ -952,6 +952,37 @@ async def report_batch_results(results: list) -> bool:
         return False
 
 
+async def log_error(runner_name: str, message: str, log_level: str = "error"):
+    """
+    Log error to vps_logs table for admin dashboard visibility.
+    This ensures all Python runner errors appear in the Recent Errors card.
+    
+    Args:
+        runner_name: Name of the runner (campaign, account, warmup, livechat)
+        message: Error message to log (raw Telegram error)
+        log_level: Log level - typically 'error' for dashboard visibility
+    """
+    try:
+        http = get_http_client()
+        await http.post(
+            f"{SUPABASE_URL}/rest/v1/vps_logs",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            json={
+                "runner_name": runner_name,
+                "message": message[:500],  # Truncate to 500 chars max
+                "log_level": log_level
+            },
+            timeout=5
+        )
+    except Exception:
+        pass  # Never block runner for logging failures
+
+
 async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None, recipient_name: str = None):
     """
     Send message using official Telegram API best practices.
@@ -1823,7 +1854,8 @@ from client_manager import (
     get_or_create_client, get_batch_tasks, report_result,
     send_message, shutdown_all, disconnect_batch, report_batch_results,
     active_clients, reset_http_client, save_session_to_db,
-    process_batch_optimized, bulk_import_contacts, bulk_send_messages
+    process_batch_optimized, bulk_import_contacts, bulk_send_messages,
+    log_error
 )
 
 # ========== GLOBAL STATE ==========
@@ -1945,12 +1977,15 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
     
     # If no client after all retries, return errors for all tasks
     if not client:
-        print(f"    ✗ [{account_phone}] No client (for {len(tasks)} tasks) - {last_connection_error}")
+        error_msg = last_connection_error or "Could not connect client"
+        print(f"    ✗ [{account_phone}] No client (for {len(tasks)} tasks) - {error_msg}")
+        # Log to vps_logs for admin dashboard visibility
+        await log_error("campaign", f"[{account_phone}] Connection failed: {error_msg}")
         for task in tasks:
             msg = task.get("message", {})
             results.append({
                 "success": False,
-                "error": last_connection_error or "Could not connect client",
+                "error": error_msg,
                 "campaign_recipient_id": msg.get("campaign_recipient_id"),
                 "message_id": msg.get("id"),
                 "account_id": account_id,
@@ -2048,6 +2083,8 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
             except Exception as e:
                 error_str = str(e)
                 print(f"    ✗ [{account_phone}] → {recipient}: {error_str[:150]}")
+                # Log send failure to vps_logs for admin visibility
+                await log_error("campaign", f"[{account_phone}] Send to {recipient}: {error_str}")
                 results.append({
                     "success": False,
                     "error": error_str,
@@ -2062,6 +2099,8 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
         # Connection failed during send - return error for remaining tasks
         error_str = str(e)
         print(f"    ✗ [{account_phone}] Send error: {error_str[:150]}")
+        # Log to vps_logs for admin visibility
+        await log_error("campaign", f"[{account_phone}] Send error: {error_str}")
         # Return results already collected plus error for remaining
         return results
         
@@ -2391,7 +2430,7 @@ from telethon import events
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
-    retry_proxy_error_accounts,
+    retry_proxy_error_accounts, log_error,
     HTTP_TIMEOUT_UPLOAD
 )
 from config import SUPABASE_URL, SUPABASE_KEY
@@ -4082,8 +4121,11 @@ async def process_single_task(task):
     
     except Exception as e:
         # CRITICAL: Report failure to backend so task doesn't stay stuck in "in_progress"
-        print(f"  [ERROR] Task {task_type} failed: {e}")
-        await report_task_failure(task_type, task_id, account_id, str(e))
+        error_str = str(e)
+        print(f"  [ERROR] Task {task_type} failed: {error_str}")
+        # Log to vps_logs for admin dashboard visibility
+        await log_error("account", f"[{phone}] {task_type} failed: {error_str}")
+        await report_task_failure(task_type, task_id, account_id, error_str)
     
     finally:
         # ALWAYS save session and disconnect after task to free session file for LiveChat runner
