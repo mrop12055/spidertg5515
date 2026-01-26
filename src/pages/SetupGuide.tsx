@@ -4019,6 +4019,10 @@ async def verify_session(client, account_id):
 async def process_single_task(task):
     """Process a single account task - runs in parallel with others.
     IMPORTANT: Disconnects client after each task to free session file for LiveChat runner.
+    
+    SESSION SAVING OPTIMIZATION:
+    - Read-only tasks (sync_profile, verify_session) don't modify entity cache, so skip saving
+    - Write tasks (change_name, change_photo, spambot_check, etc.) should save session
     """
     task_type = task.get("task")
     account = task.get("account", {})
@@ -4027,6 +4031,11 @@ async def process_single_task(task):
     task_proxy = task.get("proxy")  # Get proxy from task (sent by get-batch-tasks)
     account_id = account.get("id")
     phone = account.get("phone_number", "")
+    
+    # READ-ONLY TASKS: These only fetch data, no entity cache changes
+    # Skip session saving to reduce unnecessary DB writes
+    READ_ONLY_TASKS = {"sync_profile", "verify_session"}
+    should_save_session = task_type not in READ_ONLY_TASKS
     
     try:
         # NOTE: skip_session_check=True for all account management tasks to avoid redundant API calls
@@ -4141,10 +4150,10 @@ async def process_single_task(task):
         await report_task_failure(task_type, task_id, account_id, error_str)
     
     finally:
-        # ALWAYS save session and disconnect after task to free session file for LiveChat runner
-        # save_session=True preserves entity cache for future connections
+        # Disconnect client after task to free session file for LiveChat runner
+        # Only save session for write tasks (entity cache changes), skip for read-only tasks
         if account_id:
-            await disconnect_client(account_id, phone, save_session=True)
+            await disconnect_client(account_id, phone, save_session=should_save_session)
 
 
 TASK_TIMEOUT_SECONDS = 120
