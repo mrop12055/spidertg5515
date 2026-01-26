@@ -48,40 +48,27 @@ const fetchAccountsPaged = async (): Promise<TelegramAccount[]> => {
   
   const selectColumns = 'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, telegram_id, last_spambot_check, tags, success_count, failure_count, success_rate, auto_disabled, disabled_reason';
 
-  // Fetch first page
-  const { data: firstPage, error: firstError } = await supabase
-    .from('telegram_accounts')
-    .select(selectColumns)
-    .order('created_at', { ascending: false })
-    .range(0, PAGE_SIZE - 1);
+  // NOTE: Avoid firing MAX_PAGES requests in parallel.
+  // The previous implementation launched up to 99 extra queries even when
+  // the table had only a few thousand rows, which makes the Accounts page
+  // feel extremely slow.
+  const all: any[] = [];
 
-  if (firstError) throw firstError;
-  if (!firstPage || firstPage.length === 0) return [];
-  if (firstPage.length < PAGE_SIZE) return firstPage.map(transformAccount);
-
-  // Need more pages - fetch remaining in parallel
-  const pagePromises: Promise<{ data: any[] | null; error: any }>[] = [];
-  for (let page = 1; page < MAX_PAGES; page++) {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
-    const promise = (async () => {
-      return await supabase
-        .from('telegram_accounts')
-        .select(selectColumns)
-        .order('created_at', { ascending: false })
-        .range(from, to);
-    })();
-    pagePromises.push(promise);
-  }
 
-  const results = await Promise.all(pagePromises);
-  const all = [...firstPage];
+    const { data, error } = await supabase
+      .from('telegram_accounts')
+      .select(selectColumns)
+      .order('created_at', { ascending: false })
+      .range(from, to);
 
-  for (const result of results) {
-    if (result.data && result.data.length > 0) {
-      all.push(...result.data);
-    }
-    if (!result.data || result.data.length < PAGE_SIZE) break;
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
   }
 
   return all.map(transformAccount);
