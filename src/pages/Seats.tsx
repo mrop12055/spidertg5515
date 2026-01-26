@@ -131,15 +131,6 @@ const Seats: React.FC = () => {
   useEffect(() => {
     fetchSeats();
     
-    // Longer debounce (5s) to reduce refresh frequency for stats
-    let statsRefreshTimer: NodeJS.Timeout | null = null;
-    const debouncedStatsRefresh = () => {
-      if (statsRefreshTimer) clearTimeout(statsRefreshTimer);
-      statsRefreshTimer = setTimeout(() => {
-        fetchSeats();
-      }, 5000); // Debounce 5 seconds to reduce lag
-    };
-    
     // Subscribe only to seats table changes (not messages/conversations for performance)
     const seatsChannel = supabase
       .channel('seats-changes')
@@ -156,13 +147,12 @@ const Seats: React.FC = () => {
       )
       .subscribe();
     
-    // Auto-refresh stats every 30 seconds instead of on every message
+    // OPTIMIZED: Increased auto-refresh interval from 30s to 60s
     const autoRefreshInterval = setInterval(() => {
       fetchSeats();
-    }, 30000);
+    }, 60000);
 
     return () => {
-      if (statsRefreshTimer) clearTimeout(statsRefreshTimer);
       clearInterval(autoRefreshInterval);
       supabase.removeChannel(seatsChannel);
     };

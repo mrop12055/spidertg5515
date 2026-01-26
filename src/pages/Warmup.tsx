@@ -446,9 +446,10 @@ export default function Warmup() {
     if (debounceRef.current) {
       clearTimeout(debounceRef.current);
     }
+    // OPTIMIZED: Increased debounce from 2s to 3s
     debounceRef.current = setTimeout(() => {
       fetchData();
-    }, 2000); // Wait 2 seconds after last change before fetching
+    }, 3000);
   }, [fetchData]);
 
   useEffect(() => {
@@ -482,8 +483,8 @@ export default function Warmup() {
       )
       .subscribe();
 
-    // Also poll every 10 seconds as backup
-    const pollInterval = setInterval(fetchData, 10000);
+    // OPTIMIZED: Increased polling interval from 10s to 15s
+    const pollInterval = setInterval(fetchData, 15000);
 
     return () => {
       supabase.removeChannel(channel);

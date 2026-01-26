@@ -23,6 +23,7 @@ export const RecentErrorsCard: React.FC = () => {
 
   const fetchData = async () => {
     try {
+      // OPTIMIZED: Reduced limits from 100 to 50 per table for faster loading
       const [
         failedRecipientsRes,
         failedMessagesRes,
@@ -38,48 +39,48 @@ export const RecentErrorsCard: React.FC = () => {
           .eq('status', 'failed')
           .not('failed_reason', 'is', null)
           .order('sent_at', { ascending: false, nullsFirst: false })
-          .limit(100),
+          .limit(50),
         supabase
           .from('messages')
           .select('id, failed_reason, created_at, conversation_id')
           .eq('status', 'failed')
           .not('failed_reason', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(100),
+          .limit(50),
         supabase
           .from('account_check_tasks')
           .select('id, account_id, result, created_at')
           .eq('status', 'failed')
           .not('result', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(100),
+          .limit(50),
         supabase
           .from('block_contact_tasks')
           .select('id, target_phone, result, created_at')
           .eq('status', 'failed')
           .not('result', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(100),
+          .limit(50),
         supabase
           .from('contact_import_tasks')
           .select('id, result, created_at')
           .eq('status', 'failed')
           .not('result', 'is', null)
           .order('created_at', { ascending: false })
-          .limit(100),
+          .limit(50),
         supabase
           .from('warmup_schedule')
           .select('id, account_id, task_type, created_at')
           .eq('status', 'failed')
           .order('created_at', { ascending: false })
-          .limit(100),
+          .limit(50),
         supabase
           .from('telegram_accounts')
           .select('id, phone_number, status, ban_reason, restricted_until, created_at')
           .not('ban_reason', 'is', null)
           .neq('ban_reason', '')
           .order('restricted_until', { ascending: false, nullsFirst: false })
-          .limit(100)
+          .limit(50)
       ]);
 
       const allErrors: RecentError[] = [];
@@ -165,10 +166,11 @@ export const RecentErrorsCard: React.FC = () => {
   useEffect(() => {
     fetchData();
 
+    // OPTIMIZED: Increased debounce from 2s to 5s
     let refreshTimer: NodeJS.Timeout | null = null;
     const debouncedRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => fetchData(), 2000);
+      refreshTimer = setTimeout(() => fetchData(), 5000);
     };
 
     const channel = supabase
