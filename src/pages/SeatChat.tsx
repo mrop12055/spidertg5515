@@ -226,12 +226,12 @@ const SeatChat: React.FC = () => {
     return Array.from(phoneMap.values());
   }, []);
 
-  // Time-filtered base conversations - ONLY show campaign conversations (where we messaged first)
+  // Time-filtered base conversations - Show campaign conversations OR conversations with replies
   const timeFilteredConversations = React.useMemo(() => {
     const cutoffTime = timeFilterCutoff.getTime();
     return conversations.filter(conv => {
-      // Only include conversations where we sent the first message (campaign initiated)
-      if (!conv.first_message_sent) return false;
+      // Include conversations where we sent the first message OR where recipient replied
+      if (!conv.first_message_sent && !conv.has_reply) return false;
       
       const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
       return lastMsgTime >= cutoffTime;
@@ -246,8 +246,8 @@ const SeatChat: React.FC = () => {
     if (chatTab === 'pinned') {
       filtered = filtered.filter(conv => conv.is_pinned);
     } else if (chatTab === 'hidden') {
-      // Hidden tab should show all hidden regardless of time filter (only campaign conversations)
-      filtered = conversations.filter(conv => conv.is_hidden && conv.first_message_sent);
+      // Hidden tab should show all hidden (campaign conversations OR with replies)
+      filtered = conversations.filter(conv => conv.is_hidden && (conv.first_message_sent || conv.has_reply));
     } else {
       // "all" tab shows non-hidden conversations
       filtered = filtered.filter(conv => !conv.is_hidden);
@@ -260,10 +260,10 @@ const SeatChat: React.FC = () => {
     
     // When searching, ignore time filter to search ALL conversations
     if (searchQuery) {
-      // Re-filter from all conversations for search (still only campaign conversations)
+      // Re-filter from all conversations for search (campaign OR with replies)
       const searchLower = searchQuery.toLowerCase();
       filtered = conversations.filter(conv => (
-        conv.first_message_sent && // Only campaign conversations
+        (conv.first_message_sent || conv.has_reply) && // Campaign or reply conversations
         (conv.recipient_name?.toLowerCase().includes(searchLower) ||
         conv.recipient_phone?.toLowerCase().includes(searchLower) ||
         conv.recipient_username?.toLowerCase().includes(searchLower) ||
@@ -290,10 +290,10 @@ const SeatChat: React.FC = () => {
     });
   }, [timeFilteredConversations, conversations, chatTab, showRepliedOnly, searchQuery, deduplicateConversations]);
 
-  // Count for each tab (using time-filtered base - only campaign conversations)
+  // Count for each tab (using time-filtered base - campaign or reply conversations)
   const allCount = timeFilteredConversations.filter(c => !c.is_hidden).length;
   const pinnedCount = timeFilteredConversations.filter(c => c.is_pinned).length;
-  const hiddenCount = conversations.filter(c => c.is_hidden && c.first_message_sent).length;
+  const hiddenCount = conversations.filter(c => c.is_hidden && (c.first_message_sent || c.has_reply)).length;
   
   // Count replies and unread replies
   const repliesCount = timeFilteredConversations.filter(c => c.has_reply && !c.is_hidden).length;
@@ -346,7 +346,7 @@ const SeatChat: React.FC = () => {
     validateSeat();
   }, [token]);
 
-  // Fetch conversations for this seat - ONLY campaign conversations (where we messaged first)
+  // Fetch conversations for this seat - campaign conversations OR conversations with replies
   // Limited to last 5 days
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
@@ -356,19 +356,21 @@ const SeatChat: React.FC = () => {
       const fiveDaysAgo = new Date();
       fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
       
-      // Only fetch campaign conversations (first_message_sent = true) from last 5 days
+      // Fetch conversations: either we sent first OR they replied (incoming messages exist)
       const { data, error } = await supabase
         .from('conversations')
         .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
         .eq('seat_id', seat.id)
-        .eq('first_message_sent', true)
         .gte('last_message_at', fiveDaysAgo.toISOString())
         .order('last_message_at', { ascending: false, nullsFirst: false });
 
       if (error) throw error;
       
+      // Filter: show if first_message_sent OR has_reply
+      const filtered = (data || []).filter(conv => conv.first_message_sent || conv.has_reply);
+      
       // Use the conversation's stored values directly (updated by trigger)
-      setConversations((data || []).map(conv => ({
+      setConversations(filtered.map(conv => ({
         ...conv,
         has_reply: conv.has_reply ?? false,
         last_message_direction: conv.last_message_direction as 'incoming' | 'outgoing' | undefined,
