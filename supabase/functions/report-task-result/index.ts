@@ -1175,47 +1175,60 @@ serve(async (req) => {
           }
         }
 
-        // Priority 5 (BACKFILL): If we have sender_id but no match, search for conversations 
-        // with NULL telegram_id that match by account_id - these are from campaign sends 
-        // where telegram_id wasn't captured. We can now link them!
+        // Priority 5 (BACKFILL): Since we can't reliably match by phone (Telegram-registered
+        // phone differs from campaign import phone), we need a different strategy:
+        // CREATE a new conversation for this sender and link it properly, so future messages work
         if (!convId && sender_id) {
-          console.log(`[report-task-result] Attempting backfill: searching for conversations with NULL telegram_id for account ${account_id}...`);
+          console.log(`[report-task-result] Creating NEW conversation for sender_id=${sender_id} since no existing match found`);
           
-          // Find ANY conversation for this account that has no telegram_id
-          // Since the sender is replying to THIS account, they must have been messaged by it
-          const { data: nullIdConvs } = await supabase
+          // Get the account's seat_id for proper routing
+          const { data: accountData } = await supabase
+            .from("telegram_accounts")
+            .select("id")
+            .eq("id", account_id)
+            .single();
+          
+          // Find seat_id from any existing conversation for this account
+          const { data: existingAccountConv } = await supabase
             .from("conversations")
-            .select("*")
+            .select("seat_id, campaign_id, campaign_name")
             .eq("account_id", account_id)
-            .is("recipient_telegram_id", null)
-            .eq("first_message_sent", true)
-            .order("last_message_at", { ascending: false })
-            .limit(50);
+            .not("seat_id", "is", null)
+            .limit(1);
           
-          if (nullIdConvs && nullIdConvs.length > 0) {
-            // Try to match by phone number first
-            const phoneClean = sender_phone?.replace(/[^\d]/g, '') || '';
-            for (const conv of nullIdConvs) {
-              const convPhoneClean = conv.recipient_phone?.replace(/[^\d]/g, '') || '';
-              if (phoneClean && convPhoneClean && (
-                phoneClean === convPhoneClean ||
-                phoneClean.endsWith(convPhoneClean) ||
-                convPhoneClean.endsWith(phoneClean)
-              )) {
-                convId = conv.id;
-                existingConvData = conv;
-                console.log(`[report-task-result] BACKFILL: Matched conversation ${convId} by partial phone (sender: ${sender_phone}, conv: ${conv.recipient_phone})`);
-                break;
-              }
-            }
-            
-            // If still no match and we only have one conversation with null telegram_id, use it
-            // This handles the case where phone numbers don't match but it's the only option
-            if (!convId && nullIdConvs.length === 1) {
-              convId = nullIdConvs[0].id;
-              existingConvData = nullIdConvs[0];
-              console.log(`[report-task-result] BACKFILL: Using single unlinked conversation ${convId} (only option for this account)`);
-            }
+          const seatId = existingAccountConv?.[0]?.seat_id || null;
+          const campaignId = existingAccountConv?.[0]?.campaign_id || null;
+          const campaignName = existingAccountConv?.[0]?.campaign_name || null;
+          
+          // Create a new conversation for this sender
+          const { data: newConv, error: createError } = await supabase
+            .from("conversations")
+            .insert({
+              account_id: account_id,
+              recipient_phone: sender_phone || null,
+              recipient_telegram_id: sender_id,
+              recipient_name: sender_name || phoneDisplay || `User ${sender_id}`,
+              recipient_username: sender_username ? `@${sender_username}` : null,
+              is_active: true,
+              first_message_sent: false, // This is an incoming reply, we didn't send first
+              has_reply: true,
+              unread_count: 1,
+              last_message_at: new Date().toISOString(),
+              last_message_content: content?.substring(0, 500) || null,
+              last_message_direction: 'incoming',
+              seat_id: seatId,
+              campaign_id: campaignId,
+              campaign_name: campaignName,
+            })
+            .select()
+            .single();
+          
+          if (newConv) {
+            convId = newConv.id;
+            existingConvData = newConv;
+            console.log(`[report-task-result] Created NEW conversation ${convId} for sender ${sender_id} (${sender_phone})`);
+          } else if (createError) {
+            console.error(`[report-task-result] Failed to create conversation: ${createError.message}`);
           }
         }
 
