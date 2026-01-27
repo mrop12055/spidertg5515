@@ -81,8 +81,8 @@ export const useConversations = () => {
         async (payload) => {
           if (payload.eventType === 'INSERT') {
             const newConv = transformConversation(payload.new);
-            // Only add if it meets our filter criteria
-            if (newConv.firstMessageSent && newConv.lastMessageAt) {
+            // Add if it has a last message (either we sent first or they replied)
+            if (newConv.lastMessageAt) {
               queryClient.setQueryData<Conversation[]>(['conversations'], (old) => {
                 if (!old) return [newConv];
                 if (old.some(c => c.id === newConv.id)) return old;
