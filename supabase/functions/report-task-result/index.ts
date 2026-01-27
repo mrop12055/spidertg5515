@@ -244,6 +244,7 @@ serve(async (req) => {
                   account_id: account_id,
                   recipient_phone: recipient_phone,
                   recipient_name: recipient_name,
+                  recipient_telegram_id: recipient_telegram_id || null,  // Include telegram_id for reply matching
                   is_active: true,
                   first_message_sent: true,
                   last_message_at: new Date().toISOString(),
