@@ -1175,13 +1175,60 @@ serve(async (req) => {
           }
         }
 
+        // Priority 5 (BACKFILL): If we have sender_id but no match, search for conversations 
+        // with NULL telegram_id that match by account_id - these are from campaign sends 
+        // where telegram_id wasn't captured. We can now link them!
+        if (!convId && sender_id) {
+          console.log(`[report-task-result] Attempting backfill: searching for conversations with NULL telegram_id for account ${account_id}...`);
+          
+          // Find ANY conversation for this account that has no telegram_id
+          // Since the sender is replying to THIS account, they must have been messaged by it
+          const { data: nullIdConvs } = await supabase
+            .from("conversations")
+            .select("*")
+            .eq("account_id", account_id)
+            .is("recipient_telegram_id", null)
+            .eq("first_message_sent", true)
+            .order("last_message_at", { ascending: false })
+            .limit(50);
+          
+          if (nullIdConvs && nullIdConvs.length > 0) {
+            // Try to match by phone number first
+            const phoneClean = sender_phone?.replace(/[^\d]/g, '') || '';
+            for (const conv of nullIdConvs) {
+              const convPhoneClean = conv.recipient_phone?.replace(/[^\d]/g, '') || '';
+              if (phoneClean && convPhoneClean && (
+                phoneClean === convPhoneClean ||
+                phoneClean.endsWith(convPhoneClean) ||
+                convPhoneClean.endsWith(phoneClean)
+              )) {
+                convId = conv.id;
+                existingConvData = conv;
+                console.log(`[report-task-result] BACKFILL: Matched conversation ${convId} by partial phone (sender: ${sender_phone}, conv: ${conv.recipient_phone})`);
+                break;
+              }
+            }
+            
+            // If still no match and we only have one conversation with null telegram_id, use it
+            // This handles the case where phone numbers don't match but it's the only option
+            if (!convId && nullIdConvs.length === 1) {
+              convId = nullIdConvs[0].id;
+              existingConvData = nullIdConvs[0];
+              console.log(`[report-task-result] BACKFILL: Using single unlinked conversation ${convId} (only option for this account)`);
+            }
+          }
+        }
+
         // Update existing conversation with sender info (link telegram_id)
         if (convId && existingConvData) {
           const updateData: Record<string, unknown> = {
             last_message_at: new Date().toISOString(),
+            last_message_content: content?.substring(0, 500) || null,
+            last_message_direction: 'incoming',
             updated_at: new Date().toISOString(),
             unread_count: (existingConvData.unread_count || 0) + 1,
             is_active: true,
+            has_reply: true,  // Mark that recipient has replied
           };
           
           // Always update telegram_id if we have it
