@@ -87,6 +87,28 @@ serve(async (req) => {
         .order("created_at", { ascending: true })
         .limit(100);
 
+      // ========== PRE-FETCH API POOL FOR TRUE ROUND-ROBIN ==========
+      // Get all active APIs sorted by usage for true round-robin distribution
+      const { data: allActiveApis } = await supabase
+        .from('telegram_api_credentials')
+        .select('id, api_id, api_hash, usage_count')
+        .eq('is_active', true)
+        .order('usage_count', { ascending: true })
+        .order('last_used_at', { ascending: true, nullsFirst: true });
+
+      const apiPool = allActiveApis || [];
+      let apiPoolIndex = 0;
+
+      // Helper function for true in-batch round-robin (rotates through pool)
+      const getNextApiFromPool = (): { id: string; api_id: string; api_hash: string } | null => {
+        if (apiPool.length === 0) return null;
+        const api = apiPool[apiPoolIndex % apiPool.length];
+        apiPoolIndex++; // Advance for next call (true rotation)
+        return { id: api.id, api_id: api.api_id, api_hash: api.api_hash };
+      };
+
+      console.log(`[get-next-task] Livechat API POOL: ${apiPool.length} APIs for round-robin`);
+
       if (pendingMessages && pendingMessages.length > 0 && livechatSettings.enableParallel) {
         // Heartbeat
         supabase
@@ -146,8 +168,8 @@ serve(async (req) => {
             
             const proxy = Array.isArray(account.proxies) ? account.proxies[0] : account.proxies;
             
-            // ROUND-ROBIN API: Get API credentials from pool (NO INCREMENT - happens on success)
-            const accountFreshApi = await selectNextApiCredential(supabase);
+            // ROUND-ROBIN API: Get API credentials from pool (true rotation)
+            const accountFreshApi = getNextApiFromPool();
             if (!accountFreshApi) {
               console.log('[get-next-task] No API credentials available for livechat batch');
               continue;
@@ -178,10 +200,10 @@ serve(async (req) => {
                 proxy_type: proxy.proxy_type,
                 type: proxy.proxy_type,
               },
-              // ROUND-ROBIN API: Each message gets API from the pool (NO INCREMENT - happens on success)
-              messages: await Promise.all(msgs.map(async (msg) => {
+              // ROUND-ROBIN API: Each message gets API from the pool (true rotation)
+              messages: msgs.map((msg) => {
                 const conv = (msg as any).conversations || {};
-                const messageFreshApi = await selectNextApiCredential(supabase);
+                const messageFreshApi = getNextApiFromPool();
                 return {
                   id: msg.id,
                   content: msg.content,
@@ -196,7 +218,7 @@ serve(async (req) => {
                   api_hash: messageFreshApi?.api_hash || accountFreshApi.api_hash,
                   api_credential_id: messageFreshApi?.id || accountFreshApi.id, // Track for usage reporting
                 };
-              })),
+              }),
             });
           }
           
@@ -209,12 +231,12 @@ serve(async (req) => {
             .in("status", ["active", "restricted", "cooldown", "frozen"])
             .not("session_data", "is", null);
           
-          const validAccounts = await Promise.all((livechatAccounts || [])
-            .map(async (acc) => {
+          const validAccounts = (livechatAccounts || [])
+            .map((acc) => {
               const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
               if (!proxy || proxy.status !== "active") return null;
-              // ROUND-ROBIN API: Get from pool (NO INCREMENT - happens on success)
-              const freshApi = await selectNextApiCredential(supabase);
+              // ROUND-ROBIN API: Get from pool (true rotation)
+              const freshApi = getNextApiFromPool();
               if (!freshApi) return null;
               return {
                 id: acc.id,
@@ -240,7 +262,7 @@ serve(async (req) => {
                   type: proxy.proxy_type,
                 },
               };
-            })).then(results => results.filter(Boolean));
+            }).filter(Boolean);
           
           return new Response(JSON.stringify({
             task: "send_parallel",
@@ -273,8 +295,8 @@ serve(async (req) => {
               .eq("status", "pending");
 
             const conv = (msg as any).conversations || {};
-            // ROUND-ROBIN API: Get from pool (NO INCREMENT - happens on success)
-            const freshApi = await selectNextApiCredential(supabase);
+            // ROUND-ROBIN API: Get from pool (true rotation)
+            const freshApi = getNextApiFromPool();
             if (!freshApi) {
               console.log('[get-next-task] No API credentials available for single livechat');
               continue;
@@ -333,12 +355,12 @@ serve(async (req) => {
         .in("status", ["active", "restricted", "cooldown", "frozen"])
         .not("session_data", "is", null);
 
-      const validAccounts = await Promise.all((livechatAccounts || [])
-        .map(async (acc) => {
+      const validAccounts = (livechatAccounts || [])
+        .map((acc) => {
           const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
           if (!proxy || proxy.status !== "active") return null;
-          // ROUND-ROBIN API: Get from pool (NO INCREMENT - happens on success)
-          const freshApi = await selectNextApiCredential(supabase);
+          // ROUND-ROBIN API: Get from pool (true rotation)
+          const freshApi = getNextApiFromPool();
           if (!freshApi) return null;
           return {
             id: acc.id,
@@ -364,7 +386,7 @@ serve(async (req) => {
               type: proxy.proxy_type,
             },
           };
-        })).then(results => results.filter(Boolean));
+        }).filter(Boolean);
 
       console.log(`[get-next-task] Livechat: returning ${validAccounts.length} accounts for listening`);
 
