@@ -36,7 +36,7 @@ const fetchConversations = async (): Promise<Conversation[]> => {
     const { data, error } = await supabase
       .from('conversations')
       .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
-      .eq('first_message_sent', true)
+      // Removed first_message_sent filter - incoming-only conversations also have replies
       .not('last_message_at', 'is', null)
       .order('last_message_at', { ascending: false })
       .range(from, to);
