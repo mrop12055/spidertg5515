@@ -1609,7 +1609,26 @@ async def bulk_send_messages(
                             timeout=30
                         )
                         result["success"] = True
-                        print(f"    ✓ [{account_phone}] → {recipient} (media)")
+                        
+                        # Capture telegram_id for reply matching
+                        if isinstance(entity, InputPeerUser):
+                            result["recipient_telegram_id"] = entity.user_id
+                        elif hasattr(entity, 'id'):
+                            result["recipient_telegram_id"] = entity.id
+                        
+                        # Add to contacts so replies pass the "contacts only" filter
+                        try:
+                            contact = InputPhoneContact(
+                                client_id=rnd.randint(0, 2**31 - 1),
+                                phone=recipient,
+                                first_name=task.get("recipient_name") or recipient.replace("+", ""),
+                                last_name=""
+                            )
+                            await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=5)
+                            print(f"    ✓ [{account_phone}] → {recipient} (media) [+contact]")
+                        except Exception:
+                            print(f"    ✓ [{account_phone}] → {recipient} (media)")
+                        
                         return result
                 except Exception as media_err:
                     print(f"    ⚠ [{account_phone}] Media failed, trying text: {str(media_err)[:30]}")
@@ -1635,7 +1654,26 @@ async def bulk_send_messages(
                 )
             
             result["success"] = True
-            print(f"    ✓ [{account_phone}] → {recipient}")
+            
+            # Capture telegram_id for reply matching
+            if isinstance(entity, InputPeerUser):
+                result["recipient_telegram_id"] = entity.user_id
+            elif hasattr(entity, 'id'):
+                result["recipient_telegram_id"] = entity.id
+            
+            # Add to contacts so replies pass the "contacts only" filter
+            try:
+                contact = InputPhoneContact(
+                    client_id=rnd.randint(0, 2**31 - 1),
+                    phone=recipient,
+                    first_name=task.get("recipient_name") or recipient.replace("+", ""),
+                    last_name=""
+                )
+                await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=5)
+                print(f"    ✓ [{account_phone}] → {recipient} [+contact]")
+            except Exception:
+                print(f"    ✓ [{account_phone}] → {recipient}")
+            
             return result
             
         except FloodWaitError as e:
@@ -3472,7 +3510,7 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-22-no-session-check")
+    print("  BUILD: 2026-01-27-contact-sync-fix")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 3 min cooldown")
