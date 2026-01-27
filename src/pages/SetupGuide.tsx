@@ -394,13 +394,12 @@ async def retry_proxy_error_accounts():
         print(f"    [{phone}] Retry attempt {retry_count + 1}/{PROXY_MAX_RETRIES}...")
         
         try:
-            # Check if we have account data cached
-            if not account_data.get("api_id") or not account_data.get("api_hash"):
-                # Fetch fresh account data from database
+            # Fetch fresh account data from database if not cached
+            if not account_data.get("session_data"):
                 resp = await http.get(
                     f"{SUPABASE_URL}/rest/v1/telegram_accounts",
                     params={
-                        "select": "id,phone_number,session_data,device_model,system_version,app_version,lang_code,system_lang_code,proxy_id,api_id,api_hash,status",
+                        "select": "id,phone_number,session_data,device_model,system_version,app_version,lang_code,system_lang_code,proxy_id,status",
                         "id": f"eq.{acc_id}",
                         "limit": "1"
                     },
@@ -416,9 +415,31 @@ async def retry_proxy_error_accounts():
                     print(f"    [{phone}] ✗ Could not fetch account data")
                     continue
             
+            # ROUND-ROBIN API: Fetch from telegram_api_credentials pool (lowest usage first)
             if not account_data.get("api_id") or not account_data.get("api_hash"):
-                print(f"    [{phone}] ✗ No API credentials assigned - skipping")
-                continue
+                api_resp = await http.get(
+                    f"{SUPABASE_URL}/rest/v1/telegram_api_credentials",
+                    params={
+                        "select": "id,api_id,api_hash,usage_count",
+                        "is_active": "eq.true",
+                        "order": "usage_count.asc,last_used_at.asc.nullsfirst",
+                        "limit": "1"
+                    },
+                    headers={
+                        "apikey": SUPABASE_KEY,
+                        "Authorization": f"Bearer {SUPABASE_KEY}"
+                    },
+                    timeout=10
+                )
+                if api_resp.status_code == 200 and api_resp.json():
+                    api_cred = api_resp.json()[0]
+                    account_data["api_id"] = api_cred["api_id"]
+                    account_data["api_hash"] = api_cred["api_hash"]
+                    account_data["api_credential_id"] = api_cred["id"]
+                    print(f"    [{phone}] Using round-robin API: {api_cred['api_id'][:4]}... (usage: {api_cred.get('usage_count', 0)})")
+                else:
+                    print(f"    [{phone}] ✗ No active API credentials available in pool")
+                    continue
             
             # Fetch proxy if not cached
             if not proxy_data and account_data.get("proxy_id"):
@@ -439,8 +460,6 @@ async def retry_proxy_error_accounts():
             
             # Add proxy data to account for connection
             account_data["proxy"] = proxy_data
-            
-            print(f"    [{phone}] Using stored API credentials: {account_data['api_id'][:4]}...")
             
             client = await get_or_create_client(
                 account_data,
