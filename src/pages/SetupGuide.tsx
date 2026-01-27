@@ -194,11 +194,6 @@ def get_http_client() -> httpx.AsyncClient:
 # Persistent retry tracking with timestamps: {account_id: {"count": int, "next_retry_at": float, "account_data": dict, "proxy_data": dict}}
 _proxy_retry_queue: Dict[str, dict] = {}
 
-# ========== CLIENT ACCOUNT DATA CACHE ==========
-# Cache account data with API credentials for reconnection (populated on successful connect)
-# Ensures health check failures have access to original API credentials for retry
-_client_account_data: Dict[str, dict] = {}
-
 
 async def force_disconnect_session(account_id: str, reason: str = "proxy_error"):
     """
@@ -892,24 +887,6 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         # Only cache if caching is enabled
         if not no_cache:
             active_clients[account_id] = client
-        
-        # ========== CACHE ACCOUNT DATA FOR RECONNECTION ==========
-        # Store API credentials and proxy data so health check failures can retry properly
-        _client_account_data[account_id] = {
-            "id": account_id,
-            "phone_number": account.get("phone_number"),
-            "api_id": api_id,
-            "api_hash": api_hash,
-            "api_credential_id": account.get("api_credential_id"),
-            "proxy_id": proxy_id,
-            "proxy": task_proxy,
-            "device_model": device_model,
-            "system_version": system_version,
-            "app_version": app_version,
-            "lang_code": lang_code,
-            "system_lang_code": system_lang_code,
-            "session_data": session_data
-        }
         
         # ========== REPORT PROXY SUCCESS ==========
         # Connection succeeded - mark proxy as active and remove from retry queue
@@ -1632,9 +1609,6 @@ async def bulk_send_messages(
                             timeout=30
                         )
                         result["success"] = True
-                        # Capture recipient's telegram_id from InputPeerUser for conversation matching
-                        if isinstance(entity, InputPeerUser):
-                            result["recipient_telegram_id"] = entity.user_id
                         print(f"    ✓ [{account_phone}] → {recipient} (media)")
                         return result
                 except Exception as media_err:
@@ -1661,9 +1635,6 @@ async def bulk_send_messages(
                 )
             
             result["success"] = True
-            # Capture recipient's telegram_id from InputPeerUser for conversation matching
-            if isinstance(entity, InputPeerUser):
-                result["recipient_telegram_id"] = entity.user_id
             print(f"    ✓ [{account_phone}] → {recipient}")
             return result
             
@@ -3438,14 +3409,9 @@ async def keep_clients_alive():
                         health_check_disconnects.append(acc_id)
                 
                 # Immediately disconnect dead connections and add to retry queue
-                # FIX: Use cached account data (includes API credentials) for reconnection
                 for acc_id in health_check_disconnects:
-                    # Get cached account data for this client (includes API credentials from original connection)
-                    cached_data = _client_account_data.get(acc_id, {"id": acc_id})
-                    cached_proxy = cached_data.get("proxy")
-                    
                     await force_disconnect_session(acc_id, "health_check_failed")
-                    await add_to_proxy_retry_queue(acc_id, cached_data, cached_proxy)
+                    await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
                 
                 if health_check_disconnects:
                     print(f"  [HEALTH CHECK] Disconnected {len(health_check_disconnects)} zombie connections")
@@ -3506,12 +3472,11 @@ async def keep_clients_alive():
 async def main_loop():
     print("=" * 50)
     print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-27-health-check-fix")
+    print("  BUILD: 2026-01-22-no-session-check")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
     print("  🔄 Failed connections retry after 3 min cooldown")
     print("  📨 Skips accounts without proxy/API")
-    print("  🔑 API credentials cached for reconnection")
     print("=" * 50)
     print("=" * 50)
     

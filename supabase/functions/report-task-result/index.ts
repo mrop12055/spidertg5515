@@ -1141,23 +1141,6 @@ serve(async (req) => {
               break;
             }
           }
-          
-          // Enhanced fallback: Match by last 10 digits (handles format mismatches)
-          if (!convId && phoneClean.length >= 10) {
-            const last10 = phoneClean.slice(-10);
-            const { data: phoneConv } = await supabase
-              .from("conversations")
-              .select("*")
-              .eq("account_id", account_id)
-              .like("recipient_phone", `%${last10}`)
-              .limit(1);
-
-            if (phoneConv && phoneConv.length > 0) {
-              convId = phoneConv[0].id;
-              existingConvData = phoneConv[0];
-              console.log(`[report-task-result] Found conversation by phone last-10 digits ${last10}: ${convId}`);
-            }
-          }
         }
 
         // Priority 4: Check campaign_recipients for matching phone and link to that conversation
@@ -1191,40 +1174,6 @@ serve(async (req) => {
           }
         }
 
-        // Priority 5: FALLBACK - Search campaign_recipients by phone last-10 digits to find seat/campaign info
-        // Then create conversation if we can confidently link to a campaign
-        let fallbackRecipientData: { seat_id: string | null; campaign_id: string | null; campaign_name: string | null; phone_number: string } | null = null;
-        
-        if (!convId && sender_phone) {
-          const phoneClean = sender_phone.replace(/[^\d]/g, '');
-          const last10 = phoneClean.slice(-10);
-          
-          if (last10.length >= 10) {
-            console.log(`[report-task-result] FALLBACK: Searching campaign_recipients by last-10 digits: ${last10}`);
-            
-            // Search for campaign recipients that match the last 10 digits
-            const { data: recipientMatch } = await supabase
-              .from("campaign_recipients")
-              .select("id, phone_number, seat_id, campaign_id, campaigns(id, name, seat_id)")
-              .like("phone_number", `%${last10}`)
-              .in("status", ["sent", "failed", "pending"])
-              .order("sent_at", { ascending: false, nullsFirst: false })
-              .limit(1);
-            
-            if (recipientMatch && recipientMatch.length > 0) {
-              const match = recipientMatch[0];
-              const campaign = match.campaigns as any;
-              fallbackRecipientData = {
-                seat_id: match.seat_id || campaign?.seat_id || null,
-                campaign_id: campaign?.id || match.campaign_id,
-                campaign_name: campaign?.name || null,
-                phone_number: match.phone_number,
-              };
-              console.log(`[report-task-result] FALLBACK: Found campaign recipient match: phone=${fallbackRecipientData.phone_number}, seat=${fallbackRecipientData.seat_id}, campaign=${fallbackRecipientData.campaign_name}`);
-            }
-          }
-        }
-
         // Update existing conversation with sender info (link telegram_id)
         if (convId && existingConvData) {
           const updateData: Record<string, unknown> = {
@@ -1232,9 +1181,6 @@ serve(async (req) => {
             updated_at: new Date().toISOString(),
             unread_count: (existingConvData.unread_count || 0) + 1,
             is_active: true,
-            has_reply: true, // Explicitly set has_reply
-            last_message_content: content?.substring(0, 255) || '',
-            last_message_direction: 'incoming',
           };
           
           // Always update telegram_id if we have it
@@ -1264,53 +1210,22 @@ serve(async (req) => {
             .update(updateData)
             .eq("id", convId);
             
-          console.log(`[report-task-result] Updated conversation ${convId} with telegram_id=${sender_id}, has_reply=true, has_avatar=${!!sender_avatar}`);
-        }
-
-        // If no conversation found but we have fallback recipient data, CREATE the conversation
-        if (!convId && fallbackRecipientData) {
-          console.log(`[report-task-result] Creating new conversation via fallback recipient match`);
-          
-          const { data: newConv, error: convError } = await supabase
-            .from("conversations")
-            .insert({
-              account_id: account_id,
-              recipient_phone: fallbackRecipientData.phone_number || sender_phone,
-              recipient_telegram_id: sender_id || null,
-              recipient_username: sender_username ? `@${sender_username}` : null,
-              recipient_name: (sender_name && sender_name !== 'Contact') ? sender_name : (sender_phone || (sender_username ? `@${sender_username}` : `ID:${sender_id}`)),
-              recipient_avatar: sender_avatar ? `data:image/jpeg;base64,${sender_avatar}` : null,
-              seat_id: fallbackRecipientData.seat_id,
-              campaign_id: fallbackRecipientData.campaign_id,
-              campaign_name: fallbackRecipientData.campaign_name,
-              first_message_sent: true, // This is a reply to our campaign outreach
-              is_active: true,
-              has_reply: true,
-              unread_count: 1,
-              last_message_at: new Date().toISOString(),
-              last_message_content: content?.substring(0, 255) || '',
-              last_message_direction: 'incoming',
-            })
-            .select()
-            .single();
-          
-          if (convError) {
-            console.error(`[report-task-result] Error creating fallback conversation:`, convError);
-          } else if (newConv) {
-            convId = newConv.id;
-            existingConvData = newConv;
-            console.log(`[report-task-result] Created fallback conversation ${convId} linked to seat=${fallbackRecipientData.seat_id}, campaign=${fallbackRecipientData.campaign_name}`);
-          }
+          console.log(`[report-task-result] Updated conversation ${convId} with telegram_id=${sender_id}, has_avatar=${!!sender_avatar}`);
         }
 
         if (!convId) {
-          // Only skip if we truly have no way to link this message
-          console.log(`[report-task-result] WARNING: Could not find existing conversation OR campaign recipient for incoming message from sender_id=${sender_id}, phone=${sender_phone}, username=${sender_username} - SKIPPING`);
+          // DO NOT create new conversations for incoming messages
+          // The Python runner should have already filtered this - if we can't find
+          // an existing conversation, it means:
+          // 1. Phone/username format mismatch from campaign send
+          // 2. The runner filter failed
+          // Either way, we should NOT create orphan conversations
+          console.log(`[report-task-result] WARNING: Could not find existing conversation for incoming message from sender_id=${sender_id}, phone=${sender_phone}, username=${sender_username} - SKIPPING (no conversation created)`);
           
           return new Response(
             JSON.stringify({ 
               success: false, 
-              warning: "No matching campaign conversation or recipient found - message ignored" 
+              warning: "No matching campaign conversation found - message ignored" 
             }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );

@@ -131,7 +131,7 @@ const Seats: React.FC = () => {
   useEffect(() => {
     fetchSeats();
     
-    // Subscribe to seats table changes
+    // Subscribe only to seats table changes (not messages/conversations for performance)
     const seatsChannel = supabase
       .channel('seats-changes')
       .on(
@@ -147,34 +147,6 @@ const Seats: React.FC = () => {
       )
       .subscribe();
     
-    // Subscribe to conversations changes to update unread counters faster
-    let conversationsDebounceTimer: NodeJS.Timeout | null = null;
-    const conversationsChannel = supabase
-      .channel('seats-conversations-sync')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'conversations'
-        },
-        (payload) => {
-          // Only refresh on relevant changes (has_reply or unread_count updates)
-          const newData = payload.new as any;
-          if (newData?.seat_id && (payload.eventType === 'INSERT' || 
-              newData?.has_reply === true || 
-              (newData?.unread_count !== undefined && newData.unread_count > 0))) {
-            // Debounce to avoid rapid updates
-            if (conversationsDebounceTimer) clearTimeout(conversationsDebounceTimer);
-            conversationsDebounceTimer = setTimeout(() => {
-              console.log('[Seats] Conversation change detected, refreshing...');
-              fetchSeats();
-            }, 2000);
-          }
-        }
-      )
-      .subscribe();
-    
     // OPTIMIZED: Increased auto-refresh interval from 30s to 60s
     const autoRefreshInterval = setInterval(() => {
       fetchSeats();
@@ -182,9 +154,7 @@ const Seats: React.FC = () => {
 
     return () => {
       clearInterval(autoRefreshInterval);
-      if (conversationsDebounceTimer) clearTimeout(conversationsDebounceTimer);
       supabase.removeChannel(seatsChannel);
-      supabase.removeChannel(conversationsChannel);
     };
   }, [fetchSeats]);
 
