@@ -100,10 +100,10 @@ const Seats: React.FC = () => {
       }
 
       // Fetch unread replies count per seat (unique conversations with unread messages)
+      // Note: Don't filter by first_message_sent since incoming-only conversations also have replies
       const { data: unreadData, error: unreadError } = await supabase
         .from('conversations')
         .select('id, seat_id')
-        .eq('first_message_sent', true)
         .eq('has_reply', true)
         .gt('unread_count', 0)
         .not('seat_id', 'is', null);
