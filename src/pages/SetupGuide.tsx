@@ -1632,6 +1632,9 @@ async def bulk_send_messages(
                             timeout=30
                         )
                         result["success"] = True
+                        # Capture recipient's telegram_id from InputPeerUser for conversation matching
+                        if isinstance(entity, InputPeerUser):
+                            result["recipient_telegram_id"] = entity.user_id
                         print(f"    ✓ [{account_phone}] → {recipient} (media)")
                         return result
                 except Exception as media_err:
@@ -1658,6 +1661,9 @@ async def bulk_send_messages(
                 )
             
             result["success"] = True
+            # Capture recipient's telegram_id from InputPeerUser for conversation matching
+            if isinstance(entity, InputPeerUser):
+                result["recipient_telegram_id"] = entity.user_id
             print(f"    ✓ [{account_phone}] → {recipient}")
             return result
             

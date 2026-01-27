@@ -1141,6 +1141,23 @@ serve(async (req) => {
               break;
             }
           }
+          
+          // Enhanced fallback: Match by last 10 digits (handles format mismatches)
+          if (!convId && phoneClean.length >= 10) {
+            const last10 = phoneClean.slice(-10);
+            const { data: phoneConv } = await supabase
+              .from("conversations")
+              .select("*")
+              .eq("account_id", account_id)
+              .like("recipient_phone", `%${last10}`)
+              .limit(1);
+
+            if (phoneConv && phoneConv.length > 0) {
+              convId = phoneConv[0].id;
+              existingConvData = phoneConv[0];
+              console.log(`[report-task-result] Found conversation by phone last-10 digits ${last10}: ${convId}`);
+            }
+          }
         }
 
         // Priority 4: Check campaign_recipients for matching phone and link to that conversation
