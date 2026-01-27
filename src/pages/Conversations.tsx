@@ -310,16 +310,19 @@ const Chat: React.FC = () => {
   };
 
   // Helper to check if conversation should be shown:
-  // Only show conversations where WE sent the first message (campaign initiated)
+  // Show conversations where WE sent the first message OR have a reply (incoming message)
   const shouldShowConversation = (conv: typeof conversations[0]) => {
-    // STRICT: Only show if first_message_sent is explicitly TRUE
+    // Show if first_message_sent is TRUE (we initiated)
     if (conv.firstMessageSent === true) return true;
+    
+    // Also show if conversation has a reply (incoming messages exist)
+    if (conv.hasReply === true) return true;
 
     const stats = messageStats.get(conv.id);
     if (!stats) return false;
 
-    // Only show if WE sent the first message (outgoing)
-    return stats.firstDir === 'outgoing';
+    // Show if we have any messages in this conversation
+    return stats.hasNonFailed;
   };
 
   // Helper to check if conversation has any successful (non-failed) messages
