@@ -1,146 +1,126 @@
 
-# Plan: Fix LiveChat Message Sync and Reply Reception
 
-## Problem Summary
+# Plan: Fix Message Reply Sync - Save `recipient_telegram_id` in Edge Function
 
-Your requirement is to receive messages **only from contacts**. The issue is a **mismatch** between:
-1. How campaigns send messages (without adding to contacts)
-2. How LiveChat filters messages (requires sender to be in contacts)
+## Confirmed Problem
 
-### Database Evidence
+After deep investigation, I've confirmed **the problem is 100% real**. Here's the evidence:
 
-| Metric | Current Value | Problem |
-|--------|--------------|---------|
-| Total messages | 439 | All outgoing |
-| Incoming messages | 0 | Zero replies recorded |
-| Conversations with `has_reply` | 0 | No replies flagged |
-| Conversations with `recipient_telegram_id` | 0 | Can't match replies by Telegram ID |
+| Database Check | Result |
+|----------------|--------|
+| Total conversations | 439 |
+| Conversations with `recipient_telegram_id` | **0** (all NULL) |
+| Incoming messages saved | **0** |
+| Conversations with `has_reply = true` | **0** |
 
----
+### The Failure Flow
 
-## Root Causes
+1. **Campaign sends message** → Python runner captures `recipient_telegram_id`
+2. **report-batch-results creates conversation** → **BUT ignores the telegram_id** (the bug)
+3. **Recipient replies** → LiveChat runner receives it (passes `is_contact` filter)
+4. **report-task-result tries to match** → Tries telegram_id first (all NULL), then phone (format mismatch)
+5. **Result**: "Could not find existing conversation - SKIPPING" → Message lost
 
-### Issue 1: Campaign Sends Don't Add Recipients to Contacts
+### Why Phone Matching Fails
 
-The campaign runner uses `ResolvePhoneRequest` as the **first priority** for contact resolution (lines 1442-1454). This method:
-- Resolves the phone number to a Telegram user ✓
-- Allows sending messages ✓
-- Does **NOT** add the user to contacts ✗
+The edge function logs show:
+- We sent to: `+919329159376` (campaign import phone)
+- Reply came from: `+916380709474` (user's Telegram registered phone)
 
-The fallback `ImportContactsRequest` **does** add contacts, but it's only used when `ResolvePhoneRequest` fails.
-
-**Result:** Campaign recipients are never added to the sender's contact list.
-
-### Issue 2: LiveChat Filters Out Non-Contact Messages
-
-The LiveChat runner has a strict "contacts only" filter (lines 3198-3202):
-
-```python
-is_contact = getattr(sender, 'contact', False)
-if not is_contact:
-    return  # Message discarded
-```
-
-Since campaign recipients aren't contacts, ALL their replies are silently discarded.
-
-### Issue 3: `recipient_telegram_id` Not Captured
-
-Even if messages got through, the `send_one` function (lines 1562-1639) never extracts the Telegram user ID from the resolved entity. Without this ID saved to the database, the edge function can't reliably match incoming replies.
+These are **different phones for the same user**. Without `recipient_telegram_id`, we can't link them.
 
 ---
 
 ## Solution
 
-To maintain your "contacts only" policy while receiving campaign replies, we need to:
+### File 1: `supabase/functions/report-batch-results/index.ts`
 
-1. **Add recipients to contacts immediately after successful send** - This ensures replies pass the filter
-2. **Capture `recipient_telegram_id` from the entity** - This enables reliable reply matching
+#### Change 1: Add `recipient_telegram_id` to New Conversations (lines 215-225)
 
-### Changes Required
-
-#### File: `src/pages/SetupGuide.tsx`
-
-**Change 1: Extract `recipient_telegram_id` after successful send (lines 1611-1639)**
-
-After `result["success"] = True`, add:
-```python
-# Capture telegram_id for reply matching
-if isinstance(entity, InputPeerUser):
-    result["recipient_telegram_id"] = entity.user_id
-elif hasattr(entity, 'id'):
-    result["recipient_telegram_id"] = entity.id
+```typescript
+const newConv = {
+  account_id: r.account_id,
+  recipient_phone: r.recipient_phone,
+  recipient_name: r.recipient_name,
+  recipient_telegram_id: r.recipient_telegram_id || null,  // ADD THIS LINE
+  is_active: true,
+  first_message_sent: true,
+  last_message_at: now,
+  seat_id: r.campaign_seat_id,
+  campaign_id: r.campaign_id,
+  campaign_name: r.campaign_name,
+};
 ```
 
-**Change 2: Add recipient to contacts after successful send (lines 1637-1639)**
+#### Change 2: Update Existing Conversations with telegram_id (after line 212)
 
-After message send succeeds, add the recipient to contacts so their replies pass the `is_contact` filter:
+When a result matches an existing conversation that doesn't have a telegram_id yet, update it:
 
-```python
-result["success"] = True
+```typescript
+// Track conversations needing telegram_id update
+const convUpdatePromises: Promise<any>[] = [];
 
-# Extract telegram_id for database matching
-if isinstance(entity, InputPeerUser):
-    result["recipient_telegram_id"] = entity.user_id
-elif hasattr(entity, 'id'):
-    result["recipient_telegram_id"] = entity.id
+for (const r of successResults) {
+  const key = `${r.account_id}:${r.recipient_phone}`;
+  const existingId = convLookup.get(key);
 
-# Add to contacts so replies pass the "contacts only" filter
-try:
-    contact = InputPhoneContact(
-        client_id=random.randint(0, 2**31 - 1),
-        phone=recipient,
-        first_name=task.get("recipient_name") or recipient.replace("+", ""),
-        last_name=""
-    )
-    await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=5)
-except Exception:
-    pass  # Don't fail send if contact add fails
+  if (existingId && existingId !== "pending" && r.recipient_telegram_id) {
+    // Update existing conversation with telegram_id for future reply matching
+    convUpdatePromises.push(
+      supabase
+        .from("conversations")
+        .update({ recipient_telegram_id: r.recipient_telegram_id })
+        .eq("id", existingId)
+        .is("recipient_telegram_id", null)
+    );
+  }
+  // ... rest of existing logic
+}
+
+// Execute telegram_id updates in parallel
+if (convUpdatePromises.length > 0) {
+  await Promise.all(convUpdatePromises);
+  console.log(`[report-batch-results] Updated ${convUpdatePromises.length} conversations with telegram_id`);
+}
 ```
 
-**Change 3: Update build version (line ~3475)**
+#### Change 3: Add Debug Logging
 
-```python
-print("  BUILD: 2026-01-27-contact-sync-fix")
+```typescript
+console.log(`[report-batch-results] Processing ${successResults.length} results, ` +
+            `${successResults.filter(r => r.recipient_telegram_id).length} have telegram_id`);
 ```
-
----
-
-## Technical Summary
-
-| Before | After |
-|--------|-------|
-| `ResolvePhoneRequest` used first | Still used (faster) |
-| Recipient not in contacts | Contact added after send |
-| `is_contact = False` for replies | `is_contact = True` for replies |
-| `recipient_telegram_id = NULL` | Captured from entity |
-| Replies discarded at filter | Replies pass filter and sync |
-
----
-
-## Files to Modify
-
-1. **`src/pages/SetupGuide.tsx`**
-   - Lines 1611-1613: Add telegram_id extraction for media sends
-   - Lines 1637-1639: Add telegram_id extraction and contact add for text sends
-   - Line ~3475: Update build version
 
 ---
 
 ## Expected Outcome
 
 After this fix:
-1. Campaign sends complete successfully ✓
-2. Recipient added to contacts immediately after ✓
-3. `recipient_telegram_id` saved to database ✓
-4. Recipient replies → `is_contact = True` ✓
-5. Reply passes filter → reaches edge function ✓
-6. Edge function matches by `telegram_id` or `phone` ✓
-7. Reply saved to messages table ✓
-8. `has_reply = true` and `unread_count` updated ✓
-9. Replies appear in Seats and Conversations pages ✓
+
+| Step | Before | After |
+|------|--------|-------|
+| Campaign send | `recipient_telegram_id = NULL` | `recipient_telegram_id = 5077515613` |
+| Reply matching | Fails (all NULL, phone mismatch) | Matches by telegram_id |
+| Message saved | Lost (0 incoming) | Saved to messages table |
+| `has_reply` flag | Always false | Set to true by trigger |
+| UI display | No replies shown | Replies appear in Seats/Conversations |
 
 ---
 
-## Note on Database Trigger
+## Files to Modify
 
-The existing `update_conversation_on_message` trigger already updates `has_reply` and `last_message_content` for incoming messages. Once replies start reaching the edge function, these fields will update correctly.
+1. **`supabase/functions/report-batch-results/index.ts`**
+   - Lines 215-225: Add `recipient_telegram_id` to new conversation creation
+   - After line 212: Add logic to update existing conversations with telegram_id
+   - Add logging for debugging
+
+---
+
+## Note on Existing Data
+
+The 439 existing conversations with NULL `recipient_telegram_id` will be updated automatically when:
+1. The LiveChat runner syncs any activity from those users (existing flow at line 1187 of report-task-result)
+2. OR a new campaign message is sent to them (new flow above)
+
+No manual database migration is required.
+
