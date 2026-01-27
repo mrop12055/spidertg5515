@@ -1,77 +1,146 @@
 
+# Plan: Fix LiveChat Message Sync and Reply Reception
 
-# Plan: Fix Misleading Startup Log in LiveChat Runner
+## Problem Summary
 
-## Problem Identified
+Your requirement is to receive messages **only from contacts**. The issue is a **mismatch** between:
+1. How campaigns send messages (without adding to contacts)
+2. How LiveChat filters messages (requires sender to be in contacts)
 
-The startup banner in `main_loop()` displays an **outdated** message that doesn't match the actual retry logic:
+### Database Evidence
 
-| What's Displayed | Actual Code |
-|------------------|-------------|
-| `🔄 Failed connections retry after 60s cooldown` | `FAILED_RETRY_DELAY = 180` (3 minutes) |
+| Metric | Current Value | Problem |
+|--------|--------------|---------|
+| Total messages | 439 | All outgoing |
+| Incoming messages | 0 | Zero replies recorded |
+| Conversations with `has_reply` | 0 | No replies flagged |
+| Conversations with `recipient_telegram_id` | 0 | Can't match replies by Telegram ID |
 
-This creates confusion because:
-1. **Network/Proxy errors** → go to `add_to_proxy_retry_queue` → 3-minute delay between attempts
-2. **Non-proxy errors** → go to `failed_connection_accounts[acc_id] = time.time() + 180` → 3-minute delay
+---
 
-The "60s" mentioned in the log is a **stale reference** from a previous version. There's also `SYNC_RETRY_INTERVAL = 60` but that's for message synchronization, not connection retries.
+## Root Causes
+
+### Issue 1: Campaign Sends Don't Add Recipients to Contacts
+
+The campaign runner uses `ResolvePhoneRequest` as the **first priority** for contact resolution (lines 1442-1454). This method:
+- Resolves the phone number to a Telegram user ✓
+- Allows sending messages ✓
+- Does **NOT** add the user to contacts ✗
+
+The fallback `ImportContactsRequest` **does** add contacts, but it's only used when `ResolvePhoneRequest` fails.
+
+**Result:** Campaign recipients are never added to the sender's contact list.
+
+### Issue 2: LiveChat Filters Out Non-Contact Messages
+
+The LiveChat runner has a strict "contacts only" filter (lines 3198-3202):
+
+```python
+is_contact = getattr(sender, 'contact', False)
+if not is_contact:
+    return  # Message discarded
+```
+
+Since campaign recipients aren't contacts, ALL their replies are silently discarded.
+
+### Issue 3: `recipient_telegram_id` Not Captured
+
+Even if messages got through, the `send_one` function (lines 1562-1639) never extracts the Telegram user ID from the resolved entity. Without this ID saved to the database, the edge function can't reliably match incoming replies.
+
+---
 
 ## Solution
 
-Update the startup log message to accurately reflect the 3-minute retry logic.
+To maintain your "contacts only" policy while receiving campaign replies, we need to:
 
-### Change Required
+1. **Add recipients to contacts immediately after successful send** - This ensures replies pass the filter
+2. **Capture `recipient_telegram_id` from the entity** - This enables reliable reply matching
 
-**File**: `src/pages/SetupGuide.tsx`
+### Changes Required
 
-**Location**: Line 3478 (inside livechatRunnerPy template)
+#### File: `src/pages/SetupGuide.tsx`
 
-**Before**:
+**Change 1: Extract `recipient_telegram_id` after successful send (lines 1611-1639)**
+
+After `result["success"] = True`, add:
 ```python
-print("  🔄 Failed connections retry after 60s cooldown")
+# Capture telegram_id for reply matching
+if isinstance(entity, InputPeerUser):
+    result["recipient_telegram_id"] = entity.user_id
+elif hasattr(entity, 'id'):
+    result["recipient_telegram_id"] = entity.id
 ```
 
-**After**:
+**Change 2: Add recipient to contacts after successful send (lines 1637-1639)**
+
+After message send succeeds, add the recipient to contacts so their replies pass the `is_contact` filter:
+
 ```python
-print("  🔄 Failed connections retry after 3 min cooldown")
+result["success"] = True
+
+# Extract telegram_id for database matching
+if isinstance(entity, InputPeerUser):
+    result["recipient_telegram_id"] = entity.user_id
+elif hasattr(entity, 'id'):
+    result["recipient_telegram_id"] = entity.id
+
+# Add to contacts so replies pass the "contacts only" filter
+try:
+    contact = InputPhoneContact(
+        client_id=random.randint(0, 2**31 - 1),
+        phone=recipient,
+        first_name=task.get("recipient_name") or recipient.replace("+", ""),
+        last_name=""
+    )
+    await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=5)
+except Exception:
+    pass  # Don't fail send if contact add fails
 ```
 
-### Additional Fix
+**Change 3: Update build version (line ~3475)**
 
-Also update the comment at line 3523 that incorrectly says "60s":
-
-**Before**:
 ```python
-# Allow failed accounts to retry after their cooldown expires (60s from failure)
+print("  BUILD: 2026-01-27-contact-sync-fix")
 ```
 
-**After**:
-```python
-# Allow failed accounts to retry after their cooldown expires (180s/3min from failure)
-```
+---
 
-## Summary of Retry Logic (No Change Needed)
+## Technical Summary
 
-The actual code is **correct**:
+| Before | After |
+|--------|-------|
+| `ResolvePhoneRequest` used first | Still used (faster) |
+| Recipient not in contacts | Contact added after send |
+| `is_contact = False` for replies | `is_contact = True` for replies |
+| `recipient_telegram_id = NULL` | Captured from entity |
+| Replies discarded at filter | Replies pass filter and sync |
 
-| Error Type | Handler | Delay | Max Attempts |
-|------------|---------|-------|--------------|
-| Proxy/Network errors | `add_to_proxy_retry_queue()` | 3 minutes | 3 attempts then disable |
-| Other connection errors | `failed_connection_accounts` | 3 minutes (180s) | Unlimited |
-| Health check failures | `add_to_proxy_retry_queue()` | 3 minutes | 3 attempts then disable |
-
-The **only issue** is the misleading log message - the retry logic itself is working correctly.
+---
 
 ## Files to Modify
 
-1. **`src/pages/SetupGuide.tsx`**:
-   - Line 3478: Update startup log from "60s" to "3 min"
-   - Line 3523: Update comment from "60s" to "180s/3min"
+1. **`src/pages/SetupGuide.tsx`**
+   - Lines 1611-1613: Add telegram_id extraction for media sends
+   - Lines 1637-1639: Add telegram_id extraction and contact add for text sends
+   - Line ~3475: Update build version
+
+---
 
 ## Expected Outcome
 
 After this fix:
-- The startup banner will correctly show "3 min cooldown"
-- Comments will match the actual `FAILED_RETRY_DELAY = 180` constant
-- No confusion between the two different 60s values (SYNC_RETRY_INTERVAL vs FAILED_RETRY_DELAY)
+1. Campaign sends complete successfully ✓
+2. Recipient added to contacts immediately after ✓
+3. `recipient_telegram_id` saved to database ✓
+4. Recipient replies → `is_contact = True` ✓
+5. Reply passes filter → reaches edge function ✓
+6. Edge function matches by `telegram_id` or `phone` ✓
+7. Reply saved to messages table ✓
+8. `has_reply = true` and `unread_count` updated ✓
+9. Replies appear in Seats and Conversations pages ✓
 
+---
+
+## Note on Database Trigger
+
+The existing `update_conversation_on_message` trigger already updates `has_reply` and `last_message_content` for incoming messages. Once replies start reaching the edge function, these fields will update correctly.
