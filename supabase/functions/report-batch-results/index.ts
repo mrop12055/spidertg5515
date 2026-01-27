@@ -39,7 +39,8 @@ serve(async (req) => {
       });
     }
 
-    console.log(`[report-batch-results] Processing ${results.length} results`);
+    console.log(`[report-batch-results] Processing ${results.length} results, ` +
+                `${results.filter((r: any) => r.recipient_telegram_id).length} have telegram_id`);
 
     // Separate already_sent results (from local cache - prevent double send)
     const alreadySentResults = results.filter(r => r.already_sent && r.campaign_recipient_id);
@@ -205,17 +206,33 @@ serve(async (req) => {
         const newConversations: any[] = [];
         const resultToConvId = new Map<string, string>();
 
+        // Track conversations needing telegram_id update
+        const convTelegramIdUpdates: Promise<any>[] = [];
+
         for (const r of successResults) {
           const key = `${r.account_id}:${r.recipient_phone}`;
           const existingId = convLookup.get(key);
 
           if (existingId) {
             resultToConvId.set(r.campaign_recipient_id, existingId);
+            // Update existing conversation with telegram_id if we have it and it's missing
+            if (r.recipient_telegram_id) {
+              convTelegramIdUpdates.push(
+                asPromise(
+                  supabase
+                    .from("conversations")
+                    .update({ recipient_telegram_id: r.recipient_telegram_id })
+                    .eq("id", existingId)
+                    .is("recipient_telegram_id", null)
+                )
+              );
+            }
           } else if (!convLookup.has(key)) {
             const newConv = {
               account_id: r.account_id,
               recipient_phone: r.recipient_phone,
               recipient_name: r.recipient_name,
+              recipient_telegram_id: r.recipient_telegram_id || null,
               is_active: true,
               first_message_sent: true,
               last_message_at: now,
@@ -238,6 +255,12 @@ serve(async (req) => {
           for (const conv of createdConvs || []) {
             convLookup.set(`${conv.account_id}:${conv.recipient_phone}`, conv.id);
           }
+        }
+
+        // Execute telegram_id updates for existing conversations in parallel
+        if (convTelegramIdUpdates.length > 0) {
+          await Promise.all(convTelegramIdUpdates);
+          console.log(`[report-batch-results] Updated ${convTelegramIdUpdates.length} existing conversations with telegram_id`);
         }
 
         // Update resultToConvId with newly created convs
