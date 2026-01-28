@@ -136,7 +136,7 @@ active_clients: Dict[str, TelegramClient] = {}
 
 # ========== PROXY ERROR RETRY SETTINGS ==========
 PROXY_RETRY_DELAY = 60    # Retry proxy error accounts after 1 MINUTE (60 seconds)
-PROXY_MAX_RETRIES = 3     # Max retry attempts before marking account as inactive
+PROXY_MAX_RETRIES = 2     # Mark inactive after 2 failed attempts (1 initial + 1 retry)
 
 # ========== SPLIT TIMEOUTS ==========
 CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
