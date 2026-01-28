@@ -133,6 +133,7 @@ from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
+message_queues: Dict[str, asyncio.Queue] = {}  # Per-account outgoing message queues
 
 # ========== PROXY ERROR RETRY SETTINGS ==========
 PROXY_RETRY_DELAY = 60    # Retry proxy error accounts after 1 MINUTE (60 seconds)
@@ -368,6 +369,8 @@ async def retry_proxy_error_accounts():
     """
     Process accounts in the proxy retry queue that are ready for retry (1 min passed).
     Uses the in-memory _proxy_retry_queue for tracking with 1-minute delays.
+    
+    FIX 2026-01-28: Now processes up to 100 accounts in PARALLEL BATCHES instead of sequentially.
     """
     global _proxy_retry_queue
     
@@ -377,13 +380,17 @@ async def retry_proxy_error_accounts():
     if not ready_ids:
         return 0
     
-    print(f"\\n  [PROXY RETRY] {len(ready_ids)} accounts ready for retry...")
+    # Limit batch size to 100 per cycle (user preference)
+    BATCH_SIZE = 100
+    batch = ready_ids[:BATCH_SIZE]
+    
+    print(f"\\n  [PROXY RETRY] {len(batch)} accounts ready for PARALLEL retry...")
     
     http = get_http_client()
     from datetime import datetime
     
-    reconnected = 0
-    for acc_id in ready_ids:
+    async def retry_one(acc_id: str) -> bool:
+        """Retry a single account connection. Returns True on success."""
         info = _proxy_retry_queue.get(acc_id, {})
         account_data = info.get("account_data", {})
         proxy_data = info.get("proxy_data")
@@ -412,7 +419,7 @@ async def retry_proxy_error_accounts():
                     account_data = resp.json()[0]
                 else:
                     print(f"    [{phone}] ✗ Could not fetch account data")
-                    continue
+                    return False
             
             # ROUND-ROBIN API: Fetch from telegram_api_credentials pool (lowest usage first)
             if not account_data.get("api_id") or not account_data.get("api_hash"):
@@ -438,7 +445,7 @@ async def retry_proxy_error_accounts():
                     print(f"    [{phone}] Using round-robin API: {api_cred['api_id'][:4]}... (usage: {api_cred.get('usage_count', 0)})")
                 else:
                     print(f"    [{phone}] ✗ No active API credentials available in pool")
-                    continue
+                    return False
             
             # Fetch proxy if not cached
             if not proxy_data and account_data.get("proxy_id"):
@@ -470,7 +477,6 @@ async def retry_proxy_error_accounts():
             if client:
                 # SUCCESS! Clear from retry queue
                 remove_from_proxy_retry_queue(acc_id)
-                reconnected += 1
                 
                 # Update database to clear disabled_reason
                 try:
@@ -495,9 +501,12 @@ async def retry_proxy_error_accounts():
                         print(f"    [{phone}] ✓ Reconnected (db update failed: {update_resp.status_code})")
                 except Exception as db_err:
                     print(f"    [{phone}] ✓ Reconnected (db update error: {db_err})")
+                
+                return True
             else:
                 # FAILED - add_to_proxy_retry_queue was already called in get_or_create_client
                 print(f"    [{phone}] ✗ Still failing - will retry in 1 min")
+                return False
                 
         except Exception as e:
             error_str = str(e).lower()
@@ -506,9 +515,20 @@ async def retry_proxy_error_accounts():
             # If proxy error, ensure it's tracked (immediate disconnect already happened)
             if any(p in error_str for p in PROXY_ERROR_PATTERNS):
                 await add_to_proxy_retry_queue(acc_id, account_data, proxy_data)
+            
+            return False
+    
+    # Process ALL ready accounts in PARALLEL (up to 100 at once)
+    results = await asyncio.gather(
+        *[retry_one(acc_id) for acc_id in batch],
+        return_exceptions=True
+    )
+    
+    # Count successful reconnections (True results, ignoring exceptions)
+    reconnected = sum(1 for r in results if r is True)
     
     if reconnected > 0:
-        print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(ready_ids)} accounts")
+        print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(batch)} accounts (parallel)")
     
     return reconnected
 
@@ -2641,7 +2661,7 @@ from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
     retry_proxy_error_accounts, log_error, check_client_health, add_to_proxy_retry_queue,
-    force_disconnect_session, HTTP_TIMEOUT_UPLOAD
+    force_disconnect_session, HTTP_TIMEOUT_UPLOAD, _proxy_retry_queue
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
@@ -3636,11 +3656,13 @@ async def main_loop():
             
             if task_type == "wait":
                 accounts = task.get("accounts", [])
-                # Only connect NEW accounts (skip already connected and recently failed)
+                # Only connect NEW accounts (skip already connected, recently failed, AND in proxy retry queue)
+                # FIX 2026-01-28: Added _proxy_retry_queue check to isolate retry-queue accounts
                 new_accounts = [
                     acc for acc in accounts 
                     if acc.get("id") not in connected_ids 
                     and acc.get("id") not in failed_connection_accounts
+                    and acc.get("id") not in _proxy_retry_queue  # Retry-queue isolation
                 ]
                 
                 if new_accounts:
