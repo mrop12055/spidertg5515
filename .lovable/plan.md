@@ -1,82 +1,166 @@
 
 
-# Implementation: Fix "Original account is not available" Error
+# Fix: Settings API Keys - Usage Display and Live Updates
 
-## Problem
-When users try to send messages from the Conversations page, they see:
-**"Original account is not available. Cannot send from a different number."**
+## Problems Identified
 
-This happens for ALL conversations because `accounts` from `useTelegram()` context is always an empty array (the context no longer populates it - accounts are now loaded via the dedicated `useAccounts` hook).
+1. **Wrong Usage Displayed**: The table shows `usage_count` (lifetime) in the "Usage" column instead of `daily_usage` (today's usage)
+2. **Stats Card Mismatch**: The summary shows "Total Messages Sent: 18" which is correct for lifetime, but the user wants focus on daily
+3. **Page Refresh Loop**: Every 30 seconds, `fetchCredentials()` sets `isLoading = true` causing a full table re-render with spinner animation
+4. **No Live Updates**: Changes to usage values require full data refetch instead of updating numbers in-place
 
-## Solution: Use the useAccounts hook
+## Database Reality
+- You have **16 API keys** 
+- `usage_count` ranges from 15-18 (lifetime total)
+- `daily_usage` = 0 for all (was reset or no messages sent today)
 
-Replace the empty `accounts` array from TelegramContext with the properly loaded accounts from `useAccounts` hook.
+## Solution Overview
 
-## File Changes
+### Change 1: Display Today's Usage (daily_usage) in Table
 
-### File: `src/pages/Conversations.tsx`
+Update the table column to show `daily_usage` instead of `usage_count`:
 
-**Change 1: Add import for useAccounts hook (line 4-5)**
+| Current | Fixed |
+|---------|-------|
+| `{cred.usage_count \|\| 0}` | `{cred.daily_usage \|\| 0}` |
+
+### Change 2: Fix Stats Cards Labels
+
+Current stats:
+- "Total Messages Sent" → shows `usage_count` sum
+- "24h Usage" → shows `daily_usage` sum
+
+User wants emphasis on TODAY's usage, so:
+- Rename "Total Messages Sent" → "Lifetime Usage" 
+- Keep "24h Usage" as the primary focus
+
+### Change 3: Remove Full Page Refresh - Use Realtime Updates
+
+Replace the 30-second `setInterval` with Supabase Realtime subscription:
+
 ```typescript
-import { useTelegram } from '@/context/TelegramContext';
-import { useAccounts } from '@/hooks/useAccounts';
+// Instead of this (causes full reload):
+const interval = setInterval(fetchCredentials, 30000);
+
+// Use this (updates only changed values):
+const channel = supabase
+  .channel('api-credentials-updates')
+  .on('postgres_changes', 
+    { event: 'UPDATE', schema: 'public', table: 'telegram_api_credentials' },
+    (payload) => {
+      // Update only the changed credential in-place
+      setCredentials(prev => prev.map(c => 
+        c.id === payload.new.id ? { ...c, ...payload.new } : c
+      ));
+    }
+  )
+  .subscribe();
 ```
 
-**Change 2: Update hook usage (lines 58-74)**
+### Change 4: Don't Show Loading Spinner on Background Refresh
+
+Only show loading spinner on initial load, not on refetches:
+
 ```typescript
-const Chat: React.FC = () => {
-  const { 
-    conversations, 
-    messages, 
-    sendMessage, 
-    sendMediaMessage,
-    // accounts,  <-- REMOVE THIS from context destructuring
-    typingUsers,
-    markConversationAsRead,
-    startNewConversation,
-    deleteConversation,
-    deleteConversations,
-    blockContact,
-    blockContacts
-  } = useTelegram();
-  
-  // Use the dedicated accounts hook for proper data loading
-  const { accounts, isLoading: accountsLoading } = useAccounts();
+const fetchCredentials = async (showLoading = true) => {
+  if (showLoading) setIsLoading(true);
+  // ... fetch logic
+};
+
+// Initial load: show spinner
+fetchCredentials(true);
+
+// Window focus: no spinner
+const handleFocus = () => fetchCredentials(false);
 ```
 
-**Change 3: Add loading protection in handleSendMessage (lines 505-513)**
+---
+
+## Technical Details
+
+### File: `src/components/settings/ApiCredentialsManager.tsx`
+
+**Change 1: Line 359-362 - Table Usage Column**
 ```typescript
-const handleSendMessage = async () => {
-  if ((!messageInput.trim() && !selectedImage) || !selectedConv) return;
-  
-  // Wait for accounts to load before attempting to send
-  if (accountsLoading) {
-    toast.info('Loading accounts, please wait...');
-    return;
-  }
-  
-  // CRITICAL: Always use the conversation's original account - never fallback to another account
-  const account = accounts.find(a => a.id === selectedConv.accountId);
-  if (!account) {
-    toast.error('Original account is not available. Cannot send from a different number.');
-    return;
-  }
-  // ... rest unchanged
+// BEFORE:
+<Badge variant={cred.usage_count > 0 ? "default" : "secondary"}>
+  {cred.usage_count || 0}
+</Badge>
+
+// AFTER:
+<Badge variant={cred.daily_usage > 0 ? "default" : "secondary"}>
+  {cred.daily_usage || 0}
+</Badge>
 ```
+
+**Change 2: Lines 305-308 - Stats Card Label**
+```typescript
+// BEFORE:
+<p className="text-2xl font-bold text-blue-500">{totalUsage.toLocaleString()}</p>
+<p className="text-xs text-muted-foreground">Total Messages Sent</p>
+
+// AFTER:
+<p className="text-2xl font-bold text-blue-500">{totalUsage.toLocaleString()}</p>
+<p className="text-xs text-muted-foreground">Lifetime Usage</p>
+```
+
+**Change 3: Lines 39-75 - Replace Interval with Realtime**
+```typescript
+const fetchCredentials = async (showLoading = true) => {
+  if (showLoading) setIsLoading(true);
+  // ... rest same
+};
+
+useEffect(() => {
+  fetchCredentials(true); // Initial load with spinner
+  
+  // Realtime subscription for live updates (no full reload)
+  const channel = supabase
+    .channel('api-credentials-live')
+    .on('postgres_changes', 
+      { event: '*', schema: 'public', table: 'telegram_api_credentials' },
+      (payload) => {
+        if (payload.eventType === 'UPDATE') {
+          setCredentials(prev => prev.map(c => 
+            c.id === payload.new.id ? { ...c, ...payload.new as ApiCredential } : c
+          ));
+        } else if (payload.eventType === 'INSERT') {
+          fetchCredentials(false);
+        } else if (payload.eventType === 'DELETE') {
+          setCredentials(prev => prev.filter(c => c.id !== payload.old.id));
+        }
+      }
+    )
+    .subscribe();
+  
+  // Window focus - refresh without spinner
+  const handleFocus = () => fetchCredentials(false);
+  window.addEventListener('focus', handleFocus);
+  
+  return () => {
+    window.removeEventListener('focus', handleFocus);
+    supabase.removeChannel(channel);
+  };
+}, []);
+```
+
+**Change 4: Table Header Label - Line 345**
+```typescript
+// BEFORE:
+<TableHead className="text-center">Usage</TableHead>
+
+// AFTER:
+<TableHead className="text-center">Today</TableHead>
+```
+
+---
 
 ## Expected Outcome
 
-After implementing this fix:
-1. The `accounts` array will be properly populated from the database via `useAccounts` hook
-2. Messages will send correctly from the original account
-3. The error "Original account is not available" will only appear for genuinely deleted/unavailable accounts
-4. A loading message will appear if accounts haven't loaded yet
-
-## Testing Steps
-
-1. Navigate to the Conversations page
-2. Select any conversation
-3. Type a message and click Send
-4. Verify the message appears in the chat without any error
-5. Confirm the message is sent from the correct (original) account
+After implementation:
+1. Table "Today" column shows `daily_usage` (currently 0 for all APIs)
+2. Stats cards clearly differentiate "Lifetime Usage" vs "24h Usage"
+3. Values update in real-time without page refresh/spinner
+4. No more visual flickering or "refreshing again and again"
+5. Window focus triggers a silent background refresh
 
