@@ -1,18 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
-import { Plus, Trash2, Upload, Key, RotateCcw, RefreshCw, Loader2, Activity } from 'lucide-react';
+import { Trash2, Upload, Key, RotateCcw, RefreshCw, Loader2, Activity } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface ApiCredential {
@@ -32,16 +30,7 @@ interface ApiCredential {
 export const ApiCredentialsManager: React.FC = () => {
   const [credentials, setCredentials] = useState<ApiCredential[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false);
-  
-  // Form state for single add
-  const [formData, setFormData] = useState({
-    name: '',
-    api_id: '',
-    api_hash: '',
-    client_type: 'android'
-  });
   
   // Bulk add state
   const [bulkInput, setBulkInput] = useState('');
@@ -84,40 +73,6 @@ export const ApiCredentialsManager: React.FC = () => {
       clearInterval(interval);
     };
   }, []);
-
-  const handleAddSingle = async () => {
-    if (!formData.api_id || !formData.api_hash) {
-      toast.error('API ID and API Hash are required');
-      return;
-    }
-    
-    setIsSaving(true);
-    try {
-      const { error } = await supabase
-        .from('telegram_api_credentials')
-        .insert({
-          name: formData.name || `API ${formData.api_id}`,
-          api_id: formData.api_id,
-          api_hash: formData.api_hash,
-          client_type: formData.client_type,
-          is_active: true,
-          usage_count: 0,
-          daily_usage: 0
-        });
-      
-      if (error) throw error;
-      
-      toast.success('API credential added');
-      setIsAddDialogOpen(false);
-      setFormData({ name: '', api_id: '', api_hash: '', client_type: 'android' });
-      fetchCredentials();
-    } catch (error: any) {
-      console.error('Failed to add API credential:', error);
-      toast.error(error.message || 'Failed to add API credential');
-    } finally {
-      setIsSaving(false);
-    }
-  };
 
   const handleBulkAdd = async () => {
     if (!bulkInput.trim()) {
@@ -294,83 +249,16 @@ export const ApiCredentialsManager: React.FC = () => {
       <CardContent className="space-y-4">
         {/* Action Buttons */}
         <div className="flex gap-2">
-          <Dialog open={isAddDialogOpen} onOpenChange={setIsAddDialogOpen}>
-            <DialogTrigger asChild>
-              <Button variant="default" size="sm">
-                <Plus className="w-4 h-4 mr-2" />
-                Add Single
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Add API Credential</DialogTitle>
-                <DialogDescription>
-                  Enter Telegram API credentials from my.telegram.org
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-4 py-4">
-                <div className="space-y-2">
-                  <Label>Name (optional)</Label>
-                  <Input 
-                    placeholder="My API"
-                    value={formData.name}
-                    onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>API ID *</Label>
-                  <Input 
-                    placeholder="12345678"
-                    value={formData.api_id}
-                    onChange={(e) => setFormData(prev => ({ ...prev, api_id: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>API Hash *</Label>
-                  <Input 
-                    placeholder="32-character hash"
-                    value={formData.api_hash}
-                    onChange={(e) => setFormData(prev => ({ ...prev, api_hash: e.target.value }))}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Client Type</Label>
-                  <Select 
-                    value={formData.client_type} 
-                    onValueChange={(value) => setFormData(prev => ({ ...prev, client_type: value }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="android">Android</SelectItem>
-                      <SelectItem value="ios">iOS</SelectItem>
-                      <SelectItem value="desktop">Desktop</SelectItem>
-                      <SelectItem value="web">Web</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setIsAddDialogOpen(false)}>Cancel</Button>
-                <Button onClick={handleAddSingle} disabled={isSaving}>
-                  {isSaving ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-                  Add
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-          
           <Dialog open={isBulkDialogOpen} onOpenChange={setIsBulkDialogOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline" size="sm">
+              <Button variant="default" size="sm">
                 <Upload className="w-4 h-4 mr-2" />
-                Bulk Add
+                Add API Credentials
               </Button>
             </DialogTrigger>
             <DialogContent className="max-w-2xl">
               <DialogHeader>
-                <DialogTitle>Bulk Add API Credentials</DialogTitle>
+                <DialogTitle>Add API Credentials</DialogTitle>
                 <DialogDescription>
                   Paste multiple API credentials, one per line
                 </DialogDescription>
