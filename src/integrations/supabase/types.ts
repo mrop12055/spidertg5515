@@ -993,6 +993,7 @@ export type Database = {
           created_at: string
           id: string
           ip_address: string | null
+          last_offline_at: string | null
           last_seen: string
           runner_name: string
           server_id: string | null
@@ -1002,6 +1003,7 @@ export type Database = {
           created_at?: string
           id?: string
           ip_address?: string | null
+          last_offline_at?: string | null
           last_seen?: string
           runner_name: string
           server_id?: string | null
@@ -1011,6 +1013,7 @@ export type Database = {
           created_at?: string
           id?: string
           ip_address?: string | null
+          last_offline_at?: string | null
           last_seen?: string
           runner_name?: string
           server_id?: string | null
