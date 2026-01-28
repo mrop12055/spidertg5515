@@ -997,51 +997,6 @@ const Proxies: React.FC = () => {
             
             <div className="w-px h-8 bg-border" />
             
-            {/* Status Filters */}
-            <button
-              onClick={() => setStatusFilter(statusFilter === 'active' ? 'all' : 'active')}
-              className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
-                statusFilter === 'active' 
-                  ? "bg-green-500 text-white" 
-                  : "bg-green-500/10 text-green-600 hover:bg-green-500/20"
-              )}
-            >
-              <Wifi className="w-4 h-4" />
-              <span className="font-bold">{proxies.filter(p => p.status === 'active').length}</span>
-              <span className="text-sm opacity-80">Active</span>
-            </button>
-            
-            <button
-              onClick={() => setStatusFilter(statusFilter === 'inactive' ? 'all' : 'inactive')}
-              className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
-                statusFilter === 'inactive' 
-                  ? "bg-muted-foreground text-white" 
-                  : "bg-muted text-muted-foreground hover:bg-muted/80"
-              )}
-            >
-              <Globe className="w-4 h-4" />
-              <span className="font-bold">{proxies.filter(p => p.status === 'inactive').length}</span>
-              <span className="text-sm opacity-80">Inactive</span>
-            </button>
-            
-            <button
-              onClick={() => setStatusFilter(statusFilter === 'error' ? 'all' : 'error')}
-              className={cn(
-                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
-                statusFilter === 'error' 
-                  ? "bg-destructive text-destructive-foreground" 
-                  : "bg-destructive/10 text-destructive hover:bg-destructive/20"
-              )}
-            >
-              <WifiOff className="w-4 h-4" />
-              <span className="font-bold">{proxies.filter(p => p.status === 'error').length}</span>
-              <span className="text-sm opacity-80">Error</span>
-            </button>
-            
-            <div className="w-px h-8 bg-border" />
-            
             {/* Usage Filters */}
             <button
               onClick={() => setUsageFilter(usageFilter === 'assigned' ? 'all' : 'assigned')}
@@ -1070,30 +1025,6 @@ const Proxies: React.FC = () => {
               <span className="font-bold">{unassignedProxiesCount}</span>
               <span className="text-sm opacity-80">Free</span>
             </button>
-
-            {/* Error Alert - Inline */}
-            {(() => {
-              const totalErrors = Array.from(proxyErrors.values()).reduce((sum, count) => sum + count, 0);
-              if (totalErrors === 0) return null;
-              return (
-                <>
-                  <div className="w-px h-8 bg-border" />
-                  <button
-                    onClick={() => setUsageFilter('with_errors')}
-                    className={cn(
-                      "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
-                      usageFilter === 'with_errors' 
-                        ? "bg-destructive text-destructive-foreground" 
-                        : "bg-destructive/10 text-destructive hover:bg-destructive/20"
-                    )}
-                  >
-                    <AlertTriangle className="w-4 h-4" />
-                    <span className="font-bold">{totalErrors}</span>
-                    <span className="text-sm opacity-80">Errors Today</span>
-                  </button>
-                </>
-              );
-            })()}
           </div>
           
           {/* Search & Country Filter Row */}
