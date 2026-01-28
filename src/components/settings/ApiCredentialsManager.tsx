@@ -420,7 +420,7 @@ export const ApiCredentialsManager: React.FC = () => {
           </div>
           <div className="p-3 rounded-lg border bg-card">
             <p className="text-2xl font-bold text-amber-500">{todayUsage.toLocaleString()}</p>
-            <p className="text-xs text-muted-foreground">Today's Usage</p>
+            <p className="text-xs text-muted-foreground">24h Usage (auto-resets)</p>
           </div>
         </div>
 
