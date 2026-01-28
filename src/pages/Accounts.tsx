@@ -2700,7 +2700,7 @@ const Accounts: React.FC = () => {
           )}
         </div>
 
-        {/* Bulk Actions Bar - Always visible */}
+        {/* Bulk Actions Bar - Simplified selection indicator */}
         <Card className={cn("transition-colors", selectedIds.size > 0 ? "border-primary/30 bg-primary/5" : "")}>
           <CardContent className="p-3">
             <div className="flex items-center gap-3 flex-wrap">
@@ -2708,112 +2708,6 @@ const Accounts: React.FC = () => {
                 {selectedIds.size} selected
               </Badge>
               
-              <Separator orientation="vertical" className="h-6" />
-              
-              <Button variant="outline" size="sm" onClick={handleSyncProfile} disabled={isAccountTaskRunning || selectedIds.size === 0} className="gap-1.5">
-                {isAccountTaskRunning && accountTasksProgress.taskType === 'Sync Profile' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                Sync Profile
-              </Button>
-              
-              <Button variant="outline" size="sm" onClick={handleBulkCheck} disabled={isBulkChecking || selectedIds.size === 0} className="gap-1.5">
-                {isBulkChecking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Shield className="w-3.5 h-3.5" />}
-                Session Check
-              </Button>
-              
-              
-              
-              <Button variant="outline" size="sm" onClick={handleExportSessions} disabled={isExporting || selectedIds.size === 0} className="gap-1.5">
-                {isExporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-                Export
-              </Button>
-              
-
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm" className="gap-1.5" disabled={selectedIds.size === 0}>
-                    <Settings className="w-3.5 h-3.5" />
-                    Actions
-                    <ChevronDown className="w-3 h-3" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="w-56">
-                  <DropdownMenuItem onClick={() => { setIsBulkNameOpen(true); fetchNameTags(); }}>
-                    <UserCircle className="w-4 h-4 mr-2" />
-                    Change Name
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => { setIsProfilePicOpen(true); fetchPictureTags(); }}>
-                    <Image className="w-4 h-4 mr-2" />
-                    Change Profile Picture
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
-                    <EyeOff className="w-4 h-4 mr-2" />
-                    Privacy Settings
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setIsPasswordDialogOpen(true)}>
-                    <Lock className="w-4 h-4 mr-2" />
-                    Change Password
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleLogoutOtherSessions}>
-                    <LogOut className="w-4 h-4 mr-2" />
-                    Logout Other Sessions
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleSpamBotCheck} disabled={isSpamBotChecking}>
-                    <Bot className="w-4 h-4 mr-2" />
-                    SpamBot Check
-                    {isSpamBotChecking && <Loader2 className="w-3 h-3 ml-auto animate-spin" />}
-                  </DropdownMenuItem>
-                  <DropdownMenuSub>
-                    <DropdownMenuSubTrigger>
-                      <Shuffle className="w-4 h-4 mr-2" />
-                      Change Status
-                    </DropdownMenuSubTrigger>
-                    <DropdownMenuPortal>
-                      <DropdownMenuSubContent>
-                        <DropdownMenuItem onClick={() => handleBulkStatusChange('active')}>
-                          <Wifi className="w-4 h-4 mr-2 text-status-active" />
-                          Set to Active
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleBulkStatusChange('frozen')}>
-                          <Lock className="w-4 h-4 mr-2 text-blue-500" />
-                          Set to Frozen
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleBulkStatusChange('restricted')}>
-                          <AlertTriangle className="w-4 h-4 mr-2 text-status-restricted" />
-                          Set to Used/Restricted
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleBulkStatusChange('disconnected')}>
-                          <WifiOff className="w-4 h-4 mr-2 text-status-disconnected" />
-                          Set to Inactive/Disconnected
-                        </DropdownMenuItem>
-                      </DropdownMenuSubContent>
-                    </DropdownMenuPortal>
-                  </DropdownMenuSub>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
-                    <Tag className="w-4 h-4 mr-2" />
-                    Assign Tags
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleBulkRemoveAllTags} className="text-orange-600">
-                    <X className="w-4 h-4 mr-2" />
-                    Remove All Tags
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setIsBulkProxyOpen(true)}>
-                    <Globe className="w-4 h-4 mr-2" />
-                    Assign Proxy
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handleBulkRemoveProxy} className="text-orange-600">
-                    <Unlink className="w-4 h-4 mr-2" />
-                    Remove Proxy
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={handleBulkDelete} className="text-destructive">
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Delete Selected
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-
               <div className="flex-1" />
               
               <Button variant="ghost" size="sm" onClick={() => { setSelectedIds(new Set()); setVerifyResults(new Map()); }} disabled={selectedIds.size === 0}>
@@ -3084,6 +2978,106 @@ const Accounts: React.FC = () => {
                   </Button>
                 </>
               )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          
+          {/* Actions Dropdown - Consolidated bulk actions */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-9 gap-2" disabled={selectedIds.size === 0}>
+                <Settings className="w-4 h-4" />
+                Actions
+                <ChevronDown className="w-3 h-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-56">
+              <DropdownMenuItem onClick={handleSyncProfile} disabled={isAccountTaskRunning}>
+                {isAccountTaskRunning && accountTasksProgress.taskType === 'Sync Profile' ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-2" />}
+                Sync Profile
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleBulkCheck} disabled={isBulkChecking}>
+                {isBulkChecking ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Shield className="w-4 h-4 mr-2" />}
+                Session Check
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleExportSessions} disabled={isExporting}>
+                {isExporting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-2" />}
+                Export
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => { setIsBulkNameOpen(true); fetchNameTags(); }}>
+                <UserCircle className="w-4 h-4 mr-2" />
+                Change Name
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setIsProfilePicOpen(true); fetchPictureTags(); }}>
+                <Image className="w-4 h-4 mr-2" />
+                Change Profile Picture
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
+                <EyeOff className="w-4 h-4 mr-2" />
+                Privacy Settings
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsPasswordDialogOpen(true)}>
+                <Lock className="w-4 h-4 mr-2" />
+                Change Password
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleLogoutOtherSessions}>
+                <LogOut className="w-4 h-4 mr-2" />
+                Logout Other Sessions
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleSpamBotCheck} disabled={isSpamBotChecking}>
+                <Bot className="w-4 h-4 mr-2" />
+                SpamBot Check
+                {isSpamBotChecking && <Loader2 className="w-3 h-3 ml-auto animate-spin" />}
+              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <Shuffle className="w-4 h-4 mr-2" />
+                  Change Status
+                </DropdownMenuSubTrigger>
+                <DropdownMenuPortal>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem onClick={() => handleBulkStatusChange('active')}>
+                      <Wifi className="w-4 h-4 mr-2 text-status-active" />
+                      Set to Active
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleBulkStatusChange('frozen')}>
+                      <Lock className="w-4 h-4 mr-2 text-blue-500" />
+                      Set to Frozen
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleBulkStatusChange('restricted')}>
+                      <AlertTriangle className="w-4 h-4 mr-2 text-status-restricted" />
+                      Set to Used/Restricted
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => handleBulkStatusChange('disconnected')}>
+                      <WifiOff className="w-4 h-4 mr-2 text-status-disconnected" />
+                      Set to Inactive/Disconnected
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuPortal>
+              </DropdownMenuSub>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setIsTagDialogOpen(true)}>
+                <Tag className="w-4 h-4 mr-2" />
+                Assign Tags
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleBulkRemoveAllTags} className="text-orange-600">
+                <X className="w-4 h-4 mr-2" />
+                Remove All Tags
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => setIsBulkProxyOpen(true)}>
+                <Globe className="w-4 h-4 mr-2" />
+                Assign Proxy
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={handleBulkRemoveProxy} className="text-orange-600">
+                <Unlink className="w-4 h-4 mr-2" />
+                Remove Proxy
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleBulkDelete} className="text-destructive">
+                <Trash2 className="w-4 h-4 mr-2" />
+                Delete Selected
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
