@@ -129,16 +129,23 @@ const Proxies: React.FC = () => {
   const [proxyErrors, setProxyErrors] = useState<Map<string, number>>(new Map());
   
   // Fetch proxy errors for today (ONLY for proxies currently in error)
+  // Use a stable dependency to prevent re-fetching on every proxy array change
+  const errorProxyIdsKey = proxies
+    .filter(p => p.status === 'error')
+    .map(p => p.id)
+    .sort()
+    .join(',');
+  
   useEffect(() => {
     const fetchProxyErrors = async () => {
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const errorProxyIds = proxies.filter(p => p.status === 'error').map(p => p.id);
+      const errorProxyIds = errorProxyIdsKey.split(',').filter(Boolean);
       if (errorProxyIds.length === 0) {
         setProxyErrors(new Map());
         return;
       }
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
       const { data, error } = await supabase
         .from('proxy_errors')
@@ -157,28 +164,10 @@ const Proxies: React.FC = () => {
     };
 
     fetchProxyErrors();
-  }, [proxies]);
+  }, [errorProxyIdsKey]);
 
-  // Real-time subscription for proxy count updates when accounts change proxy
-  useEffect(() => {
-    const channel = supabase
-      .channel('proxy-account-changes')
-      .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'telegram_accounts' },
-        (payload) => {
-          // Refresh when proxy_id changes on any account
-          if (payload.old?.proxy_id !== payload.new?.proxy_id) {
-            refreshData();
-          }
-        }
-      )
-      .subscribe();
-    
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [refreshData]);
+  // NOTE: Removed redundant realtime subscription for telegram_accounts proxy changes
+  // The useProxies hook already handles realtime updates, and useAccounts updates separately
 
   // Load settings from localStorage
   useEffect(() => {
@@ -200,20 +189,26 @@ const Proxies: React.FC = () => {
     }));
   }, [autoHealthCheck, healthCheckInterval]);
 
-  // Auto health check interval
+  // Auto health check interval - use ref for proxies to avoid dependency issues
+  const proxiesRef = React.useRef(proxies);
+  proxiesRef.current = proxies;
+  
   useEffect(() => {
-    if (!autoHealthCheck || proxies.length === 0) return;
+    if (!autoHealthCheck) return;
     
     const checkHealth = async () => {
+      const currentProxies = proxiesRef.current;
+      if (currentProxies.length === 0) return;
+      
       console.log('Running auto health check...');
-      const proxyIds = proxies.map(p => p.id);
+      const proxyIds = currentProxies.map(p => p.id);
       
       try {
         await supabase.functions.invoke('test-proxies', {
           body: { proxy_ids: proxyIds, auto_detect_country: true }
         });
         setLastHealthCheck(new Date());
-        refreshData();
+        refetchProxies();
         toast.success('Health check completed');
       } catch (error) {
         console.error('Health check failed:', error);
@@ -224,7 +219,7 @@ const Proxies: React.FC = () => {
     const interval = setInterval(checkHealth, intervalMs);
     
     return () => clearInterval(interval);
-  }, [autoHealthCheck, healthCheckInterval, proxies.length]);
+  }, [autoHealthCheck, healthCheckInterval, refetchProxies]);
 
   // Get unique countries for filter
   const uniqueCountries = [...new Set(proxies.map(p => p.country).filter(Boolean))] as string[];
