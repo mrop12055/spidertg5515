@@ -40,6 +40,7 @@ import { Switch } from '@/components/ui/switch';
 import { Separator } from '@/components/ui/separator';
 import { CountdownTimer } from '@/components/ui/countdown-timer';
 import { Skeleton } from '@/components/ui/skeleton';
+import { AccountFilters } from '@/components/accounts/AccountFilters';
 
 // Status options for stat cards (merged categories)
 const statCardOptions: { value: string; label: string; color: string; icon: React.ReactNode }[] = [
@@ -2755,215 +2756,22 @@ const Accounts: React.FC = () => {
             </Select>
           )}
           
-          {/* Unified Filter Dropdown */}
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-9 gap-2">
-                <Filter className="w-4 h-4" />
-                Filters
-                {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all' || avatarFilter !== 'all') && (
-                  <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
-                    {[tagFilter !== 'all', proxyFilter !== 'all', profileFilter !== 'all', proxyErrorFilter !== 'all', avatarFilter !== 'all'].filter(Boolean).length}
-                  </Badge>
-                )}
-                <ChevronDown className="w-3 h-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64 p-3">
-              {/* Tag Filter */}
-              <div className="space-y-2 mb-4">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <Tag className="w-3.5 h-3.5" />
-                  Tags
-                </Label>
-                <Select value={tagFilter} onValueChange={setTagFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Tags" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Tags</SelectItem>
-                    <SelectItem value="no_tags">
-                      <span className="flex items-center gap-2 text-muted-foreground">
-                        <X className="w-3 h-3" />
-                        No Tags
-                      </span>
-                    </SelectItem>
-                    {availableTags.map(tag => (
-                      <SelectItem key={tag} value={tag}>
-                        <span className="flex items-center gap-2">
-                          <Tag className="w-3 h-3" />
-                          {tag}
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Proxy Filter */}
-              <div className="space-y-2 mb-4">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <Globe className="w-3.5 h-3.5" />
-                  Proxy
-                </Label>
-                <Select value={proxyFilter} onValueChange={setProxyFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Accounts" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Accounts</SelectItem>
-                    <SelectItem value="with_proxy">
-                      <span className="flex items-center gap-2">
-                        <Link2 className="w-3 h-3 text-green-500" />
-                        With Proxy
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="without_proxy">
-                      <span className="flex items-center gap-2">
-                        <Unlink className="w-3 h-3 text-red-500" />
-                        Without Proxy
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Profile Sync Filter */}
-              <div className="space-y-2 mb-3">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5" />
-                  Profile Sync
-                </Label>
-                <Select value={profileFilter} onValueChange={setProfileFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Profiles" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Profiles</SelectItem>
-                    <SelectItem value="synced">
-                      <span className="flex items-center gap-2">
-                        <CheckCircle2 className="w-3 h-3 text-green-500" />
-                        Synced
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="not_synced">
-                      <span className="flex items-center gap-2">
-                        <AlertCircle className="w-3 h-3 text-orange-500" />
-                        Not Synced
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Profile Picture Filter */}
-              <div className="space-y-2 mb-4">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <UserCircle className="w-3.5 h-3.5" />
-                  Profile Picture
-                </Label>
-                <Select value={avatarFilter} onValueChange={setAvatarFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Accounts" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Accounts</SelectItem>
-                    <SelectItem value="with_avatar">
-                      <span className="flex items-center gap-2">
-                        <CheckCircle2 className="w-3 h-3 text-green-500" />
-                        With Picture
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="without_avatar">
-                      <span className="flex items-center gap-2">
-                        <X className="w-3 h-3 text-red-500" />
-                        Without Picture
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Proxy Error Filter */}
-              <div className="space-y-2 mb-4">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  Proxy Status
-                </Label>
-                <Select value={proxyErrorFilter} onValueChange={setProxyErrorFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Proxies" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Proxies</SelectItem>
-                    <SelectItem value="with_error">
-                      <span className="flex items-center gap-2 text-status-banned">
-                        <AlertTriangle className="w-3 h-3" />
-                        With Errors
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="no_error">
-                      <span className="flex items-center gap-2 text-status-active">
-                        <CheckCircle2 className="w-3 h-3" />
-                        No Errors
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Messages Sent Today Filter */}
-              <div className="space-y-2 mb-3">
-                <Label className="text-xs text-muted-foreground flex items-center gap-2">
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  Messages Today
-                </Label>
-                <Select value={messagesTodayFilter} onValueChange={setMessagesTodayFilter}>
-                  <SelectTrigger className="h-8">
-                    <SelectValue placeholder="All Accounts" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Accounts</SelectItem>
-                    <SelectItem value="zero_messages">
-                      <span className="flex items-center gap-2 text-muted-foreground">
-                        <MessageSquare className="w-3 h-3" />
-                        0 Messages Today
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="has_messages">
-                      <span className="flex items-center gap-2 text-status-active">
-                        <MessageSquare className="w-3 h-3" />
-                        Has Messages Today
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              
-              {/* Clear Filters */}
-              {(tagFilter !== 'all' || proxyFilter !== 'all' || profileFilter !== 'all' || proxyErrorFilter !== 'all' || avatarFilter !== 'all' || messagesTodayFilter !== 'all') && (
-                <>
-                  <DropdownMenuSeparator className="my-2" />
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    className="w-full h-8 text-xs"
-                    onClick={() => {
-                      setTagFilter('all');
-                      setProxyFilter('all');
-                      setProfileFilter('all');
-                      setProxyErrorFilter('all');
-                      setAvatarFilter('all');
-                      setMessagesTodayFilter('all');
-                    }}
-                  >
-                    <X className="w-3 h-3 mr-1" />
-                    Clear All Filters
-                  </Button>
-                </>
-              )}
-            </DropdownMenuContent>
-          </DropdownMenu>
+          {/* Professional Filter Panel */}
+          <AccountFilters
+            tagFilter={tagFilter}
+            setTagFilter={setTagFilter}
+            proxyFilter={proxyFilter}
+            setProxyFilter={setProxyFilter}
+            profileFilter={profileFilter}
+            setProfileFilter={setProfileFilter}
+            avatarFilter={avatarFilter}
+            setAvatarFilter={setAvatarFilter}
+            proxyErrorFilter={proxyErrorFilter}
+            setProxyErrorFilter={setProxyErrorFilter}
+            messagesTodayFilter={messagesTodayFilter}
+            setMessagesTodayFilter={setMessagesTodayFilter}
+            availableTags={availableTags}
+          />
           
           {/* Selection info + Actions Dropdown */}
           {selectedIds.size > 0 && (
