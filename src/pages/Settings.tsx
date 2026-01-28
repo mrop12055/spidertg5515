@@ -35,6 +35,9 @@ const Settings: React.FC = () => {
     updateSettings: updateDbSettings 
   } = useAppSettings();
   
+  // Track active tab to conditionally show Save button
+  const [activeTab, setActiveTab] = useState('api');
+  
   // Local UI settings
   const [localSettings, setLocalSettings] = useState({
     notifyOnReply: true,
@@ -97,7 +100,7 @@ const Settings: React.FC = () => {
           </Card>
         )}
 
-        <Tabs defaultValue="api" className="space-y-6">
+        <Tabs defaultValue="api" className="space-y-6" onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-3 h-11">
             <TabsTrigger value="api" className="gap-2">
               <Key className="w-4 h-4" />
@@ -238,22 +241,24 @@ const Settings: React.FC = () => {
       </TabsContent>
     </Tabs>
 
-        {/* Save Button */}
-        <div className="flex justify-end pt-4">
-          <Button onClick={handleSave} disabled={isSaving} size="lg" className="gap-2">
-            {isSaving ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Saving...
-              </>
-            ) : (
-              <>
-                <Save className="w-4 h-4" />
-                Save Changes
-              </>
-            )}
-          </Button>
-        </div>
+        {/* Save Button - Only show for tabs that need it (not API Keys which saves immediately) */}
+        {activeTab !== 'api' && (
+          <div className="flex justify-end pt-4">
+            <Button onClick={handleSave} disabled={isSaving} size="lg" className="gap-2">
+              {isSaving ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </>
+              )}
+            </Button>
+          </div>
+        )}
       </div>
     </DashboardLayout>
   );
