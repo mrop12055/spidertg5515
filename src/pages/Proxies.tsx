@@ -975,176 +975,180 @@ const Proxies: React.FC = () => {
         </div>
       )}
 
-      {/* Filters */}
-      <div className="flex flex-wrap gap-4 mb-6">
-        <div className="relative flex-1 min-w-[200px] max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="Search by host, country, or username..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="pl-9"
-          />
-        </div>
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-36">
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Status</SelectItem>
-            {statusOptions.map(opt => (
-              <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        {uniqueCountries.length > 0 && (
-          <Select value={countryFilter} onValueChange={setCountryFilter}>
-            <SelectTrigger className="w-40">
-              <SelectValue placeholder="Country" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All Countries</SelectItem>
-              {uniqueCountries.map(country => (
-                <SelectItem key={country} value={country}>
-                  {getCountryFlag(country)} {countryNames[country] || country}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        <Select value={usageFilter} onValueChange={setUsageFilter}>
-          <SelectTrigger className="w-40">
-            <SelectValue placeholder="Usage" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">All Proxies</SelectItem>
-            <SelectItem value="assigned">Assigned</SelectItem>
-            <SelectItem value="unassigned">Unassigned</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Unified Stats & Filters Bar */}
+      <Card className="mb-6">
+        <CardContent className="p-4">
+          {/* Stats Row */}
+          <div className="flex flex-wrap items-center gap-3 mb-4 pb-4 border-b border-border">
+            {/* Total */}
+            <button
+              onClick={() => { setStatusFilter('all'); setUsageFilter('all'); }}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
+                statusFilter === 'all' && usageFilter === 'all' 
+                  ? "bg-primary text-primary-foreground" 
+                  : "bg-muted hover:bg-muted/80"
+              )}
+            >
+              <Server className="w-4 h-4" />
+              <span className="font-bold">{proxies.length}</span>
+              <span className="text-sm opacity-80">Total</span>
+            </button>
+            
+            <div className="w-px h-8 bg-border" />
+            
+            {/* Status Filters */}
+            <button
+              onClick={() => setStatusFilter(statusFilter === 'active' ? 'all' : 'active')}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
+                statusFilter === 'active' 
+                  ? "bg-green-500 text-white" 
+                  : "bg-green-500/10 text-green-600 hover:bg-green-500/20"
+              )}
+            >
+              <Wifi className="w-4 h-4" />
+              <span className="font-bold">{proxies.filter(p => p.status === 'active').length}</span>
+              <span className="text-sm opacity-80">Active</span>
+            </button>
+            
+            <button
+              onClick={() => setStatusFilter(statusFilter === 'inactive' ? 'all' : 'inactive')}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
+                statusFilter === 'inactive' 
+                  ? "bg-muted-foreground text-white" 
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              )}
+            >
+              <Globe className="w-4 h-4" />
+              <span className="font-bold">{proxies.filter(p => p.status === 'inactive').length}</span>
+              <span className="text-sm opacity-80">Inactive</span>
+            </button>
+            
+            <button
+              onClick={() => setStatusFilter(statusFilter === 'error' ? 'all' : 'error')}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
+                statusFilter === 'error' 
+                  ? "bg-destructive text-destructive-foreground" 
+                  : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+              )}
+            >
+              <WifiOff className="w-4 h-4" />
+              <span className="font-bold">{proxies.filter(p => p.status === 'error').length}</span>
+              <span className="text-sm opacity-80">Error</span>
+            </button>
+            
+            <div className="w-px h-8 bg-border" />
+            
+            {/* Usage Filters */}
+            <button
+              onClick={() => setUsageFilter(usageFilter === 'assigned' ? 'all' : 'assigned')}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
+                usageFilter === 'assigned' 
+                  ? "bg-blue-500 text-white" 
+                  : "bg-blue-500/10 text-blue-600 hover:bg-blue-500/20"
+              )}
+            >
+              <User className="w-4 h-4" />
+              <span className="font-bold">{proxies.filter(p => accounts.some(a => a.proxyId === p.id)).length}</span>
+              <span className="text-sm opacity-80">Assigned</span>
+            </button>
+            
+            <button
+              onClick={() => setUsageFilter(usageFilter === 'unassigned' ? 'all' : 'unassigned')}
+              className={cn(
+                "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
+                usageFilter === 'unassigned' 
+                  ? "bg-yellow-500 text-white" 
+                  : "bg-yellow-500/10 text-yellow-600 hover:bg-yellow-500/20"
+              )}
+            >
+              <User className="w-4 h-4" />
+              <span className="font-bold">{unassignedProxiesCount}</span>
+              <span className="text-sm opacity-80">Free</span>
+            </button>
 
-      {/* Error Alert Banner - Show at top if there are errors */}
-      {(() => {
-        const totalErrors = Array.from(proxyErrors.values()).reduce((sum, count) => sum + count, 0);
-        const proxiesWithErrors = proxyErrors.size;
-        if (totalErrors === 0) return null;
-        
-        return (
-          <Card className="mb-6 border-destructive/50 bg-destructive/5">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-xl bg-destructive/20 flex items-center justify-center">
-                  <AlertTriangle className="w-6 h-6 text-destructive" />
-                </div>
-                <div className="flex-1">
-                  <p className="font-medium text-destructive">Proxy Errors Detected Today</p>
-                  <p className="text-sm text-muted-foreground">
-                    {totalErrors} error{totalErrors !== 1 ? 's' : ''} across {proxiesWithErrors} prox{proxiesWithErrors !== 1 ? 'ies' : 'y'}
-                  </p>
-                </div>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  className="border-destructive/50 text-destructive hover:bg-destructive/10"
-                  onClick={() => setUsageFilter('with_errors')}
-                >
-                  View Affected Proxies
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        );
-      })()}
-
-      {/* Stats - Clickable to filter */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4 mb-6">
-        <Card 
-          className={cn(
-            "cursor-pointer transition-all hover:border-primary/50",
-            statusFilter === 'all' && usageFilter === 'all' && "ring-2 ring-primary"
-          )}
-          onClick={() => { setStatusFilter('all'); setUsageFilter('all'); }}
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Server className="w-6 h-6 text-primary" />
+            {/* Error Alert - Inline */}
+            {(() => {
+              const totalErrors = Array.from(proxyErrors.values()).reduce((sum, count) => sum + count, 0);
+              if (totalErrors === 0) return null;
+              return (
+                <>
+                  <div className="w-px h-8 bg-border" />
+                  <button
+                    onClick={() => setUsageFilter('with_errors')}
+                    className={cn(
+                      "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
+                      usageFilter === 'with_errors' 
+                        ? "bg-destructive text-destructive-foreground" 
+                        : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+                    )}
+                  >
+                    <AlertTriangle className="w-4 h-4" />
+                    <span className="font-bold">{totalErrors}</span>
+                    <span className="text-sm opacity-80">Errors Today</span>
+                  </button>
+                </>
+              );
+            })()}
+          </div>
+          
+          {/* Search & Country Filter Row */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative flex-1 min-w-[200px] max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+              <Input
+                placeholder="Search host, country, username..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="pl-9 h-9"
+              />
             </div>
-            <div>
-              <p className="text-2xl font-bold">{proxies.length}</p>
-              <p className="text-sm text-muted-foreground">Total</p>
+            
+            {uniqueCountries.length > 0 && (
+              <Select value={countryFilter} onValueChange={setCountryFilter}>
+                <SelectTrigger className="w-44 h-9">
+                  <MapPin className="w-4 h-4 mr-2 text-muted-foreground" />
+                  <SelectValue placeholder="All Countries" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Countries</SelectItem>
+                  {uniqueCountries.map(country => (
+                    <SelectItem key={country} value={country}>
+                      {getCountryFlag(country)} {countryNames[country] || country}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
+            
+            {/* Active Filters Display */}
+            {(statusFilter !== 'all' || usageFilter !== 'all' || countryFilter !== 'all' || searchQuery) && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={() => {
+                  setStatusFilter('all');
+                  setUsageFilter('all');
+                  setCountryFilter('all');
+                  setSearchQuery('');
+                }}
+                className="text-muted-foreground hover:text-foreground gap-1"
+              >
+                <XCircle className="w-4 h-4" />
+                Clear filters
+              </Button>
+            )}
+            
+            <div className="ml-auto text-sm text-muted-foreground">
+              Showing {filteredProxies.length} of {proxies.length}
             </div>
-          </CardContent>
-        </Card>
-        <Card 
-          className={cn(
-            "cursor-pointer transition-all hover:border-green-500/50",
-            statusFilter === 'active' && "ring-2 ring-green-500"
-          )}
-          onClick={() => setStatusFilter(statusFilter === 'active' ? 'all' : 'active')}
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-green-500/10 flex items-center justify-center">
-              <Wifi className="w-6 h-6 text-green-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{proxies.filter(p => p.status === 'active').length}</p>
-              <p className="text-sm text-muted-foreground">Active</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card 
-          className={cn(
-            "cursor-pointer transition-all hover:border-destructive/50",
-            statusFilter === 'error' && "ring-2 ring-destructive"
-          )}
-          onClick={() => setStatusFilter(statusFilter === 'error' ? 'all' : 'error')}
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-destructive/10 flex items-center justify-center">
-              <WifiOff className="w-6 h-6 text-destructive" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{proxies.filter(p => p.status === 'error').length}</p>
-              <p className="text-sm text-muted-foreground">Error</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card 
-          className={cn(
-            "cursor-pointer transition-all hover:border-blue-500/50",
-            usageFilter === 'assigned' && "ring-2 ring-blue-500"
-          )}
-          onClick={() => setUsageFilter(usageFilter === 'assigned' ? 'all' : 'assigned')}
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center">
-              <User className="w-6 h-6 text-blue-500" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{proxies.filter(p => accounts.some(a => a.proxyId === p.id)).length}</p>
-              <p className="text-sm text-muted-foreground">Assigned</p>
-            </div>
-          </CardContent>
-        </Card>
-        <Card 
-          className={cn(
-            "cursor-pointer transition-all hover:border-yellow-500/50",
-            usageFilter === 'unassigned' && "ring-2 ring-yellow-500"
-          )}
-          onClick={() => setUsageFilter(usageFilter === 'unassigned' ? 'all' : 'unassigned')}
-        >
-          <CardContent className="p-4 flex items-center gap-4">
-            <div className="w-12 h-12 rounded-xl bg-yellow-500/10 flex items-center justify-center">
-              <User className="w-6 h-6 text-yellow-600" />
-            </div>
-            <div>
-              <p className="text-2xl font-bold">{unassignedProxiesCount}</p>
-              <p className="text-sm text-muted-foreground">Unassigned</p>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Proxies List */}
       {isLoading ? (
