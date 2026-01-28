@@ -1,193 +1,170 @@
 
-# Secure Connection & Session Management - Verification Report
 
-## Executive Summary
+# LiveChat Runner - Proxy Failure Handling Fixes
 
-I have analyzed the LiveChat runner implementation in `src/pages/SetupGuide.tsx`, the edge functions (`get-next-task`, `report-task-result`), and the database schema. The implementation **already satisfies all 5 requirements** with only minor clarifications needed.
+## Issues Identified from Logs
+
+Based on the log analysis, there are **3 bugs** in the current LiveChat runner that need fixing:
 
 ---
 
-## Requirement Verification
+### Issue 1: `message_queues` is not defined
 
-### 1. Strict Proxy/Fingerprint Protocol
+**Log Evidence:**
+```
+[DISCONNECTED] +918238263086: name 'message_queues' is not defined
+```
 
-**Status: FULLY IMPLEMENTED**
+**Root Cause:**
+The `force_disconnect_session()` function references `message_queues` in its `global` declaration (line 205) and cleanup code (lines 273-275), but **`message_queues` is never initialized anywhere in the client_manager.py code**.
 
-| Check | Location | Evidence |
-|-------|----------|----------|
-| Proxy mandatory check | Lines 698-706 | `if not proxy: print("NO PROXY ASSIGNED (MANDATORY)")` returns `None` |
-| Fingerprint mandatory check | Lines 718-722 | `if not device_model or not system_version: print("NO FINGERPRINT ASSIGNED")` returns `None` |
-| API credentials mandatory | Lines 748-751 | `if not api_id or not api_hash: print("NO API CREDENTIALS")` returns `None` |
-| Pre-connection validation | Lines 3655-3667 | Accounts skipped at loop entry if missing proxy/API |
+**Fix:**
+Add the missing `message_queues` initialization at the top of the client_manager.py section (near line 135):
 
-**Code Flow:**
-```text
-1. get_or_create_client() called
-2. Check session_data exists → Skip if missing
-3. Check proxy exists and valid → Skip if missing (MANDATORY)
-4. Check fingerprint exists → Skip if missing (MANDATORY)  
-5. Check API credentials → Skip if missing (MANDATORY)
-6. Only then: Create TelegramClient with proxy parameter
+```python
+message_queues: Dict[str, asyncio.Queue] = {}  # Per-account outgoing message queues
 ```
 
 ---
 
-### 2. Instant Disconnect on Failure
+### Issue 2: Retry Accounts Reconnect Sequentially (One-by-One)
 
-**Status: FULLY IMPLEMENTED**
+**Log Evidence:**
+```
+[CONNECT] Connecting 1 accounts in PARALLEL...
+[2651] STEP 1: Proxy validated...
+```
 
-| Check | Location | Evidence |
-|-------|----------|----------|
-| `force_disconnect_session()` | Lines 197-277 | Immediately removes from `active_clients`, cancels all Telethon internal tasks |
-| Single attempt connection | Lines 568-583 | `connect_single_attempt()` - NO internal retries |
-| Auto-reconnect disabled | Lines 772-774 | `connection_retries=0, auto_reconnect=False` |
-| Instant cleanup on proxy error | Lines 794-816 | Calls `force_disconnect_session()` immediately on connection failure |
+Instead of connecting in parallel batches, accounts reconnect one at a time when picked up by the retry queue.
 
-**Key Settings (Line 770-774):**
+**Root Cause:**
+The `retry_proxy_error_accounts()` function (lines 367-513) processes accounts sequentially in a `for acc_id in ready_ids:` loop. Unlike the main connection loop which uses `asyncio.gather()`, retries happen one by one.
+
+**Fix:**
+Modify `retry_proxy_error_accounts()` to process ready accounts in **parallel batches of up to 100** (as per your preference):
+
 ```python
-client = TelegramClient(
-    ...
-    connection_retries=0,    # NEVER retry internally - could bypass proxy
-    retry_delay=0,
-    auto_reconnect=False,    # NEVER auto-reconnect - could bypass proxy
+async def retry_proxy_error_accounts():
+    """
+    Process accounts in the proxy retry queue that are ready for retry.
+    FIX: Now processes up to 100 accounts in PARALLEL BATCHES instead of sequentially.
+    """
+    global _proxy_retry_queue
+    
+    # Get accounts ready for retry
+    ready_ids = get_ready_proxy_retries()
+    
+    if not ready_ids:
+        return 0
+    
+    # Limit batch size to 100 per cycle
+    BATCH_SIZE = 100
+    batch = ready_ids[:BATCH_SIZE]
+    
+    print(f"\\n  [PROXY RETRY] {len(batch)} accounts ready for PARALLEL retry...")
+    
+    http = get_http_client()
+    from datetime import datetime
+    
+    async def retry_one(acc_id):
+        # ... existing retry logic for single account ...
+        # (move current for-loop body here as async function)
+        pass
+    
+    # Process ALL ready accounts in PARALLEL
+    results = await asyncio.gather(
+        *[retry_one(acc_id) for acc_id in batch],
+        return_exceptions=True
+    )
+    
+    reconnected = sum(1 for r in results if r is True)
+    
+    if reconnected > 0:
+        print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(batch)} accounts (parallel)")
+    
+    return reconnected
+```
+
+---
+
+### Issue 3: Failed Accounts Added to Both Queues (Duplicate Retries)
+
+**Log Evidence (combined):**
+The logs show accounts sometimes being added to `failed_connection_accounts` AND `_proxy_retry_queue`, causing confusion.
+
+**Root Cause:**
+Multiple code paths add failed accounts to different retry tracking structures:
+- `disconnect_and_schedule_retry()` (line 3433) adds to `failed_connection_accounts`
+- `add_to_proxy_retry_queue()` (line 305) adds to `_proxy_retry_queue`
+
+When an account fails, it might get added to one or both, and the normal connect loop (line 3640-3644) only checks `failed_connection_accounts`, not `_proxy_retry_queue`.
+
+**Fix:**
+Ensure failed accounts are excluded from the normal connect loop if they're in the proxy retry queue:
+
+```python
+# Lines 3640-3644: Filter out accounts in proxy retry queue
+new_accounts = [
+    acc for acc in accounts 
+    if acc.get("id") not in connected_ids 
+    and acc.get("id") not in failed_connection_accounts
+    and acc.get("id") not in _proxy_retry_queue  # ADD THIS CHECK
+]
+```
+
+Also add import of `_proxy_retry_queue` to the livechat runner imports (around line 2643):
+```python
+from client_manager import (
+    # ... existing imports ...
+    _proxy_retry_queue  # ADD THIS
 )
 ```
 
-**Instant Disconnect Flow:**
+---
+
+## Summary of Changes
+
+| File | Location | Change |
+|------|----------|--------|
+| `src/pages/SetupGuide.tsx` | Line ~135 | Add `message_queues: Dict[str, asyncio.Queue] = {}` initialization |
+| `src/pages/SetupGuide.tsx` | Lines 367-513 | Refactor `retry_proxy_error_accounts()` to use `asyncio.gather()` for parallel retry (batch size 100) |
+| `src/pages/SetupGuide.tsx` | Lines 3640-3644 | Add `_proxy_retry_queue` check to exclude retry-queue accounts from normal connect loop |
+| `src/pages/SetupGuide.tsx` | Line ~2643 | Add `_proxy_retry_queue` to imports |
+
+---
+
+## Technical Details
+
+### Before (Sequential Retry):
 ```text
-1. Connection attempt fails
-2. Immediately: try { client.disconnect() } with 5s timeout
-3. Immediately: force_disconnect_session(account_id)
-4. Immediately: report_result("proxy_error", {...})
-5. Then: add_to_proxy_retry_queue(account_id, ...)
+Account A ready → retry → wait → success
+Account B ready → retry → wait → fail
+Account C ready → retry → wait → success
+...
+Total time: N * (connection_time)
 ```
 
----
-
-### 3. Retry Logic (60 seconds, mark inactive after 2nd failure)
-
-**Status: IMPLEMENTED with 3 attempts (not 2)**
-
-| Check | Location | Evidence |
-|-------|----------|----------|
-| Retry delay | Line 138 | `PROXY_RETRY_DELAY = 60` (1 minute / 60 seconds) |
-| Max retries | Line 139 | `PROXY_MAX_RETRIES = 3` (currently 3, not 2) |
-| Retry queue logic | Lines 305-338 | `add_to_proxy_retry_queue()` tracks count and schedules |
-| Mark inactive | Lines 326-335 | `if retry_count >= PROXY_MAX_RETRIES:` reports to backend |
-
-**Current Behavior:**
-- Attempt 1: Connection fails → instant disconnect → queue for retry in 60s
-- Attempt 2: Retry fails → queue for retry in 60s
-- Attempt 3: Retry fails → `report_result("proxy_max_retries_exceeded")` → account marked **disconnected + auto_disabled**
-
-**Recommendation:** If you want to mark inactive after the 2nd failure (not 3rd), change line 139:
-```python
-PROXY_MAX_RETRIES = 2     # Mark inactive after 2 failed attempts
-```
-
----
-
-### 4. Re-activation on Admin Update
-
-**Status: FULLY IMPLEMENTED**
-
-| Check | Location | Evidence |
-|-------|----------|----------|
-| LiveChat polls for accounts | Lines 3633-3644 | `get_next_task(runner="livechat")` fetches all active accounts |
-| Filter by status | `get-next-task/index.ts` Line 209 | `.in("status", ["active", "restricted", "cooldown", "frozen"])` |
-| Skip already connected | Line 3640-3644 | `acc.get("id") not in connected_ids` |
-| Connect new accounts | Lines 3646-3759 | New accounts are connected in parallel |
-
-**Re-activation Flow:**
+### After (Parallel Retry up to 100):
 ```text
-1. Admin sets account status to "active" in dashboard
-2. Next poll iteration (every ~0.5s): get_next_task returns account
-3. Account not in connected_ids → added to new_accounts
-4. connect_one(acc) called → validates proxy/fingerprint → connects
-5. Success → added to connected_ids
+Account A ready ─┐
+Account B ready ─┼─→ asyncio.gather() → All retry simultaneously
+Account C ready ─┤
+...              ─┘
+Total time: max(connection_time) for the batch
 ```
 
-**Database Handling (report-task-result Lines 1469-1478):**
-When account fails 3 times, it's marked as:
-```sql
-UPDATE telegram_accounts SET 
-  status = 'disconnected',
-  auto_disabled = true,
-  disabled_reason = 'Proxy error: Failed 3x (3-min intervals) - requires admin fix'
-WHERE id = account_id;
-```
-
-When admin fixes and sets to `active`:
-```sql
-UPDATE telegram_accounts SET 
-  status = 'active',
-  auto_disabled = false,
-  disabled_reason = null
-WHERE id = account_id;
-```
+### Retry-Queue Isolation (Your Preference):
+Failed accounts will ONLY be retried via the 60-second retry queue, never picked up by the normal "connect new accounts" loop. This prevents:
+- Early retries before 60 seconds
+- Double connection attempts
+- Race conditions between retry paths
 
 ---
 
-### 5. Session Integrity (Double Session Lock Prevention)
+## Required Action After Implementation
 
-**Status: FULLY IMPLEMENTED**
+**Restart the LiveChat runner on VPS** to load these fixes. The changes ensure:
+1. No `message_queues not defined` errors
+2. Failed accounts reconnect in parallel (up to 100 at once)
+3. Failed accounts only retry via the 60-second queue (no duplicates)
 
-| Check | Location | Evidence |
-|-------|----------|----------|
-| Per-account locks | Lines 87-97 | `_connection_locks: Dict[str, asyncio.Lock]` |
-| Thread-safe lock access | Lines 92-97 | `get_account_lock()` with `_connection_locks_mutex` |
-| Lock acquisition | Lines 628-634 | `async with lock:` wraps entire connection process |
-| Global connection semaphore | Not shown but exists | Limits concurrent client creations to 5 |
-
-**Lock Implementation:**
-```python
-# Thread-safe lock storage
-_connection_locks: Dict[str, asyncio.Lock] = {}
-_connection_locks_mutex = threading.Lock()  # Protects dict itself
-
-def get_account_lock(account_id: str) -> asyncio.Lock:
-    with _connection_locks_mutex:
-        if account_id not in _connection_locks:
-            _connection_locks[account_id] = asyncio.Lock()
-        return _connection_locks[account_id]
-
-async def get_or_create_client(account, ...):
-    lock = get_account_lock(account_id)
-    async with lock:  # Only ONE connection attempt per account at a time
-        return await _get_or_create_client_internal(...)
-```
-
-**Additional Protections:**
-1. `active_clients` dict ensures only one client per account_id
-2. Cleanup of stale connections before creating new ones (Lines 644-688)
-3. `no_cache=True` option forces disconnect of existing client first
-
----
-
-## Summary
-
-| Requirement | Status | Notes |
-|-------------|--------|-------|
-| Strict Proxy/Fingerprint Protocol | **PASS** | All connections require proxy + fingerprint + API |
-| Instant Disconnect | **PASS** | `force_disconnect_session()` + disabled auto-reconnect |
-| Retry Logic (60s, 2 failures) | **PARTIAL** | Currently 3 attempts, easily configurable |
-| Re-activation | **PASS** | Admin sets active → auto-connected on next poll |
-| Session Integrity | **PASS** | Per-account asyncio locks prevent double sessions |
-
----
-
-## Optional Improvement
-
-If you want to change from 3 retries to 2 retries before marking inactive, the change is:
-
-**File:** `src/pages/SetupGuide.tsx`  
-**Line 139:**
-```python
-# Current:
-PROXY_MAX_RETRIES = 3     # Max retry attempts before marking account as inactive
-
-# Change to:
-PROXY_MAX_RETRIES = 2     # Mark inactive after 2 failed attempts
-```
-
-This is a single-line configuration change. The system is already correctly implemented to use this value.
