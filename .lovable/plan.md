@@ -1,170 +1,237 @@
 
 
-# LiveChat Runner - Proxy Failure Handling Fixes
+# LiveChat Runner - Critical Session & Connection Fixes
 
-## Issues Identified from Logs
+## Analysis from Log File
 
-Based on the log analysis, there are **3 bugs** in the current LiveChat runner that need fixing:
+After analyzing the 1933-line log file, I identified **5 critical issues** that need to be fixed to meet your requirements:
 
 ---
 
-### Issue 1: `message_queues` is not defined
+## Issues Identified
 
-**Log Evidence:**
+### Issue 1: Database Locked Errors (SQLite Lock)
+
+**Log Evidence (Lines 1758-1804):**
 ```
-[DISCONNECTED] +918238263086: name 'message_queues' is not defined
+[PROXY ERROR] +919012593881 - INSTANT disconnect: database is locked
+[PROXY ERROR] +917567507488 - INSTANT disconnect: database is locked
+sqlite3.OperationalError: database is locked
 ```
 
 **Root Cause:**
-The `force_disconnect_session()` function references `message_queues` in its `global` declaration (line 205) and cleanup code (lines 273-275), but **`message_queues` is never initialized anywhere in the client_manager.py code**.
+When accounts fail and retry, the same session file gets opened multiple times because:
+1. The retry logic in `retry_proxy_error_accounts()` creates a NEW client
+2. But the main loop might also try to connect the SAME account if it appears in the "failed" accounts list
+3. This causes TWO connections to the SAME SQLite session file
 
-**Fix:**
-Add the missing `message_queues` initialization at the top of the client_manager.py section (near line 135):
-
-```python
-message_queues: Dict[str, asyncio.Queue] = {}  # Per-account outgoing message queues
-```
+**The Fix:**
+- Add stronger session file locking with an **exclusive file lock** before opening
+- Ensure session file is **completely released** (with explicit close) before any retry
+- Never open the same session file twice in parallel
 
 ---
 
-### Issue 2: Retry Accounts Reconnect Sequentially (One-by-One)
+### Issue 2: Double Connection Attempts
 
-**Log Evidence:**
+**Log Evidence (Lines 1692-1757):**
 ```
-[CONNECT] Connecting 1 accounts in PARALLEL...
-[2651] STEP 1: Proxy validated...
+[RETRY] 6 failed accounts ready for retry
+[CONNECT] Connecting 9 accounts in PARALLEL...
+[1031] STEP 1: Proxy validated...  ← Same account in BOTH loops!
 ```
-
-Instead of connecting in parallel batches, accounts reconnect one at a time when picked up by the retry queue.
 
 **Root Cause:**
-The `retry_proxy_error_accounts()` function (lines 367-513) processes accounts sequentially in a `for acc_id in ready_ids:` loop. Unlike the main connection loop which uses `asyncio.gather()`, retries happen one by one.
+The normal connect loop (`new_accounts` filter on line 3661-3666) excludes accounts in `_proxy_retry_queue`, **BUT** once the 60s retry window expires, they get removed from `failed_connection_accounts` (line 3640-3643) and immediately picked up by the normal loop AGAIN - before `retry_proxy_error_accounts()` gets to them.
 
-**Fix:**
-Modify `retry_proxy_error_accounts()` to process ready accounts in **parallel batches of up to 100** (as per your preference):
-
-```python
-async def retry_proxy_error_accounts():
-    """
-    Process accounts in the proxy retry queue that are ready for retry.
-    FIX: Now processes up to 100 accounts in PARALLEL BATCHES instead of sequentially.
-    """
-    global _proxy_retry_queue
-    
-    # Get accounts ready for retry
-    ready_ids = get_ready_proxy_retries()
-    
-    if not ready_ids:
-        return 0
-    
-    # Limit batch size to 100 per cycle
-    BATCH_SIZE = 100
-    batch = ready_ids[:BATCH_SIZE]
-    
-    print(f"\\n  [PROXY RETRY] {len(batch)} accounts ready for PARALLEL retry...")
-    
-    http = get_http_client()
-    from datetime import datetime
-    
-    async def retry_one(acc_id):
-        # ... existing retry logic for single account ...
-        # (move current for-loop body here as async function)
-        pass
-    
-    # Process ALL ready accounts in PARALLEL
-    results = await asyncio.gather(
-        *[retry_one(acc_id) for acc_id in batch],
-        return_exceptions=True
-    )
-    
-    reconnected = sum(1 for r in results if r is True)
-    
-    if reconnected > 0:
-        print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(batch)} accounts (parallel)")
-    
-    return reconnected
-```
+**The Fix:**
+- Keep accounts in `_proxy_retry_queue` until `retry_proxy_error_accounts()` processes them
+- Remove from `_proxy_retry_queue` ONLY on success or max retries
+- Add an **account connection lock** to prevent ANY double attempts
 
 ---
 
-### Issue 3: Failed Accounts Added to Both Queues (Duplicate Retries)
+### Issue 3: Retry Miscount (2 Attempts Instead of 3)
 
-**Log Evidence (combined):**
-The logs show accounts sometimes being added to `failed_connection_accounts` AND `_proxy_retry_queue`, causing confusion.
+**Log Evidence (Lines 1503-1518):**
+```
+[PROXY RETRY] e5606268 - Adding to 3-attempt retry queue
+[PROXY MAX] e5606268 - 2 attempts failed, marking INACTIVE
+```
 
 **Root Cause:**
-Multiple code paths add failed accounts to different retry tracking structures:
-- `disconnect_and_schedule_retry()` (line 3433) adds to `failed_connection_accounts`
-- `add_to_proxy_retry_queue()` (line 305) adds to `_proxy_retry_queue`
+The current retry logic has `PROXY_MAX_RETRIES = 2` (line 140), which gives only 1 initial + 1 retry = 2 attempts total. Your requirement is for exactly 2 retries (1 initial + 1 retry after 60s + 1 more retry = 3 total).
 
-When an account fails, it might get added to one or both, and the normal connect loop (line 3640-3644) only checks `failed_connection_accounts`, not `_proxy_retry_queue`.
-
-**Fix:**
-Ensure failed accounts are excluded from the normal connect loop if they're in the proxy retry queue:
-
-```python
-# Lines 3640-3644: Filter out accounts in proxy retry queue
-new_accounts = [
-    acc for acc in accounts 
-    if acc.get("id") not in connected_ids 
-    and acc.get("id") not in failed_connection_accounts
-    and acc.get("id") not in _proxy_retry_queue  # ADD THIS CHECK
-]
-```
-
-Also add import of `_proxy_retry_queue` to the livechat runner imports (around line 2643):
-```python
-from client_manager import (
-    # ... existing imports ...
-    _proxy_retry_queue  # ADD THIS
-)
-```
+**The Fix:**
+- Change `PROXY_MAX_RETRIES = 3` to allow 3 total attempts
+- Initial connection (1) + First retry after 60s (2) + Second retry after another 60s (3)
+- Only mark inactive after all 3 attempts fail
 
 ---
 
-## Summary of Changes
+### Issue 4: Session Not Properly Closed Before Retry
 
-| File | Location | Change |
-|------|----------|--------|
-| `src/pages/SetupGuide.tsx` | Line ~135 | Add `message_queues: Dict[str, asyncio.Queue] = {}` initialization |
-| `src/pages/SetupGuide.tsx` | Lines 367-513 | Refactor `retry_proxy_error_accounts()` to use `asyncio.gather()` for parallel retry (batch size 100) |
-| `src/pages/SetupGuide.tsx` | Lines 3640-3644 | Add `_proxy_retry_queue` check to exclude retry-queue accounts from normal connect loop |
-| `src/pages/SetupGuide.tsx` | Line ~2643 | Add `_proxy_retry_queue` to imports |
-
----
-
-## Technical Details
-
-### Before (Sequential Retry):
-```text
-Account A ready → retry → wait → success
-Account B ready → retry → wait → fail
-Account C ready → retry → wait → success
+**Log Evidence (Lines 1678-1689):**
+```
+[FORCE DISCONNECT] d7802056 - No active client found, cleared tracking
+[PROXY MAX] d7802056 - 2 attempts failed, marking INACTIVE
 ...
-Total time: N * (connection_time)
+[d7802056] ✗ Still failing - will retry in 1 min
 ```
 
-### After (Parallel Retry up to 100):
-```text
-Account A ready ─┐
-Account B ready ─┼─→ asyncio.gather() → All retry simultaneously
-Account C ready ─┤
-...              ─┘
-Total time: max(connection_time) for the batch
-```
+**Root Cause:**
+The `force_disconnect_session()` function tries to disconnect, but:
+1. The client is already removed from `active_clients` by the connection error handler
+2. So it skips the actual disconnect logic and only "clears tracking"
+3. The SQLite session file is NOT explicitly closed
+4. When retry happens, the old file handle may still be held by the OS
 
-### Retry-Queue Isolation (Your Preference):
-Failed accounts will ONLY be retried via the 60-second retry queue, never picked up by the normal "connect new accounts" loop. This prevents:
-- Early retries before 60 seconds
-- Double connection attempts
-- Race conditions between retry paths
+**The Fix:**
+- Store the **session file path** in `_proxy_retry_queue` alongside account data
+- Before retry, explicitly **delete the session temp file** and decode fresh
+- Add a longer sleep (1-2s) after disconnect to let OS release file handles
 
 ---
 
-## Required Action After Implementation
+### Issue 5: Normal Connect Loop Reprocesses Retry-Queue Accounts
 
-**Restart the LiveChat runner on VPS** to load these fixes. The changes ensure:
-1. No `message_queues not defined` errors
-2. Failed accounts reconnect in parallel (up to 100 at once)
-3. Failed accounts only retry via the 60-second queue (no duplicates)
+**Log Evidence (Lines 1914-1933):**
+```
+[CONNECT] Connecting 2 accounts in PARALLEL...
+[6270] STEP 1: Proxy validated...
+[3617] STEP 1: Proxy validated...
+[PROXY ERROR] +919301163617 - INSTANT disconnect: database is locked
+```
+
+**Root Cause:**
+Account 3617 was successfully reconnected by `retry_proxy_error_accounts()` (line 1904: `[fef0e9a1] ✓ Reconnected`), but then the normal connect loop (line 1914) tries to connect it AGAIN - causing SQLite lock.
+
+**The Fix:**
+- After successful reconnection in `retry_proxy_error_accounts()`, add to `connected_ids` IMMEDIATELY
+- Check `connected_ids` at the START of `connect_one()` function to bail early
+- Add a **per-account "connecting" flag** to prevent concurrent connection attempts
+
+---
+
+## Implementation Summary
+
+| File | Change | Purpose |
+|------|--------|---------|
+| `SetupGuide.tsx` (Line 140) | `PROXY_MAX_RETRIES = 3` | Allow 3 total attempts (1 initial + 2 retries) |
+| `SetupGuide.tsx` (Line 478-479) | Add to `connected_ids` immediately on retry success | Prevent normal loop from reconnecting |
+| `SetupGuide.tsx` (Lines 368-540) | Add session file cleanup before retry | Prevent SQLite locks |
+| `SetupGuide.tsx` (Lines 198-278) | Improve `force_disconnect_session()` with explicit file cleanup | Ensure file is released |
+| `SetupGuide.tsx` (New) | Add `_currently_connecting: Set[str]` | Prevent ANY double connection attempts |
+
+---
+
+## Technical Implementation
+
+### 1. Add Connection-in-Progress Lock
+
+```python
+# New global set to track accounts currently being connected
+_currently_connecting: Set[str] = set()
+
+async def connect_one(acc):
+    acc_id = acc.get("id")
+    
+    # CRITICAL: Skip if already being connected
+    if acc_id in _currently_connecting:
+        return acc_id, None, "Already connecting", phone, False
+    
+    # Skip if already connected
+    if acc_id in connected_ids:
+        return acc_id, None, "Already connected", phone, False
+    
+    _currently_connecting.add(acc_id)
+    try:
+        # ... existing connection logic ...
+    finally:
+        _currently_connecting.discard(acc_id)
+```
+
+### 2. Fix Retry Count (3 Attempts Total)
+
+```python
+PROXY_MAX_RETRIES = 3  # Changed from 2 to 3
+# Gives: Initial (1) + Retry after 60s (2) + Final retry (3)
+```
+
+### 3. Session File Cleanup Before Retry
+
+```python
+async def retry_one(acc_id: str) -> bool:
+    # ... existing code ...
+    
+    # CRITICAL: Delete old session temp file to prevent SQLite locks
+    phone = account_data.get("phone_number", acc_id[:8])
+    old_session_path = os.path.join(SESSION_FOLDER, f"{phone}.session")
+    if os.path.exists(old_session_path):
+        try:
+            os.remove(old_session_path)
+            print(f"    [{phone[:8]}] Cleaned up old session file")
+        except:
+            pass
+    
+    # Now connect with fresh session decode
+    client = await get_or_create_client(...)
+```
+
+### 4. Add to connected_ids Immediately on Retry Success
+
+```python
+if client:
+    # SUCCESS! Clear from retry queue
+    remove_from_proxy_retry_queue(acc_id)
+    
+    # CRITICAL: Add to connected_ids IMMEDIATELY to prevent normal loop reconnection
+    connected_ids.add(acc_id)  # NEW LINE
+    
+    # Update database...
+```
+
+---
+
+## Flow After Fix
+
+```text
+Account A fails → INSTANT DISCONNECT → Add to retry queue (attempt 1/3)
+                                       ↓
+                        Wait 60 seconds
+                                       ↓
+[Normal loop sees A NOT in connected_ids, BUT A IS in _proxy_retry_queue → SKIP]
+                                       ↓
+retry_proxy_error_accounts() picks up A → Clean session file → Connect
+                                       ↓
+Success? → Remove from queue, add to connected_ids → DONE
+Fail?    → Increment count → Wait 60s → Retry (attempt 2/3)
+                                       ↓
+Success? → Remove from queue, add to connected_ids → DONE
+Fail?    → Increment count → Wait 60s → Retry (attempt 3/3)
+                                       ↓
+Success? → Remove from queue, add to connected_ids → DONE
+Fail?    → Report to backend as INACTIVE → Admin must fix proxy
+```
+
+---
+
+## Re-activation Flow (Requirement #4)
+
+When admin updates proxy and sets account to Active:
+1. The next iteration of `get_next_task(runner="livechat")` returns this account
+2. Account is NOT in `connected_ids` (was marked inactive/removed)
+3. Account is NOT in `_proxy_retry_queue` (was cleared on max retries)
+4. Account is NOT in `failed_connection_accounts` (status was set to inactive)
+5. Normal connect loop picks it up → Fresh connection with new proxy
+
+This is already working correctly - no changes needed.
+
+---
+
+## Session Integrity (Requirement #5)
+
+The current implementation has per-account locks (`get_account_lock()`), but they only protect within the same function call. The issue is parallel attempts from DIFFERENT code paths.
+
+**Fix:** Add `_currently_connecting` set as a cross-function lock to prevent ANY concurrent connection to the same account.
 
