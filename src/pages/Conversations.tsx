@@ -177,48 +177,63 @@ const Chat: React.FC = () => {
     return stats;
   }, [messages]);
 
-  // Function to fetch messages for a conversation
-  const fetchMessagesForConversation = async (convId: string) => {
+  // Cache for messages to avoid refetching
+  const messagesCacheRef = useRef<Map<string, typeof fetchedMessages>>(new Map());
+
+  // Transform database message to local format
+  const mapMessage = (m: any) => {
+    let status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' = 'pending';
+    if (m.status === 'sent' || m.status === 'sending') status = 'sent';
+    else if (m.status === 'delivered') status = 'delivered';
+    else if (m.status === 'read') status = 'read';
+    else if (m.status === 'failed' || m.status === 'cancelled') status = 'failed';
+    
+    return {
+      id: m.id,
+      conversationId: m.conversation_id,
+      accountId: m.account_id,
+      recipientPhone: m.conversations?.recipient_phone || '',
+      content: m.content,
+      direction: m.direction as 'incoming' | 'outgoing',
+      status,
+      timestamp: new Date(m.created_at),
+      telegramMessageId: m.telegram_message_id || undefined,
+      failedReason: m.failed_reason || undefined,
+      mediaUrl: m.media_url || undefined,
+      mediaType: m.media_type || undefined,
+      campaignRecipientId: m.campaign_recipient_id || undefined,
+    };
+  };
+
+  // Function to fetch messages for a conversation - optimized with limit and caching
+  const fetchMessagesForConversation = async (convId: string, useCache = true) => {
     if (!convId) {
       setFetchedMessages([]);
       return;
     }
     
+    // Return cached messages instantly if available
+    if (useCache && messagesCacheRef.current.has(convId)) {
+      setFetchedMessages(messagesCacheRef.current.get(convId)!);
+      return;
+    }
+    
     try {
+      // Fetch only essential columns, limit to last 50 messages for speed
       const { data, error } = await supabase
         .from('messages')
-        .select('*, conversations(recipient_phone)')
+        .select('id,conversation_id,account_id,content,direction,status,created_at,telegram_message_id,failed_reason,media_url,media_type,campaign_recipient_id')
         .eq('conversation_id', convId)
-        .order('created_at', { ascending: true });
+        .order('created_at', { ascending: false })
+        .limit(50);
       
       if (error) throw error;
       
-      const mappedMessages = (data || []).map(m => {
-        // Map database status to Message type status
-        let status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' = 'pending';
-        if (m.status === 'sent' || m.status === 'sending') status = 'sent';
-        else if (m.status === 'delivered') status = 'delivered';
-        else if (m.status === 'read') status = 'read';
-        else if (m.status === 'failed' || m.status === 'cancelled') status = 'failed';
-        else if (m.status === 'pending') status = 'pending';
-        
-        return {
-          id: m.id,
-          conversationId: m.conversation_id,
-          accountId: m.account_id,
-          recipientPhone: m.conversations?.recipient_phone || '',
-          content: m.content,
-          direction: m.direction as 'incoming' | 'outgoing',
-          status,
-          timestamp: new Date(m.created_at),
-          telegramMessageId: m.telegram_message_id || undefined,
-          failedReason: m.failed_reason || undefined,
-          mediaUrl: m.media_url || undefined,
-          mediaType: m.media_type || undefined,
-          campaignRecipientId: m.campaign_recipient_id || undefined,
-        };
-      });
+      // Reverse to get ascending order after limiting
+      const mappedMessages = (data || []).reverse().map(mapMessage);
       
+      // Cache the result
+      messagesCacheRef.current.set(convId, mappedMessages);
       setFetchedMessages(mappedMessages);
     } catch (err) {
       console.error('Error fetching messages:', err);
@@ -232,7 +247,16 @@ const Chat: React.FC = () => {
       return;
     }
     
-    setIsLoadingMessages(true);
+    // Check cache first - show instantly if cached
+    const cached = messagesCacheRef.current.get(selectedConversation);
+    if (cached) {
+      setFetchedMessages(cached);
+      setIsLoadingMessages(false);
+    } else {
+      setIsLoadingMessages(true);
+    }
+    
+    // Fetch (will use cache if available)
     fetchMessagesForConversation(selectedConversation).finally(() => {
       setIsLoadingMessages(false);
     });
@@ -243,14 +267,38 @@ const Chat: React.FC = () => {
       .on(
         'postgres_changes',
         {
-          event: '*',
+          event: 'INSERT',
           schema: 'public',
           table: 'messages',
           filter: `conversation_id=eq.${selectedConversation}`
         },
-        () => {
-          // Refetch messages on any change
-          fetchMessagesForConversation(selectedConversation);
+        (payload) => {
+          // Add new message to cache and state instantly
+          const newMsg = mapMessage(payload.new);
+          setFetchedMessages(prev => {
+            if (prev.some(m => m.id === newMsg.id)) return prev;
+            const updated = [...prev, newMsg];
+            messagesCacheRef.current.set(selectedConversation, updated);
+            return updated;
+          });
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'messages',
+          filter: `conversation_id=eq.${selectedConversation}`
+        },
+        (payload) => {
+          // Update message in cache and state
+          const updated = mapMessage(payload.new);
+          setFetchedMessages(prev => {
+            const newState = prev.map(m => m.id === updated.id ? updated : m);
+            messagesCacheRef.current.set(selectedConversation, newState);
+            return newState;
+          });
         }
       )
       .subscribe();
