@@ -929,7 +929,7 @@ const Proxies: React.FC = () => {
 
       {/* Bulk Actions Bar */}
       {selectedIds.size > 0 && (
-        <div className="flex items-center gap-4 mb-4 p-4 rounded-lg bg-primary/10 border border-primary/30 animate-fade-in">
+        <div className="flex items-center gap-4 mb-4 p-4 rounded-lg bg-primary/10 border border-primary/30">
           <span className="text-sm font-medium">
             {selectedIds.size} prox{selectedIds.size !== 1 ? 'ies' : 'y'} selected
           </span>
@@ -944,9 +944,9 @@ const Proxies: React.FC = () => {
             {isBulkTesting ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              <Wifi className="w-4 h-4" />
+              <Activity className="w-4 h-4" />
             )}
-            Test Connectivity
+            Test Selected
           </Button>
           <Button
             variant="destructive"
@@ -960,7 +960,7 @@ const Proxies: React.FC = () => {
             ) : (
               <Trash2 className="w-4 h-4" />
             )}
-            Delete Selected
+            Delete
           </Button>
           <Button
             variant="ghost"
