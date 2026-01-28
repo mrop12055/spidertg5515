@@ -1,166 +1,136 @@
 
 
-# Fix: Settings API Keys - Usage Display and Live Updates
+# Fix: Instant Disconnect on Proxy Failure - No Connection Retries
 
-## Problems Identified
+## Current Problem
 
-1. **Wrong Usage Displayed**: The table shows `usage_count` (lifetime) in the "Usage" column instead of `daily_usage` (today's usage)
-2. **Stats Card Mismatch**: The summary shows "Total Messages Sent: 18" which is correct for lifetime, but the user wants focus on daily
-3. **Page Refresh Loop**: Every 30 seconds, `fetchCredentials()` sets `isLoading = true` causing a full table re-render with spinner animation
-4. **No Live Updates**: Changes to usage values require full data refetch instead of updating numbers in-place
+The LiveChat runner has a risky retry mechanism:
 
-## Database Reality
-- You have **16 API keys** 
-- `usage_count` ranges from 15-18 (lifetime total)
-- `daily_usage` = 0 for all (was reset or no messages sent today)
+1. `connect_with_retry()` function retries connection **3 times** with exponential backoff (1s, 2s, 4s delays)
+2. During retry attempts, if the proxy fails but network is available, the Telethon client **could connect without the proxy**
+3. This causes **account bans** because Telegram sees different IP addresses
 
-## Solution Overview
+Your requirement:
+- **INSTANT DISCONNECT** on proxy failure - no retries
+- Wait until ALL accounts finish connecting
+- Retry failed accounts after **1 minute** (not 3 minutes)
+- Never risk connecting without proxy
 
-### Change 1: Display Today's Usage (daily_usage) in Table
+## Solution
 
-Update the table column to show `daily_usage` instead of `usage_count`:
+### File: `src/pages/SetupGuide.tsx`
 
-| Current | Fixed |
-|---------|-------|
-| `{cred.usage_count \|\| 0}` | `{cred.daily_usage \|\| 0}` |
+**Change 1: Remove retry from `connect_with_retry` - Make it single attempt**
 
-### Change 2: Fix Stats Cards Labels
+Replace `connect_with_retry` function (lines 569-600) with a simple single-attempt connect:
 
-Current stats:
-- "Total Messages Sent" → shows `usage_count` sum
-- "24h Usage" → shows `daily_usage` sum
-
-User wants emphasis on TODAY's usage, so:
-- Rename "Total Messages Sent" → "Lifetime Usage" 
-- Keep "24h Usage" as the primary focus
-
-### Change 3: Remove Full Page Refresh - Use Realtime Updates
-
-Replace the 30-second `setInterval` with Supabase Realtime subscription:
-
-```typescript
-// Instead of this (causes full reload):
-const interval = setInterval(fetchCredentials, 30000);
-
-// Use this (updates only changed values):
-const channel = supabase
-  .channel('api-credentials-updates')
-  .on('postgres_changes', 
-    { event: 'UPDATE', schema: 'public', table: 'telegram_api_credentials' },
-    (payload) => {
-      // Update only the changed credential in-place
-      setCredentials(prev => prev.map(c => 
-        c.id === payload.new.id ? { ...c, ...payload.new } : c
-      ));
-    }
-  )
-  .subscribe();
+```python
+async def connect_single_attempt(client: TelegramClient, timeout: int = CONNECTION_TIMEOUT) -> tuple[bool, str]:
+    """
+    Single connection attempt - NO RETRIES.
+    If proxy fails, we disconnect immediately to prevent proxyless connection.
+    Returns (success, error_message).
+    """
+    try:
+        await asyncio.wait_for(client.connect(), timeout=timeout)
+        return True, None
+    except asyncio.TimeoutError:
+        return False, "Connection timeout"
+    except Exception as e:
+        return False, str(e)
 ```
 
-### Change 4: Don't Show Loading Spinner on Background Refresh
+**Change 2: Update client creation to use single attempt (lines 808-826)**
 
-Only show loading spinner on initial load, not on refetches:
+Replace retry logic in `_get_or_create_client_internal`:
 
-```typescript
-const fetchCredentials = async (showLoading = true) => {
-  if (showLoading) setIsLoading(true);
-  // ... fetch logic
-};
+```python
+# BEFORE (3 retries):
+print(f"  [CONNECT] {account['phone_number']} (with 3 retries)...")
+if not await connect_with_retry(client, max_retries=3):
 
-// Initial load: show spinner
-fetchCredentials(true);
-
-// Window focus: no spinner
-const handleFocus = () => fetchCredentials(false);
+# AFTER (single attempt - instant fail):
+print(f"  [CONNECT] {account['phone_number']} (single attempt - no retry)...")
+success, connect_error = await connect_single_attempt(client, timeout=CONNECTION_TIMEOUT)
+if not success:
+    # PROXY FAILED - IMMEDIATELY DISCONNECT
+    print(f"  [PROXY ERROR] {phone} - INSTANT disconnect: {connect_error[:50]}")
+    
+    # Clean up any partial connection state
+    try:
+        if client.is_connected():
+            await asyncio.wait_for(client.disconnect(), timeout=5)
+    except:
+        pass
+    
+    # Report and queue for retry (after all accounts connected)
+    asyncio.create_task(report_result("proxy_error", {
+        "account_id": account_id,
+        "proxy_id": proxy_id,
+        "reason": f"Instant fail (no retry): {connect_error[:100]}"
+    }))
+    
+    await add_to_proxy_retry_queue(account_id, account, task_proxy)
+    return None
 ```
 
----
+**Change 3: Reduce retry delay from 3 minutes to 1 minute (line 138)**
+
+```python
+# BEFORE:
+PROXY_RETRY_DELAY = 180   # 3 minutes
+
+# AFTER:
+PROXY_RETRY_DELAY = 60    # 1 minute (user request)
+```
+
+**Change 4: Update retry queue comments (line 321)**
+
+```python
+# BEFORE:
+_proxy_retry_queue[account_id]["next_retry_at"] = now + PROXY_RETRY_DELAY  # 3 minutes from now
+
+# AFTER:
+_proxy_retry_queue[account_id]["next_retry_at"] = now + PROXY_RETRY_DELAY  # 1 minute from now
+```
+
+**Change 5: Update logging messages to reflect 1-minute delay (lines 329, 339)**
+
+```python
+# BEFORE:
+print(f"  [PROXY RETRY] {phone} - Attempt {retry_count}/{PROXY_MAX_RETRIES}, retry in 3 min ({remaining} left)")
+
+# AFTER:
+print(f"  [PROXY RETRY] {phone} - Attempt {retry_count}/{PROXY_MAX_RETRIES}, retry in 1 min ({remaining} left)")
+```
+
+## Summary of Changes
+
+| Setting | Current | New | Why |
+|---------|---------|-----|-----|
+| Connection Retries | 3 attempts with backoff | 1 attempt (instant fail) | Prevents proxyless connection |
+| Retry Delay | 180s (3 min) | 60s (1 min) | Faster recovery after all connected |
+| On Proxy Fail | Retry immediately | Instant disconnect + queue | No risk of ban |
+
+## How It Works After Changes
+
+```text
+[START] Connect 137 accounts in parallel
+  ├─ Account A: Connected OK ✓
+  ├─ Account B: Proxy timeout → INSTANT DISCONNECT → Queue for 1-min retry
+  ├─ Account C: Connected OK ✓
+  └─ Account D: Proxy error → INSTANT DISCONNECT → Queue for 1-min retry
+
+[AFTER ALL CONNECTED] (main loop continues)
+  └─ Every loop iteration: Check retry queue for accounts past 1-min mark
+       └─ Retry Account B and D now (1 minute passed)
+```
 
 ## Technical Details
 
-### File: `src/components/settings/ApiCredentialsManager.tsx`
-
-**Change 1: Line 359-362 - Table Usage Column**
-```typescript
-// BEFORE:
-<Badge variant={cred.usage_count > 0 ? "default" : "secondary"}>
-  {cred.usage_count || 0}
-</Badge>
-
-// AFTER:
-<Badge variant={cred.daily_usage > 0 ? "default" : "secondary"}>
-  {cred.daily_usage || 0}
-</Badge>
-```
-
-**Change 2: Lines 305-308 - Stats Card Label**
-```typescript
-// BEFORE:
-<p className="text-2xl font-bold text-blue-500">{totalUsage.toLocaleString()}</p>
-<p className="text-xs text-muted-foreground">Total Messages Sent</p>
-
-// AFTER:
-<p className="text-2xl font-bold text-blue-500">{totalUsage.toLocaleString()}</p>
-<p className="text-xs text-muted-foreground">Lifetime Usage</p>
-```
-
-**Change 3: Lines 39-75 - Replace Interval with Realtime**
-```typescript
-const fetchCredentials = async (showLoading = true) => {
-  if (showLoading) setIsLoading(true);
-  // ... rest same
-};
-
-useEffect(() => {
-  fetchCredentials(true); // Initial load with spinner
-  
-  // Realtime subscription for live updates (no full reload)
-  const channel = supabase
-    .channel('api-credentials-live')
-    .on('postgres_changes', 
-      { event: '*', schema: 'public', table: 'telegram_api_credentials' },
-      (payload) => {
-        if (payload.eventType === 'UPDATE') {
-          setCredentials(prev => prev.map(c => 
-            c.id === payload.new.id ? { ...c, ...payload.new as ApiCredential } : c
-          ));
-        } else if (payload.eventType === 'INSERT') {
-          fetchCredentials(false);
-        } else if (payload.eventType === 'DELETE') {
-          setCredentials(prev => prev.filter(c => c.id !== payload.old.id));
-        }
-      }
-    )
-    .subscribe();
-  
-  // Window focus - refresh without spinner
-  const handleFocus = () => fetchCredentials(false);
-  window.addEventListener('focus', handleFocus);
-  
-  return () => {
-    window.removeEventListener('focus', handleFocus);
-    supabase.removeChannel(channel);
-  };
-}, []);
-```
-
-**Change 4: Table Header Label - Line 345**
-```typescript
-// BEFORE:
-<TableHead className="text-center">Usage</TableHead>
-
-// AFTER:
-<TableHead className="text-center">Today</TableHead>
-```
-
----
-
-## Expected Outcome
-
-After implementation:
-1. Table "Today" column shows `daily_usage` (currently 0 for all APIs)
-2. Stats cards clearly differentiate "Lifetime Usage" vs "24h Usage"
-3. Values update in real-time without page refresh/spinner
-4. No more visual flickering or "refreshing again and again"
-5. Window focus triggers a silent background refresh
+**Why instant disconnect prevents bans:**
+- Telethon stores connection state in SQLite session file
+- If we retry with a dead proxy, Telethon might fall back to direct connection
+- Direct connection = different IP = Telegram detects mismatch = BAN
+- By disconnecting immediately, we ensure session file is clean for next attempt
 
