@@ -140,7 +140,6 @@ PROXY_MAX_RETRIES = 3     # Max retry attempts before marking account as inactiv
 
 # ========== SPLIT TIMEOUTS ==========
 CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
-CONNECTION_RETRIES = 2       # Connection retries (increased from 1)
 RETRY_DELAY = 2              # Retry delay in seconds (increased from 0)
 
 # HTTP Timeouts - split by purpose (increased for high-load 500+ clients)
