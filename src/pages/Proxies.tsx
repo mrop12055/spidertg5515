@@ -30,11 +30,11 @@ const proxyTypeOptions = [
   { value: 'socks5', label: 'SOCKS5' },
 ];
 
-const statusOptions = [
-  { value: 'active', label: 'Active', color: 'bg-green-500/20 text-green-600 border-green-500/30' },
-  { value: 'inactive', label: 'Inactive', color: 'bg-muted text-muted-foreground border-border' },
-  { value: 'error', label: 'Error', color: 'bg-destructive/20 text-destructive border-destructive/30' },
-];
+const statusColors: Record<string, string> = {
+  'active': 'bg-green-500/20 text-green-600 border-green-500/30',
+  'inactive': 'bg-muted text-muted-foreground border-border',
+  'error': 'bg-destructive/20 text-destructive border-destructive/30',
+};
 
 // Country code to flag emoji
 const getCountryFlag = (countryCode: string | null | undefined): string => {
@@ -564,21 +564,6 @@ const Proxies: React.FC = () => {
     }
   };
 
-  const handleStatusChange = async (id: string, status: 'active' | 'inactive' | 'error') => {
-    try {
-      const { error } = await supabase
-        .from('proxies')
-        .update({ status })
-        .eq('id', id);
-
-      if (error) throw error;
-      refreshData();
-    } catch (error) {
-      console.error('Error updating status:', error);
-      toast.error('Failed to update status');
-    }
-  };
-
   const toggleCredentialsVisibility = (id: string) => {
     const newSet = new Set(showCredentials);
     if (newSet.has(id)) {
@@ -646,10 +631,10 @@ const Proxies: React.FC = () => {
   const isAllSelected = filteredProxies.length > 0 && selectedIds.size === filteredProxies.length;
 
   const getStatusBadge = (status: string) => {
-    const option = statusOptions.find(o => o.value === status);
+    const label = status.charAt(0).toUpperCase() + status.slice(1);
     return (
-      <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium border", option?.color || 'bg-muted')}>
-        {option?.label || status}
+      <span className={cn("px-2 py-0.5 rounded-full text-xs font-medium border", statusColors[status] || 'bg-muted')}>
+        {label}
       </span>
     );
   };
@@ -1259,20 +1244,6 @@ const Proxies: React.FC = () => {
                       )}
                     </div>
 
-                    {/* Status Select */}
-                    <Select
-                      value={proxy.status}
-                      onValueChange={(value) => handleStatusChange(proxy.id, value as any)}
-                    >
-                      <SelectTrigger className="w-28 h-8">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statusOptions.map(opt => (
-                          <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
 
                     {/* Delete */}
                     <Button
