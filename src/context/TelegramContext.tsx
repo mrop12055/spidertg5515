@@ -156,10 +156,10 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           .order('created_at', { ascending: false }),
 
         // Fetch conversations - limit for performance
+        // Show all conversations with messages (removed first_message_sent filter to include reply-only convos)
         supabase
           .from('conversations')
           .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
-          .eq('first_message_sent', true)
           .not('last_message_at', 'is', null)
           .order('last_message_at', { ascending: false })
           .limit(5000), // Limit to most recent conversations
@@ -407,6 +407,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             
             if (payload.eventType === 'INSERT') {
             const c = payload.new as any;
+            // Include all conversations with messages (last_message_at set)
             const newConv: Conversation = {
               id: c.id,
               accountId: c.account_id,
@@ -418,18 +419,23 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
               isActive: c.is_active || false,
               createdAt: new Date(c.created_at),
               updatedAt: new Date(c.updated_at || c.created_at),
+              lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : undefined,
+              lastMessageContent: c.last_message_content || undefined,
               blockedByRecipient: c.blocked_by_recipient || false,
               firstMessageSent: c.first_message_sent ?? false,
+              hasReply: c.has_reply ?? false,
               seatId: c.seat_id || undefined,
             };
 
-            setConversations(prev => {
-              if (prev.some(conv => conv.id === c.id)) {
-                return prev.map(conv => (conv.id === c.id ? newConv : conv));
-              }
-
-              return [newConv, ...prev];
-            });
+            // Add conversation if it has messages (last_message_at is set)
+            if (newConv.lastMessageAt) {
+              setConversations(prev => {
+                if (prev.some(conv => conv.id === c.id)) {
+                  return prev.map(conv => (conv.id === c.id ? newConv : conv));
+                }
+                return [newConv, ...prev];
+              });
+            }
           } else if (payload.eventType === 'UPDATE') {
             const c = payload.new as any;
             setConversations(prev =>
