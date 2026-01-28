@@ -1,84 +1,82 @@
 
-# Fix: Conversations Page Not Showing Messages
 
-## Problem Summary
-When clicking on a conversation in the Conversations page, nothing is showing because:
-1. The TelegramContext is filtering out conversations where `first_message_sent=false`, even if they have replies
-2. This excludes legitimate campaign reply conversations from the UI
-3. The message loading logic depends on conversation data that isn't being loaded
+# Implementation: Fix "Original account is not available" Error
 
-## Root Cause
-In `src/context/TelegramContext.tsx` (line 162), there's a database filter:
-```typescript
-.eq('first_message_sent', true)
-```
-This excludes conversations where:
-- Campaign message was sent but `first_message_sent` wasn't updated correctly
-- User replied to a campaign but the conversation wasn't marked properly
+## Problem
+When users try to send messages from the Conversations page, they see:
+**"Original account is not available. Cannot send from a different number."**
 
-## Solution
+This happens for ALL conversations because `accounts` from `useTelegram()` context is always an empty array (the context no longer populates it - accounts are now loaded via the dedicated `useAccounts` hook).
 
-### Step 1: Fix TelegramContext Conversation Query
-Update the query in `src/context/TelegramContext.tsx` to match the updated `useConversations` hook logic:
+## Solution: Use the useAccounts hook
 
-**Before:**
-```typescript
-.eq('first_message_sent', true)
-.not('last_message_at', 'is', null)
-```
+Replace the empty `accounts` array from TelegramContext with the properly loaded accounts from `useAccounts` hook.
 
-**After:**
-```typescript
-.not('last_message_at', 'is', null)  // Remove first_message_sent filter
-```
-
-This matches the already-updated `useConversations` hook which removed this filter.
-
-### Step 2: Ensure Realtime Handler Includes All Conversations
-Update the realtime INSERT handler for conversations to add new conversations regardless of `first_message_sent` status, as long as they have a `last_message_at`.
-
-### Step 3: Add Loading State Protection
-Ensure the message loading displays properly even if the conversation list is empty initially:
-- Keep cached messages on display while fetching fresh data
-- Show loading indicator only on first load, not on refetches
-
----
-
-## Technical Details
-
-### File: `src/context/TelegramContext.tsx`
-
-**Change 1:** Remove `first_message_sent` filter from conversations query (line 162)
-```typescript
-// Current:
-.eq('first_message_sent', true)
-.not('last_message_at', 'is', null)
-
-// Fixed:
-.not('last_message_at', 'is', null)  // Show all conversations with messages
-```
-
-**Change 2:** Update realtime INSERT handler to always add conversations with messages (around line 408-432)
+## File Changes
 
 ### File: `src/pages/Conversations.tsx`
 
-**Change 3:** Optimize the message fetch to handle edge cases:
-- Ensure `isLoadingMessages` is set correctly
-- Don't clear messages array if fetch fails
-- Add better error handling with user feedback
+**Change 1: Add import for useAccounts hook (line 4-5)**
+```typescript
+import { useTelegram } from '@/context/TelegramContext';
+import { useAccounts } from '@/hooks/useAccounts';
+```
 
----
+**Change 2: Update hook usage (lines 58-74)**
+```typescript
+const Chat: React.FC = () => {
+  const { 
+    conversations, 
+    messages, 
+    sendMessage, 
+    sendMediaMessage,
+    // accounts,  <-- REMOVE THIS from context destructuring
+    typingUsers,
+    markConversationAsRead,
+    startNewConversation,
+    deleteConversation,
+    deleteConversations,
+    blockContact,
+    blockContacts
+  } = useTelegram();
+  
+  // Use the dedicated accounts hook for proper data loading
+  const { accounts, isLoading: accountsLoading } = useAccounts();
+```
+
+**Change 3: Add loading protection in handleSendMessage (lines 505-513)**
+```typescript
+const handleSendMessage = async () => {
+  if ((!messageInput.trim() && !selectedImage) || !selectedConv) return;
+  
+  // Wait for accounts to load before attempting to send
+  if (accountsLoading) {
+    toast.info('Loading accounts, please wait...');
+    return;
+  }
+  
+  // CRITICAL: Always use the conversation's original account - never fallback to another account
+  const account = accounts.find(a => a.id === selectedConv.accountId);
+  if (!account) {
+    toast.error('Original account is not available. Cannot send from a different number.');
+    return;
+  }
+  // ... rest unchanged
+```
 
 ## Expected Outcome
-After implementing these changes:
-1. All conversations with messages (including replies) will appear in the sidebar
-2. Clicking on any conversation will immediately show cached messages or fetch them
-3. Messages will load quickly with proper loading indicators
-4. The UI will remain responsive during data fetching
 
-## Testing Verification
-After implementation:
-1. Navigate to Conversations page
-2. Verify all conversations with replies appear in the sidebar
-3. Click on any conversation - messages should load instantly or within 1-2 seconds
-4. Verify the console doesn't show fetch errors
+After implementing this fix:
+1. The `accounts` array will be properly populated from the database via `useAccounts` hook
+2. Messages will send correctly from the original account
+3. The error "Original account is not available" will only appear for genuinely deleted/unavailable accounts
+4. A loading message will appear if accounts haven't loaded yet
+
+## Testing Steps
+
+1. Navigate to the Conversations page
+2. Select any conversation
+3. Type a message and click Send
+4. Verify the message appears in the chat without any error
+5. Confirm the message is sent from the correct (original) account
+
