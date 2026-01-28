@@ -104,19 +104,8 @@ const Proxies: React.FC = () => {
   const [testResults, setTestResults] = useState<Map<string, TestResult>>(new Map());
   
   // Add form state
-  const [addTab, setAddTab] = useState<'single' | 'bulk'>('single');
-  const [singleProxy, setSingleProxy] = useState({
-    host: '',
-    port: '',
-    username: '',
-    password: '',
-    type: 'socks5' as const,
-  });
   const [bulkProxyType, setBulkProxyType] = useState<'http' | 'https' | 'socks4' | 'socks5'>('socks5');
   const [bulkProxies, setBulkProxies] = useState('');
-  const [isAdding, setIsAdding] = useState(false);
-  const [isTesting, setIsTesting] = useState(false);
-  const [singleTestResult, setSingleTestResult] = useState<TestResult | null>(null);
   const [parsedProxies, setParsedProxies] = useState<ProxyToAdd[]>([]);
   const [isTestingBulk, setIsTestingBulk] = useState(false);
   
@@ -223,75 +212,6 @@ const Proxies: React.FC = () => {
 
   // Get unique countries for filter
   const uniqueCountries = [...new Set(proxies.map(p => p.country).filter(Boolean))] as string[];
-
-  // Test a single proxy before adding
-  const testSingleProxy = async () => {
-    if (!singleProxy.host || !singleProxy.port) {
-      toast.error('Host and port are required');
-      return;
-    }
-
-    setIsTesting(true);
-    setSingleTestResult({ status: 'testing' });
-
-    try {
-      // Create a temporary proxy entry to test
-      const { data: tempProxy, error: insertError } = await supabase
-        .from('proxies')
-        .insert({
-          host: singleProxy.host.trim(),
-          port: parseInt(singleProxy.port),
-          username: singleProxy.username.trim() || null,
-          password: singleProxy.password || null,
-          proxy_type: singleProxy.type,
-          status: 'inactive',
-        })
-        .select()
-        .single();
-
-      if (insertError) throw insertError;
-
-      // Test the proxy
-      const { data, error } = await supabase.functions.invoke('test-proxies', {
-        body: { proxy_ids: [tempProxy.id], auto_detect_country: true }
-      });
-
-      if (error) throw error;
-
-      const result = data.results?.[0];
-      if (result?.success) {
-        setSingleTestResult({ 
-          status: 'success', 
-          responseTime: result.responseTime,
-          country: result.country 
-        });
-        toast.success(`Proxy is working! Response time: ${result.responseTime}ms`);
-        
-        // Update proxy status to active
-        await supabase
-          .from('proxies')
-          .update({ status: 'active' })
-          .eq('id', tempProxy.id);
-      } else {
-        setSingleTestResult({ status: 'failed', error: result?.error || 'Connection failed' });
-        toast.error(`Proxy test failed: ${result?.error || 'Connection failed'}`);
-        
-        // Delete the failed proxy
-        await supabase
-          .from('proxies')
-          .delete()
-          .eq('id', tempProxy.id);
-      }
-
-      refreshData();
-    } catch (error) {
-      console.error('Error testing proxy:', error);
-      setSingleTestResult({ status: 'failed', error: 'Test failed' });
-      toast.error('Failed to test proxy');
-    } finally {
-      setIsTesting(false);
-    }
-  };
 
   // Parse and preview bulk proxies - supports URL and colon formats
   const parseBulkProxies = () => {
@@ -410,24 +330,6 @@ const Proxies: React.FC = () => {
     } finally {
       setIsTestingBulk(false);
     }
-  };
-
-  const handleAddSingle = async () => {
-    if (!singleProxy.host || !singleProxy.port) {
-      toast.error('Host and port are required');
-      return;
-    }
-
-    // If no test was run, test first
-    if (!singleTestResult || singleTestResult.status !== 'success') {
-      await testSingleProxy();
-      return;
-    }
-
-    // Proxy was already added during test
-    setSingleProxy({ host: '', port: '', username: '', password: '', type: 'socks5' });
-    setSingleTestResult(null);
-    setIsAddOpen(false);
   };
 
   const handleAddBulk = async () => {
@@ -668,7 +570,6 @@ const Proxies: React.FC = () => {
             <Dialog open={isAddOpen} onOpenChange={(open) => {
               setIsAddOpen(open);
               if (!open) {
-                setSingleTestResult(null);
                 setParsedProxies([]);
               }
             }}>
@@ -685,227 +586,104 @@ const Proxies: React.FC = () => {
                     Proxies will be tested before being added
                   </DialogDescription>
                 </DialogHeader>
-                <Tabs value={addTab} onValueChange={(v) => setAddTab(v as 'single' | 'bulk')} className="mt-4">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="single">Single Proxy</TabsTrigger>
-                    <TabsTrigger value="bulk">Bulk Import</TabsTrigger>
-                  </TabsList>
+                <div className="space-y-4 mt-4">
+                  {/* SOCKS5 Recommendation Banner */}
+                  <div className="p-3 rounded-lg border border-green-500/30 bg-green-500/10 flex items-center gap-2">
+                    <Shield className="w-4 h-4 text-green-600" />
+                    <span className="text-sm text-green-700 dark:text-green-400">
+                      <strong>SOCKS5 is recommended</strong> for Telegram — better MTProto protocol support
+                    </span>
+                  </div>
                   
-                  <TabsContent value="single" className="space-y-4 mt-4">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Host</Label>
-                        <Input
-                          placeholder="proxy.example.com"
-                          value={singleProxy.host}
-                          onChange={(e) => {
-                            setSingleProxy({ ...singleProxy, host: e.target.value });
-                            setSingleTestResult(null);
-                          }}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Port</Label>
-                        <Input
-                          type="number"
-                          placeholder="8080"
-                          value={singleProxy.port}
-                          onChange={(e) => {
-                            setSingleProxy({ ...singleProxy, port: e.target.value });
-                            setSingleTestResult(null);
-                          }}
-                        />
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label>Username (optional)</Label>
-                        <Input
-                          placeholder="username"
-                          value={singleProxy.username}
-                          onChange={(e) => setSingleProxy({ ...singleProxy, username: e.target.value })}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Password (optional)</Label>
-                        <Input
-                          type="password"
-                          placeholder="password"
-                          value={singleProxy.password}
-                          onChange={(e) => setSingleProxy({ ...singleProxy, password: e.target.value })}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Type</Label>
-                      <Select
-                        value={singleProxy.type}
-                        onValueChange={(v) => setSingleProxy({ ...singleProxy, type: v as any })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {proxyTypeOptions.map(opt => (
-                            <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    
-                    {/* Test Result */}
-                    {singleTestResult && (
-                      <div className={cn(
-                        "p-3 rounded-lg border flex items-center gap-2",
-                        singleTestResult.status === 'testing' && "bg-primary/10 border-primary/30",
-                        singleTestResult.status === 'success' && "bg-green-500/10 border-green-500/30",
-                        singleTestResult.status === 'failed' && "bg-destructive/10 border-destructive/30"
-                      )}>
-                        {singleTestResult.status === 'testing' && (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="text-sm">Testing proxy connection...</span>
-                          </>
-                        )}
-                        {singleTestResult.status === 'success' && (
-                          <>
-                            <CheckCircle className="w-4 h-4 text-green-600" />
-                            <span className="text-sm text-green-600">
-                              Connected! Response time: {singleTestResult.responseTime}ms
-                              {singleTestResult.country && ` • ${getCountryFlag(singleTestResult.country)} ${singleTestResult.country}`}
-                            </span>
-                          </>
-                        )}
-                        {singleTestResult.status === 'failed' && (
-                          <>
-                            <XCircle className="w-4 h-4 text-destructive" />
-                            <span className="text-sm text-destructive">
-                              Failed: {singleTestResult.error}
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    )}
-                    
-                    <Button onClick={handleAddSingle} disabled={isTesting} className="w-full">
-                      {isTesting ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Testing...
-                        </>
-                      ) : singleTestResult?.status === 'success' ? (
-                        <>
-                          <CheckCircle className="w-4 h-4 mr-2" />
-                          Proxy Added
-                        </>
-                      ) : (
-                        <>
-                          <Wifi className="w-4 h-4 mr-2" />
-                          Test & Add Proxy
-                        </>
-                      )}
-                    </Button>
-                  </TabsContent>
+                  {/* Bulk Proxy Type Selector */}
+                  <div className="space-y-2">
+                    <Label>Default Proxy Type</Label>
+                    <Select
+                      value={bulkProxyType}
+                      onValueChange={(v) => setBulkProxyType(v as 'http' | 'https' | 'socks4' | 'socks5')}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="socks5">
+                          <span className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+                            SOCKS5 (Recommended)
+                          </span>
+                        </SelectItem>
+                        <SelectItem value="socks4">SOCKS4</SelectItem>
+                        <SelectItem value="https">HTTPS</SelectItem>
+                        <SelectItem value="http">
+                          <span className="flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
+                            HTTP (Not recommended)
+                          </span>
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                   
-                  <TabsContent value="bulk" className="space-y-4 mt-4">
-                    {/* SOCKS5 Recommendation Banner */}
-                    <div className="p-3 rounded-lg border border-green-500/30 bg-green-500/10 flex items-center gap-2">
-                      <Shield className="w-4 h-4 text-green-600" />
-                      <span className="text-sm text-green-700 dark:text-green-400">
-                        <strong>SOCKS5 is recommended</strong> for Telegram — better MTProto protocol support
-                      </span>
+                  <div className="space-y-2">
+                    <Label>Proxy List</Label>
+                    <Textarea
+                      placeholder="gate-eu.example.com:1000:username:password&#10;proxy.example.com:8080&#10;host:port:user:pass:socks5"
+                      value={bulkProxies}
+                      onChange={(e) => {
+                        setBulkProxies(e.target.value);
+                        setParsedProxies([]);
+                      }}
+                      rows={6}
+                      className="font-mono text-sm"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      One proxy per line. Format: <code className="px-1 py-0.5 bg-muted rounded">host:port:user:pass</code> or <code className="px-1 py-0.5 bg-muted rounded">host:port:user:pass:type</code>
+                    </p>
+                  </div>
+                  
+                  {parsedProxies.length > 0 && (
+                    <div className="max-h-40 overflow-y-auto space-y-1">
+                      {parsedProxies.map((p, i) => (
+                        <div key={i} className={cn(
+                          "flex items-center gap-2 p-2 rounded text-sm",
+                          p.testResult?.status === 'success' && "bg-green-500/10",
+                          p.testResult?.status === 'failed' && "bg-destructive/10",
+                          !p.testResult && "bg-muted"
+                        )}>
+                          {p.testResult?.status === 'success' && <CheckCircle className="w-4 h-4 text-green-600" />}
+                          {p.testResult?.status === 'failed' && <XCircle className="w-4 h-4 text-destructive" />}
+                          {!p.testResult && <Globe className="w-4 h-4 text-muted-foreground" />}
+                          <span>{p.host}:{p.port}</span>
+                          {p.testResult?.country && <span>{getCountryFlag(p.testResult.country)}</span>}
+                          {p.testResult?.responseTime && (
+                            <span className="text-xs text-muted-foreground">{p.testResult.responseTime}ms</span>
+                          )}
+                        </div>
+                      ))}
                     </div>
-                    
-                    {/* Bulk Proxy Type Selector */}
-                    <div className="space-y-2">
-                      <Label>Default Proxy Type</Label>
-                      <Select
-                        value={bulkProxyType}
-                        onValueChange={(v) => setBulkProxyType(v as 'http' | 'https' | 'socks4' | 'socks5')}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="socks5">
-                            <span className="flex items-center gap-2">
-                              <span className="w-2 h-2 rounded-full bg-green-500"></span>
-                              SOCKS5 (Recommended)
-                            </span>
-                          </SelectItem>
-                          <SelectItem value="socks4">SOCKS4</SelectItem>
-                          <SelectItem value="https">HTTPS</SelectItem>
-                          <SelectItem value="http">
-                            <span className="flex items-center gap-2">
-                              <span className="w-2 h-2 rounded-full bg-yellow-500"></span>
-                              HTTP (Not recommended)
-                            </span>
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <Label>Proxy List</Label>
-                      <Textarea
-                        placeholder="gate-eu.example.com:1000:username:password&#10;proxy.example.com:8080&#10;host:port:user:pass:socks5"
-                        value={bulkProxies}
-                        onChange={(e) => {
-                          setBulkProxies(e.target.value);
-                          setParsedProxies([]);
-                        }}
-                        rows={6}
-                        className="font-mono text-sm"
-                      />
-                      <p className="text-xs text-muted-foreground">
-                        One proxy per line. Format: <code className="px-1 py-0.5 bg-muted rounded">host:port:user:pass</code> or <code className="px-1 py-0.5 bg-muted rounded">host:port:user:pass:type</code>
-                      </p>
-                    </div>
-                    
-                    {parsedProxies.length > 0 && (
-                      <div className="max-h-40 overflow-y-auto space-y-1">
-                        {parsedProxies.map((p, i) => (
-                          <div key={i} className={cn(
-                            "flex items-center gap-2 p-2 rounded text-sm",
-                            p.testResult?.status === 'success' && "bg-green-500/10",
-                            p.testResult?.status === 'failed' && "bg-destructive/10",
-                            !p.testResult && "bg-muted"
-                          )}>
-                            {p.testResult?.status === 'success' && <CheckCircle className="w-4 h-4 text-green-600" />}
-                            {p.testResult?.status === 'failed' && <XCircle className="w-4 h-4 text-destructive" />}
-                            {!p.testResult && <Globe className="w-4 h-4 text-muted-foreground" />}
-                            <span>{p.host}:{p.port}</span>
-                            {p.testResult?.country && <span>{getCountryFlag(p.testResult.country)}</span>}
-                            {p.testResult?.responseTime && (
-                              <span className="text-xs text-muted-foreground">{p.testResult.responseTime}ms</span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
+                  )}
+                  
+                  <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
+                    <p className="text-xs text-muted-foreground">
+                      All proxies will be tested before being added. Only working proxies will be saved.
+                    </p>
+                  </div>
+                  
+                  <Button onClick={handleAddBulk} disabled={isTestingBulk} className="w-full">
+                    {isTestingBulk ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Testing Proxies...
+                      </>
+                    ) : (
+                      <>
+                        <Wifi className="w-4 h-4 mr-2" />
+                        Test & Add {bulkProxies.split('\n').filter(l => l.trim()).length} Proxies
+                      </>
                     )}
-                    
-                    <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 flex items-start gap-2">
-                      <AlertTriangle className="w-4 h-4 text-yellow-600 mt-0.5" />
-                      <p className="text-xs text-muted-foreground">
-                        All proxies will be tested before being added. Only working proxies will be saved.
-                      </p>
-                    </div>
-                    
-                    <Button onClick={handleAddBulk} disabled={isTestingBulk} className="w-full">
-                      {isTestingBulk ? (
-                        <>
-                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          Testing Proxies...
-                        </>
-                      ) : (
-                        <>
-                          <Wifi className="w-4 h-4 mr-2" />
-                          Test & Add {bulkProxies.split('\n').filter(l => l.trim()).length} Proxies
-                        </>
-                      )}
-                    </Button>
-                  </TabsContent>
-                </Tabs>
+                  </Button>
+                </div>
               </DialogContent>
             </Dialog>
           </div>
