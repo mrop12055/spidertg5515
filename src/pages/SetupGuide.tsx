@@ -306,7 +306,7 @@ async def check_client_health(client, account_id: str) -> bool:
 async def add_to_proxy_retry_queue(account_id: str, account_data: dict, proxy_data: dict = None):
     """
     Schedule retry after IMMEDIATE disconnect.
-    Tracks attempt count and schedules next retry after 3 minutes.
+    Tracks attempt count and schedules next retry after 1 minute.
     After 3 failed attempts, reports to backend to mark account inactive.
     """
     global _proxy_retry_queue
@@ -769,10 +769,10 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                     system_lang_code=system_lang_code,
                     proxy=proxy,
                     timeout=CONNECTION_TIMEOUT,
-                    connection_retries=3 if long_lived else 0,
-                    retry_delay=2 if long_lived else 0,
-                    auto_reconnect=long_lived,
-                    request_retries=3 if long_lived else 1
+                    connection_retries=0,  # NEVER retry internally - could bypass proxy
+                    retry_delay=0,
+                    auto_reconnect=False,  # NEVER auto-reconnect - could bypass proxy
+                    request_retries=1  # Allow 1 request retry for API calls only (not connection)
                 )
                 break  # Success - exit retry loop
             except Exception as db_err:
@@ -2140,37 +2140,40 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
     proxy = tasks[0].get("proxy")
     account_phone = account.get("phone_number", "????")[-4:]
     
+    # ========== SINGLE ATTEMPT - INSTANT DISCONNECT ON PROXY/NETWORK FAILURE ==========
+    # SQLite lock errors are handled internally by get_or_create_client
+    # Network/proxy errors trigger INSTANT disconnect - no retry at this level
     client = None
-    max_connection_retries = 3
     last_connection_error = None
     
-    # ========== RETRY LOOP FOR SQLITE LOCK ERRORS ==========
-    for attempt in range(max_connection_retries):
-        try:
-            # Open session ONCE for all tasks for this account
-            # IMPORTANT: Use no_cache=True because this runner restarts via asyncio.run(...)
-            # and cached Telethon clients cannot be reused across event loops.
-            client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
+    try:
+        # Open session ONCE for all tasks for this account
+        # IMPORTANT: Use no_cache=True because this runner restarts via asyncio.run(...)
+        # and cached Telethon clients cannot be reused across event loops.
+        client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
+        
+        if not client:
+            last_connection_error = "Could not connect client"
             
-            if client:
-                break  # Success - exit retry loop
-            else:
-                last_connection_error = "Could not connect client"
-                
-        except Exception as conn_err:
-            last_connection_error = str(conn_err)
-            err_lower = last_connection_error.lower()
-            
-            # Check for SQLite lock errors - retry with delay
-            if "database is locked" in err_lower and attempt < max_connection_retries - 1:
-                wait_time = 1.0 * (attempt + 1)  # 1s, 2s, 3s
-                print(f"    ⚠ [{account_phone}] SQLite lock, retry {attempt + 1}/{max_connection_retries} in {wait_time}s...")
-                await asyncio.sleep(wait_time)
-                continue
-            
-            # Non-lock error or final attempt - don't retry
-            print(f"    ✗ [{account_phone}] Connection error: {last_connection_error[:60]}")
-            break
+    except Exception as conn_err:
+        last_connection_error = str(conn_err)
+        err_lower = last_connection_error.lower()
+        
+        # ONLY retry for SQLite lock errors (local file contention - safe to retry)
+        if "database is locked" in err_lower:
+            for db_retry in range(3):
+                await asyncio.sleep(0.5 * (db_retry + 1))
+                try:
+                    client = await get_or_create_client(account, task_proxy=proxy, skip_avatar=True, no_cache=True)
+                    if client:
+                        break
+                except Exception as db_err:
+                    if "database is locked" not in str(db_err).lower():
+                        last_connection_error = str(db_err)
+                        break  # Not a lock error - stop retrying immediately
+        else:
+            # NETWORK/PROXY ERROR - no retry, session already disconnected by get_or_create_client
+            print(f"    ✗ [{account_phone}] Connection failed (instant disconnect): {last_connection_error[:60]}")
     
     # If no client after all retries, return errors for all tasks
     if not client:
@@ -3324,12 +3327,12 @@ _processing_batch = False
 # Track failed accounts with retry timestamps {account_id: retry_time}
 # Shared between keep_clients_alive and main_loop
 failed_connection_accounts = {}
-FAILED_RETRY_DELAY = 180  # 3 MINUTES to wait before retrying failed connection
+FAILED_RETRY_DELAY = 60  # 1 MINUTE to wait before retrying failed connection
 
 
 async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected"):
     """
-    Properly disconnect a session and schedule it for retry after 3 MINUTES.
+    Properly disconnect a session and schedule it for retry after 1 MINUTE.
     
     FIX V2: Routes network/proxy errors to add_to_proxy_retry_queue for 3-attempt limit.
     Also cancels ALL internal Telethon tasks to prevent GeneratorExit errors.
@@ -3523,7 +3526,7 @@ async def main_loop():
     print("  BUILD: 2026-01-27-contact-sync-fix")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
-    print("  🔄 Failed connections retry after 3 min cooldown")
+    print("  🔄 Failed connections retry after 1 min cooldown")
     print("  📨 Skips accounts without proxy/API")
     print("=" * 50)
     print("=" * 50)
@@ -3784,34 +3787,41 @@ async def main_loop():
                         acc_id = account.get("id")
                         phone = account.get("phone_number", acc_id[:8] if acc_id else "?")
                         
-                        # ========== CONNECTION WITH SQLITE LOCK RETRY ==========
+                        # ========== SINGLE ATTEMPT - INSTANT DISCONNECT ON PROXY/NETWORK FAILURE ==========
+                        # SQLite lock errors are handled internally by connect_account_with_fingerprint
+                        # Network/proxy errors trigger INSTANT disconnect - no retry at this level
                         client = active_clients.get(acc_id)
                         connection_error = None
-                        max_db_retries = 3
                         
                         if not client or not client.is_connected():
-                            for db_attempt in range(max_db_retries):
-                                try:
-                                    client, connection_error = await connect_account_with_fingerprint(
-                                        account, setup_handler=setup_message_handler, task_proxy=proxy,
-                                        skip_session_check=True  # Skip session check for message sending
-                                    )
-                                    if client:
-                                        break  # Success
-                                except Exception as conn_err:
-                                    connection_error = str(conn_err)
-                                    err_lower = connection_error.lower()
-                                    
-                                    # Retry on SQLite lock
-                                    if "database is locked" in err_lower and db_attempt < max_db_retries - 1:
-                                        wait_time = 0.5 * (db_attempt + 1)
-                                        print(f"    [{phone}] SQLite lock, retry {db_attempt + 1}/{max_db_retries} in {wait_time}s...")
-                                        await asyncio.sleep(wait_time)
-                                        continue
-                                    break  # Non-lock error - don't retry
+                            try:
+                                client, connection_error = await connect_account_with_fingerprint(
+                                    account, setup_handler=setup_message_handler, task_proxy=proxy,
+                                    skip_session_check=True  # Skip session check for message sending
+                                )
+                            except Exception as conn_err:
+                                connection_error = str(conn_err)
+                                err_lower = connection_error.lower()
+                                
+                                # ONLY retry for SQLite lock errors (local file contention - safe)
+                                if "database is locked" in err_lower:
+                                    for db_retry in range(3):
+                                        await asyncio.sleep(0.5 * (db_retry + 1))
+                                        try:
+                                            client, connection_error = await connect_account_with_fingerprint(
+                                                account, setup_handler=setup_message_handler, task_proxy=proxy,
+                                                skip_session_check=True
+                                            )
+                                            if client:
+                                                break
+                                        except Exception as db_err:
+                                            if "database is locked" not in str(db_err).lower():
+                                                connection_error = str(db_err)
+                                                break  # Not a lock error - stop immediately
+                                # else: NETWORK/PROXY ERROR - session already disconnected by connect_account_with_fingerprint
                             
                             if connection_error and not client:
-                                print(f"    [{phone}] Connection failed: {connection_error}")
+                                print(f"    [{phone}] Connection failed (instant disconnect): {connection_error[:60]}")
                                 # Report all messages as failed
                                 for msg in messages:
                                     if not connection_error.startswith("NETWORK_ERROR:"):
