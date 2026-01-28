@@ -119,16 +119,10 @@ export const PageHeader: React.FC<PageHeaderProps> = ({
       </div>
 
       {(action || children) && (
-        <motion.div
-          initial={shouldAnimate ? "hidden" : false}
-          animate="show"
-          variants={actionsVariants}
-          transition={{ duration: 0.4, delay: 0.25 }}
-          className="flex items-center gap-3"
-        >
+        <div className="flex items-center gap-3">
           {action}
           {children}
-        </motion.div>
+        </div>
       )}
     </motion.div>
   );
