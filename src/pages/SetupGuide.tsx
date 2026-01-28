@@ -833,7 +833,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                     "proxy_id": proxy_id,
                     "reason": f"Auth check failed: {str(auth_err)[:100]}"
                 }))
-                # Add to retry queue with 3-min delay
+                # Add to retry queue with 1-min delay (PROXY_RETRY_DELAY)
                 await add_to_proxy_retry_queue(account_id, account, task_proxy)
             else:
                 print(f"  [SESSION ERROR] Auth check failed for {phone}: {auth_err}")
