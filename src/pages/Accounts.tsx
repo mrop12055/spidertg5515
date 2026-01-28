@@ -2700,22 +2700,6 @@ const Accounts: React.FC = () => {
           )}
         </div>
 
-        {/* Bulk Actions Bar - Simplified selection indicator */}
-        <Card className={cn("transition-colors", selectedIds.size > 0 ? "border-primary/30 bg-primary/5" : "")}>
-          <CardContent className="p-3">
-            <div className="flex items-center gap-3 flex-wrap">
-              <Badge variant="secondary" className="font-medium">
-                {selectedIds.size} selected
-              </Badge>
-              
-              <div className="flex-1" />
-              
-              <Button variant="ghost" size="sm" onClick={() => { setSelectedIds(new Set()); setVerifyResults(new Map()); }} disabled={selectedIds.size === 0}>
-                Clear
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
 
         {/* SpamBot Progress */}
         {isSpamBotChecking && (
@@ -2981,12 +2965,33 @@ const Accounts: React.FC = () => {
             </DropdownMenuContent>
           </DropdownMenu>
           
-          {/* Actions Dropdown - Consolidated bulk actions */}
+          {/* Selection info + Actions Dropdown */}
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2">
+              <Badge variant="secondary" className="font-medium">
+                {selectedIds.size} selected
+              </Badge>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-7 px-2 text-xs"
+                onClick={() => { setSelectedIds(new Set()); setVerifyResults(new Map()); }}
+              >
+                <X className="w-3 h-3" />
+              </Button>
+            </div>
+          )}
+          
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-9 gap-2" disabled={selectedIds.size === 0}>
                 <Settings className="w-4 h-4" />
                 Actions
+                {selectedIds.size > 0 && (
+                  <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
+                    {selectedIds.size}
+                  </Badge>
+                )}
                 <ChevronDown className="w-3 h-3" />
               </Button>
             </DropdownMenuTrigger>
