@@ -850,7 +850,8 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                 me = await asyncio.wait_for(client.get_me(), timeout=5)
                 if not me:
                     print(f"  [BANNED] Account deleted: {account['phone_number']}")
-                    asyncio.create_task(report_session_check(account_id, success=False, error="Account deleted - get_me returned None"))
+                    if not skip_session_check:
+                        asyncio.create_task(report_session_check(account_id, success=False, error="Account deleted - get_me returned None"))
                     return None
                 
                 # SUCCESS - Only report if NOT a reconnection (to avoid spamming session checks)
@@ -864,29 +865,35 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                 
             except AuthKeyUnregisteredError:
                 print(f"  [EXPIRED] {account['phone_number']}: Auth key unregistered")
-                asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
+                if not skip_session_check:
+                    asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
                 return None
             except SessionRevokedError:
                 print(f"  [EXPIRED] {account['phone_number']}: Session revoked")
-                asyncio.create_task(report_session_check(account_id, success=False, error="Session revoked"))
+                if not skip_session_check:
+                    asyncio.create_task(report_session_check(account_id, success=False, error="Session revoked"))
                 return None
             except UserDeactivatedBanError:
                 print(f"  [BANNED] {account['phone_number']}: User deactivated/banned")
-                asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated or banned"))
+                if not skip_session_check:
+                    asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated or banned"))
                 return None
             except PhoneNumberBannedError:
                 print(f"  [BANNED] {account['phone_number']}: Phone number banned")
-                asyncio.create_task(report_session_check(account_id, success=False, error="Phone number banned"))
+                if not skip_session_check:
+                    asyncio.create_task(report_session_check(account_id, success=False, error="Phone number banned"))
                 return None
             except InputUserDeactivatedError:
                 print(f"  [BANNED] {account['phone_number']}: Input user deactivated")
-                asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated"))
+                if not skip_session_check:
+                    asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated"))
                 return None
             except Exception as me_err:
                 err_str = str(me_err).lower()
                 status = detect_account_status(err_str)
                 print(f"  [{status.upper()}] {account['phone_number']}: {me_err}")
-                asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
+                if not skip_session_check:
+                    asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
                 return None
         
         if setup_handler:
@@ -911,21 +918,25 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         return client
     except AuthKeyUnregisteredError:
         print(f"  [EXPIRED] {account['phone_number']}: Auth key unregistered")
-        asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
+        if not skip_session_check:
+            asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
         return None
     except SessionRevokedError:
         print(f"  [EXPIRED] {account['phone_number']}: Session revoked")
-        asyncio.create_task(report_session_check(account_id, success=False, error="Session revoked"))
+        if not skip_session_check:
+            asyncio.create_task(report_session_check(account_id, success=False, error="Session revoked"))
         return None
     except UserDeactivatedBanError:
         print(f"  [BANNED] {account['phone_number']}: User deactivated")
-        asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated"))
+        if not skip_session_check:
+            asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated"))
         return None
     except Exception as e:
         err_str = str(e).lower()
         status = detect_account_status(err_str)
         print(f"  [{status.upper()}] {account['phone_number']}: {e}")
-        asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
+        if not skip_session_check:
+            asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
         return None
 
 
