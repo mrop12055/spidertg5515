@@ -2828,13 +2828,14 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
         return None, f"Proxy error: {e}"
 
 
-async def sync_missed_messages(client, account_id: str, phone: str, last_synced_msg_ids: dict = None) -> tuple:
+async def sync_missed_messages(client, account_id: str, phone: str, last_synced_msg_ids: dict = None, last_offline_at = None) -> tuple:
     """
     Sync missed messages after connection using TWO strategies:
     1. catch_up() - syncs updates since last connection (may fail if session is stale)
     2. fetch_dialogs() - explicitly fetches unread messages from all dialogs (always works)
     
     Uses last_synced_msg_ids to skip messages that were already processed in previous runs.
+    Uses last_offline_at to only sync messages from when the runner was last offline (instead of fixed 24h).
     
     Returns: (success: bool, needs_retry: bool)
     """
@@ -2885,12 +2886,15 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                 sender_key = f"{account_id}_{sender_id}"
                 last_synced_id = last_synced_msg_ids.get(sender_key, 0)
                 
-                # Fetch unread messages from this dialog (limit to last 24 hours)
+                # Fetch unread messages from this dialog
                 messages = await client.get_messages(dialog.entity, limit=min(dialog.unread_count, 100))
                 
-                # Calculate 24 hour ago cutoff for missed message recovery
+                # Calculate sync cutoff based on last_offline_at or fallback to 24h
                 from datetime import datetime, timezone, timedelta
-                twenty_four_hours_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+                if last_offline_at:
+                    sync_cutoff = last_offline_at
+                else:
+                    sync_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
                 
                 max_msg_id = last_synced_id
                 for msg in reversed(messages):  # Process oldest first
@@ -2899,8 +2903,8 @@ async def sync_missed_messages(client, account_id: str, phone: str, last_synced_
                     if not msg.text and not msg.photo and not msg.video and not msg.document:
                         continue
                     
-                    # SKIP if message is older than 24 hours
-                    if msg.date and msg.date < twenty_four_hours_ago:
+                    # SKIP if message is older than sync cutoff (last offline time or 24h fallback)
+                    if msg.date and msg.date < sync_cutoff:
                         skipped_count += 1
                         continue
                     
@@ -3521,10 +3525,10 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-27-contact-sync-fix")
+    print("  LiveChat Runner (DYNAMIC SYNC WINDOW)")
+    print("  BUILD: 2026-01-28-offline-sync-fix")
     print("  [Incoming + Replies + Offline Sync]")
-    print("  ⏰ Only syncs messages from last 24 hours")
+    print("  ⏰ Syncs messages from last offline time (fallback: 24h)")
     print("  🔄 Failed connections retry after 1 min cooldown")
     print("  📨 Skips accounts without proxy/API")
     print("=" * 50)
@@ -3541,6 +3545,36 @@ async def main_loop():
     last_sync_retry = time.time()
     last_proxy_retry = time.time()
     iteration_count = 0
+    
+    # ========== FETCH LAST OFFLINE TIMESTAMP FOR ACCURATE SYNC ==========
+    last_offline_at = None
+    try:
+        http = get_http_client()
+        resp = await http.get(
+            f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
+            params={
+                "runner_name": "eq.livechat",
+                "select": "last_offline_at"
+            },
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}"
+            },
+            timeout=10
+        )
+        if resp.status_code == 200 and resp.json():
+            data = resp.json()[0]
+            if data.get("last_offline_at"):
+                from datetime import datetime
+                last_offline_at = datetime.fromisoformat(
+                    data["last_offline_at"].replace("Z", "+00:00")
+                )
+                print(f"  [SYNC] Will fetch messages since last offline: {last_offline_at}")
+    except Exception as e:
+        print(f"  [WARN] Could not fetch last_offline_at: {e}")
+    
+    if not last_offline_at:
+        print("  [SYNC] No offline timestamp found, using 24h fallback")
     
     # Start background task to keep clients catching updates
     asyncio.create_task(keep_clients_alive())
@@ -3632,8 +3666,8 @@ async def main_loop():
                                 timeout=CONNECT_TIMEOUT_SECONDS
                             )
                             if client:
-                                # Sync missed messages after successful connection
-                                sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
+                                # Sync missed messages after successful connection (using last_offline_at)
+                                sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids, last_offline_at)
                                 return acc_id, client, error, phone, needs_retry
                             else:
                                 # Connection failed - ensure session is cleaned up
@@ -3737,7 +3771,7 @@ async def main_loop():
                     if client and client.is_connected():
                         try:
                             print(f"  [SYNC RETRY] Retrying sync for {phone}...")
-                            sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids)
+                            sync_success, needs_retry = await sync_missed_messages(client, acc_id, phone, last_synced_msg_ids, last_offline_at)
                             
                             if sync_success:
                                 del pending_sync_accounts[acc_id]
@@ -3935,14 +3969,35 @@ def save_all_sessions_sync():
     """
     Synchronous wrapper to save all sessions - for use in signal handlers.
     Creates a new event loop to run the async save operation.
+    Also stores last_offline_at timestamp for accurate message sync on next startup.
     """
     import asyncio
-    from client_manager import active_clients, save_session_to_db
+    import requests
+    from datetime import datetime
+    from client_manager import active_clients, save_session_to_db, SUPABASE_URL, SUPABASE_KEY
+    
+    print("\\n  [SHUTDOWN] Saving sessions before exit...")
+    
+    # Store last offline timestamp for accurate message sync on next startup
+    try:
+        requests.patch(
+            f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
+            params={"runner_name": "eq.livechat"},
+            json={"last_offline_at": datetime.utcnow().isoformat() + "Z"},
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            timeout=5
+        )
+        print("  [OK] Saved last_offline_at timestamp")
+    except Exception as e:
+        print(f"  [WARN] Could not save offline timestamp: {e}")
     
     if not active_clients:
         return
-    
-    print("\\n  [SHUTDOWN] Saving sessions before exit...")
     
     try:
         loop = asyncio.new_event_loop()
