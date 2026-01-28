@@ -137,12 +137,13 @@ Deno.serve(async (req) => {
         .or('restricted_until.is.null,restricted_until.lte.' + nowIso)
         .select('id, phone_number'),
       
-      // Reset API daily usage counts at midnight (if running at midnight)
-      now.getUTCHours() === 0 ? supabase
+      // Reset API daily usage counts if last reset was more than 24 hours ago
+      supabase
         .from('telegram_api_credentials')
         .update({ daily_usage: 0, daily_usage_reset_at: nowIso })
+        .or(`daily_usage_reset_at.is.null,daily_usage_reset_at.lt.${oneDayAgo}`)
         .gt('daily_usage', 0)
-        .select('id') : Promise.resolve({ data: null }),
+        .select('id'),
     ]);
 
     stats.daily_counts_reset = resetAccountsResult.data?.length || 0;

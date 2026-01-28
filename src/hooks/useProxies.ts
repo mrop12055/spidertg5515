@@ -75,31 +75,70 @@ export const useProxies = () => {
     refetchOnWindowFocus: false,
   });
 
-  // Setup realtime subscription for optimistic updates
+  // Setup realtime subscription with debounced updates to prevent excessive refreshes
   useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const pendingUpdates: Map<string, any> = new Map();
+    const pendingDeletes: Set<string> = new Set();
+    let pendingInserts: any[] = [];
+    
+    const flushUpdates = () => {
+      // Apply all pending changes in one batch
+      queryClient.setQueryData<Proxy[]>(['proxies'], (old) => {
+        if (!old) return [];
+        
+        let result = [...old];
+        
+        // Apply deletes
+        if (pendingDeletes.size > 0) {
+          result = result.filter(p => !pendingDeletes.has(p.id));
+          pendingDeletes.clear();
+        }
+        
+        // Apply updates
+        if (pendingUpdates.size > 0) {
+          result = result.map(p => {
+            const update = pendingUpdates.get(p.id);
+            return update ? transformProxy(update) : p;
+          });
+          pendingUpdates.clear();
+        }
+        
+        // Apply inserts
+        if (pendingInserts.length > 0) {
+          const existingIds = new Set(result.map(p => p.id));
+          const newProxies = pendingInserts
+            .filter(p => !existingIds.has(p.id))
+            .map(transformProxy);
+          result = [...newProxies, ...result];
+          pendingInserts = [];
+        }
+        
+        return result;
+      });
+    };
+    
+    const scheduleFlush = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(flushUpdates, 500); // 500ms debounce
+    };
+
     const channel = supabase
       .channel('proxies-cache-sync')
       .on(
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'proxies' },
         (payload) => {
-          const newProxy = transformProxy(payload.new);
-          queryClient.setQueryData<Proxy[]>(['proxies'], (old) => {
-            if (!old) return [newProxy];
-            if (old.some(p => p.id === newProxy.id)) return old;
-            return [newProxy, ...old];
-          });
+          pendingInserts.push(payload.new);
+          scheduleFlush();
         }
       )
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'proxies' },
         (payload) => {
-          const updated = transformProxy(payload.new);
-          queryClient.setQueryData<Proxy[]>(['proxies'], (old) => {
-            if (!old) return [updated];
-            return old.map(p => p.id === updated.id ? updated : p);
-          });
+          pendingUpdates.set((payload.new as any).id, payload.new);
+          scheduleFlush();
         }
       )
       .on(
@@ -107,16 +146,16 @@ export const useProxies = () => {
         { event: 'DELETE', schema: 'public', table: 'proxies' },
         (payload) => {
           const deletedId = (payload.old as any)?.id;
-          if (!deletedId) return;
-          queryClient.setQueryData<Proxy[]>(['proxies'], (old) => {
-            if (!old) return [];
-            return old.filter(p => p.id !== deletedId);
-          });
+          if (deletedId) {
+            pendingDeletes.add(deletedId);
+            scheduleFlush();
+          }
         }
       )
       .subscribe();
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       supabase.removeChannel(channel);
     };
   }, [queryClient]);
