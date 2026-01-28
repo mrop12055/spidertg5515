@@ -44,7 +44,7 @@ const navItems: NavItem[] = [
   { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
-export const Sidebar: React.FC = () => {
+export const Sidebar: React.FC = React.memo(() => {
   const { logout } = useAuth();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
@@ -52,9 +52,16 @@ export const Sidebar: React.FC = () => {
   const { anyOfflineConfirmed } = useRunnerStatus();
 
   // Calculate count of unread *visible* chats (campaign/user-initiated only)
-  const totalUnread = conversations.filter(c => (c.firstMessageSent ?? false) && (c.unreadCount || 0) > 0).length;
+  // Memoize to prevent recalculation on every render
+  const totalUnread = React.useMemo(() => 
+    conversations.filter(c => (c.firstMessageSent ?? false) && (c.unreadCount || 0) > 0).length,
+    [conversations]
+  );
 
-  const filteredNavItems = navItems.filter(item => !item.superAdminOnly);
+  const filteredNavItems = React.useMemo(() => 
+    navItems.filter(item => !item.superAdminOnly),
+    []
+  );
 
   return (
     <aside 
@@ -185,4 +192,4 @@ export const Sidebar: React.FC = () => {
       </button>
     </aside>
   );
-};
+});
