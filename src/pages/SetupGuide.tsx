@@ -29,7 +29,7 @@ SUPABASE_KEY = "${supabaseKey}"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (ROUND-ROBIN API SYSTEM)
 
-BUILD: 2026-01-28-session-lock-fix
+BUILD: 2026-01-28-instant-kill-v2
 
 ROUND-ROBIN API CREDENTIALS:
 - Each task gets API credentials from the backend pool
@@ -587,7 +587,11 @@ async def retry_proxy_error_accounts(connected_ids_ref: set = None):
             error_str = str(e).lower()
             print(f"    [{phone}] ✗ Error: {str(e)[:100]}")
             
-            # If proxy error, ensure it's tracked (immediate disconnect already happened)
+            # CRITICAL FIX: Force disconnect session FIRST before ANY other action
+            # This ensures the account NEVER connects without proxy (prevents bans)
+            await force_disconnect_session(acc_id, f"retry_exception:{error_str[:30]}")
+            
+            # If proxy error, ensure it's tracked for retry
             if any(p in error_str for p in PROXY_ERROR_PATTERNS):
                 await add_to_proxy_retry_queue(acc_id, account_data, proxy_data)
             
@@ -831,7 +835,27 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
     else:
         print(f"  ✓ [FP] Using: {device_model} ({system_version})")
     
-    # ========== STEP 5: DECODE SESSION FILE ==========
+    # ========== STEP 5: CLEAN OLD SESSION FILE FIRST (INSTANT KILL SAFETY) ==========
+    # CRITICAL: Delete any existing session file BEFORE creating new client
+    # This prevents SQLite locks and ensures NO stale connection state exists
+    # that could cause the account to briefly connect without proxy
+    try:
+        import glob
+        phone_clean = account["phone_number"].replace("+", "")
+        session_patterns = [
+            os.path.join(SESSION_FOLDER, f"*{phone_clean}*.session"),
+            os.path.join(SESSION_FOLDER, f"{phone_clean}.session"),
+        ]
+        for pattern in session_patterns:
+            for session_file in glob.glob(pattern):
+                try:
+                    os.remove(session_file)
+                except:
+                    pass
+    except:
+        pass
+    
+    # ========== STEP 6: DECODE FRESH SESSION FILE ==========
     session_path = decode_session_file(account["phone_number"], session_data)
     if not session_path:
         return None
@@ -1031,6 +1055,11 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         return None
     except Exception as e:
         err_str = str(e).lower()
+        
+        # CRITICAL FIX: Force disconnect session FIRST to prevent any proxyless connection
+        # This ensures the account is killed IMMEDIATELY if any error occurs during connection
+        await force_disconnect_session(account_id, f"outer_exception:{err_str[:30]}")
+        
         status = detect_account_status(err_str)
         print(f"  [{status.upper()}] {account['phone_number']}: {e}")
         if not skip_session_check:
@@ -2921,6 +2950,10 @@ async def connect_account_with_fingerprint(account: dict, setup_handler=None, ta
             return None, "Proxy connection failed"
     except Exception as e:
         error_str = str(e).lower()
+        
+        # CRITICAL FIX: Force disconnect session FIRST - before ANY other action
+        # This ensures the account is killed IMMEDIATELY when proxy fails (prevents bans)
+        await force_disconnect_session(account_id, f"connect_exception:{error_str[:30]}")
         
         # Check if this is a LOCAL network error
         if is_network_error(error_str) or "winerror 64" in error_str:
