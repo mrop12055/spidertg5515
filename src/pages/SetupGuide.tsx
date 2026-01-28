@@ -347,7 +347,7 @@ def remove_from_proxy_retry_queue(account_id: str):
 
 
 def get_ready_proxy_retries() -> list:
-    """Get list of account IDs ready for proxy retry (3 min passed)."""
+    """Get list of account IDs ready for proxy retry (1 min passed)."""
     global _proxy_retry_queue
     
     now = time.time()
@@ -358,7 +358,7 @@ def get_ready_proxy_retries() -> list:
         if info.get("count", 0) >= PROXY_MAX_RETRIES:
             continue
         
-        # Check if enough time has passed (3 minutes)
+        # Check if enough time has passed (1 minute = PROXY_RETRY_DELAY)
         if now >= info.get("next_retry_at", 0):
             ready.append(acc_id)
     
@@ -367,8 +367,8 @@ def get_ready_proxy_retries() -> list:
 
 async def retry_proxy_error_accounts():
     """
-    Process accounts in the proxy retry queue that are ready for retry (3 min passed).
-    Uses the in-memory _proxy_retry_queue for tracking with 3-minute delays.
+    Process accounts in the proxy retry queue that are ready for retry (1 min passed).
+    Uses the in-memory _proxy_retry_queue for tracking with 1-minute delays.
     """
     global _proxy_retry_queue
     
@@ -3411,7 +3411,7 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
     is_proxy_error = any(p in reason_lower for p in proxy_patterns)
     
     if is_proxy_error:
-        # Use proxy retry queue with 3-attempt limit and 3-minute delay
+        # Use proxy retry queue with 3-attempt limit and 1-minute delay
         print(f"  [PROXY RETRY] {phone} - Adding to 3-attempt retry queue")
         await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
     else:
@@ -3571,7 +3571,7 @@ async def main_loop():
                 if stale_ids:
                     print(f"  [CLEANUP] Removed {len(stale_ids)} stale IDs from connected_ids")
                 
-                # Allow failed accounts to retry after their cooldown expires (180s/3min from failure)
+                # Allow failed accounts to retry after their cooldown expires (60s/1min from failure)
                 now = time.time()
                 expired_failures = [acc_id for acc_id, retry_time in failed_connection_accounts.items() if now > retry_time]
                 for acc_id in expired_failures:
