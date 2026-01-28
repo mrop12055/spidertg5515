@@ -1,6 +1,7 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Send, MessageSquare, UserCog, Flame, Ban, CheckCircle2, XCircle, Activity } from 'lucide-react';
+import { formatDistanceToNow } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { useRunnerStatus } from '@/hooks/useRunnerStatus';
 
@@ -68,7 +69,12 @@ export const RunnerStatusCard: React.FC = () => {
                   "text-[10px]",
                   runner.isOnline ? "text-green-600" : "text-destructive"
                 )}>
-                  {runner.isOnline ? 'LIVE' : 'Offline'}
+                  {runner.isOnline 
+                    ? 'LIVE' 
+                    : runner.lastSeen 
+                      ? `Offline ${formatDistanceToNow(runner.lastSeen, { addSuffix: false })}`
+                      : 'Offline'
+                  }
                 </p>
               </div>
             );
