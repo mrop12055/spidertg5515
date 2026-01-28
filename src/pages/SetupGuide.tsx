@@ -29,7 +29,7 @@ SUPABASE_KEY = "${supabaseKey}"
   const clientManagerPy = `"""
 TelegramCRM - Client Manager (ROUND-ROBIN API SYSTEM)
 
-BUILD: 2026-01-25-advanced-v2
+BUILD: 2026-01-28-session-lock-fix
 
 ROUND-ROBIN API CREDENTIALS:
 - Each task gets API credentials from the backend pool
@@ -137,7 +137,7 @@ message_queues: Dict[str, asyncio.Queue] = {}  # Per-account outgoing message qu
 
 # ========== PROXY ERROR RETRY SETTINGS ==========
 PROXY_RETRY_DELAY = 60    # Retry proxy error accounts after 1 MINUTE (60 seconds)
-PROXY_MAX_RETRIES = 2     # Mark inactive after 2 failed attempts (1 initial + 1 retry)
+PROXY_MAX_RETRIES = 3     # Mark inactive after 3 failed attempts (1 initial + 2 retries)
 
 # ========== SPLIT TIMEOUTS ==========
 CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
@@ -194,18 +194,25 @@ def get_http_client() -> httpx.AsyncClient:
 # Persistent retry tracking with timestamps: {account_id: {"count": int, "next_retry_at": float, "account_data": dict, "proxy_data": dict}}
 _proxy_retry_queue: Dict[str, dict] = {}
 
+# ========== CROSS-FUNCTION CONNECTION LOCK (prevents double connection attempts) ==========
+# Tracks accounts currently in the middle of a connection attempt (from ANY code path)
+_currently_connecting: set = set()
+
 
 async def force_disconnect_session(account_id: str, reason: str = "proxy_error"):
     """
     IMMEDIATELY disconnect and clear session from memory.
     Called the MOMENT a proxy failure is detected - before any retry logic.
     
-    FIX V2: Cancels ALL internal Telethon tasks (not just _updates_handle) to prevent
-    "coroutine ignored GeneratorExit" and "Task was destroyed" errors.
+    FIX V3: Also deletes the session file to prevent SQLite locks on retry.
+    Removes from _currently_connecting to allow future attempts.
     """
-    global active_clients, message_queues
+    global active_clients, message_queues, _currently_connecting
     
     phone = account_id[:8]
+    
+    # Step 0: Remove from connecting lock (allow future connection attempts)
+    _currently_connecting.discard(account_id)
     
     # Step 1: Remove from active clients FIRST (prevents any further operations)
     client = active_clients.pop(account_id, None)
@@ -260,7 +267,7 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
             # CRITICAL: Give MORE time for event loop to process pending callbacks
             # This prevents "coroutine ignored GeneratorExit" by letting
             # the _recv_loop coroutine exit cleanly
-            await asyncio.sleep(0.5)  # Increased from 0.2
+            await asyncio.sleep(1.0)  # Increased from 0.5 for file handle release
             
             # Force garbage collection to clean up any remaining references
             del client
@@ -274,6 +281,24 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
     # Step 3: Clear from message queue tracking if exists
     if account_id in message_queues:
         del message_queues[account_id]
+    
+    # Step 4: Delete session file to prevent SQLite locks on retry
+    try:
+        # Try to find session file using common patterns
+        import glob
+        session_patterns = [
+            os.path.join(SESSION_FOLDER, f"*{phone}*.session"),
+            os.path.join(SESSION_FOLDER, f"*{account_id[:8]}*.session"),
+        ]
+        for pattern in session_patterns:
+            for session_file in glob.glob(pattern):
+                try:
+                    os.remove(session_file)
+                    print(f"  [CLEANUP] Deleted session file: {os.path.basename(session_file)}")
+                except:
+                    pass
+    except:
+        pass
     
     return True
 
@@ -365,12 +390,14 @@ def get_ready_proxy_retries() -> list:
     return ready
 
 
-async def retry_proxy_error_accounts():
+async def retry_proxy_error_accounts(connected_ids_ref: set = None):
     """
     Process accounts in the proxy retry queue that are ready for retry (1 min passed).
     Uses the in-memory _proxy_retry_queue for tracking with 1-minute delays.
     
-    FIX 2026-01-28: Now processes up to 100 accounts in PARALLEL BATCHES instead of sequentially.
+    FIX 2026-01-28: 
+    - Now processes up to 100 accounts in PARALLEL BATCHES instead of sequentially.
+    - Accepts connected_ids_ref to immediately add reconnected accounts.
     """
     global _proxy_retry_queue
     
@@ -389,17 +416,61 @@ async def retry_proxy_error_accounts():
     http = get_http_client()
     from datetime import datetime
     
-    async def retry_one(acc_id: str) -> bool:
-        """Retry a single account connection. Returns True on success."""
+    http = get_http_client()
+    from datetime import datetime
+    
+    async def retry_one(acc_id: str, connected_ids_ref: set = None) -> bool:
+        """Retry a single account connection. Returns True on success.
+        
+        FIX V3: 
+        - Uses _currently_connecting lock to prevent double attempts
+        - Deletes old session file before retry to prevent SQLite locks
+        - Adds to connected_ids immediately on success
+        """
+        global _currently_connecting
+        
         info = _proxy_retry_queue.get(acc_id, {})
         account_data = info.get("account_data", {})
         proxy_data = info.get("proxy_data")
         retry_count = info.get("count", 0)
         phone = acc_id[:8]
         
+        # CRITICAL: Check if already being connected by another code path
+        if acc_id in _currently_connecting:
+            print(f"    [{phone}] ⏳ Already connecting (skipped)")
+            return False
+        
+        # CRITICAL: Check if already connected (reconnection already succeeded)
+        if acc_id in active_clients:
+            print(f"    [{phone}] ✓ Already connected")
+            remove_from_proxy_retry_queue(acc_id)
+            if connected_ids_ref is not None:
+                connected_ids_ref.add(acc_id)
+            return True
+        
+        # Add to connection lock
+        _currently_connecting.add(acc_id)
+        
         print(f"    [{phone}] Retry attempt {retry_count + 1}/{PROXY_MAX_RETRIES}...")
         
         try:
+            # STEP 0: Delete old session file to prevent SQLite locks
+            try:
+                import glob
+                session_patterns = [
+                    os.path.join(SESSION_FOLDER, f"*{phone}*.session"),
+                    os.path.join(SESSION_FOLDER, f"*{acc_id[:8]}*.session"),
+                ]
+                for pattern in session_patterns:
+                    for session_file in glob.glob(pattern):
+                        try:
+                            os.remove(session_file)
+                            print(f"    [{phone}] Cleaned up old session file")
+                        except:
+                            pass
+            except:
+                pass
+            
             # Fetch fresh account data from database if not cached
             if not account_data.get("session_data"):
                 resp = await http.get(
@@ -478,6 +549,10 @@ async def retry_proxy_error_accounts():
                 # SUCCESS! Clear from retry queue
                 remove_from_proxy_retry_queue(acc_id)
                 
+                # CRITICAL: Add to connected_ids IMMEDIATELY to prevent normal loop from reconnecting
+                if connected_ids_ref is not None:
+                    connected_ids_ref.add(acc_id)
+                
                 # Update database to clear disabled_reason
                 try:
                     update_resp = await http.patch(
@@ -517,10 +592,13 @@ async def retry_proxy_error_accounts():
                 await add_to_proxy_retry_queue(acc_id, account_data, proxy_data)
             
             return False
+        finally:
+            # ALWAYS remove from connection lock when done (success or failure)
+            _currently_connecting.discard(acc_id)
     
     # Process ALL ready accounts in PARALLEL (up to 100 at once)
     results = await asyncio.gather(
-        *[retry_one(acc_id) for acc_id in batch],
+        *[retry_one(acc_id, connected_ids_ref) for acc_id in batch],
         return_exceptions=True
     )
     
@@ -2622,7 +2700,7 @@ if __name__ == "__main__":
 LiveChat Runner - Handles incoming messages and live chat replies
 RUNS FOREVER with crash recovery, memory cleanup, and heartbeat logging
 
-BUILD: 2026-01-16-sqlite-lock-fix
+BUILD: 2026-01-28-session-lock-fix
 
 ORDER OF OPERATIONS (CRITICAL):
 1. PROXY FIRST - check assigned proxy is valid and active (MANDATORY)
@@ -2661,7 +2739,7 @@ from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
     retry_proxy_error_accounts, log_error, check_client_health, add_to_proxy_retry_queue,
-    force_disconnect_session, HTTP_TIMEOUT_UPLOAD, _proxy_retry_queue
+    force_disconnect_session, HTTP_TIMEOUT_UPLOAD, _proxy_retry_queue, _currently_connecting
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
@@ -3556,8 +3634,8 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (DYNAMIC SYNC WINDOW)")
-    print("  BUILD: 2026-01-28-offline-sync-fix")
+    print("  LiveChat Runner (SESSION LOCK FIX)")
+    print("  BUILD: 2026-01-28-session-lock-fix")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Syncs messages from last offline time (fallback: 24h)")
     print("  🔄 Failed connections retry after 1 min cooldown")
@@ -3616,7 +3694,7 @@ async def main_loop():
             
             # ========== RETRY PROXY ERROR ACCOUNTS (every 30s) ==========
             if time.time() - last_proxy_retry >= 30:
-                await retry_proxy_error_accounts()
+                await retry_proxy_error_accounts(connected_ids)  # Pass connected_ids to update immediately
                 last_proxy_retry = time.time()
             
             # Heartbeat logging
@@ -3657,12 +3735,13 @@ async def main_loop():
             if task_type == "wait":
                 accounts = task.get("accounts", [])
                 # Only connect NEW accounts (skip already connected, recently failed, AND in proxy retry queue)
-                # FIX 2026-01-28: Added _proxy_retry_queue check to isolate retry-queue accounts
+                # FIX 2026-01-28: Added _proxy_retry_queue and _currently_connecting check to prevent double connections
                 new_accounts = [
                     acc for acc in accounts 
                     if acc.get("id") not in connected_ids 
                     and acc.get("id") not in failed_connection_accounts
                     and acc.get("id") not in _proxy_retry_queue  # Retry-queue isolation
+                    and acc.get("id") not in _currently_connecting  # Connection-in-progress isolation
                 ]
                 
                 if new_accounts:
@@ -3673,6 +3752,16 @@ async def main_loop():
                         phone = acc.get("phone_number", "???")[-4:]
                         if not acc_id:
                             return None, None, "No ID", phone, False
+                        
+                        # ========== CROSS-FUNCTION LOCK: Prevent double connection attempts ==========
+                        if acc_id in _currently_connecting:
+                            print(f"  [{phone}] ⏳ Already connecting (skipped)")
+                            return acc_id, None, "Already connecting", phone, False
+                        
+                        # ========== PRE-CHECK: Skip if already connected ==========
+                        if acc_id in active_clients:
+                            print(f"  [{phone}] ✓ Already connected")
+                            return acc_id, active_clients[acc_id], None, phone, False
                         
                         # ========== PRE-CHECK: Validate required resources ==========
                         # Each account MUST have its own proxy and API credentials
@@ -3687,6 +3776,9 @@ async def main_loop():
                         if not api_id or not api_hash:
                             print(f"  [{phone}] SKIP - No API credentials assigned")
                             return acc_id, None, "No API credentials", phone, False
+                        
+                        # Add to connection lock
+                        _currently_connecting.add(acc_id)
                         
                         try:
                             client, error = await asyncio.wait_for(
@@ -3730,6 +3822,9 @@ async def main_loop():
                                 except:
                                     pass
                             return acc_id, None, f"ERROR:{e}", phone, False
+                        finally:
+                            # ALWAYS remove from connection lock when done
+                            _currently_connecting.discard(acc_id)
                     
                     results = await asyncio.gather(
                         *[connect_one(acc) for acc in new_accounts],
