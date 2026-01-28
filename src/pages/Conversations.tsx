@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
+import { useAccounts } from '@/hooks/useAccounts';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
@@ -61,7 +62,6 @@ const Chat: React.FC = () => {
     messages, 
     sendMessage, 
     sendMediaMessage,
-    accounts, 
     typingUsers,
     markConversationAsRead,
     startNewConversation,
@@ -70,6 +70,9 @@ const Chat: React.FC = () => {
     blockContact,
     blockContacts
   } = useTelegram();
+  
+  // Use the dedicated accounts hook for proper data loading
+  const { accounts, isLoading: accountsLoading } = useAccounts();
   
   const [selectedConversation, setSelectedConversation] = useState<string | null>(null);
   const [messageInput, setMessageInput] = useState('');
@@ -504,6 +507,12 @@ const Chat: React.FC = () => {
 
   const handleSendMessage = async () => {
     if ((!messageInput.trim() && !selectedImage) || !selectedConv) return;
+    
+    // Wait for accounts to load before attempting to send
+    if (accountsLoading) {
+      toast.info('Loading accounts, please wait...');
+      return;
+    }
     
     // CRITICAL: Always use the conversation's original account - never fallback to another account
     const account = accounts.find(a => a.id === selectedConv.accountId);
