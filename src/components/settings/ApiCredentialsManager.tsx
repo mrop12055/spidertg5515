@@ -36,8 +36,8 @@ export const ApiCredentialsManager: React.FC = () => {
   const [bulkInput, setBulkInput] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
-  const fetchCredentials = async () => {
-    setIsLoading(true);
+  const fetchCredentials = async (showLoading = true) => {
+    if (showLoading) setIsLoading(true);
     try {
       const { data, error } = await supabase
         .from('telegram_api_credentials')
@@ -59,18 +59,35 @@ export const ApiCredentialsManager: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchCredentials();
+    fetchCredentials(true); // Initial load with spinner
     
-    // Auto-refresh on window focus
-    const handleFocus = () => fetchCredentials();
+    // Realtime subscription for live updates (no full reload)
+    const channel = supabase
+      .channel('api-credentials-live')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'telegram_api_credentials' },
+        (payload) => {
+          if (payload.eventType === 'UPDATE') {
+            setCredentials(prev => prev.map(c => 
+              c.id === (payload.new as ApiCredential).id ? { ...c, ...(payload.new as ApiCredential) } : c
+            ));
+          } else if (payload.eventType === 'INSERT') {
+            fetchCredentials(false);
+          } else if (payload.eventType === 'DELETE') {
+            setCredentials(prev => prev.filter(c => c.id !== (payload.old as ApiCredential).id));
+          }
+        }
+      )
+      .subscribe();
+    
+    // Window focus - refresh without spinner
+    const handleFocus = () => fetchCredentials(false);
     window.addEventListener('focus', handleFocus);
-    
-    // Periodic refresh every 30 seconds
-    const interval = setInterval(fetchCredentials, 30000);
     
     return () => {
       window.removeEventListener('focus', handleFocus);
-      clearInterval(interval);
+      supabase.removeChannel(channel);
     };
   }, []);
 
@@ -235,7 +252,7 @@ export const ApiCredentialsManager: React.FC = () => {
             </CardDescription>
           </div>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={fetchCredentials} disabled={isLoading}>
+            <Button variant="outline" size="sm" onClick={() => fetchCredentials(true)} disabled={isLoading}>
               <RefreshCw className={`w-4 h-4 mr-2 ${isLoading ? 'animate-spin' : ''}`} />
               Refresh
             </Button>
@@ -304,7 +321,7 @@ export const ApiCredentialsManager: React.FC = () => {
           </div>
           <div className="p-3 rounded-lg border bg-card">
             <p className="text-2xl font-bold text-blue-500">{totalUsage.toLocaleString()}</p>
-            <p className="text-xs text-muted-foreground">Total Messages Sent</p>
+            <p className="text-xs text-muted-foreground">Lifetime Usage</p>
           </div>
           <div className="p-3 rounded-lg border bg-card">
             <p className="text-2xl font-bold text-amber-500">{todayUsage.toLocaleString()}</p>
@@ -342,7 +359,7 @@ export const ApiCredentialsManager: React.FC = () => {
                   <TableHead>Name</TableHead>
                   <TableHead>API ID</TableHead>
                   <TableHead>Type</TableHead>
-                  <TableHead className="text-center">Usage</TableHead>
+                  <TableHead className="text-center">Today</TableHead>
                   <TableHead className="text-center">Last Used</TableHead>
                   <TableHead className="text-center">Active</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
@@ -357,8 +374,8 @@ export const ApiCredentialsManager: React.FC = () => {
                       <Badge variant="outline">{cred.client_type}</Badge>
                     </TableCell>
                     <TableCell className="text-center">
-                      <Badge variant={cred.usage_count > 0 ? "default" : "secondary"}>
-                        {cred.usage_count || 0}
+                      <Badge variant={cred.daily_usage > 0 ? "default" : "secondary"}>
+                        {cred.daily_usage || 0}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-center text-xs text-muted-foreground">
