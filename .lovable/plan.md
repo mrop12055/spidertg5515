@@ -1,61 +1,92 @@
 
-# Plan: Fix Campaign Recipients Upload Issue
+# Plan: Fix Runner Restart Loop
 
-## Problem Found
+## Problem Identified
 
-Your campaign shows 14 recipients but has **zero actual recipients** in the database:
-- Campaign `recipient_count`: 14
-- Actual `campaign_recipients` rows: 0
+The runner is stuck in a restart loop because of the outer `while True:` wrapper in `__main__`:
 
-**Root Cause**: When the campaign was created, the old code tried to call an edge function (`send-bulk-messages/upload-recipients`) that no longer exists. The call failed silently, so recipients were never inserted.
+```python
+if __name__ == "__main__":
+    while True:
+        try:
+            asyncio.run(main())  # main() exits normally
+        except KeyboardInterrupt:
+            break
+        except Exception as e:
+            print("Crashed, restarting...")
+            time.sleep(5)
+```
 
-The new code I added directly inserts to the database, but your campaign was created BEFORE that fix was applied.
+When `main()` exits for ANY reason (including normal exit when `RUNNING = False`), the outer loop immediately restarts it. This causes the infinite "CONNECTING ACCOUNTS → No tasks → CONNECTING ACCOUNTS" loop you're seeing.
+
+---
+
+## Root Cause
+
+The `RUNNING` flag is set to `False` by the signal handler (Ctrl+C), but:
+1. `main()` exits its while loop cleanly
+2. The outer `while True` loop sees no exception
+3. It immediately calls `asyncio.run(main())` again
+4. The new `main()` call has `RUNNING = True` (reset at module level)
+
+This creates the restart loop.
 
 ---
 
 ## Solution
 
-### Option 1: Delete and recreate the campaign (Recommended)
-Simply delete this campaign and create a new one. The new code will properly insert recipients.
+Modify the `__main__` block to only restart on actual crashes, not on clean exits:
 
-### Option 2: Fix the existing campaign
-Re-upload recipients manually using the "Upload Recipients" button in the campaign.
+### File: `src/pages/SetupGuide.tsx`
+
+**Change the `__main__` block (around line 1265):**
+
+```python
+if __name__ == "__main__":
+    print("\\n" + "="*50)
+    print("  pip install telethon httpx pysocks")
+    print("="*50 + "\\n")
+    
+    while True:
+        try:
+            asyncio.run(main())
+            # If main() exits cleanly (RUNNING = False), break the loop
+            if not RUNNING:
+                print("  ✓ Clean shutdown")
+                break
+        except KeyboardInterrupt:
+            print("\\n⏹ Stopped")
+            break
+        except Exception as e:
+            print(f"\\n⚠ Crashed: {e}\\n  Restarting in 5s...")
+            time.sleep(5)
+            # Reset RUNNING flag for restart
+            RUNNING = True
+```
 
 ---
 
-## Technical Fix Required
+## What This Fixes
 
-Add better error handling and validation to prevent this in the future:
+| Before | After |
+|--------|-------|
+| `main()` exits → immediately restart | `main()` exits → check `RUNNING` flag |
+| Signal handler sets `RUNNING=False` → ignored | `RUNNING=False` → break outer loop |
+| Infinite restart loop | Clean shutdown or crash-only restart |
 
-### File: `src/pages/Campaigns.tsx`
+---
 
-**Change in `handleCreateCampaign` (around line 655-695):**
+## Expected Behavior After Fix
 
-```typescript
-// After uploadRecipients call, verify it worked
-const result = await uploadRecipients(createdCampaign.id, recipientsWithSeats);
-
-if (!result || result.inserted === 0) {
-  // Delete the campaign if no recipients were inserted
-  await supabase.from('campaigns').delete().eq('id', createdCampaign.id);
-  toast.error('Failed to upload recipients - campaign cancelled');
-  return;
-}
-```
-
-This ensures that if recipient upload fails, the campaign is deleted rather than left in an invalid state.
+1. **Normal operation**: Runner connects, processes tasks, stays running
+2. **Ctrl+C**: Sets `RUNNING=False`, exits main loop, breaks outer loop, stops
+3. **Crash/Exception**: Logs error, waits 5 seconds, resets `RUNNING=True`, restarts
 
 ---
 
 ## Summary
 
-| Issue | Cause | Fix |
-|-------|-------|-----|
-| Campaign has 0 recipients | Old edge function was deleted | Delete campaign and recreate with new code |
-| Future prevention | No validation after upload | Add check to delete campaign if upload fails |
-
----
-
-## Immediate Action
-
-Delete the campaign "asfasdfs" and create a new one. The new code will properly insert the recipients into the database.
+Single change to the `__main__` block to:
+1. Check if exit was intentional (`RUNNING = False`) and break
+2. Only restart on actual exceptions/crashes
+3. Reset `RUNNING = True` before restart so new loop works
