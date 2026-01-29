@@ -3759,7 +3759,7 @@ async def main_loop():
             
             # ========== RETRY FAILED ACCOUNTS (every 30s) ==========
             if time.time() - last_proxy_retry >= 30:
-                await retry_failed_accounts_parallel(connected_ids)  # Uses simplified _failed_accounts tracking
+                await retry_proxy_error_accounts(connected_ids)  # Uses simplified _failed_accounts tracking
                 last_proxy_retry = time.time()
             
             # Heartbeat logging
