@@ -1460,7 +1460,7 @@ serve(async (req) => {
       }
 
       case "proxy_timeout_disable": {
-        // Proxy connection failed after 3-minute timeout - IMMEDIATE DISABLE
+        // Proxy connection failed after 1-minute timeout - IMMEDIATE DISABLE
         // Session was already killed in Python runner - now mark account as inactive
         // CRITICAL: Proxy is NEVER removed - admin must fix manually
         const { account_id, proxy_id, reason } = result;
@@ -1473,7 +1473,7 @@ serve(async (req) => {
           .update({
             status: "disconnected",
             auto_disabled: true,
-            disabled_reason: "Connection timeout - proxy failed after 3 minutes",
+            disabled_reason: "Connection timeout - proxy failed after 1 minute",
             ban_reason: reason || "Proxy connection timeout",
             last_active: new Date().toISOString()
             // IMPORTANT: proxy_id is NOT changed - stays assigned
@@ -1498,7 +1498,7 @@ serve(async (req) => {
             .from("proxy_errors")
             .insert({
               proxy_id: proxy_id,
-              error_message: reason || "Proxy connection timeout after 3 minutes",
+              error_message: reason || "Proxy connection timeout after 1 minute",
               error_type: "connection_timeout"
             });
         } else if (account_id) {
