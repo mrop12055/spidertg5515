@@ -1,67 +1,55 @@
 
-# Plan: Fix Runner Restart Loop
+# Plan: Fix Campaign Recipient Extraction Bug
 
-## Problem Identified
+## Problem Found
 
-The runner is stuck in a restart loop because of the outer `while True:` wrapper in `__main__`:
+The Python runner is receiving recipient data as an **object** (dictionary) but treating it as a **string**:
 
-```python
-if __name__ == "__main__":
-    while True:
-        try:
-            asyncio.run(main())  # main() exits normally
-        except KeyboardInterrupt:
-            break
-        except Exception as e:
-            print("Crashed, restarting...")
-            time.sleep(5)
+```text
+Edge Function sends:
+  recipient: { phone: "+919176830038", name: null, ... }
+
+Python extracts:
+  task.get("recipient")  →  {"phone": "+919176830038", ...}  (dict, not string!)
+
+Python then calls:
+  send_message(client, "{'phone': '+919...'}", ...)  →  FAILS
 ```
 
-When `main()` exits for ANY reason (including normal exit when `RUNNING = False`), the outer loop immediately restarts it. This causes the infinite "CONNECTING ACCOUNTS → No tasks → CONNECTING ACCOUNTS" loop you're seeing.
-
----
-
-## Root Cause
-
-The `RUNNING` flag is set to `False` by the signal handler (Ctrl+C), but:
-1. `main()` exits its while loop cleanly
-2. The outer `while True` loop sees no exception
-3. It immediately calls `asyncio.run(main())` again
-4. The new `main()` call has `RUNNING = True` (reset at module level)
-
-This creates the restart loop.
+The error `Recipient not found` occurs because the code is trying to use `{'phone': '+919...'}` as a phone number.
 
 ---
 
 ## Solution
 
-Modify the `__main__` block to only restart on actual crashes, not on clean exits:
+Update the recipient extraction logic in the Python runner to handle both:
+1. **String format** (phone number directly)
+2. **Object format** (dictionary with `phone` key)
 
 ### File: `src/pages/SetupGuide.tsx`
 
-**Change the `__main__` block (around line 1265):**
+**Change in `process()` function (around line 1095-1101):**
 
 ```python
-if __name__ == "__main__":
-    print("\\n" + "="*50)
-    print("  pip install telethon httpx pysocks")
-    print("="*50 + "\\n")
-    
-    while True:
-        try:
-            asyncio.run(main())
-            # If main() exits cleanly (RUNNING = False), break the loop
-            if not RUNNING:
-                print("  ✓ Clean shutdown")
-                break
-        except KeyboardInterrupt:
-            print("\\n⏹ Stopped")
-            break
-        except Exception as e:
-            print(f"\\n⚠ Crashed: {e}\\n  Restarting in 5s...")
-            time.sleep(5)
-            # Reset RUNNING flag for restart
-            RUNNING = True
+# Extract recipient - handle both string and object formats
+raw_recipient = (
+    task.get("recipient") or 
+    td.get("recipient_phone") or 
+    td.get("recipient_telegram_id") or 
+    msg.get("recipient") or 
+    msg.get("recipient_phone")
+)
+
+# If recipient is a dict (from campaign), extract the phone/telegram_id
+if isinstance(raw_recipient, dict):
+    recipient = (
+        raw_recipient.get("phone") or 
+        raw_recipient.get("telegram_id") or 
+        raw_recipient.get("username") or 
+        ""
+    )
+else:
+    recipient = raw_recipient
 ```
 
 ---
@@ -70,23 +58,30 @@ if __name__ == "__main__":
 
 | Before | After |
 |--------|-------|
-| `main()` exits → immediately restart | `main()` exits → check `RUNNING` flag |
-| Signal handler sets `RUNNING=False` → ignored | `RUNNING=False` → break outer loop |
-| Infinite restart loop | Clean shutdown or crash-only restart |
+| `recipient = {"phone": "+91..."}` | `recipient = "+919176830038"` |
+| Passed dict to `send_message()` | Passed actual phone string |
+| "Recipient not found" for ALL | Messages sent successfully |
 
 ---
 
-## Expected Behavior After Fix
+## Root Cause Analysis
 
-1. **Normal operation**: Runner connects, processes tasks, stays running
-2. **Ctrl+C**: Sets `RUNNING=False`, exits main loop, breaks outer loop, stops
-3. **Crash/Exception**: Logs error, waits 5 seconds, resets `RUNNING=True`, restarts
+The edge function correctly structures campaign tasks with recipient as an object:
+```javascript
+recipient: {
+  phone: r.phone_number,      // "+919176830038"
+  name: r.name,               // null
+  telegram_id: null,
+  username: null,
+}
+```
+
+But the Python runner assumed `task.get("recipient")` would return a string, not a dict.
 
 ---
 
 ## Summary
 
-Single change to the `__main__` block to:
-1. Check if exit was intentional (`RUNNING = False`) and break
-2. Only restart on actual exceptions/crashes
-3. Reset `RUNNING = True` before restart so new loop works
+Single change to extract the phone number from the recipient object when it's a dictionary instead of a string.
+
+After this fix, re-download the `unified_runner.py` from the Setup Guide and restart it.
