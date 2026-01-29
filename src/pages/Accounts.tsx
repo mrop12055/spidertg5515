@@ -934,20 +934,19 @@ const Accounts: React.FC = () => {
       const idsToDelete = Array.from(selectedIds);
       const BATCH_SIZE = 50; // Avoid URL length limits
       
-      // Collect all proxy and API credential IDs first (in batches)
+      // Collect proxy IDs first (in batches)
+      // Note: api_credential_id no longer needs cleanup - per-account credentials are stored in telegram_accounts
       const proxyIdsToDelete: string[] = [];
-      const apiCredentialIdsToDelete: string[] = [];
       
       for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
         const batch = idsToDelete.slice(i, i + BATCH_SIZE);
         const { data: accountsToDelete } = await supabase
           .from('telegram_accounts')
-          .select('id, proxy_id, api_credential_id')
+          .select('id, proxy_id')
           .in('id', batch);
         
         (accountsToDelete || []).forEach(a => {
           if (a.proxy_id) proxyIdsToDelete.push(a.proxy_id);
-          if (a.api_credential_id) apiCredentialIdsToDelete.push(a.api_credential_id);
         });
       }
       
@@ -1013,11 +1012,8 @@ const Accounts: React.FC = () => {
         await supabase.from('proxies').delete().in('id', batch);
       }
       
-      // Delete API credentials in batches
-      for (let i = 0; i < apiCredentialIdsToDelete.length; i += BATCH_SIZE) {
-        const batch = apiCredentialIdsToDelete.slice(i, i + BATCH_SIZE);
-        await supabase.from('telegram_api_credentials').delete().in('id', batch);
-      }
+      // Note: Per-account API credentials (api_id, api_hash) are stored directly in telegram_accounts
+      // and are automatically deleted with the account - no separate cleanup needed
       
       toast.success(`Deleted ${selectedIds.size} account(s)`);
       setSelectedIds(new Set());

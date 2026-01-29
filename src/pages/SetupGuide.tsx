@@ -15,9 +15,9 @@ const SetupGuide: React.FC = () => {
 const configPy = `"""
 TelegramCRM - Configuration
 
-ROUND-ROBIN API SYSTEM: Each request receives API credentials from the pool.
-The backend rotates through all APIs evenly (lowest usage_count first).
-API credentials come in the task payload from get-next-task / get-batch-tasks.
+PER-ACCOUNT API SYSTEM: Each account uses its own API credentials from JSON metadata.
+Credentials (api_id, api_hash) and device fingerprint are imported with the session file.
+Legacy accounts without JSON credentials fall back to the admin pool (round-robin).
 """
 
 BACKEND_URL = "${supabaseUrl}/functions/v1"

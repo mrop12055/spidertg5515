@@ -196,7 +196,6 @@ const Logs: React.FC = () => {
           'logout_sessions': 'Logout Sessions',
           'spambot_check': 'SpamBot Check',
           'verify_session': 'Session Verify',
-          'fingerprint_generated': 'Fingerprint Gen',
         };
         return labels[taskType] || taskType.replace(/_/g, ' ');
       };
@@ -209,7 +208,6 @@ const Logs: React.FC = () => {
           case 'change_photo': return <UserCheck className="w-4 h-4" />;
           case 'spambot_check': return <Zap className="w-4 h-4" />;
           case 'verify_session': return <CheckCircle className="w-4 h-4" />;
-          case 'fingerprint_generated': return <Database className="w-4 h-4" />;
           default: return <ClipboardList className="w-4 h-4" />;
         }
       };
@@ -641,7 +639,6 @@ const Logs: React.FC = () => {
       case 'Logout Sessions': return <Shield className="w-3.5 h-3.5" />;
       case 'SpamBot Check': return <UserCheck className="w-3.5 h-3.5" />;
       case 'Session Verify': return <CheckCircle className="w-3.5 h-3.5" />;
-      case 'Fingerprint Gen': return <Database className="w-3.5 h-3.5" />;
       case 'Warmup Chat': return <MessageSquare className="w-3.5 h-3.5" />;
       case 'Block Contact': return <Shield className="w-3.5 h-3.5" />;
       case 'Contact Import': return <Database className="w-3.5 h-3.5" />;
