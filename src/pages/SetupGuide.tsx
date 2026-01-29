@@ -265,7 +265,9 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
             # Force garbage collection to clean up any remaining references
             del client
             
-            print(f"  [FORCE DISCONNECT] {phone} - Session terminated: {reason}")
+            # SECURITY LOG: Confirm session killed BEFORE any retry attempt
+            print(f"  [SECURITY] {phone} - Session TERMINATED. Proxy assignment unchanged in DB.")
+            print(f"  [FORCE DISCONNECT] {phone} - Reason: {reason}")
         except Exception as e:
             print(f"  [FORCE DISCONNECT] {phone} - Force cleared (error: {str(e)[:30]})")
     else:
