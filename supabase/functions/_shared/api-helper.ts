@@ -295,20 +295,24 @@ export function getEffectiveApiCredentials(
  */
 export async function getApiCredentialsForAccount(
   supabase: any,
-  account: { api_id?: string | null; api_hash?: string | null }
+  account: { id?: string; phone_number?: string; api_id?: string | null; api_hash?: string | null }
 ): Promise<{ api_id: string; api_hash: string; api_credential_id: string | null } | null> {
-  // Check account's own credentials first
+  const accountId = account.phone_number || account.id || 'unknown';
+  
+  // Check account's own credentials first (priority: per-account from JSON)
   if (account.api_id && account.api_hash) {
+    console.log(`[api-helper] ✅ PER-ACCOUNT API for ${accountId}: app_id=${account.api_id}`);
     return {
       api_id: account.api_id,
       api_hash: account.api_hash,
-      api_credential_id: null,
+      api_credential_id: null, // No pool tracking for per-account credentials
     };
   }
   
-  // Fallback to pool
+  // Fallback to pool (round-robin)
   const poolCred = await selectNextApiCredential(supabase);
   if (poolCred) {
+    console.log(`[api-helper] 🔄 POOL API for ${accountId}: app_id=${poolCred.api_id} (fallback - account has no own credentials)`);
     return {
       api_id: poolCred.api_id,
       api_hash: poolCred.api_hash,
@@ -316,5 +320,6 @@ export async function getApiCredentialsForAccount(
     };
   }
   
+  console.warn(`[api-helper] ❌ NO API for ${accountId}: account has no credentials and pool is empty`);
   return null;
 }

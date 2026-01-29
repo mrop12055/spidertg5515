@@ -24,6 +24,8 @@ interface AccountData {
   app_version?: string;
   lang_code?: string;
   system_lang_code?: string;
+  // 2FA password from JSON metadata
+  two_fa_password?: string;
 }
 
 // Real device models as they appear in Telegram's device_model field
@@ -593,6 +595,13 @@ serve(async (req) => {
       account_ids: [] as string[],
       proxies_assigned: 0,
       proxies_unavailable: 0,
+      // Metadata stats for enhanced feedback
+      metadata_stats: {
+        with_json_api: 0,
+        with_json_fingerprint: 0,
+        with_generated_fingerprint: 0,
+        with_2fa: 0,
+      },
     };
 
     // Fetch all existing accounts in one query for faster lookup
@@ -661,7 +670,17 @@ serve(async (req) => {
         }
 
         // Use JSON-provided device info if available, otherwise generate
-        const hasJsonFingerprint = account.device_model && account.system_version;
+        const hasJsonFingerprint = !!(account.device_model && account.system_version);
+        const hasJsonApi = !!(account.api_id && account.api_hash);
+        const has2fa = !!account.two_fa_password;
+        
+        // Track metadata stats
+        if (hasJsonApi) results.metadata_stats.with_json_api++;
+        if (hasJsonFingerprint) results.metadata_stats.with_json_fingerprint++;
+        else results.metadata_stats.with_generated_fingerprint++;
+        if (has2fa) results.metadata_stats.with_2fa++;
+        
+        // ALWAYS use JSON fingerprint if provided (even for existing accounts)
         const deviceModel = hasJsonFingerprint ? account.device_model : fingerprint.device_model;
         const systemVersion = hasJsonFingerprint ? account.system_version : fingerprint.system_version;
         const appVersion = account.app_version || fingerprint.app_version;
@@ -671,8 +690,11 @@ serve(async (req) => {
         if (hasJsonFingerprint) {
           console.log(`[process-account-upload] Using JSON fingerprint for ${account.phone_number}: ${deviceModel} | ${systemVersion}`);
         }
-        if (account.api_id && account.api_hash) {
+        if (hasJsonApi) {
           console.log(`[process-account-upload] Using per-account API credentials for ${account.phone_number}: ${account.api_id}`);
+        }
+        if (has2fa) {
+          console.log(`[process-account-upload] Storing 2FA password for ${account.phone_number}`);
         }
 
         const accountData = {
@@ -681,9 +703,10 @@ serve(async (req) => {
           last_name: extracted.lastName || account.last_name || null,
           username: extracted.username || account.username || null,
           telegram_id: extracted.telegramId || null,
-          // Per-account API credentials from JSON
-          api_id: account.api_id || null,
-          api_hash: account.api_hash || null,
+          // Per-account API credentials from JSON (ALWAYS update if provided)
+          ...(hasJsonApi ? { api_id: account.api_id, api_hash: account.api_hash } : {}),
+          // 2FA password from JSON (ALWAYS update if provided)
+          ...(has2fa ? { two_fa_password: account.two_fa_password } : {}),
           status: finalStatus,
           last_active: extracted.isValid ? new Date().toISOString() : null,
           phone_country: phoneCountry,
@@ -691,15 +714,22 @@ serve(async (req) => {
             warmup_phase: 0,
             warmup_started_at: new Date().toISOString(),
           }),
-          // Use JSON fingerprint if provided, otherwise use generated (only for new accounts or accounts without fingerprint)
-          ...(existing?.device_model ? {} : {
+          // ALWAYS update fingerprint if JSON provides it, otherwise only set for new accounts
+          ...(hasJsonFingerprint ? {
             device_model: deviceModel,
             system_version: systemVersion,
             app_version: appVersion,
             lang_code: langCode,
             system_lang_code: systemLangCode,
-            build_id: hasJsonFingerprint ? null : fingerprint.build_id, // Don't override with generated if using JSON
-          })
+            build_id: null, // Don't set build_id when using JSON fingerprint
+          } : (existing?.device_model ? {} : {
+            device_model: fingerprint.device_model,
+            system_version: fingerprint.system_version,
+            app_version: fingerprint.app_version,
+            lang_code: fingerprint.lang_code,
+            system_lang_code: fingerprint.system_lang_code,
+            build_id: fingerprint.build_id,
+          }))
         };
 
         // Auto-assign proxy for NEW accounts only (if available)
@@ -715,18 +745,10 @@ serve(async (req) => {
         if (existing) {
           accountsToUpdate.push({ id: existing.id, data: accountData });
         } else {
-          // Use JSON fingerprint if provided, otherwise use generated
-          const hasJsonFingerprint = account.device_model && account.system_version;
           accountsToInsert.push({
             phone_number: account.phone_number,
             ...accountData,
             proxy_id: assignedProxyId, // Auto-assigned proxy (null if none available)
-            device_model: hasJsonFingerprint ? account.device_model : fingerprint.device_model,
-            system_version: hasJsonFingerprint ? account.system_version : fingerprint.system_version,
-            app_version: account.app_version || fingerprint.app_version,
-            lang_code: account.lang_code || fingerprint.lang_code,
-            system_lang_code: account.system_lang_code || fingerprint.system_lang_code,
-            build_id: hasJsonFingerprint ? null : fingerprint.build_id,
             maturity_score: 0,
             maturity_days: 0,
             daily_limit: 25,
@@ -810,6 +832,7 @@ serve(async (req) => {
     }
 
     console.log(`[process-account-upload] Completed: ${results.successful} successful, ${results.failed} failed, ${results.proxies_assigned} proxies assigned, ${results.proxies_unavailable} accounts without proxy`);
+    console.log(`[process-account-upload] Metadata: ${results.metadata_stats.with_json_api} with JSON API, ${results.metadata_stats.with_json_fingerprint} with JSON fingerprint, ${results.metadata_stats.with_generated_fingerprint} generated fingerprint, ${results.metadata_stats.with_2fa} with 2FA`);
 
     return new Response(
       JSON.stringify(results),
