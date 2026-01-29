@@ -202,28 +202,17 @@ async def update_proxy_status(proxy_id: str, status: str, error_msg: str = None)
         pass
 
 
-async def fetch_accounts() -> List[dict]:
-    try:
-        r = await get_http().get(
-            f"{SUPABASE_URL}/rest/v1/telegram_accounts?status=eq.active&session_data=not.is.null&select=*,proxies(*)",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, timeout=60
-        )
-        return r.json() if r.status_code == 200 else []
-    except:
-        return []
-
-
 async def get_tasks(batch_size: int = 100) -> dict:
-    """Fetch tasks from unified endpoint."""
+    """Fetch tasks AND accounts from unified endpoint."""
     try:
         r = await get_http().post(
             f"{BACKEND_URL}/runner-tasks/get",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
             json={"runner": "unified", "batch_size": batch_size}, timeout=60
         )
-        return r.json() if r.status_code == 200 else {"tasks": []}
+        return r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
     except:
-        return {"tasks": []}
+        return {"tasks": [], "accounts": []}
 
 
 # ==============================================================================
@@ -766,15 +755,14 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             return None, error_str
 
 
-async def connect_all():
-    """Connect ALL accounts in parallel."""
+async def connect_all_from_response(accs: List[dict]) -> int:
+    """Connect accounts from /runner-tasks/get response."""
     print("\\n" + "="*50)
-    print("  CONNECTING ALL ACCOUNTS")
+    print("  CONNECTING ACCOUNTS")
     print("="*50)
     
-    accs = await fetch_accounts()
     if not accs:
-        print("  No accounts found")
+        print("  No accounts in response")
         return 0
     
     print(f"  Found {len(accs)} accounts...\\n")
@@ -935,12 +923,15 @@ async def main():
     print("    • account_action() - Non-message ops")
     print("="*50 + "\\n")
     
-    # Connect all accounts
-    await connect_all()
+    # Initial fetch to get accounts and connect them
+    print("  Fetching accounts from backend...")
+    initial = await get_tasks(100)
+    initial_accounts = initial.get("accounts", [])
+    await connect_all_from_response(initial_accounts)
     await setup_handlers()
     
     print("\\n" + "="*50)
-    print("  PROCESSING TASKS")
+    print("  PROCESSING TASKS + LISTENING FOR MESSAGES")
     print("="*50 + "\\n")
     
     empty = 0
@@ -948,22 +939,23 @@ async def main():
     
     while RUNNING:
         try:
-            # Refresh accounts every 60s
-            if time.time() - last_refresh > 60:
+            # Get tasks (also returns accounts for reconnection)
+            batch = await get_tasks(100)
+            tasks = batch.get("tasks", [])
+            batch_accounts = batch.get("accounts", [])
+            
+            # Reconnect/add new accounts every 60s or if we have fewer clients than accounts
+            if time.time() - last_refresh > 60 or len(clients) < len(batch_accounts):
                 old = len(clients)
-                await connect_all()
+                await connect_all_from_response(batch_accounts)
                 if len(clients) > old:
                     await setup_handlers()
                 last_refresh = time.time()
             
-            # Get tasks
-            batch = await get_tasks(100)
-            tasks = batch.get("tasks", [])
-            
             if not tasks:
                 empty += 1
                 if empty == 1 or empty % 12 == 0:
-                    print(f"  [WAIT] No tasks ({len(clients)} clients)")
+                    print(f"  [WAIT] No tasks ({len(clients)} clients listening)")
                 await asyncio.sleep(batch.get("delay_after", 5))
                 continue
             
