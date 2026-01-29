@@ -1136,6 +1136,7 @@ export type Database = {
           system_version: string | null
           tags: string[] | null
           telegram_id: number | null
+          two_fa_password: string | null
           username: string | null
           warmup_pair_id: string | null
           warmup_phase: number | null
@@ -1181,6 +1182,7 @@ export type Database = {
           system_version?: string | null
           tags?: string[] | null
           telegram_id?: number | null
+          two_fa_password?: string | null
           username?: string | null
           warmup_pair_id?: string | null
           warmup_phase?: number | null
@@ -1226,6 +1228,7 @@ export type Database = {
           system_version?: string | null
           tags?: string[] | null
           telegram_id?: number | null
+          two_fa_password?: string | null
           username?: string | null
           warmup_pair_id?: string | null
           warmup_phase?: number | null

@@ -116,7 +116,16 @@ const Accounts: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isUploading, setIsUploading] = useState(false);
   const [sessionFiles, setSessionFiles] = useState<SessionFile[]>([]);
-  const [uploadResults, setUploadResults] = useState<{ successful: number; failed: number } | null>(null);
+  const [uploadResults, setUploadResults] = useState<{ 
+    successful: number; 
+    failed: number;
+    metadata_stats?: {
+      with_json_api: number;
+      with_json_fingerprint: number;
+      with_generated_fingerprint: number;
+      with_2fa: number;
+    };
+  } | null>(null);
   const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
   const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
   const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0, currentChunk: 0, totalChunks: 0 });
@@ -724,6 +733,8 @@ const Accounts: React.FC = () => {
           app_version: metadata?.app_version,
           lang_code: metadata?.lang_pack,
           system_lang_code: metadata?.system_lang_pack,
+          // Include 2FA password from JSON
+          two_fa_password: metadata?.twoFA,
         };
       });
 
@@ -740,6 +751,13 @@ const Accounts: React.FC = () => {
       let totalSuccessful = 0;
       let totalFailed = 0;
       const allAccountIds: string[] = [];
+      // Aggregate metadata stats across chunks
+      const aggregatedStats = {
+        with_json_api: 0,
+        with_json_fingerprint: 0,
+        with_generated_fingerprint: 0,
+        with_2fa: 0,
+      };
 
       setUploadProgress({ processed: 0, total: totalAccounts, currentChunk: 0, totalChunks });
 
@@ -768,6 +786,13 @@ const Accounts: React.FC = () => {
             if (data.account_ids) {
               allAccountIds.push(...data.account_ids);
             }
+            // Aggregate metadata stats
+            if (data.metadata_stats) {
+              aggregatedStats.with_json_api += data.metadata_stats.with_json_api || 0;
+              aggregatedStats.with_json_fingerprint += data.metadata_stats.with_json_fingerprint || 0;
+              aggregatedStats.with_generated_fingerprint += data.metadata_stats.with_generated_fingerprint || 0;
+              aggregatedStats.with_2fa += data.metadata_stats.with_2fa || 0;
+            }
           }
         } catch (err) {
           console.error(`Chunk ${chunkNumber} exception:`, err);
@@ -780,10 +805,15 @@ const Accounts: React.FC = () => {
       setUploadResults({
         successful: totalSuccessful,
         failed: totalFailed,
+        metadata_stats: aggregatedStats,
       });
 
       if (totalSuccessful > 0) {
-        toast.success(`Uploaded ${totalSuccessful} account(s) - verifying...`);
+        // Enhanced success message with metadata stats
+        const statsMsg = aggregatedStats.with_json_api > 0 
+          ? ` (${aggregatedStats.with_json_api} with API, ${aggregatedStats.with_json_fingerprint} with fingerprint${aggregatedStats.with_2fa > 0 ? `, ${aggregatedStats.with_2fa} with 2FA` : ''})`
+          : '';
+        toast.success(`Uploaded ${totalSuccessful} account(s)${statsMsg} - verifying...`);
         
         // Auto-verify after upload (batch the verification too)
         if (allAccountIds.length > 0) {
