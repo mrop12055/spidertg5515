@@ -1,200 +1,266 @@
 
-# Plan: Fetch Unread Messages on Account Reconnection
+# Plan: Add Missing Account Action Handlers to Python Runner
 
 ## Problem
-When the Python runner is offline (crashed, closed, or restarted), incoming messages from contacts are missed. Currently, when the runner reconnects, it only starts listening for **new** messages. Any messages received during the downtime are lost.
+The Python runner shows "Unknown action" errors for these task types:
+- `sync_profile` - Fetch profile info from Telegram  
+- `privacy_settings` - Configure privacy settings
+- `change_password` - Set/change 2FA password
+- `logout_sessions` - Terminate other sessions
 
-## Solution
-Add a "catch-up" mechanism that runs when each account successfully connects. This will:
-1. Fetch all dialogs (chats) for the account
-2. Filter to only **contacts** with unread messages
-3. Retrieve and report those unread messages to the backend
-4. Mark them as read on Telegram to avoid duplicate processing
+These actions are created by the Accounts page UI but the runner's `account_action()` function doesn't have handlers for them.
 
 ---
 
 ## Changes Required
 
-### 1. Add `fetch_unread_messages()` Function (Python Runner)
-**Location:** `src/pages/SetupGuide.tsx` (inside `unifiedRunnerPy`)
+### 1. Add Missing Action Handlers to `account_action()` Function
+**File:** `src/pages/SetupGuide.tsx` (inside the Python runner code)
 
-Add a new async function that runs after account connection:
+Add these handlers before the "UNKNOWN ACTION" section (~line 607):
 
 ```python
-async def fetch_unread_messages(client, acc_id: str):
-    """Fetch and report unread messages from contacts after reconnection."""
-    acc = accounts.get(acc_id, {})
-    phone = acc.get("phone_number", "????")[-4:]
+# ==========================================================
+# SYNC PROFILE
+# ==========================================================
+
+elif action == "sync_profile":
+    print(f"  [SYNC] [{phone}] Fetching profile from Telegram...")
+    me = await asyncio.wait_for(client.get_me(), timeout=15)
+    
+    if me:
+        # Get full user for profile photo
+        from telethon.tl.functions.users import GetFullUserRequest
+        from telethon.tl.functions.photos import GetUserPhotosRequest
+        
+        avatar_url = None
+        try:
+            photos = await client(GetUserPhotosRequest(user_id=me.id, offset=0, max_id=0, limit=1))
+            if photos.photos:
+                # Download and get photo bytes
+                photo = photos.photos[0]
+                avatar_url = f"telegram_photo_{me.id}_{photo.id}"  # Placeholder - backend handles actual URL
+        except:
+            pass
+        
+        await report("sync_profile", {
+            "task_id": task_id,
+            "account_id": acc_id,
+            "success": True,
+            "telegram_id": me.id,
+            "first_name": me.first_name,
+            "last_name": me.last_name,
+            "username": me.username,
+            "phone": me.phone,
+            "avatar_id": avatar_url
+        })
+        print(f"  [SYNC] [{phone}] ✓ {me.first_name or ''} {me.last_name or ''} (@{me.username or 'none'})")
+        return True, None
+    return False, "get_me returned None"
+
+# ==========================================================
+# PRIVACY SETTINGS
+# ==========================================================
+
+elif action == "privacy_settings":
+    from telethon.tl.functions.account import SetPrivacyRequest
+    from telethon.tl.types import (
+        InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp,
+        InputPrivacyKeyPhoneCall, InputPrivacyKeyProfilePhoto,
+        InputPrivacyValueAllowAll, InputPrivacyValueAllowContacts,
+        InputPrivacyValueDisallowAll
+    )
+    
+    # Parse settings from task_data or result
+    settings = td or {}
+    if not settings and task.get("result"):
+        try:
+            import json
+            settings = json.loads(task.get("result", "{}"))
+        except:
+            settings = {}
+    
+    hide_phone = settings.get("hidePhone", False)
+    hide_last_seen = settings.get("hideLastSeen", False)
+    disable_calls = settings.get("disableCalls", False)
+    hide_photo = settings.get("hideProfilePhoto", False)
+    
+    print(f"  [PRIVACY] [{phone}] Applying: phone={hide_phone}, lastSeen={hide_last_seen}, calls={disable_calls}, photo={hide_photo}")
+    
+    # Apply phone visibility
+    await client(SetPrivacyRequest(
+        key=InputPrivacyKeyPhoneNumber(),
+        rules=[InputPrivacyValueDisallowAll()] if hide_phone else [InputPrivacyValueAllowContacts()]
+    ))
+    
+    # Apply last seen visibility
+    await client(SetPrivacyRequest(
+        key=InputPrivacyKeyStatusTimestamp(),
+        rules=[InputPrivacyValueDisallowAll()] if hide_last_seen else [InputPrivacyValueAllowAll()]
+    ))
+    
+    # Apply call settings
+    await client(SetPrivacyRequest(
+        key=InputPrivacyKeyPhoneCall(),
+        rules=[InputPrivacyValueDisallowAll()] if disable_calls else [InputPrivacyValueAllowContacts()]
+    ))
+    
+    # Apply profile photo visibility
+    await client(SetPrivacyRequest(
+        key=InputPrivacyKeyProfilePhoto(),
+        rules=[InputPrivacyValueDisallowAll()] if hide_photo else [InputPrivacyValueAllowAll()]
+    ))
+    
+    await report("privacy_settings", {"task_id": task_id, "account_id": acc_id, "success": True, "settings": settings})
+    print(f"  [PRIVACY] [{phone}] ✓ Applied")
+    return True, None
+
+# ==========================================================
+# CHANGE PASSWORD (2FA)
+# ==========================================================
+
+elif action == "change_password":
+    from telethon.tl.functions.account import GetPasswordRequest, UpdatePasswordSettingsRequest
+    from telethon.tl.types import InputCheckPasswordEmpty
+    from telethon.password import compute_check, compute_hash
+    
+    # Parse password from task_data or result
+    settings = td or {}
+    if not settings and task.get("result"):
+        try:
+            import json
+            settings = json.loads(task.get("result", "{}"))
+        except:
+            settings = {}
+    
+    existing_pw = settings.get("existing_password")
+    new_pw = settings.get("new_password")
+    
+    if not new_pw:
+        return False, "No new password provided"
+    
+    print(f"  [2FA] [{phone}] Setting cloud password...")
     
     try:
-        print(f"  [CATCHUP] [{phone}] Fetching unread messages...")
-        dialogs = await client.get_dialogs(limit=100)
+        pwd = await client(GetPasswordRequest())
         
-        total_fetched = 0
-        for dialog in dialogs:
-            # Only process direct user chats (not groups/channels)
-            if not dialog.is_user:
-                continue
+        if pwd.has_password and existing_pw:
+            # Has existing password, need to verify
+            check = compute_check(pwd, existing_pw.encode())
+            new_hash = compute_hash(pwd.new_algo, new_pw.encode())
             
-            # Only process contacts
-            entity = dialog.entity
-            if not getattr(entity, 'contact', False):
-                continue
+            from telethon.tl.types.account import PasswordInputSettings
+            await client(UpdatePasswordSettingsRequest(
+                password=check,
+                new_settings=PasswordInputSettings(
+                    new_algo=pwd.new_algo,
+                    new_password_hash=new_hash,
+                    hint=""
+                )
+            ))
+        elif not pwd.has_password:
+            # No existing password, set new one
+            new_hash = compute_hash(pwd.new_algo, new_pw.encode())
             
-            # Skip if no unread messages
-            if dialog.unread_count == 0:
-                continue
-            
-            # Fetch unread messages from this contact
-            messages = await client.get_messages(
-                dialog.entity, 
-                limit=min(dialog.unread_count, 50)  # Cap at 50 per contact
-            )
-            
-            for msg in reversed(messages):  # Process oldest first
-                if not msg.text and not msg.media:
-                    continue
-                    
-                sender_phone = None
-                if hasattr(entity, 'phone') and entity.phone:
-                    sender_phone = f"+{entity.phone}" if not entity.phone.startswith('+') else entity.phone
-                
-                name = f"{entity.first_name or ''} {entity.last_name or ''}".strip() or str(entity.id)
-                content = msg.text or "[Media]"
-                
-                await report("incoming_message", {
-                    "account_id": acc_id,
-                    "sender_id": entity.id,
-                    "sender_name": name,
-                    "sender_username": getattr(entity, 'username', None),
-                    "sender_phone": sender_phone,
-                    "content": content,
-                    "telegram_message_id": msg.id
-                })
-                total_fetched += 1
-            
-            # Mark messages as read
-            await client.send_read_acknowledge(dialog.entity)
-        
-        if total_fetched > 0:
-            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} missed messages")
+            from telethon.tl.types.account import PasswordInputSettings
+            await client(UpdatePasswordSettingsRequest(
+                password=InputCheckPasswordEmpty(),
+                new_settings=PasswordInputSettings(
+                    new_algo=pwd.new_algo,
+                    new_password_hash=new_hash,
+                    hint=""
+                )
+            ))
         else:
-            print(f"  [CATCHUP] [{phone}] No unread messages from contacts")
-            
+            return False, "Account has 2FA but no existing password provided"
+        
+        await report("change_password", {"task_id": task_id, "account_id": acc_id, "success": True})
+        print(f"  [2FA] [{phone}] ✓ Password set")
+        return True, None
+        
     except Exception as e:
-        print(f"  [CATCHUP] [{phone}] Error: {str(e)[:50]}")
+        if "PASSWORD_HASH_INVALID" in str(e):
+            return False, "Existing password is incorrect"
+        raise
+
+# ==========================================================
+# LOGOUT OTHER SESSIONS
+# ==========================================================
+
+elif action == "logout_sessions":
+    from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
+    
+    print(f"  [LOGOUT] [{phone}] Terminating other sessions...")
+    
+    auths = await client(GetAuthorizationsRequest())
+    current_hash = None
+    terminated = 0
+    
+    for auth in auths.authorizations:
+        if auth.current:
+            current_hash = auth.hash
+        else:
+            try:
+                await client(ResetAuthorizationRequest(hash=auth.hash))
+                terminated += 1
+            except:
+                pass
+    
+    await report("logout_sessions", {
+        "task_id": task_id, 
+        "account_id": acc_id, 
+        "success": True, 
+        "terminated_count": terminated
+    })
+    print(f"  [LOGOUT] [{phone}] ✓ Terminated {terminated} session(s)")
+    return True, None
 ```
 
-### 2. Call `fetch_unread_messages()` After Connection
-**Location:** `connect_all_from_response()` function
+### 2. Update Task Type Routing in `process_task()` 
+**File:** `src/pages/SetupGuide.tsx` (inside the Python runner code)
 
-After successfully connecting each account, call the catch-up function:
+Add the new task types to the account action routing (around line 966):
 
 ```python
-async def connect_all_from_response(accs: List[dict]) -> int:
-    """Connect accounts and fetch missed messages."""
-    print("\\n" + "="*50)
-    print("  CONNECTING ACCOUNTS")
-    print("="*50)
-    
-    if not accs:
-        print("  No accounts in response")
-        return 0
-    
-    print(f"  Found {len(accs)} accounts...\\n")
-    results = await asyncio.gather(*[connect(a) for a in accs], return_exceptions=True)
-    ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
-    print(f"\\n  Connected: {ok}/{len(accs)}")
-    
-    # Fetch unread messages for newly connected accounts
-    for i, acc in enumerate(accs):
-        if isinstance(results[i], tuple) and results[i][0]:
-            aid = acc.get("id")
-            if aid and aid in clients:
-                await fetch_unread_messages(clients[aid], aid)
-    
-    return ok
-```
+# Check actions
+elif tt in ("spambot_check", "session_check", "get_me", "sync_profile"):
+    await account_action(client, tt, task)
 
-### 3. Backend Already Handles Incoming Messages
-The edge function `runner-tasks/report` already has `processIncomingMessage()` which:
-- Deduplicates by `telegram_message_id` (prevents duplicates)
-- Finds or creates conversations
-- Increments unread counts
-- Saves messages with `direction: 'incoming'`
-
-No backend changes are required.
-
----
-
-## Technical Details
-
-| Aspect | Implementation |
-|--------|----------------|
-| **When it runs** | After each account successfully connects |
-| **What it fetches** | Unread messages from **contacts only** (not groups/channels) |
-| **Message limit** | 50 messages per contact, 100 dialogs scanned |
-| **Deduplication** | Backend rejects messages with same `telegram_message_id` |
-| **Read receipts** | Messages are marked as read on Telegram after fetching |
-| **Performance** | Runs in parallel with main loop startup |
-
----
-
-## Flow Diagram
-
-```
-Runner Start/Reconnect
-        │
-        ▼
-┌───────────────────────┐
-│  Get accounts from    │
-│  /runner-tasks/get    │
-└───────────────────────┘
-        │
-        ▼
-┌───────────────────────┐
-│  Connect each account │
-│  via proxy            │
-└───────────────────────┘
-        │
-        ▼
-┌───────────────────────┐    ◄── NEW
-│  fetch_unread_messages│
-│  for each connected   │
-│  account              │
-└───────────────────────┘
-        │
-        ├── Get dialogs (limit 100)
-        │
-        ├── Filter: is_user AND is_contact AND unread > 0
-        │
-        ├── Fetch messages (limit 50 per dialog)
-        │
-        ├── Report to backend (incoming_message)
-        │
-        ├── Mark as read on Telegram
-        │
-        ▼
-┌───────────────────────┐
-│  Setup NewMessage     │
-│  handlers for live    │
-│  incoming messages    │
-└───────────────────────┘
-        │
-        ▼
-┌───────────────────────┐
-│  Enter main task loop │
-└───────────────────────┘
+# Privacy/Security actions
+elif tt in ("privacy_settings", "change_password", "logout_sessions"):
+    await account_action(client, tt, task)
 ```
 
 ---
 
-## Summary
+## Summary of New Actions
 
-The Python runner will be updated to:
-1. Add a `fetch_unread_messages()` function that scans contacts for missed messages
-2. Call this function immediately after each account connects
-3. Report any unread messages to the backend (which already handles them correctly)
-4. Mark messages as read to prevent re-fetching on next restart
+| Action | Description | Telegram API Used |
+|--------|-------------|-------------------|
+| `sync_profile` | Fetch profile (name, username, avatar) | `GetMeRequest`, `GetUserPhotosRequest` |
+| `privacy_settings` | Set phone/lastSeen/calls/photo visibility | `SetPrivacyRequest` |
+| `change_password` | Set/change 2FA cloud password | `UpdatePasswordSettingsRequest` |
+| `logout_sessions` | Terminate all other sessions | `ResetAuthorizationRequest` |
 
-This ensures no messages are lost during downtime, and the existing backend deduplication prevents duplicates if the runner restarts multiple times.
+---
+
+## Expected Console Output After Fix
+
+```
+[BATCH] 2 tasks: {'sync_profile': 2}
+
+  [SYNC] [6401] Fetching profile from Telegram...
+  [SYNC] [6401] ✓ John Doe (@johndoe)
+
+  [SYNC] [9866] Fetching profile from Telegram...
+  [SYNC] [9866] ✓ Jane Smith (@janesmith)
+```
+
+---
+
+## Technical Notes
+
+1. **Settings Parsing**: Privacy and password tasks store settings in the `result` field as JSON - the runner will parse this
+2. **Privacy Rules**: Uses Telegram's privacy rule types (`InputPrivacyValueDisallowAll`, `InputPrivacyValueAllowContacts`, etc.)
+3. **2FA Handling**: Properly handles both setting a new password and changing an existing one
+4. **Session Safety**: The logout action skips the current session (marked with `auth.current = True`)
