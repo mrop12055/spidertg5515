@@ -805,11 +805,11 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
             print(f"  [DB ERROR] Could not create client for {phone}: {last_db_error}")
             return None
         
-        print(f"  [CONNECT] {account['phone_number']} (with 3 retries)...")
-        if not await connect_with_retry(client, max_retries=3):
-            # PROXY FAILED after all retries - IMMEDIATELY DISCONNECT and schedule retry
+        print(f"  [CONNECT] {account['phone_number']} (180s proxy timeout, no quick retries)...")
+        if not await connect_with_retry(client):
+            # PROXY FAILED - IMMEDIATELY DISCONNECT and schedule 3-min cooldown retry
             # We can't know session status if we can't connect via proxy
-            print(f"  [PROXY ERROR] Connection failed for {phone} after 3 attempts")
+            print(f"  [PROXY ERROR] Connection failed for {phone} - adding to 3-min retry queue")
             
             # STEP 1: IMMEDIATE DISCONNECT - clear any partial session
             await force_disconnect_session(account_id, "proxy_connection_failed")
