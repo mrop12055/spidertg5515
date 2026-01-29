@@ -1270,12 +1270,18 @@ if __name__ == "__main__":
     while True:
         try:
             asyncio.run(main())
+            # If main() exits cleanly (RUNNING = False), break the loop
+            if not RUNNING:
+                print("  ✓ Clean shutdown")
+                break
         except KeyboardInterrupt:
             print("\\n⏹ Stopped")
             break
         except Exception as e:
-            print(f"\\n⚠ Crashed: {e}\\n  Restarting...")
+            print(f"\\n⚠ Crashed: {e}\\n  Restarting in 5s...")
             time.sleep(5)
+            # Reset RUNNING flag for restart
+            RUNNING = True
 `;
 
   // ========== RUN.BAT ==========
