@@ -3711,6 +3711,7 @@ async def main_loop():
     iteration_count = 0
     
     # ========== FETCH LAST OFFLINE TIMESTAMP FOR ACCURATE SYNC ==========
+    # Priority: last_offline_at (graceful shutdown) > last_seen (crash recovery) > 24h fallback
     last_offline_at = None
     try:
         http = get_http_client()
@@ -3718,7 +3719,7 @@ async def main_loop():
             f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
             params={
                 "runner_name": "eq.livechat",
-                "select": "last_offline_at"
+                "select": "last_offline_at,last_seen"  # Fetch both for crash recovery
             },
             headers={
                 "apikey": SUPABASE_KEY,
@@ -3728,17 +3729,26 @@ async def main_loop():
         )
         if resp.status_code == 200 and resp.json():
             data = resp.json()[0]
+            from datetime import datetime
+            
+            # Priority 1: Use last_offline_at if available (graceful shutdown)
             if data.get("last_offline_at"):
-                from datetime import datetime
                 last_offline_at = datetime.fromisoformat(
                     data["last_offline_at"].replace("Z", "+00:00")
                 )
-                print(f"  [SYNC] Will fetch messages since last offline: {last_offline_at}")
+                print(f"  [SYNC] Using last_offline_at (graceful shutdown): {last_offline_at}")
+            
+            # Priority 2: Use last_seen as fallback (crash recovery - max ~15s missed window)
+            elif data.get("last_seen"):
+                last_offline_at = datetime.fromisoformat(
+                    data["last_seen"].replace("Z", "+00:00")
+                )
+                print(f"  [SYNC] Using last_seen (crash recovery): {last_offline_at}")
     except Exception as e:
-        print(f"  [WARN] Could not fetch last_offline_at: {e}")
+        print(f"  [WARN] Could not fetch sync timestamp: {e}")
     
     if not last_offline_at:
-        print("  [SYNC] No offline timestamp found, using 24h fallback")
+        print("  [SYNC] No timestamps found, using 24h fallback")
     
     # Start background task to keep clients catching updates
     asyncio.create_task(keep_clients_alive())
