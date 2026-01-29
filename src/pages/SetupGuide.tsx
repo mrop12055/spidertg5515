@@ -1092,13 +1092,25 @@ async def process(task: dict):
         msg = task.get("message", {})
         td = task.get("task_data", {})
         
-        recipient = (
+        # Extract recipient - handle both string and object formats
+        raw_recipient = (
             task.get("recipient") or 
             td.get("recipient_phone") or 
             td.get("recipient_telegram_id") or 
             msg.get("recipient") or 
             msg.get("recipient_phone")
         )
+        
+        # If recipient is a dict (from campaign), extract the phone/telegram_id
+        if isinstance(raw_recipient, dict):
+            recipient = (
+                raw_recipient.get("phone") or 
+                raw_recipient.get("telegram_id") or 
+                raw_recipient.get("username") or 
+                ""
+            )
+        else:
+            recipient = raw_recipient
         content = msg.get("content") or td.get("message") or td.get("message_content") or task.get("content") or ""
         media = msg.get("media_url") or task.get("media_url")
         
