@@ -4055,11 +4055,17 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def check_spambot(client):
+async def check_spambot(client, account_id=None):
     """
     Check SpamBot - detects banned, restricted, frozen using official API.
     Uses proper exception handling for safe operation.
     """
+    # SECURITY: Verify proxy is still configured before ANY network operation
+    if not getattr(client, '_proxy', None):
+        phone = account_id[:8] if account_id else "unknown"
+        print(f"  [SECURITY] {phone} - NO PROXY DETECTED - aborting spambot check")
+        return "error", "Security: No proxy configured", "No proxy"
+    
     from telethon.errors import (
         RPCError, FloodWaitError, UserDeactivatedBanError, 
         AuthKeyUnregisteredError, SessionRevokedError
@@ -4337,7 +4343,7 @@ async def process_single_task(task):
             client = await get_or_create_client(account, task_proxy=task_proxy, skip_session_check=True)
             if client:
                 print(f"  [SPAM] Checking {phone}...")
-                status, ban_reason, response = await check_spambot(client)
+                status, ban_reason, response = await check_spambot(client, account_id)
                 await report_result("spambot_check", {"task_id": task_id, "account_id": account_id, "status": status, "ban_reason": ban_reason, "response": response})
                 print(f"    Result: {status}")
         
@@ -4672,7 +4678,7 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-async def add_contact(client, phone, first_name, last_name=""):
+async def add_contact(client, phone, first_name, last_name="", account_id=None):
     """
     Add contact using ADVANCED Telethon 2026 patterns.
     BUILD: 2026-01-25-advanced-v2
@@ -4681,6 +4687,12 @@ async def add_contact(client, phone, first_name, last_name=""):
     1. ResolvePhoneRequest (fastest - doesn't add to contacts)
     2. ImportContactsRequest (fallback - adds to contacts)
     """
+    # SECURITY: Verify proxy is still configured before ANY network operation
+    if not getattr(client, '_proxy', None):
+        phone_short = account_id[:8] if account_id else "unknown"
+        print(f"  [SECURITY] {phone_short} - NO PROXY DETECTED - aborting add_contact")
+        return False, phone, "Security: No proxy configured"
+    
     try:
         from telethon.tl.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
         from telethon.tl.types import InputPhoneContact, InputPeerUser
@@ -4733,7 +4745,7 @@ async def add_contact(client, phone, first_name, last_name=""):
         return False, phone, str(e)
 
 
-async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_id=None, recipient_username=None, recipient_first_name=None):
+async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_id=None, recipient_username=None, recipient_first_name=None, account_id=None):
     """
     Send warmup chat message using ADVANCED Telethon 2026 patterns.
     BUILD: 2026-01-25-advanced-v2
@@ -4744,6 +4756,12 @@ async def send_warmup_chat(client, recipient_phone, message, recipient_telegram_
     3. ResolvePhoneRequest (no contact add)
     4. ImportContactsRequest (fallback)
     """
+    # SECURITY: Verify proxy is still configured before ANY network operation
+    if not getattr(client, '_proxy', None):
+        phone = account_id[:8] if account_id else "unknown"
+        print(f"  [SECURITY] {phone} - NO PROXY DETECTED - aborting warmup send")
+        return False, "Security: No proxy configured"
+    
     try:
         from telethon.tl.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
         from telethon.tl.functions.messages import SendMessageRequest
@@ -5105,7 +5123,7 @@ async def process_single_warmup_task(task: dict) -> dict:
             target_phone = task_data.get("phone") or task_data.get("recipient_phone")
             first_name = task_data.get("first_name", "Friend")
             print(f"  [CONTACT] [{phone}] Adding contact...")
-            success, added_phone, error = await add_contact(client, target_phone, first_name)
+            success, added_phone, error = await add_contact(client, target_phone, first_name, "", account_id)
             return {"task_id": task_id, "pair_id": pair_id, "account_id": account_id, "api_credential_id": api_credential_id, "success": success, "error": error, "task_subtype": "add_contact"}
         
         elif task_type == "warmup_chat":
@@ -5115,7 +5133,7 @@ async def process_single_warmup_task(task: dict) -> dict:
             recipient_first_name = task_data.get("first_name")
             message = task_data.get("message", "Hey! 👋")
             print(f"  [CHAT] [{phone}] Sending warmup message...")
-            success, error = await send_warmup_chat(client, recipient_phone, message, recipient_telegram_id, recipient_username, recipient_first_name)
+            success, error = await send_warmup_chat(client, recipient_phone, message, recipient_telegram_id, recipient_username, recipient_first_name, account_id)
             return {"task_id": task_id, "pair_id": pair_id, "account_id": account_id, "api_credential_id": api_credential_id, "success": success, "error": error}
         
         elif task_type == "warmup_join_channel":
