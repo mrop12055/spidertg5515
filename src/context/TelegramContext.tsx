@@ -787,8 +787,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
 
         try {
-          const { data, error } = await supabase.functions.invoke('process-account-upload', {
-            body: { accounts: chunk }
+          const { data, error } = await supabase.functions.invoke('admin-api', {
+            body: { path: '/upload-accounts', accounts: chunk }
           });
 
           if (error) {

@@ -773,8 +773,8 @@ const Accounts: React.FC = () => {
         });
 
         try {
-          const { data, error } = await supabase.functions.invoke('process-account-upload', {
-            body: { accounts: chunk, tags: tagsToAssign }
+          const { data, error } = await supabase.functions.invoke('admin-api', {
+            body: { path: '/upload-accounts', accounts: chunk, tags: tagsToAssign }
           });
 
           if (error) {
@@ -826,8 +826,8 @@ const Accounts: React.FC = () => {
               
               for (let i = 0; i < allAccountIds.length; i += verifyBatchSize) {
                 const batch = allAccountIds.slice(i, i + verifyBatchSize);
-                const { data: verifyData } = await supabase.functions.invoke('verify-sessions', {
-                  body: { account_ids: batch }
+                const { data: verifyData } = await supabase.functions.invoke('admin-api', {
+                  body: { path: '/verify-sessions', account_ids: batch }
                 });
                 if (verifyData?.summary) {
                   validCount += verifyData.summary.valid || 0;
@@ -1727,8 +1727,8 @@ const Accounts: React.FC = () => {
     setVerifyResults(new Map(newResults));
 
     try {
-      const { data, error } = await supabase.functions.invoke('verify-sessions', {
-        body: { account_ids: Array.from(selectedIds) }
+      const { data, error } = await supabase.functions.invoke('admin-api', {
+        body: { path: '/verify-sessions', account_ids: Array.from(selectedIds) }
       });
 
       if (error) throw error;

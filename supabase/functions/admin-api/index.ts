@@ -27,7 +27,7 @@ serve(async (req) => {
   }
 
   const url = new URL(req.url);
-  const path = url.pathname.replace('/admin-api', '');
+  let path = url.pathname.replace('/admin-api', '');
   const method = req.method;
 
   try {
@@ -37,6 +37,11 @@ serve(async (req) => {
     );
 
     const body = method !== "GET" ? await req.json().catch(() => ({})) : {};
+    
+    // Support path in body for single-endpoint calls from frontend
+    if (body.path && !path) {
+      path = body.path;
+    }
 
     console.log(`[admin-api] ${method} ${path}`);
 
@@ -145,15 +150,54 @@ serve(async (req) => {
       const { campaign_id } = body;
       if (!campaign_id) return jsonResponse({ error: "campaign_id required" }, 400);
 
-      const { data, error } = await supabase
+      console.log(`[admin-api] Pausing campaign ${campaign_id}`);
+
+      // Step 1: Update campaign status immediately
+      const { error: campaignError } = await supabase
         .from('campaigns')
         .update({ status: 'paused', updated_at: new Date().toISOString() })
-        .eq('id', campaign_id)
-        .select()
-        .single();
+        .eq('id', campaign_id);
 
-      if (error) throw error;
-      return jsonResponse({ success: true, campaign: data });
+      if (campaignError) throw campaignError;
+
+      // Step 2: Reset recipients in background (parallel)
+      const resetPromise = (async () => {
+        try {
+          await Promise.all([
+            supabase
+              .from("campaign_recipients")
+              .update({
+                status: "queued",
+                sent_by_account_id: null,
+                api_credential_id: null,
+                scheduled_at: null,
+                failed_reason: null,
+              })
+              .eq("campaign_id", campaign_id)
+              .eq("status", "sending"),
+            supabase
+              .from("campaign_recipients")
+              .update({
+                status: "queued",
+                sent_by_account_id: null,
+                api_credential_id: null,
+                scheduled_at: null,
+                failed_reason: null,
+              })
+              .eq("campaign_id", campaign_id)
+              .eq("status", "pending"),
+          ]);
+          console.log(`[admin-api] Reset recipients for campaign ${campaign_id}`);
+        } catch (err) {
+          console.error(`[admin-api] Background reset error:`, err);
+        }
+      })();
+
+      // Use EdgeRuntime.waitUntil if available, otherwise just fire and forget
+      // @ts-ignore
+      (globalThis as any).EdgeRuntime?.waitUntil?.(resetPromise) ?? resetPromise;
+
+      return jsonResponse({ success: true, campaign_id, message: "Campaign paused" });
     }
 
     // ==================== VERIFY SESSIONS ====================

@@ -23,7 +23,7 @@ serve(async (req) => {
   }
 
   const url = new URL(req.url);
-  const path = url.pathname.replace('/warmup', '');
+  let path = url.pathname.replace('/warmup', '');
 
   try {
     const supabase = createClient(
@@ -32,6 +32,15 @@ serve(async (req) => {
     );
 
     const body = await req.json().catch(() => ({}));
+    
+    // Support action in body for single-endpoint calls from frontend
+    if (body.action) {
+      if (body.action === 'start') path = '/start';
+      else if (body.action === 'stop') path = '/stop';
+      else if (body.action === 'schedule') path = '/schedule';
+    }
+
+    console.log(`[warmup] ${req.method} ${path}`);
 
     // Route: START WARMUP
     if (path === '/start' || path === '') {
