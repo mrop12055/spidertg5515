@@ -1274,22 +1274,60 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[]): Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined> => {
     try {
-      const { data, error } = await supabase.functions.invoke('send-bulk-messages/upload-recipients', {
-        body: { campaign_id: campaignId, recipients }
-      });
-
-      if (error) throw error;
+      // Get existing recipients to check for duplicates
+      const { data: existingRecipients } = await supabase
+        .from('campaign_recipients')
+        .select('phone_number')
+        .eq('campaign_id', campaignId);
       
-      const result = data as { success: boolean; inserted: number; duplicates: number; duplicateNumbers?: string[]; message?: string };
+      const existingPhones = new Set(existingRecipients?.map(r => r.phone_number) || []);
+      const duplicateNumbers: string[] = [];
+      const newRecipients: { campaign_id: string; phone_number: string; name: string | null; seat_id: string | null; status: string }[] = [];
       
-      if (result.duplicates > 0) {
-        toast.success(result.message || `Uploaded ${result.inserted} recipients. ${result.duplicates} duplicates skipped.`);
+      for (const recipient of recipients) {
+        if (existingPhones.has(recipient.phone_number)) {
+          duplicateNumbers.push(recipient.phone_number);
+        } else {
+          newRecipients.push({
+            campaign_id: campaignId,
+            phone_number: recipient.phone_number,
+            name: recipient.name || null,
+            seat_id: recipient.seat_id || null,
+            status: 'pending'
+          });
+          existingPhones.add(recipient.phone_number); // Prevent duplicates within the batch
+        }
+      }
+      
+      let inserted = 0;
+      if (newRecipients.length > 0) {
+        const { error } = await supabase
+          .from('campaign_recipients')
+          .insert(newRecipients);
+        
+        if (error) throw error;
+        inserted = newRecipients.length;
+      }
+      
+      // Update campaign recipient_count
+      const { count } = await supabase
+        .from('campaign_recipients')
+        .select('id', { count: 'exact', head: true })
+        .eq('campaign_id', campaignId);
+      
+      await supabase
+        .from('campaigns')
+        .update({ recipient_count: count || 0 })
+        .eq('id', campaignId);
+      
+      if (duplicateNumbers.length > 0) {
+        toast.success(`Uploaded ${inserted} recipients. ${duplicateNumbers.length} duplicates skipped.`);
       } else {
-        toast.success(`Uploaded ${result.inserted} recipients`);
+        toast.success(`Uploaded ${inserted} recipients`);
       }
       
       refreshData();
-      return { inserted: result.inserted, duplicates: result.duplicates, duplicateNumbers: result.duplicateNumbers };
+      return { inserted, duplicates: duplicateNumbers.length, duplicateNumbers };
     } catch (error) {
       console.error('Error uploading recipients:', error);
       toast.error('Failed to upload recipients');
@@ -1299,12 +1337,16 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const startCampaign = useCallback(async (campaignId: string) => {
     try {
-      const { data, error } = await supabase.functions.invoke('send-bulk-messages/start-campaign', {
-        body: { campaign_id: campaignId }
-      });
+      // Update campaign status to running
+      const { error } = await supabase
+        .from('campaigns')
+        .update({ status: 'running' })
+        .eq('id', campaignId);
 
       if (error) throw error;
-      toast.success(data.message || 'Campaign started');
+      
+      // The unified runner will pick up pending recipients automatically
+      toast.success('Campaign started - runner will process recipients');
       refreshData();
     } catch (error) {
       console.error('Error starting campaign:', error);
