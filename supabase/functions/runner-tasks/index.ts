@@ -17,6 +17,20 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// Account action types that the Python runner handles
+const ACCOUNT_ACTION_TYPES = [
+  "change_name", "change_photo", "change_bio", "change_username",
+  "spambot_check", "session_check", "sync_profile", "get_me",
+  "privacy_settings", "change_password", "logout_sessions",
+  "add_contact", "delete_contact", "block_contact", "unblock_contact",
+  "join_channel", "leave_channel", "react", "view_channel",
+  "get_dialogs", "read_messages", "delete_chat"
+];
+
+function isAccountActionType(taskType: string): boolean {
+  return ACCOUNT_ACTION_TYPES.includes(taskType);
+}
+
 // Settings cache
 interface CachedSettings {
   data: Record<string, any>[];
@@ -403,6 +417,61 @@ async function handleGetTasks(supabase: any, body: any) {
     }
   }
 
+  // ===== ACCOUNT ACTION TASKS =====
+  if (runner === "account_actions" || runner === "unified") {
+    const { data: actionTasks } = await supabase
+      .from("account_check_tasks")
+      .select(`*, account:telegram_accounts!inner(*, proxies!fk_proxy(*))`)
+      .eq("status", "pending")
+      .order("created_at", { ascending: true })
+      .limit(batch_size);
+
+    if (actionTasks?.length > 0) {
+      for (const task of actionTasks) {
+        const account = task.account;
+        if (!account?.session_data) continue;
+        if (!account?.proxies || account.proxies.status !== 'active') continue;
+
+        const creds = await getApiCredentialsForAccount(supabase, account);
+        if (!creds) continue;
+
+        // Parse result field for task-specific data (e.g., first_name, last_name, photo_url)
+        let taskData: Record<string, any> = {};
+        try {
+          taskData = JSON.parse(task.result || '{}');
+        } catch {
+          taskData = {};
+        }
+
+        tasks.push({
+          task_type: task.task_type, // change_name, change_photo, spambot_check, session_check, etc.
+          task_id: task.id,
+          account: {
+            id: account.id,
+            phone_number: account.phone_number,
+            session_data: account.session_data,
+            device_model: account.device_model,
+            system_version: account.system_version,
+            build_id: account.build_id,
+            app_version: account.app_version,
+            lang_code: account.lang_code,
+            system_lang_code: account.system_lang_code,
+            api_id: creds.api_id,
+            api_hash: creds.api_hash,
+            api_credential_id: creds.api_credential_id,
+          },
+          proxy: account.proxies,
+          task_data: taskData, // Contains first_name, last_name, photo_url, privacy settings, etc.
+        });
+
+        // Mark as in_progress
+        await supabase.from("account_check_tasks")
+          .update({ status: "in_progress", updated_at: nowIso })
+          .eq("id", task.id);
+      }
+    }
+  }
+
   // Build accounts list for listening
   const listeningAccounts = await Promise.all(usableAccounts.map(async (acc: any) => {
     const creds = await getApiCredentialsForAccount(supabase, acc);
@@ -536,6 +605,47 @@ async function handleReportResults(supabase: any, body: any) {
           .update({ contacts_exchanged: true })
           .eq("id", r.pair_id);
       }
+    } else if (isAccountActionType(taskType)) {
+      // Account action success - update task and account fields
+      await supabase.from("account_check_tasks")
+        .update({ 
+          status: "completed", 
+          completed_at: now,
+          result: JSON.stringify(r.data || r)
+        })
+        .eq("id", r.task_id);
+
+      // Update telegram_accounts based on action type
+      if (r.account_id) {
+        const accountUpdates: Record<string, any> = {};
+
+        if (taskType === "change_name") {
+          if (r.first_name) accountUpdates.first_name = r.first_name;
+          if (r.last_name !== undefined) accountUpdates.last_name = r.last_name;
+        } else if (taskType === "sync_profile" || taskType === "get_me") {
+          if (r.first_name) accountUpdates.first_name = r.first_name;
+          if (r.last_name !== undefined) accountUpdates.last_name = r.last_name;
+          if (r.username !== undefined) accountUpdates.username = r.username;
+          if (r.telegram_id) accountUpdates.telegram_id = r.telegram_id;
+        } else if (taskType === "spambot_check") {
+          if (r.status) accountUpdates.spambot_status = r.status;
+          accountUpdates.last_spambot_check = now;
+        } else if (taskType === "session_check") {
+          // Session is valid - ensure account is active
+          accountUpdates.status = "active";
+          accountUpdates.ban_reason = null;
+        } else if (taskType === "change_photo") {
+          if (r.photo_url) accountUpdates.avatar_url = r.photo_url;
+        } else if (taskType === "change_username") {
+          if (r.username !== undefined) accountUpdates.username = r.username;
+        }
+
+        if (Object.keys(accountUpdates).length > 0) {
+          await supabase.from("telegram_accounts")
+            .update(accountUpdates)
+            .eq("id", r.account_id);
+        }
+      }
     }
   }
 
@@ -576,6 +686,28 @@ async function handleReportResults(supabase: any, body: any) {
         await supabase.from("warmup_pairs")
           .update({ status: "failed", failed_reason: r.error })
           .eq("id", r.pair_id);
+      }
+    } else if (isAccountActionType(taskType)) {
+      // Account action failure
+      await supabase.from("account_check_tasks")
+        .update({ 
+          status: "failed", 
+          completed_at: now,
+          result: r.error || "Unknown error"
+        })
+        .eq("id", r.task_id);
+
+      // Handle specific error types that affect account status
+      if (r.account_id) {
+        if (errorLower.includes('banned') || errorLower.includes('deactivated')) {
+          await supabase.from("telegram_accounts")
+            .update({ status: "banned", ban_reason: r.error })
+            .eq("id", r.account_id);
+        } else if (errorLower.includes('session') || errorLower.includes('auth key')) {
+          await supabase.from("telegram_accounts")
+            .update({ status: "disconnected", ban_reason: r.error })
+            .eq("id", r.account_id);
+        }
       }
     }
   }
