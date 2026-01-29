@@ -1,181 +1,108 @@
 
+## What’s actually happening (based on your logs)
 
-# Fix: LiveChat 3-Minute Proxy Timeout with Immediate Disable
+### 1) The “disconnect immediately” is *not* happening before 180s
+Your log shows the proxy connection waits the full timeout:
+- `Attempt 1 at connecting failed: OSError: [WinError 121] ...`
+- then: `[CONNECTION TIMEOUT] ... Proxy failed after 180s - DISABLING ACCOUNT IMMEDIATELY`
 
-## Problem Summary
+So it is waiting ~180 seconds, then disabling (as requested). The confusing “immediate” part comes from the next bug.
 
-Three issues are causing the current behavior:
+### 2) The real bug: `name 'message_queues' is not defined`
+Right after the runner kills the session, `force_disconnect_session()` throws a `NameError` because it references `message_queues`, but `message_queues` is not defined anywhere in the generated Python code.
 
-1. **Outer timeout (30s) overrides the 3-minute proxy timeout**
-   - `CONNECT_TIMEOUT_SECONDS = 30` at line 2660 wraps the entire connection
-   - The inner `PROXY_CONNECTION_TIMEOUT = 180` never gets a chance to complete
-   - Connection is killed after 30s, not 3 minutes
+That creates this noisy chain:
+- proxy fails after 180s → we call `force_disconnect_session()` (correct)
+- inside `force_disconnect_session()` → `NameError` → prints `[DISCONNECTED] ... message_queues is not defined`
+This makes it look like the runner “disconnects instantly” or is unstable.
 
-2. **Session checks are reporting errors and changing account status**
-   - `report_session_check()` calls at lines 863, 877, 881, 885, 889, 893, 899, 924, 928, 932, 938 mark accounts as "disconnected" or "banned" on errors
-   - These run before the retry logic can take over
+### 3) The WinError 121 itself
+`WinError 121 The semaphore timeout period has expired` is a Windows network/proxy socket timeout (proxy provider / route issue). It’s not a “session check” issue, and it’s exactly the kind of error we should treat as “proxy failed” and kill the session to prevent any chance of non-proxy reconnect.
 
-3. **User wants IMMEDIATE disable after 3-minute timeout fails** (no retry queue)
-   - Current: fail → 3-min queue → retry → fail again → disable
-   - Desired: fail after 3-min timeout → immediately kill session and disable
+## Goal (what we will ensure)
 
-## Changes Required
+1. Always attempt connection **with proxy + fingerprint** (never without proxy).
+2. Give the proxy **exactly 180s** to connect.
+3. If still not connected after 180s:
+   - **kill session immediately**
+   - **mark account status = disconnected** and **auto_disabled=true**
+   - **mark proxy status = error**
+   - **never remove proxy_id from account**
+4. Remove the misleading `message_queues` NameError and any side-effects from it.
 
-### 1. Increase `CONNECT_TIMEOUT_SECONDS` to 200 seconds
+## Implementation plan (code changes)
 
-**Location:** Line 2660
+### A) Fix `message_queues` NameError safely (primary fix)
+**File:** `src/pages/SetupGuide.tsx` (inside the `clientManagerPy` python template)
 
-**Current:**
-```python
-CONNECT_TIMEOUT_SECONDS = 30  # Timeout for stable connections
-```
+1) Define `message_queues` globally near `active_clients`
+- Add:
+  - `message_queues: Dict[str, asyncio.Queue] = {}` (or `Dict[str, any]` if queue typing is not used elsewhere)
 
-**New:**
-```python
-CONNECT_TIMEOUT_SECONDS = 200  # 3+ minutes to allow full proxy timeout (180s) + overhead
-```
+2) Make `force_disconnect_session()` robust even if `message_queues` is absent
+- Change Step 3 cleanup to:
+  - check if `message_queues` exists before referencing it (e.g., wrap in `try/except NameError` or `if 'message_queues' in globals(): ...`)
+This prevents any crash/noise during critical disconnect operations.
 
-### 2. Remove retry queue - immediate disable on proxy failure
+**Result:** You will no longer see `[DISCONNECTED] ... message_queues is not defined`, and the disconnect behavior will be clean and predictable.
 
-**Current flow (wrong):**
-```
-fail → add_to_proxy_retry_queue() → wait 3 min → retry → disable
-```
+---
 
-**New flow (correct):**
-```
-3-minute timeout for proxy → fail → kill session → disable immediately
-```
+### B) Ensure we are not reintroducing retries via health-check paths
+Right now, the LiveChat runner health check section still calls:
+- `await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)`
 
-**Location:** Lines 809-826 in `get_or_create_client()` and lines 840-846
+But your latest requirement is:
+- proxy fails after 180s → disable immediately (no retry queue)
 
-**Current:**
-```python
-if not await connect_with_retry(client):
-    print(f"  [PROXY ERROR] Connection failed for {phone} - adding to 3-min retry queue")
-    await force_disconnect_session(account_id, "proxy_connection_failed")
-    asyncio.create_task(report_result("proxy_error", {...}))
-    await add_to_proxy_retry_queue(account_id, account, task_proxy)  # ← REMOVE THIS
-    return None
-```
+So we will update the LiveChat runner logic so:
+- health_check failures do **not** enqueue into `_proxy_retry_queue` (since this queue conflicts with “immediate disable” behavior)
+- health_check failure will:
+  - kill session (`force_disconnect_session`)
+  - log the reason (`log_error`)
+  - optionally report a backend result type that marks the account “disconnected” (without removing proxy assignment)
+  - NOT schedule proxy retries automatically
 
-**New:**
-```python
-if not await connect_with_retry(client):
-    print(f"  [CONNECTION TIMEOUT] {phone} - Proxy failed after 180s - DISABLING ACCOUNT")
-    await force_disconnect_session(account_id, "proxy_connection_timeout")
-    asyncio.create_task(report_result("proxy_timeout_disable", {
-        "account_id": account_id,
-        "proxy_id": proxy_id,
-        "reason": "Proxy connection failed after 3-minute timeout - account disabled"
-    }))
-    # NO RETRY QUEUE - immediate disable
-    return None
-```
+**File:** `src/pages/SetupGuide.tsx` (inside `livechatRunnerPy` python template)
 
-### 3. Replace `report_session_check()` with `log_error()` in error paths
+---
 
-Session checks should NOT run when proxy fails because we can't determine session status without a successful connection. Replace all error-path session checks with log_error() for visibility.
+### C) Keep the “proxy always used” security guarantee
+We will verify and enforce in the connect/reconnect code paths:
+- no code path calls `client.connect()` unless:
+  - proxy exists and is active
+  - the client was constructed with that proxy
+- keep Telethon settings:
+  - `auto_reconnect=False`
+  - `connection_retries=0`
+so Telethon never tries to reconnect behind our back.
 
-**Lines to modify:** 863, 877, 881, 885, 889, 893, 899, 924, 928, 932, 938
+(From your snippets, most of this is already correct; we’ll just ensure there are no bypass paths.)
 
-**Current pattern:**
-```python
-except AuthKeyUnregisteredError:
-    print(f"  [EXPIRED] {phone}: Auth key unregistered")
-    asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
-    return None
-```
+## Validation / Testing steps (what you should see)
 
-**New pattern:**
-```python
-except AuthKeyUnregisteredError:
-    print(f"  [EXPIRED] {phone}: Auth key unregistered")
-    asyncio.create_task(log_error("livechat", f"{phone}: Auth key unregistered - session expired"))
-    return None
-```
+1) Run LiveChat runner with a known bad proxy:
+- It should wait up to **180s**, then:
+  - print the timeout message
+  - print force-disconnect messages
+  - **no `message_queues` error**
+  - account becomes `disconnected + auto_disabled` in the dashboard
+  - proxy becomes `error`
+  - account still has the same proxy_id assigned
 
-### 4. Add new `proxy_timeout_disable` handler to backend
+2) Run LiveChat runner with a working proxy:
+- Accounts connect, show fingerprint usage, and stay connected.
 
-**Location:** `supabase/functions/report-task-result/index.ts`
+3) Confirm no “immediate disconnect” logs appear before ~180s on proxy failure.
+(After this fix, logs will be clearer and won’t falsely suggest instant disconnects.)
 
-Add handler for the new result type that:
-- Marks account as `status: "disconnected"` 
-- Sets `auto_disabled: true`
-- Sets `disabled_reason: "Connection timeout - proxy failed after 3 minutes"`
-- Marks proxy as `status: "error"`
-- **Never removes `proxy_id`** from account
+## Files we will modify
+- `src/pages/SetupGuide.tsx`
+  - Update the embedded Python templates:
+    - `clientManagerPy`: define `message_queues` + guard cleanup in `force_disconnect_session`
+    - `livechatRunnerPy`: remove/adjust any leftover retry-queue behavior that contradicts “disable immediately”
 
-### 5. Remove retry queue logic from main_loop error handling
-
-**Location:** Lines 3717-3729
-
-**Current:**
-```python
-elif error == "TIMEOUT":
-    timeout_count += 1
-    await disconnect_and_schedule_retry(acc_id, "connection timeout")
-```
-
-**New:**
-```python
-elif error == "TIMEOUT":
-    timeout_count += 1
-    # Timeout already handled in get_or_create_client with immediate disable
-    # Just ensure session is killed (already done in connect_with_retry failure path)
-```
-
-## Expected Flow After Fix
-
-```text
-Account Connection Attempt (main_loop)
-        ↓
-asyncio.wait_for(connect_account_with_fingerprint(), timeout=200s)  ← Allows full 180s
-        ↓
-get_or_create_client() with skip_session_check=True
-        ↓
-connect_with_retry(client) - 180s PROXY timeout (single attempt)
-        ↓
-If SUCCESS:
-   ✓ Account connected
-   ✓ NO session check (skip_session_check=True)
-        ↓
-If TIMEOUT after 180s:
-   → force_disconnect_session() - KILL SESSION IMMEDIATELY
-   → report_result("proxy_timeout_disable") - mark account INACTIVE
-   → Proxy marked: error status
-   → PROXY STAYS ASSIGNED (never removed)
-   → Account marked: disconnected + auto_disabled
-   → NO RETRY QUEUE - immediate disable
-```
-
-## Security Guarantees
-
-| Guarantee | Implementation |
-|-----------|----------------|
-| Proxy always used | `connect_with_retry()` only accepts clients with proxy configured |
-| Proxy never removed | `proxy_id` stays in database even after timeout |
-| Session killed on failure | `force_disconnect_session()` called immediately on timeout |
-| No connection without proxy | `auto_reconnect=False` and `connection_retries=0` in Telethon client |
-| 3 minutes for proxy | `PROXY_CONNECTION_TIMEOUT = 180` fully respected now |
-| Immediate disable | No retry queue - account disabled on first 3-minute timeout failure |
-
-## Files to Modify
-
-| File | Change |
-|------|--------|
-| `src/pages/SetupGuide.tsx` | 1. Increase `CONNECT_TIMEOUT_SECONDS` from 30 to 200 |
-| `src/pages/SetupGuide.tsx` | 2. Replace `add_to_proxy_retry_queue()` with immediate `report_result("proxy_timeout_disable")` |
-| `src/pages/SetupGuide.tsx` | 3. Replace all error-path `report_session_check()` with `log_error()` |
-| `supabase/functions/report-task-result/index.ts` | 4. Add `proxy_timeout_disable` handler to mark account inactive and proxy as error |
-
-## Technical Summary
-
-| Setting | Current | New | Purpose |
-|---------|---------|-----|---------|
-| `CONNECT_TIMEOUT_SECONDS` | 30s | 200s | Allow full 180s proxy timeout |
-| `PROXY_CONNECTION_TIMEOUT` | 180s | 180s (unchanged) | 3 minutes for proxy to connect |
-| Retry queue | Active (3-min delay) | REMOVED | Immediate disable on timeout |
-| `report_session_check()` on errors | Active | Replaced with `log_error()` | Don't change status on proxy failure |
-| Proxy removal | Never | Never | Admin handles manually |
+## Notes / Expectations
+- `WinError 121` will still happen if the proxy provider or route is unhealthy. Our job is to handle it safely (kill session + disable) so it cannot cause unproxied reconnect attempts.
+- If you want, we can also add a clearer log line that prints an elapsed timer (start/end timestamps) to make the 180s wait obvious in logs.
 
