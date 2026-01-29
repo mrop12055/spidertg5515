@@ -1,57 +1,99 @@
 
 
-# ✅ COMPLETED: Prevent IP Leak During Proxy Failure
+# Security Verification: Proxy Failure Handling
 
-## Security Fix Applied (2026-01-29)
+## Analysis Summary
 
-**Status**: IMPLEMENTED ACROSS ALL RUNNERS
+After thoroughly reviewing all Python runners and edge functions, I found that **the current implementation is already secure**:
 
-### Changes Made
+### What's Already Correct
 
-#### 1. Client Manager (Shared by all runners)
-- **Disabled Telethon auto-reconnect** (Line 779-794)
-  - `connection_retries=0` - Manual retries only
-  - `retry_delay=0` - Disabled
-  - `auto_reconnect=False` - Prevents Telethon from reconnecting without proxy
-  - `request_retries=1` - Fail fast to catch errors
+1. **Proxy is NEVER removed from account during failure**
+   - The `report_result("proxy_error", ...)` handler in `report-task-result/index.ts` (lines 1399-1459) only:
+     - Sets `disabled_reason` on the account
+     - Marks proxy `status: "error"` in the proxies table
+     - Does NOT change `proxy_id` - the proxy assignment remains intact
 
-- **Added proxy check in `check_client_health`** (Line 281-298)
-  - Verifies `client._proxy` exists before health check
-  - Returns `False` if no proxy → triggers force_disconnect
+2. **Retry delay is already 3 minutes**
+   - `PROXY_RETRY_DELAY = 180` (line 138 in SetupGuide.tsx)
+   - This is exactly what you requested
 
-- **Added proxy check in `send_message`** (Line 1147-1162)
-  - Verifies proxy before ANY network operation
-  - If no proxy detected → immediate `force_disconnect_session`
-  - Updated call sites to pass `account_id`
+3. **Session is disconnected BEFORE retry**
+   - `force_disconnect_session()` is called immediately when proxy fails
+   - Client is removed from `active_clients` dictionary
+   - Socket is forcefully closed with 10-second timeout
+   - Only THEN is the account added to retry queue
 
-#### 2. Account Runner
-- **Added proxy check in `check_spambot`** (Line 4058-4076)
-  - Verifies proxy before SpamBot check
-  - Returns error status if no proxy
-  - Updated call site to pass `account_id`
+4. **Auto-reconnect is disabled**
+   - `auto_reconnect=False` prevents Telethon from reconnecting on its own
+   - `connection_retries=0` ensures no internal retry attempts
+   - All reconnections go through our controlled flow
 
-#### 3. Warmup Runner  
-- **Added proxy check in `add_contact`** (Line 4681-4699)
-  - Verifies proxy before contact add operation
-  - Returns error if no proxy
-  - Updated call site to pass `account_id`
+### The Flow (Verified Secure)
 
-- **Added proxy check in `send_warmup_chat`** (Line 4748-4770)
-  - Verifies proxy before warmup message send
-  - Returns error if no proxy
-  - Updated call site to pass `account_id`
+```text
+Proxy Failure Detected
+        ↓
+force_disconnect_session()     ← CLIENT KILLED IMMEDIATELY
+        ↓
+Client removed from active_clients
+        ↓
+Socket disconnected (10s timeout)
+        ↓
+asyncio.sleep(0.5) for cleanup
+        ↓
+report_result("proxy_error")   ← Marks proxy as "error" in DB
+        ↓                         (proxy_id NOT removed from account)
+add_to_proxy_retry_queue()     ← Wait 3 minutes before retry
+        ↓
+[After 3 minutes]
+        ↓
+Retry connection with SAME proxy (proxy_id still assigned)
+        ↓
+If still failing after 3 attempts → mark account auto_disabled
+```
 
-#### 4. Campaign Runner
-- Uses shared `send_message` from client_manager (already fixed)
+### Database Confirmation
 
-#### 5. LiveChat Runner
-- Uses shared `send_message` and `check_client_health` (already fixed)
+Looking at `report-task-result/index.ts` lines 1407-1415:
+```typescript
+// Only update disabled_reason - DO NOT change proxy_id, status, or ban_reason
+await supabase
+  .from("telegram_accounts")
+  .update({ 
+    disabled_reason: `Proxy error: ${reason || "Connection failed"}`,
+    ban_reason: null
+    // NOTE: We do NOT change status, proxy_id, or any fingerprint data
+  })
+  .eq("id", account_id);
+```
 
-### Security Guarantees
+The `proxy_id` is intentionally left unchanged so the account stays linked to its assigned proxy.
 
-✅ Telethon will NOT auto-reconnect on its own  
-✅ Any proxy failure immediately terminates connection  
-✅ Before any network operation, proxy is verified  
-✅ All reconnections go through manual retry queue (validates proxy FIRST)  
-✅ Zero IP exposure - accounts NEVER connect without proxy  
-✅ All runners (Campaign, Account, Warmup, LiveChat) protected
+### Conclusion
+
+**No changes needed** - the system already:
+1. Disconnects accounts immediately when proxy fails
+2. Never removes the proxy assignment from accounts
+3. Waits 3 minutes before retry attempts
+4. Retries 3 times with the same proxy before marking account as auto_disabled
+
+The proxy assignment (`proxy_id` on the account) is only ever changed:
+- By admin in the dashboard (manual reassignment)
+- When deleting a proxy (sets accounts to `proxy_id: null`)
+- Never automatically during error handling
+
+---
+
+### Optional Enhancement: Add Explicit Logging
+
+If you want additional confidence, I can add logging to the Python runners to confirm the disconnect-before-retry sequence:
+
+```python
+# In force_disconnect_session
+print(f"  [SECURITY] {phone} - PROXY FAILED - disconnecting BEFORE any retry")
+print(f"  [SECURITY] {phone} - Session terminated. Proxy assignment unchanged in DB.")
+```
+
+Would you like me to add this explicit logging, or are you satisfied with the current implementation?
+
