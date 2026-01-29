@@ -788,6 +788,23 @@ const Proxies: React.FC = () => {
               <span className="font-bold">{unassignedProxiesCount}</span>
               <span className="text-sm opacity-80">Free</span>
             </button>
+            
+            {/* Error/Failed Proxies Filter */}
+            {proxies.filter(p => p.status === 'error').length > 0 && (
+              <button
+                onClick={() => setStatusFilter(statusFilter === 'error' ? 'all' : 'error')}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-2 rounded-lg transition-all",
+                  statusFilter === 'error' 
+                    ? "bg-destructive text-destructive-foreground" 
+                    : "bg-destructive/10 text-destructive hover:bg-destructive/20"
+                )}
+              >
+                <AlertTriangle className="w-4 h-4" />
+                <span className="font-bold">{proxies.filter(p => p.status === 'error').length}</span>
+                <span className="text-sm opacity-80">Error</span>
+              </button>
+            )}
           </div>
           
           {/* Search & Country Filter Row */}
