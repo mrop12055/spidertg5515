@@ -586,6 +586,12 @@ async def connect_with_retry(client: TelegramClient, connection_timeout: int = P
     If this times out, the account goes to the proxy retry queue for a 3-minute wait
     before the next attempt. After PROXY_MAX_RETRIES (1) cooldown retries, auto-disable.
     """
+    # IMPORTANT BEHAVIOR:
+    # Some proxy/network failures (e.g., WinError 121) can fail *immediately*.
+    # The admin requirement is to give the proxy a full 180 seconds to establish.
+    # So if connect() errors early, we still wait out the remaining time before
+    # returning False, ensuring callers can truthfully log "failed after 180s".
+    start = time.time()
     try:
         await asyncio.wait_for(client.connect(), timeout=connection_timeout)
         print(f"    [CONNECTED] Proxy connection successful")
@@ -599,6 +605,15 @@ async def connect_with_retry(client: TelegramClient, connection_timeout: int = P
             print(f"    [PROXY ERROR] {e}")
         else:
             print(f"    [CONNECTION ERROR] {e}")
+
+        # Enforce total wait time = connection_timeout
+        elapsed = time.time() - start
+        remaining = connection_timeout - elapsed
+        if remaining > 0:
+            try:
+                await asyncio.sleep(remaining)
+            except Exception:
+                pass
         return False
 
 
