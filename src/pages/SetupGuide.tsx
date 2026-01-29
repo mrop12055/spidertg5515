@@ -782,7 +782,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                     lang_code=lang_code,
                     system_lang_code=system_lang_code,
                     proxy=proxy,
-                    timeout=CONNECTION_TIMEOUT,
+                    timeout=PROXY_CONNECTION_TIMEOUT,
                     # SECURITY: Disable ALL auto-reconnect to prevent IP leak on proxy failure
                     # We handle all reconnections manually via force_disconnect + retry queue
                     connection_retries=0,   # DISABLED - manual retries only
