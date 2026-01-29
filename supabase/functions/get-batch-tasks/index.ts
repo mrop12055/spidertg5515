@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { selectNextApiCredential, selectMultipleApiCredentials, getNextApiCredential, getMultipleApiCredentials } from "../_shared/api-helper.ts";
+import { getApiCredentialsForAccount, selectNextApiCredential } from "../_shared/api-helper.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -460,16 +460,13 @@ serve(async (req) => {
           // Check account is active/restricted and has active proxy (restricted accounts CAN do warmup)
           const isUsableStatus = senderAccount && (senderAccount.status === "active" || senderAccount.status === "restricted");
           if (isUsableStatus && receiverAccount && senderProxy?.status === "active") {
-            const senderApiCred = senderAccount.telegram_api_credentials;
-            const receiverApiCred = receiverAccount.telegram_api_credentials;
+            // PER-ACCOUNT PRIORITY: Use sender's own credentials first, fallback to pool
+            const senderCreds = await getApiCredentialsForAccount(supabase, senderAccount);
+            const receiverCreds = await getApiCredentialsForAccount(supabase, receiverAccount);
             
-            // ROUND-ROBIN API: Get API credentials from pool (true rotation within batch)
-            const senderApi = getNextApiFromPool();
-            const receiverApi = getNextApiFromPool();
-            
-            // Skip if no API credentials available
-            if (!senderApi) {
-              console.log(`[get-batch-tasks] SKIP warmup msg ${msg.id}: No API credentials available in pool`);
+            // Skip if sender has no API credentials available
+            if (!senderCreds) {
+              console.log(`[get-batch-tasks] SKIP warmup msg ${msg.id}: Sender ${senderAccount.phone_number} has no API credentials`);
               continue;
             }
             
@@ -513,9 +510,9 @@ serve(async (req) => {
                 app_version: senderAccount.app_version,
                 lang_code: senderAccount.lang_code,
                 system_lang_code: senderAccount.system_lang_code,
-              api_id: senderApi.api_id,
-                api_hash: senderApi.api_hash,
-                api_credential_id: senderApi.id,
+                api_id: senderCreds.api_id,
+                api_hash: senderCreds.api_hash,
+                api_credential_id: senderCreds.api_credential_id, // null for per-account
                 proxy: senderProxy,
               },
               proxy: senderProxy,
@@ -530,9 +527,9 @@ serve(async (req) => {
                 app_version: receiverAccount.app_version,
                 lang_code: receiverAccount.lang_code,
                 system_lang_code: receiverAccount.system_lang_code,
-                api_id: receiverApi?.api_id || receiverAccount.api_id,
-                api_hash: receiverApi?.api_hash || receiverAccount.api_hash,
-                api_credential_id: receiverApi?.id,
+                api_id: receiverCreds?.api_id || receiverAccount.api_id,
+                api_hash: receiverCreds?.api_hash || receiverAccount.api_hash,
+                api_credential_id: receiverCreds?.api_credential_id || null,
               },
               partner_proxy: contactsExchanged ? null : receiverProxy,
             });
@@ -1021,10 +1018,10 @@ serve(async (req) => {
             .replace(/{name}/g, recipient.name || 'there')
             .replace(/{phone}/g, recipient.phone_number);
 
-          // ROUND-ROBIN API: Get API credentials from pool (true rotation within batch)
-          const accountApi = getNextApiFromPool();
-          if (!accountApi) {
-            console.log(`[get-batch-tasks] SKIP recipient ${recipient.id}: No API credentials available in pool`);
+          // PER-ACCOUNT PRIORITY: Use account's own credentials first, fallback to pool
+          const accountCreds = await getApiCredentialsForAccount(supabase, account);
+          if (!accountCreds) {
+            console.log(`[get-batch-tasks] SKIP recipient ${recipient.id}: Account ${account.phone_number} has no API credentials`);
             continue;
           }
           
@@ -1053,9 +1050,9 @@ serve(async (req) => {
               app_version: account.app_version,
               lang_code: account.lang_code,
               system_lang_code: account.system_lang_code,
-              api_id: accountApi.api_id,
-              api_hash: accountApi.api_hash,
-              api_credential_id: accountApi.id,
+              api_id: accountCreds.api_id,
+              api_hash: accountCreds.api_hash,
+              api_credential_id: accountCreds.api_credential_id, // null for per-account
               proxy_id: account.proxy_id,
             },
             proxy: account.proxies

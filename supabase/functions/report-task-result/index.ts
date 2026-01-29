@@ -1970,38 +1970,7 @@ serve(async (req) => {
         console.log(`[report-task-result] Session verification for ${account_id}: ${status}${error ? ` (${error})` : ''}`);
         break;
       }
-      case "fingerprint_generated": {
-        // ONLY save fingerprint if account doesn't already have one
-        // NEVER overwrite existing fingerprints
-        const { account_id, device_model, system_version, app_version, lang_code, system_lang_code } = result;
-
-        // Check if account already has fingerprint data
-        const { data: existing } = await supabase
-          .from("telegram_accounts")
-          .select("device_model, system_version")
-          .eq("id", account_id)
-          .single();
-
-        if (existing?.device_model && existing?.system_version) {
-          console.log(`[report-task-result] Fingerprint already exists for ${account_id}, SKIPPING update`);
-          break;
-        }
-
-        // Only update if no fingerprint exists
-        await supabase
-          .from("telegram_accounts")
-          .update({
-            device_model,
-            system_version,
-            app_version,
-            lang_code,
-            system_lang_code,
-          })
-          .eq("id", account_id);
-
-        console.log(`[report-task-result] Fingerprint saved for ${account_id}: ${device_model} (${system_version})`);
-        break;
-      }
+      // NOTE: "fingerprint_generated" task type removed - fingerprints now come from JSON metadata during import
 
       case "session_updated": {
         // CRITICAL: Persist updated session file (with entity cache) back to database
