@@ -135,14 +135,10 @@ SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
 message_queues: Dict[str, any] = {}  # Global message queue tracking for LiveChat runner
 
-# ========== PROXY ERROR RETRY SETTINGS ==========
-PROXY_RETRY_DELAY = 180   # Retry proxy error accounts after 3 MINUTES (180 seconds)
-PROXY_MAX_RETRIES = 1     # After 1 failed cooldown retry, auto-disable (total: initial + 1 retry = 2 attempts)
-
 # ========== SPLIT TIMEOUTS ==========
 PROXY_CONNECTION_TIMEOUT = 180   # 3 minutes for slow proxy connections (no quick retries)
-CONNECTION_RETRIES = 0           # No quick retries - handled by 3-minute cooldown queue
-RETRY_DELAY = 0                  # No retry delay - cooldown queue handles delays
+CONNECTION_RETRIES = 0           # No quick retries - immediate disable on failure
+RETRY_DELAY = 0                  # No retry delay - immediate disable
 
 # HTTP Timeouts - split by purpose (increased for high-load 500+ clients)
 HTTP_TIMEOUT_DISPATCH = 90   # Task fetching (get-next-task, get-batch-tasks) - increased from 45
@@ -191,15 +187,15 @@ def get_http_client() -> httpx.AsyncClient:
     return _http_client
 
 
-# ========== PROXY ERROR RETRY FUNCTIONS ==========
-# Persistent retry tracking with timestamps: {account_id: {"count": int, "next_retry_at": float, "account_data": dict, "proxy_data": dict}}
-_proxy_retry_queue: Dict[str, dict] = {}
-
-
-async def force_disconnect_session(account_id: str, reason: str = "proxy_error"):
+async def force_disconnect_session(account_id: str, reason: str = "proxy_error", client: Optional[TelegramClient] = None):
     """
     IMMEDIATELY disconnect and clear session from memory.
-    Called the MOMENT a proxy failure is detected - before any retry logic.
+    Called the MOMENT a proxy failure is detected - NO RETRY.
+    
+    Args:
+        account_id: Account UUID
+        reason: Reason for disconnect (for logging)
+        client: Optional TelegramClient that failed to connect (never added to active_clients)
     
     FIX V2: Cancels ALL internal Telethon tasks (not just _updates_handle) to prevent
     "coroutine ignored GeneratorExit" and "Task was destroyed" errors.
@@ -208,13 +204,11 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
     
     phone = account_id[:8]
     
-    # Step 1: Remove from active clients FIRST (prevents any further operations)
-    client = active_clients.pop(account_id, None)
-    
-    # Step 2: Force disconnect if client exists with COMPREHENSIVE CLEANUP
-    if client:
+    # If client passed directly (connection timed out before being added to active_clients)
+    # disconnect it directly
+    if client is not None:
         try:
-            # Cancel ALL internal Telethon tasks (not just _updates_handle)
+            # Cancel ALL internal Telethon tasks
             internal_handles = ['_updates_handle', '_sender', '_borrowed_senders']
             for handle_name in internal_handles:
                 if hasattr(client, handle_name):
@@ -233,9 +227,62 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
                                     except:
                                         pass
             
+            if client.is_connected():
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(client.disconnect()), 
+                        timeout=10
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                except Exception:
+                    pass
+            
+            await asyncio.sleep(0.5)
+            del client
+            
+            print(f"  [FORCE DISCONNECT] {phone} - Timed-out client disconnected (never added to active_clients)")
+            print(f"  [SECURITY] {phone} - Session TERMINATED. Reason: {reason}")
+        except Exception as e:
+            print(f"  [FORCE DISCONNECT] {phone} - Timed-out client cleanup error: {str(e)[:30]}")
+        
+        # Clear from message queue tracking if exists
+        try:
+            if 'message_queues' in globals() and account_id in message_queues:
+                del message_queues[account_id]
+        except (NameError, KeyError):
+            pass
+        
+        return True
+    
+    # Step 1: Remove from active clients FIRST (prevents any further operations)
+    existing_client = active_clients.pop(account_id, None)
+    
+    # Step 2: Force disconnect if client exists with COMPREHENSIVE CLEANUP
+    if existing_client:
+        try:
+            # Cancel ALL internal Telethon tasks (not just _updates_handle)
+            internal_handles = ['_updates_handle', '_sender', '_borrowed_senders']
+            for handle_name in internal_handles:
+                if hasattr(existing_client, handle_name):
+                    handle = getattr(existing_client, handle_name)
+                    if handle:
+                        if hasattr(handle, 'cancel'):
+                            try:
+                                handle.cancel()
+                            except:
+                                pass
+                        elif isinstance(handle, dict):
+                            for sender in handle.values():
+                                if hasattr(sender, 'cancel'):
+                                    try:
+                                        sender.cancel()
+                                    except:
+                                        pass
+            
             # Also cancel the _sender's internal loops if they exist
-            if hasattr(client, '_sender') and client._sender:
-                sender = client._sender
+            if hasattr(existing_client, '_sender') and existing_client._sender:
+                sender = existing_client._sender
                 for loop_name in ['_send_loop', '_recv_loop']:
                     if hasattr(sender, loop_name):
                         loop = getattr(sender, loop_name)
@@ -246,11 +293,11 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
                                 pass
             
             # Try graceful disconnect with increased timeout
-            if client.is_connected():
+            if existing_client.is_connected():
                 try:
                     # Use asyncio.shield to prevent cancellation during disconnect
                     await asyncio.wait_for(
-                        asyncio.shield(client.disconnect()), 
+                        asyncio.shield(existing_client.disconnect()), 
                         timeout=10  # Increased from 5
                     )
                 except asyncio.TimeoutError:
@@ -259,20 +306,20 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
                     pass
             
             # CRITICAL: Give MORE time for event loop to process pending callbacks
-            # This prevents "coroutine ignored GeneratorExit" by letting
-            # the _recv_loop coroutine exit cleanly
-            await asyncio.sleep(0.5)  # Increased from 0.2
+            await asyncio.sleep(0.5)
             
             # Force garbage collection to clean up any remaining references
-            del client
+            del existing_client
             
-            # SECURITY LOG: Confirm session killed BEFORE any retry attempt
+            # SECURITY LOG: Confirm session killed
             print(f"  [SECURITY] {phone} - Session TERMINATED. Proxy assignment unchanged in DB.")
             print(f"  [FORCE DISCONNECT] {phone} - Reason: {reason}")
         except Exception as e:
             print(f"  [FORCE DISCONNECT] {phone} - Force cleared (error: {str(e)[:30]})")
     else:
-        print(f"  [FORCE DISCONNECT] {phone} - No active client found, cleared tracking")
+        # No active client - this means connection never completed (timed out before adding)
+        # This is normal when force_disconnect is called after connection timeout
+        print(f"  [FORCE DISCONNECT] {phone} - Client not in active_clients (connection never completed)")
     
     # Step 3: Clear from message queue tracking if exists (with safety guard)
     try:
@@ -314,215 +361,10 @@ async def check_client_health(client, account_id: str) -> bool:
         return False
 
 
-async def add_to_proxy_retry_queue(account_id: str, account_data: dict, proxy_data: dict = None):
-    """
-    Schedule retry after IMMEDIATE disconnect.
-    Tracks attempt count and schedules next retry after 3 minutes.
-    After 3 failed attempts, reports to backend to mark account inactive.
-    """
-    global _proxy_retry_queue
-    
-    now = time.time()
-    phone = account_id[:8]
-    
-    if account_id not in _proxy_retry_queue:
-        _proxy_retry_queue[account_id] = {"count": 0, "next_retry_at": 0, "account_data": {}, "proxy_data": None}
-    
-    _proxy_retry_queue[account_id]["count"] += 1
-    _proxy_retry_queue[account_id]["next_retry_at"] = now + PROXY_RETRY_DELAY  # 3 minutes from now
-    _proxy_retry_queue[account_id]["account_data"] = account_data
-    _proxy_retry_queue[account_id]["proxy_data"] = proxy_data
-    
-    retry_count = _proxy_retry_queue[account_id]["count"]
-    
-    if retry_count >= PROXY_MAX_RETRIES:
-        # Max retries exceeded - mark inactive in database
-        print(f"  [PROXY MAX] {phone} - {PROXY_MAX_RETRIES} attempts failed, marking INACTIVE")
-        await report_result("proxy_max_retries_exceeded", {
-            "account_id": account_id,
-            "reason": f"Proxy failed after {PROXY_MAX_RETRIES} connection attempts (3x 3-minute retries)",
-            "retry_count": retry_count
-        })
-        # Remove from retry queue - no more retries
-        del _proxy_retry_queue[account_id]
-    else:
-        remaining = PROXY_MAX_RETRIES - retry_count
-        print(f"  [PROXY RETRY] {phone} - Attempt {retry_count}/{PROXY_MAX_RETRIES}, retry in 3 min ({remaining} left)")
+# NOTE: All retry queue functions have been REMOVED per user requirements.
+# If a connection fails, the account is immediately disabled - NO RETRIES.
+# Admin must fix the issue and manually re-enable the account.
 
-
-def remove_from_proxy_retry_queue(account_id: str):
-    """Clear retry tracking on successful connection."""
-    global _proxy_retry_queue
-    if account_id in _proxy_retry_queue:
-        del _proxy_retry_queue[account_id]
-
-
-def get_ready_proxy_retries() -> list:
-    """Get list of account IDs ready for proxy retry (3 min passed)."""
-    global _proxy_retry_queue
-    
-    now = time.time()
-    ready = []
-    
-    for acc_id, info in list(_proxy_retry_queue.items()):
-        # Skip if already at max retries (shouldn't happen, but safety check)
-        if info.get("count", 0) >= PROXY_MAX_RETRIES:
-            continue
-        
-        # Check if enough time has passed (3 minutes)
-        if now >= info.get("next_retry_at", 0):
-            ready.append(acc_id)
-    
-    return ready
-
-
-async def retry_proxy_error_accounts():
-    """
-    Process accounts in the proxy retry queue that are ready for retry (3 min passed).
-    Uses the in-memory _proxy_retry_queue for tracking with 3-minute delays.
-    """
-    global _proxy_retry_queue
-    
-    # Get accounts ready for retry
-    ready_ids = get_ready_proxy_retries()
-    
-    if not ready_ids:
-        return 0
-    
-    print(f"\\n  [PROXY RETRY] {len(ready_ids)} accounts ready for retry...")
-    
-    http = get_http_client()
-    from datetime import datetime
-    
-    reconnected = 0
-    for acc_id in ready_ids:
-        info = _proxy_retry_queue.get(acc_id, {})
-        account_data = info.get("account_data", {})
-        proxy_data = info.get("proxy_data")
-        retry_count = info.get("count", 0)
-        phone = acc_id[:8]
-        
-        print(f"    [{phone}] Retry attempt {retry_count + 1}/{PROXY_MAX_RETRIES}...")
-        
-        try:
-            # Fetch fresh account data from database if not cached
-            if not account_data.get("session_data"):
-                resp = await http.get(
-                    f"{SUPABASE_URL}/rest/v1/telegram_accounts",
-                    params={
-                        "select": "id,phone_number,session_data,device_model,system_version,app_version,lang_code,system_lang_code,proxy_id,status",
-                        "id": f"eq.{acc_id}",
-                        "limit": "1"
-                    },
-                    headers={
-                        "apikey": SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}"
-                    },
-                    timeout=10
-                )
-                if resp.status_code == 200 and resp.json():
-                    account_data = resp.json()[0]
-                else:
-                    print(f"    [{phone}] ✗ Could not fetch account data")
-                    continue
-            
-            # ROUND-ROBIN API: Fetch from telegram_api_credentials pool (lowest usage first)
-            if not account_data.get("api_id") or not account_data.get("api_hash"):
-                api_resp = await http.get(
-                    f"{SUPABASE_URL}/rest/v1/telegram_api_credentials",
-                    params={
-                        "select": "id,api_id,api_hash,usage_count",
-                        "is_active": "eq.true",
-                        "order": "usage_count.asc,last_used_at.asc.nullsfirst",
-                        "limit": "1"
-                    },
-                    headers={
-                        "apikey": SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}"
-                    },
-                    timeout=10
-                )
-                if api_resp.status_code == 200 and api_resp.json():
-                    api_cred = api_resp.json()[0]
-                    account_data["api_id"] = api_cred["api_id"]
-                    account_data["api_hash"] = api_cred["api_hash"]
-                    account_data["api_credential_id"] = api_cred["id"]
-                    print(f"    [{phone}] Using round-robin API: {api_cred['api_id'][:4]}... (usage: {api_cred.get('usage_count', 0)})")
-                else:
-                    print(f"    [{phone}] ✗ No active API credentials available in pool")
-                    continue
-            
-            # Fetch proxy if not cached
-            if not proxy_data and account_data.get("proxy_id"):
-                proxy_resp = await http.get(
-                    f"{SUPABASE_URL}/rest/v1/proxies",
-                    params={
-                        "select": "*",
-                        "id": f"eq.{account_data['proxy_id']}"
-                    },
-                    headers={
-                        "apikey": SUPABASE_KEY,
-                        "Authorization": f"Bearer {SUPABASE_KEY}"
-                    },
-                    timeout=10
-                )
-                if proxy_resp.status_code == 200 and proxy_resp.json():
-                    proxy_data = proxy_resp.json()[0]
-            
-            # Add proxy data to account for connection
-            account_data["proxy"] = proxy_data
-            
-            client = await get_or_create_client(
-                account_data,
-                task_proxy=proxy_data,
-                skip_avatar=True,
-                no_cache=True
-            )
-            
-            if client:
-                # SUCCESS! Clear from retry queue
-                remove_from_proxy_retry_queue(acc_id)
-                reconnected += 1
-                
-                # Update database to clear disabled_reason
-                try:
-                    update_resp = await http.patch(
-                        f"{SUPABASE_URL}/rest/v1/telegram_accounts?id=eq.{acc_id}",
-                        json={
-                            "disabled_reason": None,
-                            "auto_disabled": False,
-                            "last_active": datetime.now().isoformat()
-                        },
-                        headers={
-                            "apikey": SUPABASE_KEY,
-                            "Authorization": f"Bearer {SUPABASE_KEY}",
-                            "Content-Type": "application/json",
-                            "Prefer": "return=minimal"
-                        },
-                        timeout=10
-                    )
-                    if update_resp.status_code in [200, 204]:
-                        print(f"    [{phone}] ✓ Reconnected and updated in database!")
-                    else:
-                        print(f"    [{phone}] ✓ Reconnected (db update failed: {update_resp.status_code})")
-                except Exception as db_err:
-                    print(f"    [{phone}] ✓ Reconnected (db update error: {db_err})")
-            else:
-                # FAILED - add_to_proxy_retry_queue was already called in get_or_create_client
-                print(f"    [{phone}] ✗ Still failing - will retry in 3 min")
-                
-        except Exception as e:
-            error_str = str(e).lower()
-            print(f"    [{phone}] ✗ Error: {str(e)[:100]}")
-            
-            # If proxy error, ensure it's tracked (immediate disconnect already happened)
-            if any(p in error_str for p in PROXY_ERROR_PATTERNS):
-                await add_to_proxy_retry_queue(acc_id, account_data, proxy_data)
-    
-    if reconnected > 0:
-        print(f"  [PROXY RETRY] Reconnected {reconnected}/{len(ready_ids)} accounts")
-    
-    return reconnected
 
 
 def decode_session_file(phone_number: str, base64_data: str) -> Optional[str]:
@@ -830,8 +672,8 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
             # Session MUST be terminated to prevent any unproxied connection attempt
             print(f"  [CONNECTION TIMEOUT] {phone} - Proxy failed after 180s - DISABLING ACCOUNT IMMEDIATELY")
             
-            # STEP 1: KILL SESSION IMMEDIATELY - no retries, no waiting
-            await force_disconnect_session(account_id, "proxy_connection_timeout")
+            # STEP 1: KILL SESSION IMMEDIATELY - pass client object for proper cleanup
+            await force_disconnect_session(account_id, "proxy_connection_timeout", client=client)
             
             # STEP 2: Report to backend - mark account disconnected + auto_disabled + proxy as error
             asyncio.create_task(report_result("proxy_timeout_disable", {
@@ -840,7 +682,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                 "reason": "Proxy connection failed after 3-minute timeout - session killed and account disabled"
             }))
             
-            # NO RETRY QUEUE - immediate disable. Admin must fix and re-enable manually.
+            # NO RETRY - immediate disable. Admin must fix and re-enable manually.
             return None
         
         # Connected via proxy - NOW we can check session status
@@ -925,9 +767,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
             active_clients[account_id] = client
         
         # ========== REPORT PROXY SUCCESS ==========
-        # Connection succeeded - mark proxy as active and remove from retry queue
-        remove_from_proxy_retry_queue(account_id)
-        
+        # Connection succeeded - mark proxy as active (no retry queue exists anymore)
         if proxy_id:
             asyncio.create_task(report_result("proxy_success", {
                 "account_id": account_id,
@@ -2661,8 +2501,7 @@ from telethon import events
 from client_manager import (
     get_or_create_client, get_next_task, report_result,
     send_message, shutdown_all, cleanup_stale_clients, active_clients, get_http_client,
-    retry_proxy_error_accounts, log_error, check_client_health, add_to_proxy_retry_queue,
-    force_disconnect_session, HTTP_TIMEOUT_UPLOAD, _proxy_retry_queue
+    log_error, check_client_health, force_disconnect_session, HTTP_TIMEOUT_UPLOAD
 )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
@@ -3354,24 +3193,15 @@ async def setup_message_handler(client, account_id: str):
 # ========== FLAG TO PAUSE keep_clients_alive DURING BATCH PROCESSING ==========
 _processing_batch = False
 
-# ========== GLOBAL RETRY TRACKING ==========
-# Track failed accounts with retry timestamps {account_id: retry_time}
-# Shared between keep_clients_alive and main_loop
-failed_connection_accounts = {}
-FAILED_RETRY_DELAY = 180  # 3 MINUTES to wait before retrying failed connection
 
-
-async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected"):
+async def disconnect_session(acc_id: str, reason: str = "disconnected"):
     """
-    Properly disconnect a session and schedule it for retry after 3 MINUTES.
+    Immediately disconnect a session and mark for IMMEDIATE DISABLE - NO RETRIES.
     
-    FIX V2: Routes network/proxy errors to add_to_proxy_retry_queue for 3-attempt limit.
-    Also cancels ALL internal Telethon tasks to prevent GeneratorExit errors.
+    Per user requirements: If a connection fails (proxy, network, or health check),
+    disable the account immediately. It will NOT be automatically retried.
     """
-    global failed_connection_accounts
-    
     phone = acc_id[:8]
-    reason_lower = reason.lower()
     
     # IMMEDIATE DISCONNECT - Remove from active clients and disconnect properly
     if acc_id in active_clients:
@@ -3414,7 +3244,7 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
                     # Use asyncio.shield to prevent cancellation during disconnect
                     await asyncio.wait_for(
                         asyncio.shield(client.disconnect()), 
-                        timeout=10  # Increased from 5
+                        timeout=10
                     )
                 except asyncio.TimeoutError:
                     print(f"  [TIMEOUT] Disconnect timeout for {phone} - forcing cleanup")
@@ -3422,32 +3252,23 @@ async def disconnect_and_schedule_retry(acc_id: str, reason: str = "disconnected
                     pass
                 
                 # CRITICAL: Allow event loop to process pending callbacks
-                await asyncio.sleep(0.5)  # Increased from 0.2
-                print(f"  [DISCONNECT] {phone} - {reason} - scheduling retry...")
+                await asyncio.sleep(0.5)
+                print(f"  [DISCONNECT] {phone} - {reason} - DISABLED (no retry)")
             else:
-                print(f"  [CLEANUP] {phone} - already disconnected - scheduling retry...")
+                print(f"  [CLEANUP] {phone} - already disconnected - DISABLED (no retry)")
             
             # Force cleanup of client reference
             del client
             
         except Exception as e:
-            print(f"  [CLEANUP] {phone} - force cleanup ({e}) - scheduling retry...")
+            print(f"  [CLEANUP] {phone} - force cleanup ({e}) - DISABLED (no retry)")
     
-    # Check if this is a proxy/network error - use the 3-attempt retry queue
-    proxy_patterns = ["semaphore timeout", "winerror 121", "connection refused", 
-                     "proxy", "socks", "timed out", "timeout", "cannot connect",
-                     "connection reset", "connection closed", "no route",
-                     "server closed", "network error", "network is unreachable",
-                     "health_check", "zombie"]
-    is_proxy_error = any(p in reason_lower for p in proxy_patterns)
-    
-    if is_proxy_error:
-        # Use proxy retry queue with 3-attempt limit and 3-minute delay
-        print(f"  [PROXY RETRY] {phone} - Adding to 3-attempt retry queue")
-        await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
-    else:
-        # Non-proxy errors use standard retry schedule
-        failed_connection_accounts[acc_id] = time.time() + FAILED_RETRY_DELAY
+    # NO RETRY QUEUE - immediate disable per user requirements
+    # Report to backend to mark account as disconnected + auto_disabled
+    await report_result("health_check_disable", {
+        "account_id": acc_id,
+        "reason": reason
+    })
 
 
 async def keep_clients_alive():
@@ -3455,12 +3276,11 @@ async def keep_clients_alive():
     Background task that keeps all clients receiving updates - with network error handling.
     
     PAUSES during batch processing to prevent SQLite lock conflicts.
-    Disconnects failed clients and schedules them for retry.
+    Disconnects failed clients and IMMEDIATELY DISABLES them - NO RETRIES.
     
-    FIX V2: Added periodic health checks (every 60s) to detect zombie connections
+    Includes periodic health checks (every 60s) to detect zombie connections
     where is_connected() returns True but socket is actually dead.
     """
-    global failed_connection_accounts
     consecutive_errors = 0
     MAX_CONSECUTIVE_ERRORS = 10
     
@@ -3490,15 +3310,13 @@ async def keep_clients_alive():
                         print(f"  [HEALTH CHECK] {acc_id[:8]} - Error: {str(health_err)[:30]}")
                         health_check_disconnects.append(acc_id)
                 
-                # Immediately disconnect dead connections - NO RETRY (immediate disable per plan)
+                # Immediately disconnect dead connections - NO RETRY (immediate disable)
                 for acc_id in health_check_disconnects:
                     await force_disconnect_session(acc_id, "health_check_failed")
-                    # IMMEDIATE DISABLE: Report to backend to mark account disconnected + auto_disabled
-                    # DO NOT use add_to_proxy_retry_queue - that contradicts "disable immediately" requirement
-                    await report_result("proxy_max_retries_exceeded", {
+                    # IMMEDIATE DISABLE via health_check_disable (cleaner than proxy_max_retries_exceeded)
+                    await report_result("health_check_disable", {
                         "account_id": acc_id,
-                        "reason": "Health check failed - zombie connection detected",
-                        "retry_count": 1
+                        "reason": "Health check failed - zombie connection detected"
                     })
                     await log_error("LiveChat", f"[HEALTH CHECK] {acc_id[:8]} - Zombie connection terminated (auto-disabled)")
                 
@@ -3515,7 +3333,7 @@ async def keep_clients_alive():
                         # This processes pending updates without blocking
                         await asyncio.wait_for(client.catch_up(), timeout=5)
                     else:
-                        # Client disconnected - mark for removal and retry
+                        # Client disconnected - mark for immediate disable
                         disconnected_ids.append((acc_id, "connection lost"))
                 except asyncio.TimeoutError:
                     print(f"  [TIMEOUT] catch_up timeout for {acc_id[:8]}")
@@ -3526,7 +3344,7 @@ async def keep_clients_alive():
                         print(f"  [TELEGRAM] Server busy, skipping iteration: {str(e)[:40]}")
                         await asyncio.sleep(5)
                         continue
-                    # Check for network errors - disconnect and schedule retry
+                    # Check for network errors - disconnect and DISABLE immediately (no retry)
                     if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str or "server closed" in error_str:
                         consecutive_errors += 1
                         disconnected_ids.append((acc_id, f"network error: {str(e)[:30]}"))
@@ -3537,9 +3355,9 @@ async def keep_clients_alive():
                     else:
                         disconnected_ids.append((acc_id, f"error: {str(e)[:30]}"))
             
-            # Disconnect failed clients and schedule for retry (routes proxy errors to 3-attempt queue)
+            # Disconnect failed clients and IMMEDIATELY DISABLE (no retry)
             for acc_id, reason in disconnected_ids:
-                await disconnect_and_schedule_retry(acc_id, reason)
+                await disconnect_session(acc_id, reason)
             
             # Reset error counter on successful iteration
             if not disconnected_ids:
@@ -3560,16 +3378,14 @@ async def keep_clients_alive():
 
 async def main_loop():
     print("=" * 50)
-    print("  LiveChat Runner (24-HOUR SYNC WINDOW)")
-    print("  BUILD: 2026-01-27-contact-sync-fix")
+    print("  LiveChat Runner (NO RETRY VERSION)")
+    print("  BUILD: 2026-01-29-no-retry")
     print("  [Incoming + Replies + Offline Sync]")
     print("  ⏰ Only syncs messages from last 24 hours")
-    print("  🔄 Failed connections retry after 3 min cooldown")
+    print("  ⚠️  NO RETRIES - Failed connections IMMEDIATELY disabled")
     print("  📨 Skips accounts without proxy/API")
     print("=" * 50)
     print("=" * 50)
-    
-    global failed_connection_accounts, _proxy_retry_queue  # Use global retry tracking shared with keep_clients_alive
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
     # Session check disabled - accounts connect without reporting to backend
@@ -3578,7 +3394,6 @@ async def main_loop():
     last_cleanup = time.time()
     last_heartbeat = time.time()
     last_sync_retry = time.time()
-    last_proxy_retry = time.time()
     iteration_count = 0
     
     # Start background task to keep clients catching updates
@@ -3588,16 +3403,9 @@ async def main_loop():
         try:
             iteration_count += 1
             
-            # ========== RETRY PROXY ERROR ACCOUNTS (every 30s) ==========
-            if time.time() - last_proxy_retry >= 30:
-                await retry_proxy_error_accounts()
-                last_proxy_retry = time.time()
-            
-            # Heartbeat logging
+            # Heartbeat logging (simplified - no retry queue counts)
             if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
-                proxy_retry_count = len(_proxy_retry_queue)
-                conn_retry_count = len(failed_connection_accounts)
-                print(f"  [HEARTBEAT] Iteration {iteration_count}, Connected: {len(connected_ids)}, Active: {len(active_clients)}, Proxy Retry: {proxy_retry_count}, Conn Retry: {conn_retry_count}")
+                print(f"  [HEARTBEAT] Iteration {iteration_count}, Connected: {len(connected_ids)}, Active: {len(active_clients)}")
                 last_heartbeat = time.time()
             
             # Periodic cleanup - sync connected_ids with actual clients
@@ -3610,16 +3418,6 @@ async def main_loop():
                 if stale_ids:
                     print(f"  [CLEANUP] Removed {len(stale_ids)} stale IDs from connected_ids")
                 
-                # Allow failed accounts to retry after their cooldown expires (180s/3min from failure)
-                now = time.time()
-                expired_failures = [acc_id for acc_id, retry_time in failed_connection_accounts.items() if now > retry_time]
-                for acc_id in expired_failures:
-                    del failed_connection_accounts[acc_id]
-                    connected_ids.discard(acc_id)  # Allow re-connection attempt
-                
-                if expired_failures:
-                    print(f"  [RETRY] {len(expired_failures)} failed accounts ready for retry")
-                
                 # Clean up disconnected clients
                 await cleanup_stale_clients()
                 gc.collect()
@@ -3631,12 +3429,11 @@ async def main_loop():
             
             if task_type == "wait":
                 accounts = task.get("accounts", [])
-                # Only connect NEW accounts (skip already connected and recently failed)
+                # Only connect NEW accounts (skip already connected)
+                # NO retry queue filter - disabled accounts won't be in the list anyway
                 new_accounts = [
                     acc for acc in accounts 
-                    if acc.get("id") not in connected_ids 
-                    and acc.get("id") not in failed_connection_accounts
-                    and acc.get("id") not in _proxy_retry_queue  # FIX: Skip accounts waiting for proxy retry (3-min delay)
+                    if acc.get("id") not in connected_ids
                 ]
                 
                 if new_accounts:

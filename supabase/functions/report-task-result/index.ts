@@ -1581,6 +1581,49 @@ serve(async (req) => {
         break;
       }
 
+      case "health_check_disable": {
+        // Account failed health check or connection - IMMEDIATE DISABLE (no retries)
+        // Used when zombie connections are detected or connections fail after 180s timeout
+        const { account_id, reason } = result;
+
+        console.log(`[report-task-result] Account ${account_id} HEALTH CHECK FAILED - DISABLING IMMEDIATELY`);
+
+        // Mark account as disconnected with auto_disabled - requires admin intervention
+        await supabase
+          .from("telegram_accounts")
+          .update({
+            status: "disconnected",
+            disabled_reason: reason || "Health check failed - zombie connection",
+            auto_disabled: true,
+            last_active: new Date().toISOString()
+          })
+          .eq("id", account_id);
+
+        console.log(`[report-task-result] Account ${account_id} marked as DISCONNECTED + auto_disabled`);
+
+        // Mark the proxy as "error" so admin can see it in dashboard
+        // Get proxy_id from the account record
+        const { data: account } = await supabase
+          .from("telegram_accounts")
+          .select("proxy_id")
+          .eq("id", account_id)
+          .single();
+        
+        if (account?.proxy_id) {
+          await supabase
+            .from("proxies")
+            .update({
+              status: "error",
+              last_checked: new Date().toISOString()
+            })
+            .eq("id", account.proxy_id);
+          console.log(`[report-task-result] Proxy ${account.proxy_id} marked as ERROR status`);
+        }
+
+        console.log(`[report-task-result] Admin must fix proxy and manually reactivate account`);
+        break;
+      }
+
       case "proxy_success":
       case "connection_success": {
         // Account connected successfully via proxy - mark proxy as active and clear any errors
