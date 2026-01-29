@@ -1,72 +1,57 @@
 
-## Goal ✅ COMPLETED
-Make LiveChat work reliably: accounts must stay connected to receive messages, and incoming messages must be saved into the backend so they appear in the Conversations/SeatChat UI.
+## Plan: Simplify Runner Heartbeat to Show Single "Unified Runner" Card
 
-## Changes Made
+### Problem
+The Python runner currently sends a single heartbeat as `"unified"`, but the UI displays 4 separate runner cards (Campaign, LiveChat, Account, Warmup). Since `"unified"` doesn't match any of these keys, the status display is broken.
 
-### A) Backend: Added incoming message support ✅
-**File:** `supabase/functions/runner-tasks/index.ts`
+### Solution
+Since you're using a single unified runner that handles ALL functions (campaigns, livechat, accounts, warmup), we should:
 
-1. Extended `handleReportResults()` to handle `task_type: "incoming"` or `"incoming_message"`
-2. Added `processIncomingMessage()` function that:
-   - Finds existing conversation by `(account_id, recipient_telegram_id)` or `(account_id, recipient_phone)`
-   - Creates new conversation if not found
-   - Deduplicates messages by `telegram_message_id` to prevent duplicates on reconnects
-   - Inserts message with `direction: 'incoming'`, `status: 'delivered'`
-   - Updates conversation: `last_message_at`, `last_message_content`, `last_message_direction`, `has_reply`, `unread_count`
+1. **Update UI to show a single "Unified Runner" card** instead of 4 separate runners
+2. **Map `unified` runner heartbeat to display properly**
 
-3. Added database function `increment_unread_count(conv_id)` for atomic counter updates
+---
 
-### B) Runner template: Fixed account connectivity ✅
-**File:** `src/pages/SetupGuide.tsx`
+## Changes
 
-1. Removed direct REST `fetch_accounts()` call that was failing
-2. Runner now uses `/runner-tasks/get` which already returns accounts array
-3. Updated `connect_all_from_response()` to use accounts from task response
-4. Main loop now:
-   - Fetches tasks AND accounts from single endpoint
-   - Connects accounts on startup
-   - Refreshes account connections every 60s or when new accounts appear
-   - Prints "N clients listening" instead of "0 clients"
+### 1. Update Runner Status Hook
+**File:** `src/hooks/useRunnerStatus.ts`
 
-## How to Test
+- Change `runnerNames` to only have one entry: `unified: 'Unified Runner'`
+- Update `normalizeRunnerKey()` to map all legacy names to `unified`
+- This will show a single card that tracks the unified runner's heartbeat
 
-1. Download the new runner from Setup page
-2. Run on VPS - should now show:
-   ```
-   Fetching accounts from backend...
-   CONNECTING ACCOUNTS
-   Found 2 accounts...
-   ✓ [1496] Connected
-   ✓ [9866] Connected
-   Connected: 2/2
-   
-   PROCESSING TASKS + LISTENING FOR MESSAGES
-   [WAIT] No tasks (2 clients listening)
-   ```
+### 2. Update Runner Status Card UI
+**File:** `src/components/dashboard/RunnerStatus.tsx`
 
-3. Send a Telegram message to one of the connected accounts
-4. Should see: `📩 [1496] ← SenderName: Hello...`
-5. Check Conversations page - new message should appear
+- Update `runnerIcons` to show a single "Unified" runner with a combined icon
+- Update the grid to show just 1 card (or keep the current responsive layout)
+- Add a subtitle showing what the unified runner handles: "Campaigns, LiveChat, Accounts, Warmup"
 
-## Expected Log Output After Fix
-```
-Fetching accounts from backend...
-==================================================
-  CONNECTING ACCOUNTS
-==================================================
-  Found 2 accounts...
+### 3. Clean Up Database (Optional)
+- Remove old/legacy heartbeat entries like `livechat` since they're no longer used
+- Only keep the `unified` heartbeat entry
 
-  ✓ [1496] Connected
-  ✓ [9866] Connected
+---
 
-  Connected: 2/2
+## Expected Result
 
-==================================================
-  PROCESSING TASKS + LISTENING FOR MESSAGES
-==================================================
+| Before | After |
+|--------|-------|
+| 4 separate runner cards (all offline) | 1 "Unified Runner" card |
+| 0/4 Online displayed | 1/1 Online when runner is active |
+| Confusing status | Clear status |
 
-  [WAIT] No tasks (2 clients listening)
-  📩 [1496] ← John: Hello, is this available?
-  [WAIT] No tasks (2 clients listening)
-```
+---
+
+## Technical Details
+
+**useRunnerStatus.ts changes:**
+- Replace 4-runner map with single unified runner
+- Simplify normalizeRunnerKey to always return `unified`
+
+**RunnerStatus.tsx changes:**
+- Single card with combined functionality list
+- Icon: Activity or Server icon
+- Color: Primary/blue
+- Functions: "Campaigns, LiveChat, Accounts, Warmup"
