@@ -1121,8 +1121,8 @@ async def process(task: dict):
             })
         else:
             await report("send", {
-                "message_id": msg.get("id"),
-                "campaign_recipient_id": msg.get("campaign_recipient_id"),
+                "message_id": msg.get("id") or task.get("message_id"),
+                "campaign_recipient_id": task.get("campaign_recipient_id") or msg.get("campaign_recipient_id"),
                 "campaign_id": task.get("campaign_id"),
                 "campaign_seat_id": task.get("campaign_seat_id"),
                 "account_id": aid,
