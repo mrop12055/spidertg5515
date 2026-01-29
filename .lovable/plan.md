@@ -1,162 +1,181 @@
 
 
-# Fix: Proxy Timeout Handling - Wait 3 Minutes Before First Retry
+# Fix: LiveChat 3-Minute Proxy Timeout with Immediate Disable
 
 ## Problem Summary
 
-The current implementation has **fast retries inside `connect_with_retry()`** that retry 3 times with 1s/2s/4s delays - this is the "Attempt 1/3... Waiting 1s" you're seeing. The user wants:
+Three issues are causing the current behavior:
 
-1. **No quick retries** - proxy connections need 3 minutes to stabilize, not 1-4 seconds
-2. **Disable after 1 cooldown retry** - if it fails after the 3-minute wait, mark account as `auto_disabled` immediately
-3. **Never remove proxy from account** - just mark proxy as "error" status in admin; admin will remove it manually
+1. **Outer timeout (30s) overrides the 3-minute proxy timeout**
+   - `CONNECT_TIMEOUT_SECONDS = 30` at line 2660 wraps the entire connection
+   - The inner `PROXY_CONNECTION_TIMEOUT = 180` never gets a chance to complete
+   - Connection is killed after 30s, not 3 minutes
 
-## Root Cause
+2. **Session checks are reporting errors and changing account status**
+   - `report_session_check()` calls at lines 863, 877, 881, 885, 889, 893, 899, 924, 928, 932, 938 mark accounts as "disconnected" or "banned" on errors
+   - These run before the retry logic can take over
 
-The `connect_with_retry()` function (lines 576-608) contains a built-in retry loop with short delays (1s, 2s, 4s) that runs BEFORE the 3-minute cooldown queue takes over:
-
-```python
-# CURRENT BEHAVIOR (WRONG):
-for attempt in range(3):        # Quick 3x retry loop
-    connect()                    # Try connection
-    await asyncio.sleep(1/2/4)   # Wait 1s, 2s, 4s between attempts
-# THEN add to 3-minute queue
-```
-
-**What user wants:**
-```python
-# CORRECT BEHAVIOR:
-try:
-    connect()                    # Single attempt with 180s timeout
-except:
-    # IMMEDIATELY add to 3-minute queue - NO quick retries
-```
+3. **User wants IMMEDIATE disable after 3-minute timeout fails** (no retry queue)
+   - Current: fail → 3-min queue → retry → fail again → disable
+   - Desired: fail after 3-min timeout → immediately kill session and disable
 
 ## Changes Required
 
-### 1. Remove Quick Retries in `connect_with_retry()` (SetupGuide.tsx)
+### 1. Increase `CONNECT_TIMEOUT_SECONDS` to 200 seconds
 
-**Current (lines 576-608):**
+**Location:** Line 2660
+
+**Current:**
 ```python
-async def connect_with_retry(client: TelegramClient, max_retries: int = 3) -> bool:
-    for attempt in range(max_retries):  # 3 quick attempts
-        try:
-            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-            return True
-        except ...:
-            # Quick retry with 1s/2s/4s delay
-            if attempt < max_retries - 1:
-                wait_time = min(2 ** attempt, 4)
-                print(f"    [RETRY] Waiting {wait_time}s before retry...")
-                await asyncio.sleep(wait_time)
-```
-
-**New (single attempt, 3-minute proxy timeout):**
-```python
-async def connect_with_retry(client: TelegramClient, connection_timeout: int = 180) -> bool:
-    """
-    Attempt single connection with 3-minute timeout for slow proxies.
-    NO quick retries - if proxy fails, add to 3-minute cooldown queue.
-    """
-    try:
-        await asyncio.wait_for(client.connect(), timeout=connection_timeout)
-        print(f"    [CONNECTED] Proxy connection successful")
-        return True
-    except asyncio.TimeoutError:
-        print(f"    [TIMEOUT] Proxy connection timed out after {connection_timeout}s")
-        return False
-    except Exception as e:
-        err_str = str(e).lower()
-        if any(p in err_str for p in PROXY_ERROR_PATTERNS):
-            print(f"    [PROXY ERROR] {e}")
-        else:
-            print(f"    [ERROR] {e}")
-        return False
-```
-
-### 2. Change `PROXY_MAX_RETRIES` from 3 to 1 (SetupGuide.tsx)
-
-**Current (line 139):**
-```python
-PROXY_MAX_RETRIES = 3     # Max retry attempts before marking account as inactive
+CONNECT_TIMEOUT_SECONDS = 30  # Timeout for stable connections
 ```
 
 **New:**
 ```python
-PROXY_MAX_RETRIES = 1     # After 1 failed cooldown retry (total: initial + 1 retry = 2 attempts), disable
+CONNECT_TIMEOUT_SECONDS = 200  # 3+ minutes to allow full proxy timeout (180s) + overhead
 ```
 
-This means:
-- **Initial connection attempt** - uses 3-minute proxy timeout
-- If fails: wait 3 minutes in queue
-- **Retry attempt #1** - uses 3-minute proxy timeout again
-- If fails: mark account as `auto_disabled` immediately
+### 2. Remove retry queue - immediate disable on proxy failure
 
-### 3. Update Connection Timeout Constant (SetupGuide.tsx)
+**Current flow (wrong):**
+```
+fail → add_to_proxy_retry_queue() → wait 3 min → retry → disable
+```
 
-**Current (line 142):**
+**New flow (correct):**
+```
+3-minute timeout for proxy → fail → kill session → disable immediately
+```
+
+**Location:** Lines 809-826 in `get_or_create_client()` and lines 840-846
+
+**Current:**
 ```python
-CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
+if not await connect_with_retry(client):
+    print(f"  [PROXY ERROR] Connection failed for {phone} - adding to 3-min retry queue")
+    await force_disconnect_session(account_id, "proxy_connection_failed")
+    asyncio.create_task(report_result("proxy_error", {...}))
+    await add_to_proxy_retry_queue(account_id, account, task_proxy)  # ← REMOVE THIS
+    return None
 ```
 
 **New:**
 ```python
-PROXY_CONNECTION_TIMEOUT = 180   # 3 minutes for slow proxy connections
+if not await connect_with_retry(client):
+    print(f"  [CONNECTION TIMEOUT] {phone} - Proxy failed after 180s - DISABLING ACCOUNT")
+    await force_disconnect_session(account_id, "proxy_connection_timeout")
+    asyncio.create_task(report_result("proxy_timeout_disable", {
+        "account_id": account_id,
+        "proxy_id": proxy_id,
+        "reason": "Proxy connection failed after 3-minute timeout - account disabled"
+    }))
+    # NO RETRY QUEUE - immediate disable
+    return None
 ```
 
-### 4. Update Backend Handler (report-task-result/index.ts)
+### 3. Replace `report_session_check()` with `log_error()` in error paths
 
-The backend already handles `proxy_max_retries_exceeded` correctly - it marks the account as:
-- `status: "disconnected"`
-- `auto_disabled: true`
-- `disabled_reason: "Proxy error: Failed Xx (3-min intervals) - requires admin fix"`
+Session checks should NOT run when proxy fails because we can't determine session status without a successful connection. Replace all error-path session checks with log_error() for visibility.
 
-The proxy_id is **never removed** (this is already correct).
+**Lines to modify:** 863, 877, 881, 885, 889, 893, 899, 924, 928, 932, 938
 
-Also mark the proxy status as "error" so it shows in admin dashboard.
+**Current pattern:**
+```python
+except AuthKeyUnregisteredError:
+    print(f"  [EXPIRED] {phone}: Auth key unregistered")
+    asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
+    return None
+```
 
-## Updated Flow
+**New pattern:**
+```python
+except AuthKeyUnregisteredError:
+    print(f"  [EXPIRED] {phone}: Auth key unregistered")
+    asyncio.create_task(log_error("livechat", f"{phone}: Auth key unregistered - session expired"))
+    return None
+```
+
+### 4. Add new `proxy_timeout_disable` handler to backend
+
+**Location:** `supabase/functions/report-task-result/index.ts`
+
+Add handler for the new result type that:
+- Marks account as `status: "disconnected"` 
+- Sets `auto_disabled: true`
+- Sets `disabled_reason: "Connection timeout - proxy failed after 3 minutes"`
+- Marks proxy as `status: "error"`
+- **Never removes `proxy_id`** from account
+
+### 5. Remove retry queue logic from main_loop error handling
+
+**Location:** Lines 3717-3729
+
+**Current:**
+```python
+elif error == "TIMEOUT":
+    timeout_count += 1
+    await disconnect_and_schedule_retry(acc_id, "connection timeout")
+```
+
+**New:**
+```python
+elif error == "TIMEOUT":
+    timeout_count += 1
+    # Timeout already handled in get_or_create_client with immediate disable
+    # Just ensure session is killed (already done in connect_with_retry failure path)
+```
+
+## Expected Flow After Fix
 
 ```text
-Account Connection Attempt
+Account Connection Attempt (main_loop)
         ↓
-connect_with_retry() - 180s timeout (NO quick retries)
+asyncio.wait_for(connect_account_with_fingerprint(), timeout=200s)  ← Allows full 180s
+        ↓
+get_or_create_client() with skip_session_check=True
+        ↓
+connect_with_retry(client) - 180s PROXY timeout (single attempt)
         ↓
 If SUCCESS:
-   ✓ Account connected, start listening for messages
+   ✓ Account connected
+   ✓ NO session check (skip_session_check=True)
         ↓
-If FAILURE:
-   → force_disconnect_session() - kill session immediately
-   → report_result("proxy_error") - mark proxy as "error" in DB
-   → add_to_proxy_retry_queue() - schedule retry after 3 minutes
-        ↓
-[After 3 minutes]
-        ↓
-retry_proxy_error_accounts() picks up account
-        ↓
-connect_with_retry() - 180s timeout again
-        ↓
-If SUCCESS: ✓ Connected
-If FAILURE: 
-   → retry_count (now 1) >= PROXY_MAX_RETRIES (now 1)
-   → report_result("proxy_max_retries_exceeded")
+If TIMEOUT after 180s:
+   → force_disconnect_session() - KILL SESSION IMMEDIATELY
+   → report_result("proxy_timeout_disable") - mark account INACTIVE
+   → Proxy marked: error status
+   → PROXY STAYS ASSIGNED (never removed)
    → Account marked: disconnected + auto_disabled
-   → Admin must fix proxy and reactivate manually
+   → NO RETRY QUEUE - immediate disable
 ```
+
+## Security Guarantees
+
+| Guarantee | Implementation |
+|-----------|----------------|
+| Proxy always used | `connect_with_retry()` only accepts clients with proxy configured |
+| Proxy never removed | `proxy_id` stays in database even after timeout |
+| Session killed on failure | `force_disconnect_session()` called immediately on timeout |
+| No connection without proxy | `auto_reconnect=False` and `connection_retries=0` in Telethon client |
+| 3 minutes for proxy | `PROXY_CONNECTION_TIMEOUT = 180` fully respected now |
+| Immediate disable | No retry queue - account disabled on first 3-minute timeout failure |
 
 ## Files to Modify
 
 | File | Change |
 |------|--------|
-| `src/pages/SetupGuide.tsx` | Remove quick retry loop in `connect_with_retry()`, increase timeout to 180s, change `PROXY_MAX_RETRIES` to 1 |
-| `supabase/functions/report-task-result/index.ts` | Update `proxy_max_retries_exceeded` handler to also mark proxy status as "error" |
+| `src/pages/SetupGuide.tsx` | 1. Increase `CONNECT_TIMEOUT_SECONDS` from 30 to 200 |
+| `src/pages/SetupGuide.tsx` | 2. Replace `add_to_proxy_retry_queue()` with immediate `report_result("proxy_timeout_disable")` |
+| `src/pages/SetupGuide.tsx` | 3. Replace all error-path `report_session_check()` with `log_error()` |
+| `supabase/functions/report-task-result/index.ts` | 4. Add `proxy_timeout_disable` handler to mark account inactive and proxy as error |
 
 ## Technical Summary
 
 | Setting | Current | New | Purpose |
 |---------|---------|-----|---------|
-| `CONNECTION_TIMEOUT` | 20s | 180s (renamed to `PROXY_CONNECTION_TIMEOUT`) | Give proxy 3 minutes to connect |
-| Quick retries | 3x (1s, 2s, 4s delays) | 0 (removed) | No fast retries |
-| `PROXY_MAX_RETRIES` | 3 | 1 | Auto-disable after 1 cooldown retry |
-| `PROXY_RETRY_DELAY` | 180s | 180s (unchanged) | 3 minutes between cooldown retries |
-| Proxy removal | Never | Never (unchanged) | Admin handles manually |
+| `CONNECT_TIMEOUT_SECONDS` | 30s | 200s | Allow full 180s proxy timeout |
+| `PROXY_CONNECTION_TIMEOUT` | 180s | 180s (unchanged) | 3 minutes for proxy to connect |
+| Retry queue | Active (3-min delay) | REMOVED | Immediate disable on timeout |
+| `report_session_check()` on errors | Active | Replaced with `log_error()` | Don't change status on proxy failure |
+| Proxy removal | Never | Never | Admin handles manually |
 
