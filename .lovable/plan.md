@@ -1,95 +1,166 @@
 
 
-# LiveChat Runner - Fix "retry_failed_accounts_parallel" Not Defined
+# Fix: Settings API Keys - Usage Display and Live Updates
 
-## Build Version: 2026-01-29-retry-import-fix
+## Problems Identified
+
+1. **Wrong Usage Displayed**: The table shows `usage_count` (lifetime) in the "Usage" column instead of `daily_usage` (today's usage)
+2. **Stats Card Mismatch**: The summary shows "Total Messages Sent: 18" which is correct for lifetime, but the user wants focus on daily
+3. **Page Refresh Loop**: Every 30 seconds, `fetchCredentials()` sets `isLoading = true` causing a full table re-render with spinner animation
+4. **No Live Updates**: Changes to usage values require full data refetch instead of updating numbers in-place
+
+## Database Reality
+- You have **16 API keys** 
+- `usage_count` ranges from 15-18 (lifetime total)
+- `daily_usage` = 0 for all (was reset or no messages sent today)
+
+## Solution Overview
+
+### Change 1: Display Today's Usage (daily_usage) in Table
+
+Update the table column to show `daily_usage` instead of `usage_count`:
+
+| Current | Fixed |
+|---------|-------|
+| `{cred.usage_count \|\| 0}` | `{cred.daily_usage \|\| 0}` |
+
+### Change 2: Fix Stats Cards Labels
+
+Current stats:
+- "Total Messages Sent" → shows `usage_count` sum
+- "24h Usage" → shows `daily_usage` sum
+
+User wants emphasis on TODAY's usage, so:
+- Rename "Total Messages Sent" → "Lifetime Usage" 
+- Keep "24h Usage" as the primary focus
+
+### Change 3: Remove Full Page Refresh - Use Realtime Updates
+
+Replace the 30-second `setInterval` with Supabase Realtime subscription:
+
+```typescript
+// Instead of this (causes full reload):
+const interval = setInterval(fetchCredentials, 30000);
+
+// Use this (updates only changed values):
+const channel = supabase
+  .channel('api-credentials-updates')
+  .on('postgres_changes', 
+    { event: 'UPDATE', schema: 'public', table: 'telegram_api_credentials' },
+    (payload) => {
+      // Update only the changed credential in-place
+      setCredentials(prev => prev.map(c => 
+        c.id === payload.new.id ? { ...c, ...payload.new } : c
+      ));
+    }
+  )
+  .subscribe();
+```
+
+### Change 4: Don't Show Loading Spinner on Background Refresh
+
+Only show loading spinner on initial load, not on refetches:
+
+```typescript
+const fetchCredentials = async (showLoading = true) => {
+  if (showLoading) setIsLoading(true);
+  // ... fetch logic
+};
+
+// Initial load: show spinner
+fetchCredentials(true);
+
+// Window focus: no spinner
+const handleFocus = () => fetchCredentials(false);
+```
 
 ---
 
-## Problem Analysis
+## Technical Details
 
-The LiveChat runner crashes with:
+### File: `src/components/settings/ApiCredentialsManager.tsx`
+
+**Change 1: Line 359-362 - Table Usage Column**
+```typescript
+// BEFORE:
+<Badge variant={cred.usage_count > 0 ? "default" : "secondary"}>
+  {cred.usage_count || 0}
+</Badge>
+
+// AFTER:
+<Badge variant={cred.daily_usage > 0 ? "default" : "secondary"}>
+  {cred.daily_usage || 0}
+</Badge>
 ```
-[ERROR] name 'retry_failed_accounts_parallel' is not defined
+
+**Change 2: Lines 305-308 - Stats Card Label**
+```typescript
+// BEFORE:
+<p className="text-2xl font-bold text-blue-500">{totalUsage.toLocaleString()}</p>
+<p className="text-xs text-muted-foreground">Total Messages Sent</p>
+
+// AFTER:
+<p className="text-2xl font-bold text-blue-500">{totalUsage.toLocaleString()}</p>
+<p className="text-xs text-muted-foreground">Lifetime Usage</p>
 ```
 
-**Root Cause:**
-1. Line 2793 imports `retry_proxy_error_accounts` (the alias function)
-2. Line 3762 calls `retry_failed_accounts_parallel` directly (which is NOT imported)
+**Change 3: Lines 39-75 - Replace Interval with Realtime**
+```typescript
+const fetchCredentials = async (showLoading = true) => {
+  if (showLoading) setIsLoading(true);
+  // ... rest same
+};
 
-```python
-# Current import (line 2793):
-from client_manager import (
-    ..., retry_proxy_error_accounts, ...  # ✓ Imported
-)
+useEffect(() => {
+  fetchCredentials(true); // Initial load with spinner
+  
+  // Realtime subscription for live updates (no full reload)
+  const channel = supabase
+    .channel('api-credentials-live')
+    .on('postgres_changes', 
+      { event: '*', schema: 'public', table: 'telegram_api_credentials' },
+      (payload) => {
+        if (payload.eventType === 'UPDATE') {
+          setCredentials(prev => prev.map(c => 
+            c.id === payload.new.id ? { ...c, ...payload.new as ApiCredential } : c
+          ));
+        } else if (payload.eventType === 'INSERT') {
+          fetchCredentials(false);
+        } else if (payload.eventType === 'DELETE') {
+          setCredentials(prev => prev.filter(c => c.id !== payload.old.id));
+        }
+      }
+    )
+    .subscribe();
+  
+  // Window focus - refresh without spinner
+  const handleFocus = () => fetchCredentials(false);
+  window.addEventListener('focus', handleFocus);
+  
+  return () => {
+    window.removeEventListener('focus', handleFocus);
+    supabase.removeChannel(channel);
+  };
+}, []);
+```
 
-# Main loop calls (line 3762):
-await retry_failed_accounts_parallel(connected_ids)  # ✗ NOT imported!
+**Change 4: Table Header Label - Line 345**
+```typescript
+// BEFORE:
+<TableHead className="text-center">Usage</TableHead>
+
+// AFTER:
+<TableHead className="text-center">Today</TableHead>
 ```
 
 ---
 
-## Solution
+## Expected Outcome
 
-**Option A (Simplest):** Replace the call on line 3762 to use the already-imported alias `retry_proxy_error_accounts`
-
-The alias was created for exactly this purpose:
-```python
-# In client_manager.py (line 635-638):
-async def retry_proxy_error_accounts(connected_ids_ref: set = None):
-    """Alias for retry_failed_accounts_parallel - for backward compatibility."""
-    return await retry_failed_accounts_parallel(connected_ids_ref)
-```
-
----
-
-## Technical Changes
-
-### File: `src/pages/SetupGuide.tsx`
-
-### Change 1: Update the Main Loop Call (Line 3762)
-
-**Current Code:**
-```python
-# ========== RETRY FAILED ACCOUNTS (every 30s) ==========
-if time.time() - last_proxy_retry >= 30:
-    await retry_failed_accounts_parallel(connected_ids)  # Uses simplified _failed_accounts tracking
-    last_proxy_retry = time.time()
-```
-
-**New Code:**
-```python
-# ========== RETRY FAILED ACCOUNTS (every 30s) ==========
-if time.time() - last_proxy_retry >= 30:
-    await retry_proxy_error_accounts(connected_ids)  # Uses simplified _failed_accounts tracking
-    last_proxy_retry = time.time()
-```
-
----
-
-## Why This Works
-
-| Component | Status |
-|-----------|--------|
-| `retry_proxy_error_accounts` | ✓ Already imported in livechat runner |
-| `retry_failed_accounts_parallel` | ✓ Exists in client_manager.py |
-| Alias mapping | ✓ `retry_proxy_error_accounts` → `retry_failed_accounts_parallel` |
-
-The alias exists for backward compatibility and works identically to the direct call.
-
----
-
-## Summary
-
-| File | Location | Change |
-|------|----------|--------|
-| SetupGuide.tsx | Line 3762 | Change `retry_failed_accounts_parallel` → `retry_proxy_error_accounts` |
-
----
-
-## Safety Guarantees
-
-1. **No functional change**: The alias calls the exact same function internally
-2. **Already tested**: The alias pattern was specifically created for this purpose
-3. **Single line change**: Minimal risk
+After implementation:
+1. Table "Today" column shows `daily_usage` (currently 0 for all APIs)
+2. Stats cards clearly differentiate "Lifetime Usage" vs "24h Usage"
+3. Values update in real-time without page refresh/spinner
+4. No more visual flickering or "refreshing again and again"
+5. Window focus triggers a silent background refresh
 
