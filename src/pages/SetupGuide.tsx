@@ -133,6 +133,7 @@ from config import BACKEND_URL, SUPABASE_URL, SUPABASE_KEY
 
 SESSION_FOLDER = tempfile.mkdtemp(prefix="telegram_sessions_")
 active_clients: Dict[str, TelegramClient] = {}
+message_queues: Dict[str, any] = {}  # Global message queue tracking for LiveChat runner
 
 # ========== PROXY ERROR RETRY SETTINGS ==========
 PROXY_RETRY_DELAY = 180   # Retry proxy error accounts after 3 MINUTES (180 seconds)
@@ -273,9 +274,12 @@ async def force_disconnect_session(account_id: str, reason: str = "proxy_error")
     else:
         print(f"  [FORCE DISCONNECT] {phone} - No active client found, cleared tracking")
     
-    # Step 3: Clear from message queue tracking if exists
-    if account_id in message_queues:
-        del message_queues[account_id]
+    # Step 3: Clear from message queue tracking if exists (with safety guard)
+    try:
+        if 'message_queues' in globals() and account_id in message_queues:
+            del message_queues[account_id]
+    except (NameError, KeyError):
+        pass  # Ignore if message_queues doesn't exist in this context
     
     return True
 
@@ -3471,13 +3475,20 @@ async def keep_clients_alive():
                         print(f"  [HEALTH CHECK] {acc_id[:8]} - Error: {str(health_err)[:30]}")
                         health_check_disconnects.append(acc_id)
                 
-                # Immediately disconnect dead connections and add to retry queue
+                # Immediately disconnect dead connections - NO RETRY (immediate disable per plan)
                 for acc_id in health_check_disconnects:
                     await force_disconnect_session(acc_id, "health_check_failed")
-                    await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)
+                    # IMMEDIATE DISABLE: Report to backend to mark account disconnected + auto_disabled
+                    # DO NOT use add_to_proxy_retry_queue - that contradicts "disable immediately" requirement
+                    await report_result("proxy_max_retries_exceeded", {
+                        "account_id": acc_id,
+                        "reason": "Health check failed - zombie connection detected",
+                        "retry_count": 1
+                    })
+                    await log_error("LiveChat", f"[HEALTH CHECK] {acc_id[:8]} - Zombie connection terminated (auto-disabled)")
                 
                 if health_check_disconnects:
-                    print(f"  [HEALTH CHECK] Disconnected {len(health_check_disconnects)} zombie connections")
+                    print(f"  [HEALTH CHECK] Disconnected {len(health_check_disconnects)} zombie connections (AUTO-DISABLED)")
                 
                 last_health_check = time.time()
             
