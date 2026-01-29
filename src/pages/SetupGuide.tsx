@@ -2795,6 +2795,10 @@ import signal
 import base64
 import time
 import gc
+ import os
+ import sys
+ import traceback
+ from datetime import datetime
 
 import httpx
 from telethon import events
@@ -2819,6 +2823,30 @@ from telethon import events
  )
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
+
+ # ========== LOCAL FILE LOGGING (crash-proof) ==========
+ # Writes next to the script so you can send us logs.txt after a crash.
+ LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs.txt")
+
+ def _log_write(line: str):
+     try:
+         with open(LOG_PATH, "a", encoding="utf-8") as f:
+             f.write(line + "\n")
+     except Exception:
+         # Never let logging crash the runner
+         pass
+
+ def log_info(msg: str):
+     ts = datetime.utcnow().isoformat()
+     _log_write(f"[{ts}] INFO {msg}")
+
+ def log_exception(context: str, exc: Exception):
+     ts = datetime.utcnow().isoformat()
+     _log_write(f"[{ts}] ERROR {context}: {type(exc).__name__}: {repr(exc)}")
+     try:
+         _log_write(traceback.format_exc())
+     except Exception:
+         pass
 
 # Ensure we always get the *origin* (e.g. https://xxxx.supabase.co)
 _u = urlparse(SUPABASE_URL)
@@ -4229,6 +4257,13 @@ def save_all_sessions_sync():
 
 if __name__ == "__main__":
     print("\\nInstall: pip install telethon httpx\\n")
+    log_info("LiveChat runner starting")
+    try:
+        log_info(f"Python: {sys.version.split()[0]}")
+        log_info(f"Working dir: {os.getcwd()}")
+        log_info(f"Log file: {LOG_PATH}")
+    except Exception:
+        pass
     
     # Import for HTTP client reset
     from client_manager import reset_http_client
@@ -4238,15 +4273,18 @@ if __name__ == "__main__":
             asyncio.run(main_loop())
         except KeyboardInterrupt:
             print("\\n⏹ Stopping...")
+            log_info("KeyboardInterrupt - stopping")
             # Save sessions on graceful shutdown
             save_all_sessions_sync()
             break
         except Exception as e:
             error_str = str(e).lower()
+            log_exception("LiveChat crashed", e)
             # Check if network error (including WinError 64)
             if is_network_error(error_str) or "winerror 64" in error_str or "network name" in error_str:
                 print(f"\\n📶 Network error (connection dropped): {e}")
                 print("  Clearing stale connections and waiting 20 seconds...")
+                log_info("Network error path - sleeping 20s")
                 # Save sessions before network recovery restart
                 save_all_sessions_sync()
                 # Reset HTTP client to clear stale connections
@@ -4255,6 +4293,7 @@ if __name__ == "__main__":
             else:
                 print(f"\\n⚠ LiveChat crashed: {e}")
                 print("  Saving sessions before restart...")
+                log_info("Crash recovery path - sleeping 5s")
                 # Save sessions before crash recovery restart
                 save_all_sessions_sync()
                 reset_http_client()
