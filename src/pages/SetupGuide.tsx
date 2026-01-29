@@ -136,12 +136,12 @@ active_clients: Dict[str, TelegramClient] = {}
 
 # ========== PROXY ERROR RETRY SETTINGS ==========
 PROXY_RETRY_DELAY = 180   # Retry proxy error accounts after 3 MINUTES (180 seconds)
-PROXY_MAX_RETRIES = 3     # Max retry attempts before marking account as inactive
+PROXY_MAX_RETRIES = 1     # After 1 failed cooldown retry, auto-disable (total: initial + 1 retry = 2 attempts)
 
 # ========== SPLIT TIMEOUTS ==========
-CONNECTION_TIMEOUT = 20      # Telegram connection timeout (increased from 10)
-CONNECTION_RETRIES = 2       # Connection retries (increased from 1)
-RETRY_DELAY = 2              # Retry delay in seconds (increased from 0)
+PROXY_CONNECTION_TIMEOUT = 180   # 3 minutes for slow proxy connections (no quick retries)
+CONNECTION_RETRIES = 0           # No quick retries - handled by 3-minute cooldown queue
+RETRY_DELAY = 0                  # No retry delay - cooldown queue handles delays
 
 # HTTP Timeouts - split by purpose (increased for high-load 500+ clients)
 HTTP_TIMEOUT_DISPATCH = 90   # Task fetching (get-next-task, get-batch-tasks) - increased from 45
@@ -573,38 +573,29 @@ def detect_account_status(error_str: str) -> str:
     return "disconnected"
 
 
-async def connect_with_retry(client: TelegramClient, max_retries: int = 3) -> bool:
+async def connect_with_retry(client: TelegramClient, connection_timeout: int = PROXY_CONNECTION_TIMEOUT) -> bool:
     """
-    Connect with automatic retry on proxy/network errors.
-    Retries up to max_retries times before giving up.
-    Returns True if connection succeeded (even after retries).
-    """
-    last_error = None
-    for attempt in range(max_retries):
-        try:
-            await asyncio.wait_for(client.connect(), timeout=CONNECTION_TIMEOUT)
-            if attempt > 0:
-                print(f"    [RETRY SUCCESS] Connected on attempt {attempt + 1}/{max_retries}")
-            return True
-        except asyncio.TimeoutError:
-            last_error = "Connection timeout"
-            print(f"    [TIMEOUT] Attempt {attempt + 1}/{max_retries}: Connection timeout")
-        except Exception as e:
-            last_error = str(e)
-            err_str = str(e).lower()
-            if any(p in err_str for p in PROXY_ERROR_PATTERNS):
-                print(f"    [PROXY RETRY] Attempt {attempt + 1}/{max_retries}: {e}")
-            else:
-                print(f"    [ERROR] Attempt {attempt + 1}/{max_retries}: {e}")
-        
-        # Wait before retry (exponential backoff: 1s, 2s, 4s)
-        if attempt < max_retries - 1:
-            wait_time = min(2 ** attempt, 4)
-            print(f"    [RETRY] Waiting {wait_time}s before retry...")
-            await asyncio.sleep(wait_time)
+    Attempt single connection with 3-minute timeout for slow proxies.
+    NO quick retries - if proxy fails, caller should add to 3-minute cooldown queue.
     
-    print(f"    [FAIL] All {max_retries} connection attempts failed: {last_error}")
-    return False
+    The 180-second timeout gives slow residential/mobile proxies time to establish.
+    If this times out, the account goes to the proxy retry queue for a 3-minute wait
+    before the next attempt. After PROXY_MAX_RETRIES (1) cooldown retries, auto-disable.
+    """
+    try:
+        await asyncio.wait_for(client.connect(), timeout=connection_timeout)
+        print(f"    [CONNECTED] Proxy connection successful")
+        return True
+    except asyncio.TimeoutError:
+        print(f"    [TIMEOUT] Proxy connection timed out after {connection_timeout}s")
+        return False
+    except Exception as e:
+        err_str = str(e).lower()
+        if any(p in err_str for p in PROXY_ERROR_PATTERNS):
+            print(f"    [PROXY ERROR] {e}")
+        else:
+            print(f"    [CONNECTION ERROR] {e}")
+        return False
 
 
 async def get_or_create_client(account: dict, setup_handler=None, task_proxy: dict = None,

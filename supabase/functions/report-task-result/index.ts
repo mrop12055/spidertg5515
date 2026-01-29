@@ -1460,9 +1460,10 @@ serve(async (req) => {
       }
 
       case "proxy_max_retries_exceeded": {
-        // Account has failed proxy connection 3 times with 3-minute delays between each
+        // Account has failed proxy connection with 3-minute delays between attempts
         // Mark as DISCONNECTED with auto_disabled so it won't be picked up until admin fixes
-        const { account_id, reason, retry_count } = result;
+        // Also mark the associated proxy as "error" so admin can see it in dashboard
+        const { account_id, proxy_id, reason, retry_count } = result;
 
         console.log(`[report-task-result] Account ${account_id} EXCEEDED MAX PROXY RETRIES (${retry_count}x)`);
 
@@ -1471,13 +1472,45 @@ serve(async (req) => {
           .from("telegram_accounts")
           .update({
             status: "disconnected",
-            disabled_reason: `Proxy error: Failed ${retry_count}x (3-min intervals) - requires admin fix`,
+            disabled_reason: `Proxy error: Failed ${retry_count + 1}x (3-min intervals) - requires admin fix`,
             auto_disabled: true,
             last_active: new Date().toISOString()
           })
           .eq("id", account_id);
 
         console.log(`[report-task-result] Account ${account_id} marked as DISCONNECTED + auto_disabled`);
+
+        // Mark the proxy as "error" so admin can see it in dashboard
+        // Proxy is NEVER removed from account - admin handles manually
+        if (proxy_id) {
+          await supabase
+            .from("proxies")
+            .update({
+              status: "error",
+              last_checked: new Date().toISOString()
+            })
+            .eq("id", proxy_id);
+          console.log(`[report-task-result] Proxy ${proxy_id} marked as ERROR status`);
+        } else if (account_id) {
+          // Fallback: get proxy from account and mark it as error
+          const { data: account } = await supabase
+            .from("telegram_accounts")
+            .select("proxy_id")
+            .eq("id", account_id)
+            .single();
+          
+          if (account?.proxy_id) {
+            await supabase
+              .from("proxies")
+              .update({
+                status: "error",
+                last_checked: new Date().toISOString()
+              })
+              .eq("id", account.proxy_id);
+            console.log(`[report-task-result] Proxy ${account.proxy_id} (from account) marked as ERROR status`);
+          }
+        }
+
         console.log(`[report-task-result] Admin must fix proxy and manually reactivate account`);
         break;
       }
