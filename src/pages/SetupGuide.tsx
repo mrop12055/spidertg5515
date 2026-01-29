@@ -136,7 +136,7 @@ active_clients: Dict[str, TelegramClient] = {}
 message_queues: Dict[str, any] = {}  # Global message queue tracking for LiveChat runner
 
 # ========== SPLIT TIMEOUTS ==========
-PROXY_CONNECTION_TIMEOUT = 180   # 3 minutes for slow proxy connections (no quick retries)
+PROXY_CONNECTION_TIMEOUT = 60    # 1 minute for proxy connections (no quick retries)
 CONNECTION_RETRIES = 0           # No quick retries - immediate disable on failure
 RETRY_DELAY = 0                  # No retry delay - immediate disable
 
@@ -421,12 +421,12 @@ def detect_account_status(error_str: str) -> str:
 
 async def connect_with_retry(client: TelegramClient, connection_timeout: int = PROXY_CONNECTION_TIMEOUT) -> bool:
     """
-    Attempt single connection with 3-minute timeout for slow proxies.
-    NO quick retries - if proxy fails, caller should add to 3-minute cooldown queue.
+    Attempt single connection with 1-minute timeout for proxy connections.
+    NO RETRIES - if proxy fails after 60s, account is immediately disabled.
     
-    The 180-second timeout gives slow residential/mobile proxies time to establish.
-    If this times out, the account goes to the proxy retry queue for a 3-minute wait
-    before the next attempt. After PROXY_MAX_RETRIES (1) cooldown retries, auto-disable.
+    The 60-second timeout gives proxies time to establish while failing faster.
+    If connection fails (timeout or error), the caller kills the session and 
+    reports to backend for immediate disable. Admin must fix proxy and re-enable.
     """
     # IMPORTANT BEHAVIOR:
     # Some proxy/network failures (e.g., WinError 121) can fail *immediately*.
@@ -666,11 +666,11 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
             print(f"  [DB ERROR] Could not create client for {phone}: {last_db_error}")
             return None
         
-        print(f"  [CONNECT] {account['phone_number']} (180s proxy timeout, NO RETRY on failure)...")
+        print(f"  [CONNECT] {account['phone_number']} (60s proxy timeout, NO RETRY on failure)...")
         if not await connect_with_retry(client):
-            # PROXY FAILED AFTER 3-MINUTE TIMEOUT - IMMEDIATELY KILL SESSION AND DISABLE
+            # PROXY FAILED AFTER 1-MINUTE TIMEOUT - IMMEDIATELY KILL SESSION AND DISABLE
             # Session MUST be terminated to prevent any unproxied connection attempt
-            print(f"  [CONNECTION TIMEOUT] {phone} - Proxy failed after 180s - DISABLING ACCOUNT IMMEDIATELY")
+            print(f"  [CONNECTION TIMEOUT] {phone} - Proxy failed after 60s - DISABLING ACCOUNT IMMEDIATELY")
             
             # STEP 1: KILL SESSION IMMEDIATELY - pass client object for proper cleanup
             await force_disconnect_session(account_id, "proxy_connection_timeout", client=client)
@@ -679,7 +679,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
             asyncio.create_task(report_result("proxy_timeout_disable", {
                 "account_id": account_id,
                 "proxy_id": proxy_id,
-                "reason": "Proxy connection failed after 3-minute timeout - session killed and account disabled"
+                "reason": "Proxy connection failed after 1-minute timeout - session killed and account disabled"
             }))
             
             # NO RETRY - immediate disable. Admin must fix and re-enable manually.
@@ -2511,9 +2511,9 @@ _u = urlparse(SUPABASE_URL)
 SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else SUPABASE_URL.rstrip("/")
 
 RUNNING = True
-CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
+CLEANUP_INTERVAL = 60   # 1 minute - faster cleanup
 HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
-CONNECT_TIMEOUT_SECONDS = 200  # 3+ minutes to allow full proxy timeout (180s) + overhead
+CONNECT_TIMEOUT_SECONDS = 80  # 1+ minute to allow full proxy timeout (60s) + overhead
 RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
 
 # ========== NETWORK ERROR HANDLING ==========
@@ -3535,11 +3535,11 @@ async def main_loop():
                                 # Don't add to retry - these need dashboard fix
                                 continue
                             
-                            # Connection failed - disconnect session and add to retry queue with 60s delay
+                            # Connection failed - disconnect session immediately (no retry)
                             if error.startswith("NETWORK_ERROR:"):
-                                # Network errors - disconnect and schedule 60s retry
+                                # Network errors - disconnect immediately
                                 error_count += 1
-                                await disconnect_and_schedule_retry(acc_id, f"network: {error[:30]}")
+                                await disconnect_session(acc_id, f"network: {error[:30]}")
                             elif error == "TIMEOUT":
                                 timeout_count += 1
                                 # Timeout already handled in get_or_create_client with immediate disable
@@ -3547,8 +3547,8 @@ async def main_loop():
                                 pass
                             else:
                                 error_count += 1
-                                # Other errors - disconnect and schedule 60s retry
-                                await disconnect_and_schedule_retry(acc_id, f"failed: {error[:30]}")
+                                # Other errors - disconnect immediately
+                                await disconnect_session(acc_id, f"failed: {error[:30]}")
                     
                     print(f"  [CONNECTED] {success_count}/{len(new_accounts)} (timeouts={timeout_count}, errors={error_count}, skipped={skip_count}, sync_pending={sync_pending_count})")
 
