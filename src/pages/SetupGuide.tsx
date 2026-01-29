@@ -938,6 +938,13 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             await update_account_status(aid, "disconnected", "Session file decode failed", auto_disabled=True)
             return None, "Session decode failed"
         
+        # Debug: Show proxy being used
+        p_data = acc.get("proxies") or acc.get("proxy")
+        if p_data:
+            print(f"  [PROXY] [{phone[-4:]}] Using: {p_data.get('host')}:{p_data.get('port')} ({p_data.get('proxy_type', 'socks5')})")
+        else:
+            print(f"  [PROXY] [{phone[-4:]}] WARNING: No proxy configured!")
+        
         try:
             client = TelegramClient(
                 path, int(acc["api_id"]), acc["api_hash"],
