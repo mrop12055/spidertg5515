@@ -1,44 +1,17 @@
 
 
-# Fix: LiveChat Runner Fast Retry Bug
+# Fix: LiveChat Runner Fast Retry Bug ✅ COMPLETED
 
 ## Issue Identified
 
-The LiveChat runner is retrying failed proxy connections immediately instead of waiting 3 minutes because there's a **gap in the retry queue checks**.
-
-### Current Flow (Broken)
-
-```text
-Proxy Failure Detected
-        ↓
-add_to_proxy_retry_queue() → Account added to _proxy_retry_queue
-        ↓
-Main loop fetches accounts from get_next_task("livechat")
-        ↓
-Filter only checks: connected_ids and failed_connection_accounts
-        ↓
-_proxy_retry_queue IS NOT CHECKED ← BUG!
-        ↓
-Account immediately reconnected (no 3-minute wait)
-```
-
-### Evidence from Logs
-
-```text
-Line 1469:  [PROXY RETRY] 16236494 - Attempt 1/3, retry in 3 min (2 left)
-Line 1492:  [CONNECTED] 116/128 (timeouts=12...)
-Line 1493:  [HEARTBEAT] Retry Queue: 0  ← Shows 0, but 12 should be waiting!
-Line 1504:  [CONNECT] Connecting 12 accounts in PARALLEL...  ← IMMEDIATE retry!
-```
+The LiveChat runner was retrying failed proxy connections immediately instead of waiting 3 minutes because there was a **gap in the retry queue checks**.
 
 ## Root Cause
 
-**File**: `src/pages/SetupGuide.tsx` (lines 3619-3623)
-
-The main loop filter does not include `_proxy_retry_queue`:
+The main loop filter in `main_loop()` did not include `_proxy_retry_queue`:
 
 ```python
-# Current (broken) - missing _proxy_retry_queue check
+# Broken - missing _proxy_retry_queue check
 new_accounts = [
     acc for acc in accounts 
     if acc.get("id") not in connected_ids 
@@ -46,9 +19,9 @@ new_accounts = [
 ]
 ```
 
-## Fix
+## Fixes Applied ✅
 
-Add `_proxy_retry_queue` to the filter so accounts waiting for proxy retry are skipped:
+### 1. Added `_proxy_retry_queue` to main loop filter (line 3619-3624)
 
 ```python
 # Fixed - includes _proxy_retry_queue check
@@ -56,46 +29,25 @@ new_accounts = [
     acc for acc in accounts 
     if acc.get("id") not in connected_ids 
     and acc.get("id") not in failed_connection_accounts
-    and acc.get("id") not in _proxy_retry_queue  # ← ADD THIS
+    and acc.get("id") not in _proxy_retry_queue  # FIX: Skip accounts waiting for proxy retry
 ]
 ```
 
-## Additional Fixes
-
-### 1. Fix Heartbeat to show correct retry queue count
-
-Update the heartbeat log (line 3583-3584) to show `_proxy_retry_queue` count instead of `failed_connection_accounts`:
+### 2. Added global declaration (line 3557)
 
 ```python
-# Current (showing wrong queue)
-retry_count = len(failed_connection_accounts)
-
-# Fixed (showing proxy retry queue)
-retry_count = len(_proxy_retry_queue)
+global failed_connection_accounts, _proxy_retry_queue
 ```
 
-### 2. Import `_proxy_retry_queue` in LiveChat runner scope
+### 3. Fixed heartbeat to show both queues (lines 3583-3585)
 
-The `_proxy_retry_queue` variable needs to be explicitly imported/available in the LiveChat runner section since it's defined in `client_manager.py`.
-
-Add after line 3353:
 ```python
-from client_manager import _proxy_retry_queue
+proxy_retry_count = len(_proxy_retry_queue)
+conn_retry_count = len(failed_connection_accounts)
+print(f"  [HEARTBEAT] ... Proxy Retry: {proxy_retry_count}, Conn Retry: {conn_retry_count}")
 ```
 
-Or add `global _proxy_retry_queue` at the start of `main_loop()` to access it.
-
----
-
-## Technical Summary
-
-| Location | Line | Issue | Fix |
-|----------|------|-------|-----|
-| `main_loop()` filter | 3619-3623 | Missing `_proxy_retry_queue` check | Add `acc.get("id") not in _proxy_retry_queue` |
-| Heartbeat log | 3583-3584 | Shows wrong queue | Use `len(_proxy_retry_queue)` |
-| `main_loop()` imports | 3557 | Missing import | Add `global _proxy_retry_queue` |
-
-## Expected Result After Fix
+## Expected Result
 
 ```text
 Proxy Failure Detected
@@ -112,4 +64,3 @@ After 3 minutes: retry_proxy_error_accounts() picks it up
         ↓
 Account reconnected with proper delay
 ```
-

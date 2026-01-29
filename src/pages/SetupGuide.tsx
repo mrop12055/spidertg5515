@@ -3554,7 +3554,7 @@ async def main_loop():
     print("=" * 50)
     print("=" * 50)
     
-    global failed_connection_accounts  # Use global retry tracking shared with keep_clients_alive
+    global failed_connection_accounts, _proxy_retry_queue  # Use global retry tracking shared with keep_clients_alive
     
     connected_ids = set()  # Track connected accounts to avoid redundant work
     # Session check disabled - accounts connect without reporting to backend
@@ -3580,8 +3580,9 @@ async def main_loop():
             
             # Heartbeat logging
             if time.time() - last_heartbeat > HEARTBEAT_INTERVAL:
-                retry_count = len(failed_connection_accounts)
-                print(f"  [HEARTBEAT] Iteration {iteration_count}, Connected: {len(connected_ids)}, Active: {len(active_clients)}, Retry Queue: {retry_count}")
+                proxy_retry_count = len(_proxy_retry_queue)
+                conn_retry_count = len(failed_connection_accounts)
+                print(f"  [HEARTBEAT] Iteration {iteration_count}, Connected: {len(connected_ids)}, Active: {len(active_clients)}, Proxy Retry: {proxy_retry_count}, Conn Retry: {conn_retry_count}")
                 last_heartbeat = time.time()
             
             # Periodic cleanup - sync connected_ids with actual clients
@@ -3620,6 +3621,7 @@ async def main_loop():
                     acc for acc in accounts 
                     if acc.get("id") not in connected_ids 
                     and acc.get("id") not in failed_connection_accounts
+                    and acc.get("id") not in _proxy_retry_queue  # FIX: Skip accounts waiting for proxy retry (3-min delay)
                 ]
                 
                 if new_accounts:
