@@ -288,6 +288,11 @@ async def check_client_health(client, account_id: str) -> bool:
     but the socket is actually dead (e.g., after "Server closed the connection").
     """
     try:
+        # SECURITY: Verify proxy is still configured before any network operation
+        if not getattr(client, '_proxy', None):
+            print(f"  [SECURITY] {account_id[:8]} - NO PROXY - killing session")
+            return False  # Will trigger force_disconnect
+        
         # get_me() is lightweight and will fail quickly if socket is dead
         await asyncio.wait_for(client.get_me(), timeout=10)
         return True
@@ -785,10 +790,12 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                     system_lang_code=system_lang_code,
                     proxy=proxy,
                     timeout=CONNECTION_TIMEOUT,
-                    connection_retries=3 if long_lived else 0,
-                    retry_delay=2 if long_lived else 0,
-                    auto_reconnect=long_lived,
-                    request_retries=3 if long_lived else 1
+                    # SECURITY: Disable ALL auto-reconnect to prevent IP leak on proxy failure
+                    # We handle all reconnections manually via force_disconnect + retry queue
+                    connection_retries=0,   # DISABLED - manual retries only
+                    retry_delay=0,          # DISABLED
+                    auto_reconnect=False,   # CRITICAL: Prevents Telethon from reconnecting without proxy
+                    request_retries=1       # Minimal - fail fast so we catch errors
                 )
                 break  # Success - exit retry loop
             except Exception as db_err:
@@ -1137,7 +1144,7 @@ async def log_error(runner_name: str, message: str, log_level: str = "error"):
         pass  # Never block runner for logging failures
 
 
-async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None, recipient_name: str = None):
+async def send_message(client: TelegramClient, recipient, content: str, media_url: str = None, recipient_name: str = None, account_id: str = None):
     """
     Send message using official Telegram API best practices.
     Uses get_input_entity() for efficiency (avoids extra API calls).
@@ -1145,6 +1152,14 @@ async def send_message(client: TelegramClient, recipient, content: str, media_ur
     
     recipient can be: int (telegram_id), str ("@username"), str ("+phone"), str ("telegram_id as string")
     """
+    # SECURITY: Verify proxy is still configured before ANY network operation
+    if not getattr(client, '_proxy', None):
+        phone = account_id[:8] if account_id else "unknown"
+        print(f"  [SECURITY] {phone} - NO PROXY DETECTED - aborting send")
+        if account_id:
+            await force_disconnect_session(account_id, "security_no_proxy")
+        return False, "Security: No proxy configured"
+    
     try:
         entity = None
         
@@ -2218,7 +2233,7 @@ async def process_account_tasks(account_id: str, tasks: list, stagger_min: float
                     await asyncio.sleep(stagger_delay)
             
             try:
-                send_res = await send_message(client, recipient, content, msg.get("media_url"), recipient_name)
+                send_res = await send_message(client, recipient, content, msg.get("media_url"), recipient_name, account_id)
                 
                 # Parse result
                 if isinstance(send_res, tuple) and len(send_res) == 3:
@@ -3885,7 +3900,7 @@ async def main_loop():
                 
                 if client and recipient:
                     print(f"  [REPLY] To {recipient}...")
-                    success, send_error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"))
+                    success, send_error = await send_message(client, recipient, msg.get("content", ""), msg.get("media_url"), None, account.get("id"))
                     
                     # Only report if not a network error
                     if not is_network_error(str(send_error)):
