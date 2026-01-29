@@ -1,108 +1,192 @@
 
-## What’s actually happening (based on your logs)
+# Fix: Remove All Retry Logic and Clean Up Disconnection Logging
 
-### 1) The “disconnect immediately” is *not* happening before 180s
-Your log shows the proxy connection waits the full timeout:
-- `Attempt 1 at connecting failed: OSError: [WinError 121] ...`
-- then: `[CONNECTION TIMEOUT] ... Proxy failed after 180s - DISABLING ACCOUNT IMMEDIATELY`
+## User Requirements Confirmed
 
-So it is waiting ~180 seconds, then disabling (as requested). The confusing “immediate” part comes from the next bug.
+1. **No retries at all** - If a connection fails (proxy, network, or health check), disable the account immediately. It will NOT be automatically retried.
+2. **Clean disconnect logging** - The "No active client found, cleared tracking" message should only appear when appropriate; accounts that time out during connection should be handled cleanly.
 
-### 2) The real bug: `name 'message_queues' is not defined`
-Right after the runner kills the session, `force_disconnect_session()` throws a `NameError` because it references `message_queues`, but `message_queues` is not defined anywhere in the generated Python code.
+## Current Issues Found
 
-That creates this noisy chain:
-- proxy fails after 180s → we call `force_disconnect_session()` (correct)
-- inside `force_disconnect_session()` → `NameError` → prints `[DISCONNECTED] ... message_queues is not defined`
-This makes it look like the runner “disconnects instantly” or is unstable.
+### Issue 1: Retry Queue Still Active
+The code still contains a fully-functional retry queue system:
+- **Lines 138-140**: `PROXY_RETRY_DELAY`, `PROXY_MAX_RETRIES` constants
+- **Lines 194-196**: `_proxy_retry_queue` dictionary
+- **Lines 317-351**: `add_to_proxy_retry_queue()` function that adds accounts to retry
+- **Lines 353-376**: `get_ready_proxy_retries()` and `remove_from_proxy_retry_queue()` functions
+- **Lines 379-525**: `retry_proxy_error_accounts()` function that processes retries
+- **Line 3447**: `add_to_proxy_retry_queue()` called in `disconnect_and_schedule_retry()`
+- **Line 3593**: `retry_proxy_error_accounts()` called every 30 seconds in `main_loop()`
+- **Lines 3639**: Checks `_proxy_retry_queue` to skip accounts
 
-### 3) The WinError 121 itself
-`WinError 121 The semaphore timeout period has expired` is a Windows network/proxy socket timeout (proxy provider / route issue). It’s not a “session check” issue, and it’s exactly the kind of error we should treat as “proxy failed” and kill the session to prevent any chance of non-proxy reconnect.
+All of this retry logic is now DEAD CODE per user requirements and must be removed.
 
-## Goal (what we will ensure)
+### Issue 2: Health Check Adds to Retry Queue
+- **Lines 3498-3502**: After a health check failure, the code calls `report_result("proxy_max_retries_exceeded")` which is meant for the retry system. This should just disable immediately without referencing retry counts.
 
-1. Always attempt connection **with proxy + fingerprint** (never without proxy).
-2. Give the proxy **exactly 180s** to connect.
-3. If still not connected after 180s:
-   - **kill session immediately**
-   - **mark account status = disconnected** and **auto_disabled=true**
-   - **mark proxy status = error**
-   - **never remove proxy_id from account**
-4. Remove the misleading `message_queues` NameError and any side-effects from it.
+### Issue 3: "No active client found" Message
+- **Line 275**: This message appears when `force_disconnect_session()` is called but the account was never successfully added to `active_clients` (because connection timed out before completing).
+- The user wants accounts that are "still trying to connect after 3 minutes" to be disconnected properly.
 
-## Implementation plan (code changes)
+The real issue: When connection times out in `connect_with_retry()`, the `TelegramClient` object exists but was never added to `active_clients`. When we call `force_disconnect_session()`, it can't find the client. We need to ensure the client object created in `get_or_create_client()` is properly cleaned up even if it never made it to `active_clients`.
 
-### A) Fix `message_queues` NameError safely (primary fix)
-**File:** `src/pages/SetupGuide.tsx` (inside the `clientManagerPy` python template)
+## Implementation Plan
 
-1) Define `message_queues` globally near `active_clients`
-- Add:
-  - `message_queues: Dict[str, asyncio.Queue] = {}` (or `Dict[str, any]` if queue typing is not used elsewhere)
+### A) Remove All Retry Queue Logic from `clientManagerPy` Template
 
-2) Make `force_disconnect_session()` robust even if `message_queues` is absent
-- Change Step 3 cleanup to:
-  - check if `message_queues` exists before referencing it (e.g., wrap in `try/except NameError` or `if 'message_queues' in globals(): ...`)
-This prevents any crash/noise during critical disconnect operations.
+**File:** `src/pages/SetupGuide.tsx` (Python template sections)
 
-**Result:** You will no longer see `[DISCONNECTED] ... message_queues is not defined`, and the disconnect behavior will be clean and predictable.
+1. **Remove retry constants** (lines 138-140):
+   - Delete `PROXY_RETRY_DELAY = 180`
+   - Delete `PROXY_MAX_RETRIES = 1`
 
----
+2. **Remove `_proxy_retry_queue` variable** (line 196):
+   - Delete `_proxy_retry_queue: Dict[str, dict] = {}`
 
-### B) Ensure we are not reintroducing retries via health-check paths
-Right now, the LiveChat runner health check section still calls:
-- `await add_to_proxy_retry_queue(acc_id, {"id": acc_id}, None)`
+3. **Remove `add_to_proxy_retry_queue()` function** (lines 317-351):
+   - Delete entire function
 
-But your latest requirement is:
-- proxy fails after 180s → disable immediately (no retry queue)
+4. **Remove `remove_from_proxy_retry_queue()` function** (lines 353-357):
+   - Delete entire function
 
-So we will update the LiveChat runner logic so:
-- health_check failures do **not** enqueue into `_proxy_retry_queue` (since this queue conflicts with “immediate disable” behavior)
-- health_check failure will:
-  - kill session (`force_disconnect_session`)
-  - log the reason (`log_error`)
-  - optionally report a backend result type that marks the account “disconnected” (without removing proxy assignment)
-  - NOT schedule proxy retries automatically
+5. **Remove `get_ready_proxy_retries()` function** (lines 360-376):
+   - Delete entire function
 
-**File:** `src/pages/SetupGuide.tsx` (inside `livechatRunnerPy` python template)
+6. **Remove `retry_proxy_error_accounts()` function** (lines 379-525):
+   - Delete entire function
 
----
+7. **Update `force_disconnect_session()` to accept an optional `client` parameter** (lines 199-284):
+   - Add parameter `client: Optional[TelegramClient] = None` to accept a client that never made it to `active_clients`
+   - If `client` is passed in, disconnect it directly instead of looking in `active_clients`
+   - Update log message to be clearer: "[FORCE DISCONNECT] {phone} - Client not in active_clients (connection never completed)"
 
-### C) Keep the “proxy always used” security guarantee
-We will verify and enforce in the connect/reconnect code paths:
-- no code path calls `client.connect()` unless:
-  - proxy exists and is active
-  - the client was constructed with that proxy
-- keep Telethon settings:
-  - `auto_reconnect=False`
-  - `connection_retries=0`
-so Telethon never tries to reconnect behind our back.
+### B) Update `get_or_create_client()` to Pass Client to Force Disconnect
 
-(From your snippets, most of this is already correct; we’ll just ensure there are no bypass paths.)
+**Location:** Lines 828-844 in `clientManagerPy`
 
-## Validation / Testing steps (what you should see)
+When connection fails after the 180s timeout, pass the `client` object to `force_disconnect_session()` so it can be properly cleaned up:
 
-1) Run LiveChat runner with a known bad proxy:
-- It should wait up to **180s**, then:
-  - print the timeout message
-  - print force-disconnect messages
-  - **no `message_queues` error**
-  - account becomes `disconnected + auto_disabled` in the dashboard
-  - proxy becomes `error`
-  - account still has the same proxy_id assigned
+```python
+if not await connect_with_retry(client):
+    # Pass the client object so it can be disconnected properly
+    await force_disconnect_session(account_id, "proxy_connection_timeout", client=client)
+    asyncio.create_task(report_result("proxy_timeout_disable", {...}))
+    return None
+```
 
-2) Run LiveChat runner with a working proxy:
-- Accounts connect, show fingerprint usage, and stay connected.
+### C) Remove Retry Logic from `livechatRunnerPy` Template
 
-3) Confirm no “immediate disconnect” logs appear before ~180s on proxy failure.
-(After this fix, logs will be clearer and won’t falsely suggest instant disconnects.)
+**File:** `src/pages/SetupGuide.tsx` (livechatRunnerPy section)
 
-## Files we will modify
-- `src/pages/SetupGuide.tsx`
-  - Update the embedded Python templates:
-    - `clientManagerPy`: define `message_queues` + guard cleanup in `force_disconnect_session`
-    - `livechatRunnerPy`: remove/adjust any leftover retry-queue behavior that contradicts “disable immediately”
+1. **Remove import of retry functions** (lines 2664-2665):
+   - Remove: `retry_proxy_error_accounts, add_to_proxy_retry_queue, _proxy_retry_queue`
+   - Keep: `force_disconnect_session, log_error, check_client_health`
 
-## Notes / Expectations
-- `WinError 121` will still happen if the proxy provider or route is unhealthy. Our job is to handle it safely (kill session + disable) so it cannot cause unproxied reconnect attempts.
-- If you want, we can also add a clearer log line that prints an elapsed timer (start/end timestamps) to make the 180s wait obvious in logs.
+2. **Remove `failed_connection_accounts` retry tracking** (lines 3360-3361):
+   - Delete these variables and the `FAILED_RETRY_DELAY` constant
 
+3. **Simplify `disconnect_and_schedule_retry()` function** (lines 3364-3450):
+   - Rename to `disconnect_session()` (no retry scheduling)
+   - Remove all calls to `add_to_proxy_retry_queue()`
+   - Remove `failed_connection_accounts` updates
+   - Just disconnect and report to backend for immediate disable
+
+4. **Remove retry loop from `main_loop()`** (line 3591-3594):
+   - Remove the `retry_proxy_error_accounts()` call
+
+5. **Remove `_proxy_retry_queue` filter** (line 3639):
+   - Remove `and acc.get("id") not in _proxy_retry_queue` check
+
+6. **Simplify cleanup loop** (lines 3613-3621):
+   - Remove `failed_connection_accounts` cleanup logic
+
+7. **Simplify health check reporting** (lines 3493-3503):
+   - Replace `proxy_max_retries_exceeded` with a simpler `health_check_disable` result type
+   - No retry counts needed
+
+### D) Add `health_check_disable` Handler to Backend
+
+**File:** `supabase/functions/report-task-result/index.ts`
+
+Add a new simple handler for health check failures (similar to `proxy_timeout_disable` but without retry count references):
+
+```typescript
+case "health_check_disable": {
+  const { account_id, reason } = result;
+  
+  await supabase
+    .from("telegram_accounts")
+    .update({
+      status: "disconnected",
+      auto_disabled: true,
+      disabled_reason: reason || "Health check failed - zombie connection",
+      last_active: new Date().toISOString()
+    })
+    .eq("id", account_id);
+    
+  // Mark proxy as error if account has one
+  const { data: account } = await supabase
+    .from("telegram_accounts")
+    .select("proxy_id")
+    .eq("id", account_id)
+    .single();
+    
+  if (account?.proxy_id) {
+    await supabase
+      .from("proxies")
+      .update({ status: "error", last_checked: new Date().toISOString() })
+      .eq("id", account.proxy_id);
+  }
+  
+  console.log(`[report-task-result] Account ${account_id} DISABLED: ${reason}`);
+  break;
+}
+```
+
+## Expected Behavior After Fix
+
+```text
+Account Connection Attempt
+        ↓
+180s PROXY timeout (single attempt, enforced by await asyncio.sleep for remaining time)
+        ↓
+If SUCCESS:
+   ✓ Account connected, added to active_clients
+        ↓
+If TIMEOUT/ERROR after 180s:
+   → Client object disconnected directly (passed to force_disconnect_session)
+   → No "No active client found" message
+   → report_result("proxy_timeout_disable") - mark account INACTIVE
+   → NO RETRY - immediately disabled
+   → Account marked: disconnected + auto_disabled
+   → Proxy marked: error status
+   → proxy_id stays assigned
+```
+
+## Heartbeat Output Change
+
+**Before:**
+```
+[HEARTBEAT] Iteration 9, Connected: 2, Active: 2, Proxy Retry: 5, Conn Retry: 3
+```
+
+**After:**
+```
+[HEARTBEAT] Iteration 9, Connected: 2, Active: 2
+```
+
+No more retry queue counts because there are no retry queues.
+
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/pages/SetupGuide.tsx` | Remove ~200 lines of retry queue code from `clientManagerPy` and `livechatRunnerPy` templates |
+| `supabase/functions/report-task-result/index.ts` | Add `health_check_disable` handler (~25 lines) |
+
+## What This Achieves
+
+1. **No retries** - Failed connections immediately disable the account
+2. **Clean logs** - No confusing "No active client found" messages when client objects are properly passed to disconnect
+3. **Simpler code** - Removes ~200 lines of dead retry queue logic
+4. **Clear behavior** - 180s to connect, then immediate disable if failed
