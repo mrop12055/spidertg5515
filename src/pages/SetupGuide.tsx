@@ -339,7 +339,17 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
                 r = await get_http().get(photo_url, timeout=60)
                 if r.status_code == 200:
                     import io
-                    photo_file = await client.upload_file(io.BytesIO(r.content))
+                    import os
+                    # Telegram requires a file with proper extension
+                    # Extract extension from URL or default to .jpg
+                    ext = os.path.splitext(photo_url.split('?')[0])[1].lower()
+                    if ext not in ('.jpg', '.jpeg', '.png'):
+                        ext = '.jpg'
+                    
+                    # Create file-like object with proper name attribute
+                    photo_bytes = io.BytesIO(r.content)
+                    photo_bytes.name = f"photo{ext}"
+                    photo_file = await client.upload_file(photo_bytes)
                     
                     # Delete old photos first (optional)
                     try:
