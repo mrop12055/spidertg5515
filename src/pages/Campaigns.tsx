@@ -671,24 +671,39 @@ const Campaigns: React.FC = () => {
           seat_id: data.selectedSeatIds[index % seatCount]
         }));
         
-        await uploadRecipients(createdCampaign.id, recipientsWithSeats);
+        const result = await uploadRecipients(createdCampaign.id, recipientsWithSeats);
+        
+        // Validate that recipients were actually inserted
+        if (!result || result.inserted === 0) {
+          await supabase.from('campaigns').delete().eq('id', createdCampaign.id);
+          toast.error('Failed to upload recipients - campaign cancelled');
+          return;
+        }
         
         // Update campaign with batch size (no single seat_id since multiple seats)
         await supabase.from('campaigns').update({ 
           batch_size: data.batchSize 
         }).eq('id', createdCampaign.id);
         
-        toast.success(`Campaign created with ${parsedRecipients.length} recipients distributed across ${data.selectedSeatIds.length} seats!`);
+        toast.success(`Campaign created with ${result.inserted} recipients distributed across ${data.selectedSeatIds.length} seats!`);
       } else {
         // Single seat or no seat
-        await uploadRecipients(createdCampaign.id, parsedRecipients);
+        const result = await uploadRecipients(createdCampaign.id, parsedRecipients);
+        
+        // Validate that recipients were actually inserted
+        if (!result || result.inserted === 0) {
+          await supabase.from('campaigns').delete().eq('id', createdCampaign.id);
+          toast.error('Failed to upload recipients - campaign cancelled');
+          return;
+        }
+        
         const updateData: any = { batch_size: data.batchSize };
         if (data.selectedSeatIds.length === 1) {
           updateData.seat_id = data.selectedSeatIds[0];
         }
         await supabase.from('campaigns').update(updateData).eq('id', createdCampaign.id);
         
-        toast.success('Campaign created! Start it to begin sending.');
+        toast.success(`Campaign created with ${result.inserted} recipients! Start it to begin sending.`);
       }
     }
     
