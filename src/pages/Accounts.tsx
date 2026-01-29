@@ -186,6 +186,10 @@ const Accounts: React.FC = () => {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   
+  // Bio change dialog
+  const [isBioDialogOpen, setIsBioDialogOpen] = useState(false);
+  const [bioText, setBioText] = useState('');
+  
   // Bulk proxy assignment
   const [isBulkProxyOpen, setIsBulkProxyOpen] = useState(false);
   
@@ -269,7 +273,7 @@ const Accounts: React.FC = () => {
   }, [isSpamBotChecking, refreshData]);
   
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
-  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
+  const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'change_bio', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
   
   useEffect(() => {
     if (!isAccountTaskRunning) return;
@@ -1316,6 +1320,34 @@ const Accounts: React.FC = () => {
     } catch (error) {
       console.error('Error queuing profile picture change:', error);
       toast.error('Failed to queue profile picture change');
+    }
+  };
+
+  // Queue bio change task
+  const handleChangeBio = async () => {
+    if (selectedIds.size === 0) return;
+    
+    try {
+      const tasks = Array.from(selectedIds).map(accountId => ({
+        account_id: accountId,
+        task_type: 'change_bio',
+        status: 'pending',
+        result: JSON.stringify({ bio: bioText }),
+      }));
+      
+      const { error } = await supabase
+        .from('account_check_tasks')
+        .insert(tasks);
+      
+      if (error) throw error;
+      
+      startAccountTaskTracking('Change Bio', selectedIds.size);
+      toast.info(`Queued bio change for ${selectedIds.size} account(s). View progress in Logs.`);
+      setBioText('');
+      setIsBioDialogOpen(false);
+    } catch (error) {
+      console.error('Error queuing bio change:', error);
+      toast.error('Failed to queue bio change');
     }
   };
 
@@ -2988,6 +3020,10 @@ const Accounts: React.FC = () => {
                 <Image className="w-4 h-4 mr-2" />
                 Change Profile Picture
               </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setIsBioDialogOpen(true)}>
+                <FileText className="w-4 h-4 mr-2" />
+                Change Bio
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={() => setIsPrivacyDialogOpen(true)}>
                 <EyeOff className="w-4 h-4 mr-2" />
                 Privacy Settings
@@ -3426,6 +3462,45 @@ const Accounts: React.FC = () => {
                   }
                 >
                   Queue Picture Change
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Bio Change Dialog */}
+        <Dialog open={isBioDialogOpen} onOpenChange={(open) => {
+          setIsBioDialogOpen(open);
+          if (!open) setBioText('');
+        }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Change Bio</DialogTitle>
+              <DialogDescription>
+                Update the bio text for {selectedIds.size} account(s). Max 70 characters.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 pt-4">
+              <div className="space-y-2">
+                <Label>Bio Text</Label>
+                <Textarea
+                  value={bioText}
+                  onChange={(e) => setBioText(e.target.value.slice(0, 70))}
+                  placeholder="Enter bio text..."
+                  className="resize-none"
+                  rows={3}
+                />
+                <p className="text-xs text-muted-foreground text-right">
+                  {bioText.length}/70 characters
+                </p>
+              </div>
+              
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setIsBioDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleChangeBio} disabled={selectedIds.size === 0}>
+                  Queue Bio Change
                 </Button>
               </div>
             </div>
