@@ -254,68 +254,327 @@ async def send_message(client, recipient: str, content: str, media_url: str = No
 
 
 # ==============================================================================
-# CORE FUNCTION 2: ACCOUNT ACTION
+# CORE FUNCTION 2: ACCOUNT ACTION (ALL ACTIONS)
 # ==============================================================================
-# Non-message operations: spambot check, name change, join channel, etc.
+# Everything that's NOT sending a message: profile changes, contacts, channels, etc.
 
 async def account_action(client, action: str, task: dict) -> Tuple[bool, Optional[str]]:
-    """Handle non-message account actions."""
+    """
+    ALL ACCOUNT ACTIONS IN ONE FUNCTION:
+    - Profile: change_name, change_photo, change_bio, change_username
+    - Contacts: add_contact, delete_contact, block_contact, unblock_contact
+    - Channels: join_channel, leave_channel, react
+    - Checks: spambot_check, session_check
+    """
     task_id = task.get("task_id") or task.get("id")
     acc_id = task.get("account", {}).get("id") or task.get("account_id")
     td = task.get("task_data", {})
+    phone = accounts.get(acc_id, {}).get("phone_number", "????")[-4:]
     
     try:
-        if action == "spambot_check":
-            bot = await client.get_entity("@SpamBot")
-            await client.send_message(bot, "/start")
-            await asyncio.sleep(2)
-            msgs = await client.get_messages(bot, limit=1)
-            resp = msgs[0].text.lower() if msgs else ""
-            status = "banned" if "banned" in resp or "deleted" in resp else "frozen" if "frozen" in resp else "restricted" if "restricted" in resp else "active"
-            await report("spambot_check", {"task_id": task_id, "account_id": acc_id, "status": status, "success": True})
-            return True, None
+        # ==========================================================
+        # PROFILE ACTIONS
+        # ==========================================================
         
-        elif action == "change_name":
+        if action == "change_name":
             fn = task.get("first_name") or td.get("first_name", "")
             ln = task.get("last_name") or td.get("last_name", "")
+            print(f"  [NAME] [{phone}] → {fn} {ln}")
             await client(UpdateProfileRequest(first_name=fn, last_name=ln))
-            await report("change_name", {"task_id": task_id, "account_id": acc_id, "success": True})
+            await report("change_name", {"task_id": task_id, "account_id": acc_id, "success": True, "first_name": fn, "last_name": ln})
             return True, None
         
-        elif "add_contact" in action:
-            phone = td.get("recipient_phone") or td.get("target_phone")
-            if phone:
-                contact = InputPhoneContact(client_id=random.randint(0,2**31-1), phone=phone if phone.startswith("+") else f"+{phone}", first_name=td.get("first_name", phone), last_name="")
-                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
-                await report("warmup_add_contact", {"task_id": task_id, "pair_id": td.get("pair_id"), "success": bool(result.users)})
-                return bool(result.users), None
-            return False, "No phone"
+        elif action == "change_photo":
+            photo_url = task.get("photo_url") or td.get("photo_url")
+            print(f"  [PHOTO] [{phone}] Updating...")
+            if photo_url:
+                from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
+                from telethon.tl.functions.users import GetFullUserRequest
+                
+                # Download photo
+                r = await get_http().get(photo_url, timeout=60)
+                if r.status_code == 200:
+                    import io
+                    photo_file = await client.upload_file(io.BytesIO(r.content))
+                    
+                    # Delete old photos first (optional)
+                    try:
+                        full = await client(GetFullUserRequest("me"))
+                        if full.full_user.profile_photo:
+                            await client(DeletePhotosRequest([full.full_user.profile_photo]))
+                    except:
+                        pass
+                    
+                    # Upload new photo
+                    await client(UploadProfilePhotoRequest(file=photo_file))
+                    await report("change_photo", {"task_id": task_id, "account_id": acc_id, "success": True})
+                    print(f"  [PHOTO] [{phone}] ✓ Updated")
+                    return True, None
+            return False, "No photo URL"
         
-        elif "join" in action:
-            channel = td.get("channel_username") or td.get("channel")
+        elif action == "change_bio":
+            bio = task.get("bio") or td.get("bio", "")
+            print(f"  [BIO] [{phone}] → {bio[:30]}...")
+            await client(UpdateProfileRequest(about=bio))
+            await report("change_bio", {"task_id": task_id, "account_id": acc_id, "success": True})
+            return True, None
+        
+        elif action == "change_username":
+            username = task.get("username") or td.get("username", "")
+            print(f"  [USERNAME] [{phone}] → @{username}")
+            from telethon.tl.functions.account import UpdateUsernameRequest
+            await client(UpdateUsernameRequest(username=username))
+            await report("change_username", {"task_id": task_id, "account_id": acc_id, "success": True, "username": username})
+            return True, None
+        
+        # ==========================================================
+        # CONTACT ACTIONS
+        # ==========================================================
+        
+        elif action in ("add_contact", "warmup_add_contact", "import_contact"):
+            target_phone = td.get("recipient_phone") or td.get("target_phone") or task.get("target_phone")
+            first_name = td.get("first_name") or task.get("first_name") or (target_phone.replace("+", "") if target_phone else "Contact")
+            last_name = td.get("last_name") or task.get("last_name", "")
+            
+            if target_phone:
+                print(f"  [CONTACT+] [{phone}] Adding {target_phone}...")
+                contact = InputPhoneContact(
+                    client_id=random.randint(0, 2**31-1),
+                    phone=target_phone if target_phone.startswith("+") else f"+{target_phone}",
+                    first_name=first_name,
+                    last_name=last_name
+                )
+                result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
+                success = bool(result.users)
+                await report("add_contact", {
+                    "task_id": task_id, 
+                    "account_id": acc_id,
+                    "pair_id": td.get("pair_id"),
+                    "target_phone": target_phone,
+                    "success": success,
+                    "telegram_id": result.users[0].id if result.users else None
+                })
+                return success, None if success else "Could not add contact"
+            return False, "No phone number"
+        
+        elif action == "delete_contact":
+            from telethon.tl.functions.contacts import DeleteContactsRequest
+            target = td.get("target_phone") or td.get("target_telegram_id") or task.get("target")
+            
+            if target:
+                print(f"  [CONTACT-] [{phone}] Removing {target}...")
+                try:
+                    entity = await client.get_input_entity(target)
+                    await client(DeleteContactsRequest([entity]))
+                    await report("delete_contact", {"task_id": task_id, "account_id": acc_id, "success": True})
+                    return True, None
+                except:
+                    return False, "Contact not found"
+            return False, "No target"
+        
+        elif action == "block_contact":
+            from telethon.tl.functions.contacts import BlockRequest
+            target = td.get("target_phone") or td.get("target_telegram_id") or task.get("target_phone")
+            
+            if target:
+                print(f"  [BLOCK] [{phone}] Blocking {target}...")
+                try:
+                    entity = await client.get_input_entity(target)
+                    await client(BlockRequest(entity))
+                    await report("block_contact", {"task_id": task_id, "account_id": acc_id, "target": str(target), "success": True})
+                    return True, None
+                except:
+                    return False, "User not found"
+            return False, "No target"
+        
+        elif action == "unblock_contact":
+            from telethon.tl.functions.contacts import UnblockRequest
+            target = td.get("target_phone") or td.get("target_telegram_id") or task.get("target")
+            
+            if target:
+                print(f"  [UNBLOCK] [{phone}] Unblocking {target}...")
+                try:
+                    entity = await client.get_input_entity(target)
+                    await client(UnblockRequest(entity))
+                    await report("unblock_contact", {"task_id": task_id, "account_id": acc_id, "success": True})
+                    return True, None
+                except:
+                    return False, "User not found"
+            return False, "No target"
+        
+        # ==========================================================
+        # CHANNEL ACTIONS
+        # ==========================================================
+        
+        elif action in ("join_channel", "join", "warmup_join_channel"):
+            channel = td.get("channel_username") or td.get("channel") or task.get("channel")
+            
             if channel:
-                await asyncio.wait_for(client(JoinChannelRequest(channel)), timeout=15)
-                await report("warmup", {"task_id": task_id, "success": True})
+                print(f"  [JOIN] [{phone}] → @{channel}")
+                try:
+                    await asyncio.wait_for(client(JoinChannelRequest(channel)), timeout=20)
+                    await report("join_channel", {"task_id": task_id, "account_id": acc_id, "channel": channel, "success": True})
+                    return True, None
+                except Exception as e:
+                    if "already" in str(e).lower():
+                        await report("join_channel", {"task_id": task_id, "account_id": acc_id, "channel": channel, "success": True})
+                        return True, None
+                    raise
+            return False, "No channel"
+        
+        elif action in ("leave_channel", "leave"):
+            from telethon.tl.functions.channels import LeaveChannelRequest
+            channel = td.get("channel_username") or td.get("channel") or task.get("channel")
+            
+            if channel:
+                print(f"  [LEAVE] [{phone}] ← @{channel}")
+                entity = await client.get_entity(channel)
+                await client(LeaveChannelRequest(entity))
+                await report("leave_channel", {"task_id": task_id, "account_id": acc_id, "channel": channel, "success": True})
                 return True, None
             return False, "No channel"
         
-        elif "react" in action:
-            channel = td.get("channel_username")
+        elif action in ("react", "warmup_react", "send_reaction"):
+            channel = td.get("channel_username") or td.get("channel") or task.get("channel")
+            emoji = td.get("emoji") or task.get("emoji") or random.choice(["👍", "❤️", "🔥", "👏", "😂"])
+            
             if channel:
+                print(f"  [REACT] [{phone}] {emoji} → @{channel}")
                 entity = await client.get_entity(channel)
                 msgs = await client.get_messages(entity, limit=10)
                 if msgs:
-                    await client(SendReactionRequest(peer=entity, msg_id=random.choice(msgs).id, reaction=[ReactionEmoji(emoticon=random.choice(["👍","❤️","🔥"]))]))
-                await report("warmup", {"task_id": task_id, "success": True})
+                    msg = random.choice(msgs)
+                    await client(SendReactionRequest(peer=entity, msg_id=msg.id, reaction=[ReactionEmoji(emoticon=emoji)]))
+                    await report("react", {"task_id": task_id, "account_id": acc_id, "success": True})
+                    return True, None
+                return False, "No messages to react"
+            return False, "No channel"
+        
+        elif action == "view_channel":
+            from telethon.tl.functions.messages import GetHistoryRequest
+            channel = td.get("channel_username") or td.get("channel") or task.get("channel")
+            
+            if channel:
+                print(f"  [VIEW] [{phone}] → @{channel}")
+                entity = await client.get_entity(channel)
+                await client(GetHistoryRequest(peer=entity, limit=20, offset_id=0, offset_date=None, add_offset=0, max_id=0, min_id=0, hash=0))
+                await report("view_channel", {"task_id": task_id, "account_id": acc_id, "success": True})
                 return True, None
             return False, "No channel"
         
+        # ==========================================================
+        # CHECK ACTIONS
+        # ==========================================================
+        
+        elif action == "spambot_check":
+            print(f"  [SPAMBOT] [{phone}] Checking...")
+            bot = await client.get_entity("@SpamBot")
+            await client.send_message(bot, "/start")
+            await asyncio.sleep(3)
+            msgs = await client.get_messages(bot, limit=1)
+            resp = msgs[0].text if msgs else ""
+            resp_lower = resp.lower()
+            
+            if "banned" in resp_lower or "deleted" in resp_lower or "deactivated" in resp_lower:
+                status = "banned"
+            elif "frozen" in resp_lower:
+                status = "frozen"
+            elif "limited" in resp_lower or "restricted" in resp_lower or "cannot" in resp_lower:
+                status = "restricted"
+            else:
+                status = "active"
+            
+            await report("spambot_check", {
+                "task_id": task_id,
+                "account_id": acc_id,
+                "status": status,
+                "response": resp[:300],
+                "success": True
+            })
+            print(f"  [SPAMBOT] [{phone}] → {status}")
+            return True, None
+        
+        elif action == "session_check":
+            print(f"  [SESSION] [{phone}] Verifying...")
+            me = await asyncio.wait_for(client.get_me(), timeout=10)
+            if me:
+                await report("session_check", {
+                    "task_id": task_id,
+                    "account_id": acc_id,
+                    "success": True,
+                    "telegram_id": me.id,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                    "username": me.username
+                })
+                print(f"  [SESSION] [{phone}] ✓ Valid")
+                return True, None
+            return False, "get_me returned None"
+        
+        elif action == "get_me":
+            me = await client.get_me()
+            await report("get_me", {
+                "task_id": task_id,
+                "account_id": acc_id,
+                "success": True,
+                "data": {"id": me.id, "first_name": me.first_name, "last_name": me.last_name, "username": me.username, "phone": me.phone}
+            })
+            return True, None
+        
+        # ==========================================================
+        # DIALOG/CHAT ACTIONS
+        # ==========================================================
+        
+        elif action == "get_dialogs":
+            print(f"  [DIALOGS] [{phone}] Fetching...")
+            dialogs = await client.get_dialogs(limit=50)
+            dialog_list = []
+            for d in dialogs:
+                dialog_list.append({
+                    "id": d.id,
+                    "name": d.name,
+                    "unread": d.unread_count,
+                    "is_user": d.is_user,
+                    "is_group": d.is_group,
+                    "is_channel": d.is_channel
+                })
+            await report("get_dialogs", {"task_id": task_id, "account_id": acc_id, "dialogs": dialog_list, "success": True})
+            return True, None
+        
+        elif action == "read_messages":
+            target = td.get("target") or td.get("chat_id") or task.get("target")
+            if target:
+                entity = await client.get_input_entity(target)
+                await client.send_read_acknowledge(entity)
+                await report("read_messages", {"task_id": task_id, "account_id": acc_id, "success": True})
+                return True, None
+            return False, "No target"
+        
+        elif action == "delete_chat":
+            from telethon.tl.functions.messages import DeleteHistoryRequest
+            target = td.get("target") or td.get("chat_id") or task.get("target")
+            if target:
+                print(f"  [DELETE] [{phone}] Deleting chat with {target}...")
+                entity = await client.get_input_entity(target)
+                await client(DeleteHistoryRequest(peer=entity, max_id=0, revoke=True))
+                await report("delete_chat", {"task_id": task_id, "account_id": acc_id, "success": True})
+                return True, None
+            return False, "No target"
+        
+        # ==========================================================
+        # UNKNOWN ACTION
+        # ==========================================================
+        
         else:
+            print(f"  [?] [{phone}] Unknown action: {action}")
+            await report(action, {"task_id": task_id, "account_id": acc_id, "success": False, "error": f"Unknown action: {action}"})
             return False, f"Unknown action: {action}"
             
     except Exception as e:
-        await report(action, {"task_id": task_id, "account_id": acc_id, "success": False, "error": str(e)[:80]})
-        return False, str(e)
+        error_msg = str(e)[:100]
+        print(f"  [ERROR] [{phone}] {action}: {error_msg}")
+        await report(action, {"task_id": task_id, "account_id": acc_id, "success": False, "error": error_msg})
+        return False, error_msg
 
 
 # ==============================================================================
@@ -515,24 +774,45 @@ async def process(task: dict):
                 **meta
             })
     
-    # ========== ACCOUNT ACTIONS ==========
-    elif tt in ("spambot_check", "change_name", "change_photo"):
+    # ========== ALL ACCOUNT ACTIONS ==========
+    # Profile actions
+    elif tt in ("change_name", "change_photo", "change_bio", "change_username"):
         await account_action(client, tt, task)
     
+    # Contact actions
+    elif tt in ("add_contact", "delete_contact", "block_contact", "unblock_contact", "import_contact"):
+        await account_action(client, tt, task)
     elif "add_contact" in tt:
         await account_action(client, "add_contact", task)
+    elif "block" in tt:
+        await account_action(client, "block_contact" if "unblock" not in tt else "unblock_contact", task)
     
+    # Channel actions
+    elif tt in ("join_channel", "leave_channel", "view_channel"):
+        await account_action(client, tt, task)
     elif "join" in tt:
-        await account_action(client, "join", task)
-    
+        await account_action(client, "join_channel", task)
+    elif "leave" in tt:
+        await account_action(client, "leave_channel", task)
     elif "react" in tt:
         await account_action(client, "react", task)
     
+    # Check actions
+    elif tt in ("spambot_check", "session_check", "get_me"):
+        await account_action(client, tt, task)
+    
+    # Dialog/chat actions
+    elif tt in ("get_dialogs", "read_messages", "delete_chat"):
+        await account_action(client, tt, task)
+    
+    # Warmup non-send actions
     elif tt.startswith("warmup") and "chat" not in tt and "send" not in tt:
         await account_action(client, tt, task)
     
+    # Unknown - try to handle as account action anyway
     else:
-        print(f"  [?] Unknown: {tt}")
+        print(f"  [?] Unknown task type: {tt} - trying as account action")
+        await account_action(client, tt, task)
 
 
 # ==============================================================================
@@ -778,7 +1058,7 @@ pysocks>=1.7.1
           <CardContent className="p-6 space-y-4">
             <h3 className="font-semibold">Task → Function Mapping</h3>
             
-            <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="grid grid-cols-2 gap-3 text-sm">
               <div className="bg-muted/30 p-3 rounded">
                 <p className="font-medium text-primary mb-2">send_message()</p>
                 <ul className="text-muted-foreground text-xs space-y-1">
@@ -789,10 +1069,45 @@ pysocks>=1.7.1
               </div>
               <div className="bg-muted/30 p-3 rounded">
                 <p className="font-medium text-primary mb-2">account_action()</p>
-                <ul className="text-muted-foreground text-xs space-y-1">
-                  <li>• Spambot check</li>
-                  <li>• Name change</li>
-                  <li>• Join channel</li>
+                <p className="text-muted-foreground text-xs mb-1">All non-message operations:</p>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              <div className="bg-muted/20 p-2 rounded">
+                <p className="font-medium text-foreground mb-1">Profile</p>
+                <ul className="text-muted-foreground space-y-0.5">
+                  <li>• change_name</li>
+                  <li>• change_photo</li>
+                  <li>• change_bio</li>
+                  <li>• change_username</li>
+                </ul>
+              </div>
+              <div className="bg-muted/20 p-2 rounded">
+                <p className="font-medium text-foreground mb-1">Contacts</p>
+                <ul className="text-muted-foreground space-y-0.5">
+                  <li>• add_contact</li>
+                  <li>• delete_contact</li>
+                  <li>• block_contact</li>
+                  <li>• unblock_contact</li>
+                </ul>
+              </div>
+              <div className="bg-muted/20 p-2 rounded">
+                <p className="font-medium text-foreground mb-1">Channels</p>
+                <ul className="text-muted-foreground space-y-0.5">
+                  <li>• join_channel</li>
+                  <li>• leave_channel</li>
+                  <li>• react</li>
+                  <li>• view_channel</li>
+                </ul>
+              </div>
+              <div className="bg-muted/20 p-2 rounded">
+                <p className="font-medium text-foreground mb-1">Checks</p>
+                <ul className="text-muted-foreground space-y-0.5">
+                  <li>• spambot_check</li>
+                  <li>• session_check</li>
+                  <li>• get_dialogs</li>
+                  <li>• delete_chat</li>
                 </ul>
               </div>
             </div>
