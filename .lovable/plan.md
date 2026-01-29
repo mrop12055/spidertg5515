@@ -1,14 +1,13 @@
 
 # LiveChat Runner - Simplified Proxy Retry System
 
-## Build Version: 2026-01-29-forward-ref-fix (IMPLEMENTED)
+## Build Version: 2026-01-28-no-queue-parallel-retry (IMPLEMENTED)
 
 ---
 
 ## Implementation Complete ✅
 
 Replaced queue-based retry with simplified in-memory tracking + parallel batch processing.
-**FIXED (2026-01-29)**: Moved `mark_account_failed` and related functions AFTER `report_result` to prevent Python NameError crash.
 
 ---
 
