@@ -148,6 +148,59 @@ async def report(task_type: str, data: dict):
         pass
 
 
+async def update_account_status(acc_id: str, status: str, reason: str = None, auto_disabled: bool = False):
+    """Update account status in database when connection fails/succeeds."""
+    try:
+        data = {"status": status}
+        if reason:
+            data["disabled_reason"] = reason[:200]
+        if auto_disabled:
+            data["auto_disabled"] = True
+        
+        await get_http().patch(
+            f"{SUPABASE_URL}/rest/v1/telegram_accounts?id=eq.{acc_id}",
+            headers={
+                "apikey": SUPABASE_KEY, 
+                "Authorization": f"Bearer {SUPABASE_KEY}", 
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            json=data, timeout=15
+        )
+    except:
+        pass
+
+
+async def update_proxy_status(proxy_id: str, status: str, error_msg: str = None):
+    """Update proxy status when connection fails."""
+    try:
+        await get_http().patch(
+            f"{SUPABASE_URL}/rest/v1/proxies?id=eq.{proxy_id}",
+            headers={
+                "apikey": SUPABASE_KEY, 
+                "Authorization": f"Bearer {SUPABASE_KEY}", 
+                "Content-Type": "application/json",
+                "Prefer": "return=minimal"
+            },
+            json={"status": status}, timeout=15
+        )
+        
+        # Log proxy error if there's an error message
+        if error_msg:
+            await get_http().post(
+                f"{SUPABASE_URL}/rest/v1/proxy_errors",
+                headers={
+                    "apikey": SUPABASE_KEY, 
+                    "Authorization": f"Bearer {SUPABASE_KEY}", 
+                    "Content-Type": "application/json",
+                    "Prefer": "return=minimal"
+                },
+                json={"proxy_id": proxy_id, "error_type": "connection", "error_message": error_msg[:200]}, timeout=15
+            )
+    except:
+        pass
+
+
 async def fetch_accounts() -> List[dict]:
     try:
         r = await get_http().get(
@@ -618,9 +671,10 @@ async def on_message(event, acc_id: str):
 # ==============================================================================
 
 async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
-    """Connect a single account."""
+    """Connect a single account. Reports failures to database."""
     aid = acc.get("id")
     phone = acc.get("phone_number", "????")
+    proxy_id = acc.get("proxy_id")
     
     if not aid:
         return None, "No ID"
@@ -629,15 +683,22 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         if aid in clients and clients[aid].is_connected():
             return clients[aid], None
         
+        # Validation checks - report specific failures
         if not acc.get("session_data"):
+            await update_account_status(aid, "disconnected", "No session data")
             return None, "No session"
+        
         if not get_proxy(acc):
+            await update_account_status(aid, "disconnected", "No proxy assigned", auto_disabled=True)
             return None, "No proxy"
+        
         if not acc.get("device_model") or not acc.get("api_id"):
+            await update_account_status(aid, "disconnected", "Missing fingerprint or API credentials", auto_disabled=True)
             return None, "No fingerprint/API"
         
         path = decode_session(phone, acc["session_data"])
         if not path:
+            await update_account_status(aid, "disconnected", "Session file decode failed", auto_disabled=True)
             return None, "Session decode failed"
         
         try:
@@ -653,6 +714,8 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             await asyncio.wait_for(client.connect(), timeout=60)
             
             if not await asyncio.wait_for(client.is_user_authorized(), timeout=10):
+                await client.disconnect()
+                await update_account_status(aid, "disconnected", "Session not authorized/revoked", auto_disabled=True)
                 return None, "Not authorized"
             
             clients[aid] = client
@@ -660,9 +723,45 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             print(f"  ✓ [{phone[-4:]}] Connected")
             return client, None
             
+        except asyncio.TimeoutError:
+            # Proxy timeout - mark both account and proxy
+            error_msg = "Connection timeout (60s) - proxy may be dead"
+            print(f"  ✗ [{phone[-4:]}] TIMEOUT")
+            await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
+            if proxy_id:
+                await update_proxy_status(proxy_id, "error", error_msg)
+            return None, error_msg
+            
+        except (AuthKeyUnregisteredError, SessionRevokedError) as e:
+            # Session invalid - account needs re-auth
+            error_msg = f"Session revoked: {str(e)[:50]}"
+            print(f"  ✗ [{phone[-4:]}] SESSION REVOKED")
+            await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
+            return None, error_msg
+            
+        except (UserDeactivatedBanError, PhoneNumberBannedError) as e:
+            # Account banned
+            error_msg = f"Account banned: {str(e)[:50]}"
+            print(f"  ✗ [{phone[-4:]}] BANNED")
+            await update_account_status(aid, "banned", error_msg, auto_disabled=True)
+            return None, error_msg
+            
         except Exception as e:
-            print(f"  ✗ [{phone[-4:]}] {str(e)[:30]}")
-            return None, str(e)
+            error_str = str(e)
+            print(f"  ✗ [{phone[-4:]}] {error_str[:30]}")
+            
+            # Check if it's a proxy-related error
+            proxy_errors = ["proxy", "socks", "connection refused", "network unreachable", "host unreachable", "timed out"]
+            is_proxy_error = any(pe in error_str.lower() for pe in proxy_errors)
+            
+            if is_proxy_error:
+                await update_account_status(aid, "disconnected", f"Proxy error: {error_str[:100]}", auto_disabled=True)
+                if proxy_id:
+                    await update_proxy_status(proxy_id, "error", error_str[:100])
+            else:
+                await update_account_status(aid, "disconnected", error_str[:100], auto_disabled=True)
+            
+            return None, error_str
 
 
 async def connect_all():
