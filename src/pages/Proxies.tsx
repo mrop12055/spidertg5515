@@ -193,8 +193,8 @@ const Proxies: React.FC = () => {
       const proxyIds = currentProxies.map(p => p.id);
       
       try {
-        await supabase.functions.invoke('test-proxies', {
-          body: { proxy_ids: proxyIds, auto_detect_country: true }
+        await supabase.functions.invoke('utilities', {
+          body: { path: '/test-proxies', proxy_ids: proxyIds, auto_detect_country: true }
         });
         setLastHealthCheck(new Date());
         refetchProxies();
@@ -282,8 +282,8 @@ const Proxies: React.FC = () => {
       if (insertError) throw insertError;
 
       // Test all inserted proxies
-      const { data, error } = await supabase.functions.invoke('test-proxies', {
-        body: { proxy_ids: insertedProxies?.map(p => p.id) || [], auto_detect_country: true }
+      const { data, error } = await supabase.functions.invoke('utilities', {
+        body: { path: '/test-proxies', proxy_ids: insertedProxies?.map(p => p.id) || [], auto_detect_country: true }
       });
 
       if (error) throw error;
@@ -399,8 +399,8 @@ const Proxies: React.FC = () => {
     setTestResults(new Map(newResults));
 
     try {
-      const { data, error } = await supabase.functions.invoke('test-proxies', {
-        body: { proxy_ids: Array.from(selectedIds), auto_detect_country: true }
+      const { data, error } = await supabase.functions.invoke('utilities', {
+        body: { path: '/test-proxies', proxy_ids: Array.from(selectedIds), auto_detect_country: true }
       });
 
       if (error) throw error;
@@ -439,8 +439,8 @@ const Proxies: React.FC = () => {
     setTestResults(new Map(newResults));
 
     try {
-      const { data, error } = await supabase.functions.invoke('test-proxies', {
-        body: { proxy_ids: allIds, auto_detect_country: true }
+      const { data, error } = await supabase.functions.invoke('utilities', {
+        body: { path: '/test-proxies', proxy_ids: allIds, auto_detect_country: true }
       });
 
       if (error) throw error;

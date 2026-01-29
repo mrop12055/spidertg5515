@@ -33,7 +33,7 @@ serve(async (req) => {
   }
 
   const url = new URL(req.url);
-  const path = url.pathname.replace('/utilities', '');
+  let path = url.pathname.replace('/utilities', '');
 
   try {
     const supabase = createClient(
@@ -42,6 +42,11 @@ serve(async (req) => {
     );
 
     const body = req.method !== "GET" ? await req.json().catch(() => ({})) : {};
+    
+    // Support path in body for single-endpoint calls from frontend
+    if (body.path && !path) {
+      path = body.path;
+    }
 
     console.log(`[utilities] ${req.method} ${path}`);
 

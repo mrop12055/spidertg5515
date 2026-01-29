@@ -534,8 +534,8 @@ export default function Warmup() {
         body.specificPairAccountIds = accountIds;
       }
       
-      const { data, error } = await supabase.functions.invoke("start-warmup-chat", {
-        body,
+      const { data, error } = await supabase.functions.invoke("warmup", {
+        body: { action: "start", ...body },
       });
 
       if (error) throw error;
@@ -586,7 +586,7 @@ export default function Warmup() {
   const handleStopWarmup = async () => {
     setIsStopping(true);
     try {
-      const { data, error } = await supabase.functions.invoke("stop-warmup-chat");
+      const { data, error } = await supabase.functions.invoke("warmup", { body: { action: "stop" } });
 
       if (error) throw error;
 
@@ -603,8 +603,8 @@ export default function Warmup() {
   const handleStopSinglePair = async (pairId: string) => {
     setStoppingPairId(pairId);
     try {
-      const { data, error } = await supabase.functions.invoke("stop-warmup-chat", {
-        body: { pairId },
+      const { data, error } = await supabase.functions.invoke("warmup", {
+        body: { action: "stop", pairId },
       });
 
       if (error) throw error;
@@ -695,8 +695,9 @@ export default function Warmup() {
   const handleStartSinglePairWarmup = async (accountId: string, pairAccountId: string) => {
     setStartingPairId(accountId);
     try {
-      const { data, error } = await supabase.functions.invoke("start-warmup-chat", {
+      const { data, error } = await supabase.functions.invoke("warmup", {
         body: {
+          action: "start",
           messagesPerPairMin: messagesPerPair[0],
           messagesPerPairMax: messagesPerPair[1],
           specificPairAccountIds: [accountId, pairAccountId],

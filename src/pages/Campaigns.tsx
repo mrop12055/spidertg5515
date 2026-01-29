@@ -915,8 +915,8 @@ const Campaigns: React.FC = () => {
       toast.success('Campaign paused');
       
       // Call pause-campaign function in background (don't block UI)
-      supabase.functions.invoke('pause-campaign', {
-        body: { campaign_id: campaign.id }
+      supabase.functions.invoke('admin-api', {
+        body: { path: '/campaigns/pause', campaign_id: campaign.id }
       }).then(({ error }) => {
         if (error) {
           console.error('Pause campaign error:', error);
