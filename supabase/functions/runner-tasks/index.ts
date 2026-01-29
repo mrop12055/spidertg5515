@@ -1,0 +1,598 @@
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
+/**
+ * UNIFIED RUNNER-TASKS ENDPOINT
+ * 
+ * Consolidates: get-batch-tasks, get-next-task, report-task-result, report-batch-results
+ * 
+ * Routes:
+ * - POST /get - Get batch of tasks for processing
+ * - POST /report - Report task results (single or batch)
+ * - POST /heartbeat - Runner heartbeat
+ */
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+};
+
+// Settings cache
+interface CachedSettings {
+  data: Record<string, any>[];
+  timestamp: number;
+}
+let settingsCache: CachedSettings | null = null;
+const SETTINGS_CACHE_TTL_MS = 30 * 1000;
+
+async function getCachedSettings(supabase: any): Promise<Record<string, any>[]> {
+  const now = Date.now();
+  if (settingsCache && (now - settingsCache.timestamp) < SETTINGS_CACHE_TTL_MS) {
+    return settingsCache.data;
+  }
+  const { data: settingsData } = await supabase.from("app_settings").select("key, value");
+  settingsCache = { data: settingsData || [], timestamp: now };
+  return settingsCache.data;
+}
+
+function parseSettings(settingsData: Record<string, any>[]) {
+  const config = {
+    messageDelayMin: 5,
+    messageDelayMax: 15,
+    dailyLimit: 25,
+    warmupBatchSize: 100,
+    campaignBatchSize: 100,
+    campaignPollingInterval: 3,
+    campaignMessagesPerAccountPerDay: 25,
+    livechatSettings: { sameAccountStaggerMin: 1, sameAccountStaggerMax: 2, enableParallel: true },
+  };
+  
+  for (const setting of settingsData) {
+    const value = setting.value as Record<string, unknown>;
+    switch (setting.key) {
+      case "message_timing":
+        if (value) {
+          config.messageDelayMin = (value.minDelaySeconds as number) || config.messageDelayMin;
+          config.messageDelayMax = (value.maxDelaySeconds as number) || config.messageDelayMax;
+        }
+        break;
+      case "account_limits":
+        if (value) config.dailyLimit = (value.dailyMessageLimit as number) || config.dailyLimit;
+        break;
+      case "warmup_batch_size":
+        if (value) config.warmupBatchSize = (value.batchSize as number) || config.warmupBatchSize;
+        break;
+      case "campaign_speed":
+        if (value) {
+          config.campaignPollingInterval = (value.pollingInterval as number) ?? config.campaignPollingInterval;
+          config.campaignBatchSize = (value.batchSize as number) ?? config.campaignBatchSize;
+          config.campaignMessagesPerAccountPerDay = (value.messagesPerAccountPerDay as number) ?? config.campaignMessagesPerAccountPerDay;
+        }
+        break;
+      case "livechat":
+        if (value) {
+          config.livechatSettings = {
+            sameAccountStaggerMin: (value.sameAccountStaggerMin as number) ?? 1,
+            sameAccountStaggerMax: (value.sameAccountStaggerMax as number) ?? 2,
+            enableParallel: (value.enableParallel as boolean) ?? true,
+          };
+        }
+        break;
+    }
+  }
+  return config;
+}
+
+// Get API credentials for account (per-account first, then pool)
+async function getApiCredentialsForAccount(supabase: any, account: any) {
+  if (account.api_id && account.api_hash) {
+    return { api_id: account.api_id, api_hash: account.api_hash, api_credential_id: null };
+  }
+  const { data: apis } = await supabase
+    .from('telegram_api_credentials')
+    .select('id, api_id, api_hash')
+    .eq('is_active', true)
+    .order('usage_count', { ascending: true })
+    .limit(1);
+  if (apis && apis.length > 0) {
+    return { api_id: apis[0].api_id, api_hash: apis[0].api_hash, api_credential_id: apis[0].id };
+  }
+  return null;
+}
+
+serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  const url = new URL(req.url);
+  const path = url.pathname.replace('/runner-tasks', '');
+
+  try {
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL") ?? "",
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
+    );
+
+    const body = await req.json().catch(() => ({}));
+
+    // Route: GET TASKS
+    if (path === '/get' || path === '') {
+      return await handleGetTasks(supabase, body);
+    }
+
+    // Route: REPORT RESULTS
+    if (path === '/report') {
+      return await handleReportResults(supabase, body);
+    }
+
+    // Route: HEARTBEAT
+    if (path === '/heartbeat') {
+      const { runner } = body;
+      if (runner) {
+        await supabase.from("runner_heartbeats").upsert(
+          { runner_name: runner, last_seen: new Date().toISOString(), status: 'online' },
+          { onConflict: 'runner_name' }
+        );
+      }
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ error: "Not found", path }), {
+      status: 404,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+
+  } catch (error) {
+    console.error(`[runner-tasks] Error:`, error);
+    return new Response(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }), {
+      status: 500,
+      headers: { ...corsHeaders, "Content-Type": "application/json" },
+    });
+  }
+});
+
+// ==================== GET TASKS ====================
+async function handleGetTasks(supabase: any, body: any) {
+  const { runner, batch_size = 100, account_ids } = body;
+  const nowIso = new Date().toISOString();
+
+  console.log(`[runner-tasks/get] Runner: ${runner}, batch_size: ${batch_size}`);
+
+  // Record heartbeat
+  if (runner) {
+    supabase.from("runner_heartbeats")
+      .upsert({ runner_name: runner, last_seen: nowIso, status: 'online' }, { onConflict: 'runner_name' })
+      .then(() => {});
+  }
+
+  const settingsData = await getCachedSettings(supabase);
+  const config = parseSettings(settingsData);
+
+  // Auto-restore expired cooldowns
+  const { data: expiredCooldowns } = await supabase
+    .from("telegram_accounts")
+    .select("id")
+    .in("status", ["cooldown", "restricted"])
+    .lt("restricted_until", nowIso);
+  
+  if (expiredCooldowns?.length > 0) {
+    await supabase.from("telegram_accounts")
+      .update({ status: "active", restricted_until: null, ban_reason: null })
+      .in("id", expiredCooldowns.map((a: any) => a.id));
+  }
+
+  // Load accounts with proxies
+  const isLivechat = runner === "livechat";
+  let accountsQuery = supabase.from("telegram_accounts").select("*, proxies!fk_proxy(*)");
+  
+  if (isLivechat) {
+    accountsQuery = accountsQuery.in("status", ["active", "restricted", "cooldown", "frozen"]);
+  } else {
+    accountsQuery = accountsQuery.eq("status", "active");
+  }
+  
+  if (account_ids?.length > 0) {
+    accountsQuery = accountsQuery.in("id", account_ids);
+  }
+
+  const { data: accounts, error: accountsError } = await accountsQuery;
+
+  if (accountsError || !accounts?.length) {
+    return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No active accounts" });
+  }
+
+  // Filter accounts with active proxy
+  const usableAccounts = accounts.filter((a: any) => {
+    if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
+    if (!isLivechat) {
+      const limit = config.campaignMessagesPerAccountPerDay || a.daily_limit || config.dailyLimit;
+      if ((a.messages_sent_today ?? 0) >= limit) return false;
+    }
+    return true;
+  });
+
+  if (usableAccounts.length === 0) {
+    return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No usable accounts" });
+  }
+
+  const tasks: any[] = [];
+
+  // ===== CAMPAIGN TASKS =====
+  if (runner === "campaign" || runner === "unified") {
+    const { data: recipients } = await supabase
+      .from("campaign_recipients")
+      .select(`*, campaigns!inner(id, name, message_template, status, seat_id)`)
+      .eq("status", "pending")
+      .eq("campaigns.status", "running")
+      .order("scheduled_at", { ascending: true, nullsFirst: true })
+      .limit(batch_size);
+
+    if (recipients?.length > 0) {
+      const accountMap = new Map(usableAccounts.map((a: any) => [a.id, a]));
+      
+      for (const r of recipients) {
+        // Find available account
+        const account = usableAccounts.find((a: any) => 
+          (a.messages_sent_today ?? 0) < (config.campaignMessagesPerAccountPerDay || config.dailyLimit)
+        );
+        if (!account) continue;
+
+        const creds = await getApiCredentialsForAccount(supabase, account);
+        if (!creds) continue;
+
+        const content = (r.campaigns.message_template || '')
+          .replace(/{name}/g, r.name || 'there')
+          .replace(/{phone}/g, r.phone_number);
+
+        tasks.push({
+          task_type: "send",
+          task_id: r.id,
+          campaign_recipient_id: r.id,
+          campaign_id: r.campaigns.id,
+          campaign_name: r.campaigns.name,
+          campaign_seat_id: r.seat_id || r.campaigns.seat_id,
+          account: {
+            id: account.id,
+            phone_number: account.phone_number,
+            session_data: account.session_data,
+            device_model: account.device_model,
+            system_version: account.system_version,
+            build_id: account.build_id,
+            app_version: account.app_version,
+            lang_code: account.lang_code,
+            system_lang_code: account.system_lang_code,
+            api_id: creds.api_id,
+            api_hash: creds.api_hash,
+            api_credential_id: creds.api_credential_id,
+          },
+          proxy: account.proxies,
+          recipient: {
+            phone: r.phone_number,
+            name: r.name,
+            telegram_id: null,
+            username: null,
+          },
+          content,
+          media_url: null,
+        });
+
+        // Mark as sending
+        await supabase.from("campaign_recipients").update({ status: "sending" }).eq("id", r.id);
+      }
+    }
+  }
+
+  // ===== WARMUP TASKS =====
+  if (runner === "warmup_chat" || runner === "unified") {
+    const { data: warmupMessages } = await supabase
+      .from("warmup_messages")
+      .select(`*, sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, proxies!fk_proxy(*)), 
+               receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(id, phone_number, telegram_id, username, first_name)`)
+      .eq("status", "pending")
+      .lte("scheduled_at", nowIso)
+      .order("scheduled_at", { ascending: true })
+      .limit(batch_size);
+
+    if (warmupMessages?.length > 0) {
+      for (const msg of warmupMessages) {
+        const sender = msg.sender;
+        if (!sender?.session_data || !sender?.proxies || sender.proxies.status !== 'active') continue;
+
+        const creds = await getApiCredentialsForAccount(supabase, sender);
+        if (!creds) continue;
+
+        tasks.push({
+          task_type: msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat",
+          task_id: msg.id,
+          pair_id: msg.pair_id,
+          account: {
+            id: sender.id,
+            phone_number: sender.phone_number,
+            session_data: sender.session_data,
+            device_model: sender.device_model,
+            system_version: sender.system_version,
+            build_id: sender.build_id,
+            app_version: sender.app_version,
+            lang_code: sender.lang_code,
+            system_lang_code: sender.system_lang_code,
+            api_id: creds.api_id,
+            api_hash: creds.api_hash,
+            api_credential_id: creds.api_credential_id,
+          },
+          proxy: sender.proxies,
+          recipient: {
+            phone: msg.receiver?.phone_number,
+            telegram_id: msg.receiver?.telegram_id,
+            username: msg.receiver?.username,
+            name: msg.receiver?.first_name || msg.message_content,
+          },
+          content: msg.message_content,
+          is_cycle_last: msg.is_cycle_last,
+        });
+
+        await supabase.from("warmup_messages").update({ status: "sending", claimed_at: nowIso }).eq("id", msg.id);
+      }
+    }
+  }
+
+  // ===== LIVECHAT TASKS =====
+  if (runner === "livechat" || runner === "unified") {
+    const { data: pendingMessages } = await supabase
+      .from("messages")
+      .select("id, content, media_url, media_type, account_id, conversations!inner(id, recipient_phone, recipient_username, recipient_telegram_id, recipient_name)")
+      .eq("status", "pending")
+      .eq("direction", "outgoing")
+      .is("campaign_recipient_id", null)
+      .order("priority", { ascending: false })
+      .order("created_at", { ascending: true })
+      .limit(batch_size);
+
+    if (pendingMessages?.length > 0) {
+      const accountIds = [...new Set(pendingMessages.map((m: any) => m.account_id))];
+      const { data: msgAccounts } = await supabase
+        .from("telegram_accounts")
+        .select("*, proxies!fk_proxy(*)")
+        .in("id", accountIds)
+        .in("status", ["active", "restricted", "cooldown", "frozen"]);
+
+      const accountMap = new Map((msgAccounts || []).map((a: any) => [a.id, a]));
+
+      for (const msg of pendingMessages) {
+        const account: any = accountMap.get(msg.account_id);
+        if (!account?.proxies || account.proxies.status !== 'active') continue;
+
+        const creds = await getApiCredentialsForAccount(supabase, account);
+        if (!creds) continue;
+
+        const conv = (msg as any).conversations;
+        tasks.push({
+          task_type: "send",
+          task_id: msg.id,
+          message_id: msg.id,
+          account: {
+            id: account.id,
+            phone_number: account.phone_number,
+            session_data: account.session_data,
+            device_model: account.device_model,
+            system_version: account.system_version,
+            build_id: account.build_id,
+            app_version: account.app_version,
+            lang_code: account.lang_code,
+            system_lang_code: account.system_lang_code,
+            api_id: creds.api_id,
+            api_hash: creds.api_hash,
+            api_credential_id: creds.api_credential_id,
+          },
+          proxy: account.proxies,
+          recipient: {
+            phone: conv.recipient_phone,
+            telegram_id: conv.recipient_telegram_id,
+            username: conv.recipient_username,
+            name: conv.recipient_name,
+          },
+          content: msg.content,
+          media_url: msg.media_url,
+          media_type: msg.media_type,
+        });
+
+        await supabase.from("messages").update({ status: "sending" }).eq("id", msg.id);
+      }
+    }
+  }
+
+  // Build accounts list for listening
+  const listeningAccounts = await Promise.all(usableAccounts.map(async (acc: any) => {
+    const creds = await getApiCredentialsForAccount(supabase, acc);
+    if (!creds) return null;
+    return {
+      id: acc.id,
+      phone_number: acc.phone_number,
+      session_data: acc.session_data,
+      device_model: acc.device_model,
+      system_version: acc.system_version,
+      build_id: acc.build_id,
+      app_version: acc.app_version,
+      lang_code: acc.lang_code,
+      system_lang_code: acc.system_lang_code,
+      api_id: creds.api_id,
+      api_hash: creds.api_hash,
+      api_credential_id: creds.api_credential_id,
+      proxy: acc.proxies,
+    };
+  })).then(results => results.filter(Boolean));
+
+  console.log(`[runner-tasks/get] Returning ${tasks.length} tasks, ${listeningAccounts.length} accounts`);
+
+  return jsonResponse({
+    tasks,
+    accounts: listeningAccounts,
+    delay_after: tasks.length > 0 ? config.campaignPollingInterval : 5,
+    settings: config.livechatSettings,
+  });
+}
+
+// ==================== REPORT RESULTS ====================
+async function handleReportResults(supabase: any, body: any) {
+  const { results, task_type, result } = body;
+  const now = new Date().toISOString();
+
+  // Support both batch and single result
+  const allResults = results || (result ? [{ ...result, task_type }] : []);
+  
+  if (allResults.length === 0) {
+    return jsonResponse({ error: "No results provided" }, 400);
+  }
+
+  console.log(`[runner-tasks/report] Processing ${allResults.length} results`);
+
+  const successResults = allResults.filter((r: any) => r.success);
+  const failedResults = allResults.filter((r: any) => !r.success);
+
+  // Process successes
+  for (const r of successResults) {
+    const taskType = r.task_type || task_type;
+
+    if (taskType === "send") {
+      if (r.campaign_recipient_id) {
+        // Campaign message success
+        await supabase.from("campaign_recipients")
+          .update({ status: "sent", sent_at: now, api_credential_id: r.api_credential_id })
+          .eq("id", r.campaign_recipient_id);
+
+        // Create/update conversation
+        let conversationId: string | null = null;
+        const { data: existingConv } = await supabase
+          .from("conversations")
+          .select("id")
+          .eq("account_id", r.account_id)
+          .eq("recipient_phone", r.recipient_phone)
+          .maybeSingle();
+
+        if (existingConv) {
+          conversationId = existingConv.id;
+          if (r.recipient_telegram_id) {
+            await supabase.from("conversations")
+              .update({ recipient_telegram_id: r.recipient_telegram_id })
+              .eq("id", conversationId);
+          }
+        } else {
+          const { data: newConv } = await supabase.from("conversations").insert({
+            account_id: r.account_id,
+            recipient_phone: r.recipient_phone,
+            recipient_name: r.recipient_name,
+            recipient_telegram_id: r.recipient_telegram_id,
+            is_active: true,
+            first_message_sent: true,
+            seat_id: r.campaign_seat_id,
+            campaign_id: r.campaign_id,
+            campaign_name: r.campaign_name,
+          }).select().single();
+          conversationId = newConv?.id;
+        }
+
+        if (conversationId) {
+          await supabase.from("messages").insert({
+            account_id: r.account_id,
+            conversation_id: conversationId,
+            content: r.content || '',
+            direction: 'outgoing',
+            status: 'sent',
+            delivered_at: now,
+            campaign_recipient_id: r.campaign_recipient_id,
+            api_credential_id: r.api_credential_id,
+          });
+        }
+
+        // Update campaign count
+        await supabase.rpc('increment_campaign_sent_count', { cid: r.campaign_id });
+
+      } else if (r.message_id) {
+        // Livechat message success
+        await supabase.from("messages")
+          .update({ status: "sent", delivered_at: now })
+          .eq("id", r.message_id);
+      }
+
+      // Record API usage
+      if (r.api_credential_id) {
+        await supabase.rpc('increment_api_usage', { p_api_id: r.api_credential_id });
+      }
+
+      // Increment account success
+      if (r.account_id) {
+        await supabase.rpc('increment_account_success', { acc_id: r.account_id });
+      }
+
+    } else if (taskType === "warmup_chat" || taskType === "warmup_add_contact") {
+      await supabase.from("warmup_messages")
+        .update({ status: "sent", sent_at: now })
+        .eq("id", r.task_id);
+
+      if (r.is_cycle_last && r.pair_id) {
+        await supabase.from("warmup_pairs")
+          .update({ contacts_exchanged: true })
+          .eq("id", r.pair_id);
+      }
+    }
+  }
+
+  // Process failures
+  for (const r of failedResults) {
+    const taskType = r.task_type || task_type;
+    const errorLower = (r.error || '').toLowerCase();
+
+    // Check for frozen account
+    if (errorLower.includes('frozen')) {
+      await supabase.from("telegram_accounts")
+        .update({ status: "frozen", ban_reason: r.error })
+        .eq("id", r.account_id);
+    }
+
+    if (taskType === "send") {
+      if (r.campaign_recipient_id) {
+        await supabase.from("campaign_recipients")
+          .update({ status: "failed", failed_reason: r.error })
+          .eq("id", r.campaign_recipient_id);
+        await supabase.rpc('increment_campaign_failed_count', { cid: r.campaign_id });
+      } else if (r.message_id) {
+        await supabase.from("messages")
+          .update({ status: "failed", failed_reason: r.error })
+          .eq("id", r.message_id);
+      }
+
+      if (r.account_id) {
+        await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
+      }
+
+    } else if (taskType === "warmup_chat" || taskType === "warmup_add_contact") {
+      await supabase.from("warmup_messages")
+        .update({ status: "failed", error_message: r.error })
+        .eq("id", r.task_id);
+
+      if (r.pair_id) {
+        await supabase.from("warmup_pairs")
+          .update({ status: "failed", failed_reason: r.error })
+          .eq("id", r.pair_id);
+      }
+    }
+  }
+
+  console.log(`[runner-tasks/report] Processed: ${successResults.length} success, ${failedResults.length} failed`);
+
+  return jsonResponse({
+    success: true,
+    processed: allResults.length,
+    succeeded: successResults.length,
+    failed: failedResults.length,
+  });
+}
+
+function jsonResponse(data: any, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
