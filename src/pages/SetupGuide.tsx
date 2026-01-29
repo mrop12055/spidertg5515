@@ -606,6 +606,184 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
             return False, "No target"
         
         # ==========================================================
+        # SYNC PROFILE
+        # ==========================================================
+        
+        elif action == "sync_profile":
+            print(f"  [SYNC] [{phone}] Fetching profile from Telegram...")
+            me = await asyncio.wait_for(client.get_me(), timeout=15)
+            
+            if me:
+                from telethon.tl.functions.photos import GetUserPhotosRequest
+                
+                avatar_id = None
+                try:
+                    photos = await client(GetUserPhotosRequest(user_id=me.id, offset=0, max_id=0, limit=1))
+                    if photos.photos:
+                        photo = photos.photos[0]
+                        avatar_id = f"telegram_photo_{me.id}_{photo.id}"
+                except:
+                    pass
+                
+                await report("sync_profile", {
+                    "task_id": task_id,
+                    "account_id": acc_id,
+                    "success": True,
+                    "telegram_id": me.id,
+                    "first_name": me.first_name,
+                    "last_name": me.last_name,
+                    "username": me.username,
+                    "phone": me.phone,
+                    "avatar_id": avatar_id
+                })
+                print(f"  [SYNC] [{phone}] ✓ {me.first_name or ''} {me.last_name or ''} (@{me.username or 'none'})")
+                return True, None
+            return False, "get_me returned None"
+        
+        # ==========================================================
+        # PRIVACY SETTINGS
+        # ==========================================================
+        
+        elif action == "privacy_settings":
+            from telethon.tl.functions.account import SetPrivacyRequest
+            from telethon.tl.types import (
+                InputPrivacyKeyPhoneNumber, InputPrivacyKeyStatusTimestamp,
+                InputPrivacyKeyPhoneCall, InputPrivacyKeyProfilePhoto,
+                InputPrivacyValueAllowAll, InputPrivacyValueAllowContacts,
+                InputPrivacyValueDisallowAll
+            )
+            
+            settings = td or {}
+            if not settings and task.get("result"):
+                try:
+                    import json
+                    settings = json.loads(task.get("result", "{}"))
+                except:
+                    settings = {}
+            
+            hide_phone = settings.get("hidePhone", False)
+            hide_last_seen = settings.get("hideLastSeen", False)
+            disable_calls = settings.get("disableCalls", False)
+            hide_photo = settings.get("hideProfilePhoto", False)
+            
+            print(f"  [PRIVACY] [{phone}] Applying: phone={hide_phone}, lastSeen={hide_last_seen}, calls={disable_calls}, photo={hide_photo}")
+            
+            await client(SetPrivacyRequest(
+                key=InputPrivacyKeyPhoneNumber(),
+                rules=[InputPrivacyValueDisallowAll()] if hide_phone else [InputPrivacyValueAllowContacts()]
+            ))
+            await client(SetPrivacyRequest(
+                key=InputPrivacyKeyStatusTimestamp(),
+                rules=[InputPrivacyValueDisallowAll()] if hide_last_seen else [InputPrivacyValueAllowAll()]
+            ))
+            await client(SetPrivacyRequest(
+                key=InputPrivacyKeyPhoneCall(),
+                rules=[InputPrivacyValueDisallowAll()] if disable_calls else [InputPrivacyValueAllowContacts()]
+            ))
+            await client(SetPrivacyRequest(
+                key=InputPrivacyKeyProfilePhoto(),
+                rules=[InputPrivacyValueDisallowAll()] if hide_photo else [InputPrivacyValueAllowAll()]
+            ))
+            
+            await report("privacy_settings", {"task_id": task_id, "account_id": acc_id, "success": True, "settings": settings})
+            print(f"  [PRIVACY] [{phone}] ✓ Applied")
+            return True, None
+        
+        # ==========================================================
+        # CHANGE PASSWORD (2FA)
+        # ==========================================================
+        
+        elif action == "change_password":
+            from telethon.tl.functions.account import GetPasswordRequest, UpdatePasswordSettingsRequest
+            from telethon.tl.types import InputCheckPasswordEmpty
+            from telethon.password import compute_check, compute_hash
+            
+            settings = td or {}
+            if not settings and task.get("result"):
+                try:
+                    import json
+                    settings = json.loads(task.get("result", "{}"))
+                except:
+                    settings = {}
+            
+            existing_pw = settings.get("existing_password")
+            new_pw = settings.get("new_password")
+            
+            if not new_pw:
+                return False, "No new password provided"
+            
+            print(f"  [2FA] [{phone}] Setting cloud password...")
+            
+            try:
+                pwd = await client(GetPasswordRequest())
+                
+                if pwd.has_password and existing_pw:
+                    check = compute_check(pwd, existing_pw.encode())
+                    new_hash = compute_hash(pwd.new_algo, new_pw.encode())
+                    
+                    from telethon.tl.types.account import PasswordInputSettings
+                    await client(UpdatePasswordSettingsRequest(
+                        password=check,
+                        new_settings=PasswordInputSettings(
+                            new_algo=pwd.new_algo,
+                            new_password_hash=new_hash,
+                            hint=""
+                        )
+                    ))
+                elif not pwd.has_password:
+                    new_hash = compute_hash(pwd.new_algo, new_pw.encode())
+                    
+                    from telethon.tl.types.account import PasswordInputSettings
+                    await client(UpdatePasswordSettingsRequest(
+                        password=InputCheckPasswordEmpty(),
+                        new_settings=PasswordInputSettings(
+                            new_algo=pwd.new_algo,
+                            new_password_hash=new_hash,
+                            hint=""
+                        )
+                    ))
+                else:
+                    return False, "Account has 2FA but no existing password provided"
+                
+                await report("change_password", {"task_id": task_id, "account_id": acc_id, "success": True})
+                print(f"  [2FA] [{phone}] ✓ Password set")
+                return True, None
+                
+            except Exception as e:
+                if "PASSWORD_HASH_INVALID" in str(e):
+                    return False, "Existing password is incorrect"
+                raise
+        
+        # ==========================================================
+        # LOGOUT OTHER SESSIONS
+        # ==========================================================
+        
+        elif action == "logout_sessions":
+            from telethon.tl.functions.account import GetAuthorizationsRequest, ResetAuthorizationRequest
+            
+            print(f"  [LOGOUT] [{phone}] Terminating other sessions...")
+            
+            auths = await client(GetAuthorizationsRequest())
+            terminated = 0
+            
+            for auth in auths.authorizations:
+                if not auth.current:
+                    try:
+                        await client(ResetAuthorizationRequest(hash=auth.hash))
+                        terminated += 1
+                    except:
+                        pass
+            
+            await report("logout_sessions", {
+                "task_id": task_id, 
+                "account_id": acc_id, 
+                "success": True, 
+                "terminated_count": terminated
+            })
+            print(f"  [LOGOUT] [{phone}] ✓ Terminated {terminated} session(s)")
+            return True, None
+        
+        # ==========================================================
         # UNKNOWN ACTION
         # ==========================================================
         
@@ -963,7 +1141,11 @@ async def process(task: dict):
         await account_action(client, "react", task)
     
     # Check actions
-    elif tt in ("spambot_check", "session_check", "get_me"):
+    elif tt in ("spambot_check", "session_check", "get_me", "sync_profile"):
+        await account_action(client, tt, task)
+    
+    # Privacy/Security actions
+    elif tt in ("privacy_settings", "change_password", "logout_sessions"):
         await account_action(client, tt, task)
     
     # Dialog/chat actions
