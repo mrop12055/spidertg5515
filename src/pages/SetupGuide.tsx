@@ -2790,63 +2790,66 @@ Features:
 - EARLY FILTERING: Only processes messages from contacts
 - Detects network/wifi disconnect and skips account updates
 """
+import os
+import sys
+import traceback
+from datetime import datetime
+
+# ========== LOCAL FILE LOGGING (crash-proof) ==========
+# Bootstrap logger FIRST so even early import/syntax/runtime failures get captured.
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs.txt")
+
+def _log_write(line: str):
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        # Never let logging crash the runner
+        pass
+
+def log_info(msg: str):
+    ts = datetime.utcnow().isoformat()
+    _log_write(f"[{ts}] INFO {msg}")
+
+def log_exception(context: str, exc: Exception):
+    ts = datetime.utcnow().isoformat()
+    _log_write(f"[{ts}] ERROR {context}: {type(exc).__name__}: {repr(exc)}")
+    try:
+        _log_write(traceback.format_exc())
+    except Exception:
+        pass
+
+log_info("bootstrap: module import start")
+
 import asyncio
 import signal
 import base64
 import time
 import gc
- import os
- import sys
- import traceback
- from datetime import datetime
 
 import httpx
 from telethon import events
 
- from client_manager import (
-     get_or_create_client,
-     get_next_task,
-     report_result,
-     send_message,
-     shutdown_all,
-     cleanup_stale_clients,
-     active_clients,
-     get_http_client,
-     retry_failed_accounts_parallel,
-     log_error,
-     check_client_health,
-     add_to_proxy_retry_queue,
-     force_disconnect_session,
-     HTTP_TIMEOUT_UPLOAD,
-     _failed_accounts,
-     _currently_connecting,
- )
+from client_manager import (
+    get_or_create_client,
+    get_next_task,
+    report_result,
+    send_message,
+    shutdown_all,
+    cleanup_stale_clients,
+    active_clients,
+    get_http_client,
+    retry_failed_accounts_parallel,
+    log_error,
+    check_client_health,
+    add_to_proxy_retry_queue,
+    force_disconnect_session,
+    HTTP_TIMEOUT_UPLOAD,
+    _failed_accounts,
+    _currently_connecting,
+)
 from config import SUPABASE_URL, SUPABASE_KEY
 from urllib.parse import urlparse
-
- # ========== LOCAL FILE LOGGING (crash-proof) ==========
- # Writes next to the script so you can send us logs.txt after a crash.
- LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs.txt")
-
- def _log_write(line: str):
-     try:
-         with open(LOG_PATH, "a", encoding="utf-8") as f:
-             f.write(line + "\n")
-     except Exception:
-         # Never let logging crash the runner
-         pass
-
- def log_info(msg: str):
-     ts = datetime.utcnow().isoformat()
-     _log_write(f"[{ts}] INFO {msg}")
-
- def log_exception(context: str, exc: Exception):
-     ts = datetime.utcnow().isoformat()
-     _log_write(f"[{ts}] ERROR {context}: {type(exc).__name__}: {repr(exc)}")
-     try:
-         _log_write(traceback.format_exc())
-     except Exception:
-         pass
 
 # Ensure we always get the *origin* (e.g. https://xxxx.supabase.co)
 _u = urlparse(SUPABASE_URL)
