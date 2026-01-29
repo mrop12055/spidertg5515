@@ -146,7 +146,7 @@ const Accounts: React.FC = () => {
   } | null>(null);
   const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
   const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
-  const [autoAssignProxy, setAutoAssignProxy] = useState(true); // Auto-assign proxies during upload
+  const [autoAssignProxy, setAutoAssignProxy] = useState(false); // Auto-assign proxies during upload
   const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0, currentChunk: 0, totalChunks: 0 });
   
   // Bulk selection state
