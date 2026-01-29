@@ -138,11 +138,12 @@ def variate(text: str) -> str:
 # ==============================================================================
 
 async def report(task_type: str, data: dict):
+    """Report task result to unified endpoint."""
     try:
         await get_http().post(
-            f"{BACKEND_URL}/report-task-result",
+            f"{BACKEND_URL}/runner-tasks/report",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"task_type": task_type, **data}, timeout=30
+            json={"results": [{"task_type": task_type, **data}]}, timeout=30
         )
     except:
         pass
@@ -213,9 +214,10 @@ async def fetch_accounts() -> List[dict]:
 
 
 async def get_tasks(batch_size: int = 100) -> dict:
+    """Fetch tasks from unified endpoint."""
     try:
         r = await get_http().post(
-            f"{BACKEND_URL}/get-batch-tasks",
+            f"{BACKEND_URL}/runner-tasks/get",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
             json={"runner": "unified", "batch_size": batch_size}, timeout=60
         )
