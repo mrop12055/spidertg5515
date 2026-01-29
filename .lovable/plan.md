@@ -1,121 +1,176 @@
 
-# LiveChat Runner - Simplified Proxy Retry System
+# LiveChat Runner - Fix Offline Timestamp Sync
 
-## Build Version: 2026-01-28-no-queue-parallel-retry (IMPLEMENTED)
-
----
-
-## Implementation Complete ✅
-
-Replaced queue-based retry with simplified in-memory tracking + parallel batch processing.
+## Build Version: 2026-01-29-sync-timestamp-fix
 
 ---
 
-## Changes Made
+## Problem Analysis
 
-### 1. Tracking Structure
-**Before:** `_proxy_retry_queue: Dict[str, dict]` with complex scheduling
-**After:** `_failed_accounts: Dict[str, dict]` with simple timestamps
-
-```python
-# Simple tracking: {account_id: {"failed_at": float, "attempts": int, "account_data": dict, "proxy_data": dict}}
-_failed_accounts: Dict[str, dict] = {}
+The LiveChat runner shows:
+```
+[SYNC] No offline timestamp found, using 24h fallback
 ```
 
-### 2. Failure Tracking Function
-**Before:** `add_to_proxy_retry_queue()` - queued with next_retry_at scheduling
-**After:** `mark_account_failed()` - simple timestamp-based tracking
+**Root Cause:**
+1. The `last_offline_at` column is NULL in the database because:
+   - Shutdown handler only runs on graceful exit (Ctrl+C)
+   - Crashes/force kills skip the shutdown handler
+   - The timestamp is never saved on abnormal termination
 
-Key changes:
-- Records `failed_at` timestamp instead of `next_retry_at`
-- Simple 1-minute delay check: `now - failed_at >= 60`
-- Increment attempts on each failure
-- Remove from tracking after 3 failed attempts + report to backend
+2. The current code **only** checks `last_offline_at` and falls back to 24h if NULL
 
-### 3. Parallel Batch Retry
-**Before:** Sequential processing, 100 accounts at a time
-**After:** Parallel processing in batches of 50
+**Current Database State:**
+```sql
+runner_name: livechat
+last_seen: 2026-01-29 08:46:41.497+00  -- This is updated every heartbeat
+last_offline_at: NULL                   -- This is never set (problem!)
+```
 
+---
+
+## Solution
+
+**Use `last_seen` as a fallback when `last_offline_at` is NULL:**
+
+The heartbeat system already tracks `last_seen` on every poll (every 5-15 seconds). This means:
+- When the runner crashes, `last_seen` is the last known active time
+- On restart, we can use `last_seen` as the sync cutoff if `last_offline_at` is NULL
+- This gives us a maximum missed window of ~15 seconds instead of 24 hours
+
+---
+
+## Technical Changes
+
+### File: `src/pages/SetupGuide.tsx`
+
+### Change 1: Fetch BOTH `last_offline_at` and `last_seen` (Lines 3717-3741)
+
+**Current Code:**
 ```python
-async def retry_failed_accounts_parallel(connected_ids_ref: set = None):
-    # Find ready accounts (1 min passed)
-    ready_ids = get_ready_failed_accounts()
+resp = await http.get(
+    f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
+    params={
+        "runner_name": "eq.livechat",
+        "select": "last_offline_at"
+    },
+    ...
+)
+if resp.status_code == 200 and resp.json():
+    data = resp.json()[0]
+    if data.get("last_offline_at"):
+        last_offline_at = datetime.fromisoformat(...)
+        print(f"  [SYNC] Will fetch messages since last offline: {last_offline_at}")
+
+if not last_offline_at:
+    print("  [SYNC] No offline timestamp found, using 24h fallback")
+```
+
+**New Code:**
+```python
+resp = await http.get(
+    f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
+    params={
+        "runner_name": "eq.livechat",
+        "select": "last_offline_at,last_seen"  # Fetch both
+    },
+    ...
+)
+if resp.status_code == 200 and resp.json():
+    data = resp.json()[0]
+    from datetime import datetime
     
-    # Process in parallel batches of 50
-    BATCH_SIZE = 50
-    batches = [ready_ids[i:i+BATCH_SIZE] for i in range(0, len(ready_ids), BATCH_SIZE)]
+    # Priority 1: Use last_offline_at if available (graceful shutdown)
+    if data.get("last_offline_at"):
+        last_offline_at = datetime.fromisoformat(
+            data["last_offline_at"].replace("Z", "+00:00")
+        )
+        print(f"  [SYNC] Using last_offline_at: {last_offline_at}")
     
-    for batch_idx, batch in enumerate(batches):
-        # Execute batch in parallel
-        results = await asyncio.gather(*[retry_one(acc_id) for acc_id in batch])
+    # Priority 2: Use last_seen as fallback (crash recovery)
+    elif data.get("last_seen"):
+        last_offline_at = datetime.fromisoformat(
+            data["last_seen"].replace("Z", "+00:00")
+        )
+        print(f"  [SYNC] Using last_seen (crash recovery): {last_offline_at}")
+
+if not last_offline_at:
+    print("  [SYNC] No timestamps found, using 24h fallback")
 ```
 
-### 4. Main Loop Filter
-Updated to use `_failed_accounts` instead of `_proxy_retry_queue`:
+### Change 2: Also Update Shutdown Handler to Clear `last_offline_at` After Successful Fetch (Optional Enhancement)
+
+To prevent stale `last_offline_at` values from accumulating, we can clear it after a successful startup sync. This ensures each restart uses the most recent timestamp.
+
+**Add after successful sync (optional, lines ~3850):**
 ```python
-new_accounts = [
-    acc for acc in accounts 
-    if acc.get("id") not in connected_ids 
-    and acc.get("id") not in failed_connection_accounts
-    and acc.get("id") not in _failed_accounts  # Changed from _proxy_retry_queue
-    and acc.get("id") not in _currently_connecting
-]
+# Clear last_offline_at after successful fetch to prevent stale data
+if last_offline_at:
+    try:
+        await http.patch(
+            f"{SUPABASE_URL}/rest/v1/runner_heartbeats",
+            params={"runner_name": "eq.livechat"},
+            json={"last_offline_at": None},
+            headers={...},
+            timeout=5
+        )
+    except:
+        pass  # Non-critical
 ```
 
 ---
 
-## Flow Summary
+## Flow After Fix
 
 ```text
-Connection Attempt:
-    1. Delete old session file (pre-cleanup)
-    2. Decode fresh session
-    3. Create TelegramClient with proxy
-    4. Single connection attempt (no internal retry)
+Runner Startup:
+    1. Query runner_heartbeats for last_offline_at AND last_seen
     
-If proxy fails:
-    1. INSTANT: Kill session via force_disconnect_session()
-    2. Mark in _failed_accounts with timestamp
-    3. Increment attempts count
+    If last_offline_at exists (graceful shutdown):
+        → Use it as sync cutoff
     
-Every ~30 seconds in main loop:
-    1. Check _failed_accounts for entries where (now - failed_at) >= 60s
-    2. Collect all ready accounts
-    3. Process in PARALLEL BATCHES of 50
-    4. On success: Remove from _failed_accounts, add to connected_ids
-    5. On failure: mark_account_failed() increments count, resets timestamp
+    Else if last_seen exists (crash/force kill):
+        → Use it as sync cutoff (max ~15 seconds missed)
     
-After 3 failures:
-    1. Report to backend: mark account INACTIVE
-    2. Remove from _failed_accounts
-    3. Admin must fix proxy and set account to Active
+    Else (first run ever):
+        → Use 24h fallback
+    
+    2. Sync messages since cutoff
+    3. Clear last_offline_at to prevent reuse
+
+Runner Shutdown (graceful):
+    1. Save last_offline_at = now()
+    2. Save sessions
+
+Runner Crash:
+    1. last_seen already contains last heartbeat time
+    2. Next startup uses last_seen as fallback
 ```
 
 ---
 
-## Key Improvements
+## Why This Works
 
-| Before | After |
-|--------|-------|
-| Queue with scheduling | Simple timestamp tracking |
-| Sequential processing | Parallel batches (50 at once) |
-| Complex state management | Minimal state (just timestamp + count) |
-| Race conditions possible | `_currently_connecting` lock prevents doubles |
+| Scenario | Before (Bug) | After (Fixed) |
+|----------|--------------|---------------|
+| Graceful shutdown (Ctrl+C) | Uses `last_offline_at` ✓ | Uses `last_offline_at` ✓ |
+| Crash/force kill | Falls back to 24h ✗ | Uses `last_seen` ✓ |
+| First run ever | Falls back to 24h ✓ | Falls back to 24h ✓ |
+
+**Maximum missed message window: ~15 seconds** (heartbeat interval) instead of 24 hours.
+
+---
+
+## Summary of Changes
+
+| File | Location | Change |
+|------|----------|--------|
+| SetupGuide.tsx | Lines 3717-3741 | Fetch `last_seen` in addition to `last_offline_at` and use as fallback |
 
 ---
 
 ## Safety Guarantees
 
-1. **Instant Kill**: `force_disconnect_session()` called FIRST on any error
-2. **No Internet Without Proxy**: `connection_retries=0`, `auto_reconnect=False`
-3. **Session Cleanup**: Session file deleted before retry
-4. **Lock Protection**: `_currently_connecting` prevents double connections
-
----
-
-## Backward Compatibility
-
-Old function names are kept as aliases:
-- `add_to_proxy_retry_queue()` → calls `mark_account_failed()`
-- `remove_from_proxy_retry_queue()` → calls `remove_from_failed_accounts()`
-- `retry_proxy_error_accounts()` → calls `retry_failed_accounts_parallel()`
+1. **No data loss**: If both timestamps are NULL, still falls back to 24h
+2. **Backward compatible**: Works with existing database (no schema changes)
+3. **Minimal overhead**: Single query already exists, just adding one more field
