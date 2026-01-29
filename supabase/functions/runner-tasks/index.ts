@@ -517,8 +517,21 @@ async function handleReportResults(supabase: any, body: any) {
 
   console.log(`[runner-tasks/report] Processing ${allResults.length} results`);
 
-  const successResults = allResults.filter((r: any) => r.success);
-  const failedResults = allResults.filter((r: any) => !r.success);
+  // Handle incoming messages separately (they don't have success/failure status in same way)
+  const incomingMessages = allResults.filter((r: any) => 
+    (r.task_type || task_type) === "incoming" || (r.task_type || task_type) === "incoming_message"
+  );
+  const otherResults = allResults.filter((r: any) => 
+    (r.task_type || task_type) !== "incoming" && (r.task_type || task_type) !== "incoming_message"
+  );
+
+  // Process incoming messages
+  for (const r of incomingMessages) {
+    await processIncomingMessage(supabase, r, now);
+  }
+
+  const successResults = otherResults.filter((r: any) => r.success);
+  const failedResults = otherResults.filter((r: any) => !r.success);
 
   // Process successes
   for (const r of successResults) {
@@ -712,14 +725,158 @@ async function handleReportResults(supabase: any, body: any) {
     }
   }
 
-  console.log(`[runner-tasks/report] Processed: ${successResults.length} success, ${failedResults.length} failed`);
+  console.log(`[runner-tasks/report] Processed: ${successResults.length} success, ${failedResults.length} failed, ${incomingMessages.length} incoming`);
 
   return jsonResponse({
     success: true,
     processed: allResults.length,
     succeeded: successResults.length,
     failed: failedResults.length,
+    incoming: incomingMessages.length,
   });
+}
+
+// ==================== PROCESS INCOMING MESSAGE ====================
+async function processIncomingMessage(supabase: any, r: any, now: string) {
+  const accountId = r.account_id;
+  const senderId = r.sender_id || r.recipient_telegram_id;
+  const senderPhone = r.sender_phone || r.recipient_phone;
+  const senderName = r.sender_name || r.recipient_name;
+  const senderUsername = r.sender_username || r.recipient_username;
+  const content = r.content || "[Media]";
+  const telegramMessageId = r.telegram_message_id;
+
+  if (!accountId) {
+    console.log("[incoming] Skipping - no account_id");
+    return;
+  }
+
+  if (!senderId && !senderPhone) {
+    console.log("[incoming] Skipping - no sender identifier");
+    return;
+  }
+
+  // Deduplicate by telegram_message_id if provided
+  if (telegramMessageId) {
+    const { data: existingMsg } = await supabase
+      .from("messages")
+      .select("id")
+      .eq("account_id", accountId)
+      .eq("telegram_message_id", telegramMessageId)
+      .maybeSingle();
+
+    if (existingMsg) {
+      console.log(`[incoming] Duplicate message ${telegramMessageId}, skipping`);
+      return;
+    }
+  }
+
+  // Find existing conversation by account_id + sender (telegram_id or phone)
+  let conversationId: string | null = null;
+  
+  if (senderId) {
+    const { data: convByTgId } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("account_id", accountId)
+      .eq("recipient_telegram_id", senderId)
+      .maybeSingle();
+    
+    if (convByTgId) {
+      conversationId = convByTgId.id;
+    }
+  }
+
+  if (!conversationId && senderPhone) {
+    const { data: convByPhone } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("account_id", accountId)
+      .eq("recipient_phone", senderPhone)
+      .maybeSingle();
+    
+    if (convByPhone) {
+      conversationId = convByPhone.id;
+    }
+  }
+
+  // Create new conversation if not found
+  if (!conversationId) {
+    // Get account's seat_id for new conversation
+    const { data: account } = await supabase
+      .from("telegram_accounts")
+      .select("id")
+      .eq("id", accountId)
+      .single();
+
+    const { data: newConv, error: convError } = await supabase
+      .from("conversations")
+      .insert({
+        account_id: accountId,
+        recipient_telegram_id: senderId,
+        recipient_phone: senderPhone,
+        recipient_name: senderName,
+        recipient_username: senderUsername,
+        is_active: true,
+        has_reply: true,
+        last_message_at: now,
+        last_message_content: content.substring(0, 200),
+        last_message_direction: 'incoming',
+        unread_count: 1,
+      })
+      .select()
+      .single();
+
+    if (convError) {
+      console.log(`[incoming] Error creating conversation: ${convError.message}`);
+      return;
+    }
+    
+    conversationId = newConv.id;
+    console.log(`[incoming] Created new conversation ${conversationId}`);
+  } else {
+    // Update existing conversation
+    await supabase
+      .from("conversations")
+      .update({
+        last_message_at: now,
+        last_message_content: content.substring(0, 200),
+        last_message_direction: 'incoming',
+        has_reply: true,
+        unread_count: supabase.rpc ? undefined : 1, // Will use raw SQL increment below
+        recipient_telegram_id: senderId || undefined,
+        recipient_name: senderName || undefined,
+        recipient_username: senderUsername || undefined,
+      })
+      .eq("id", conversationId);
+
+    // Increment unread_count atomically
+    await supabase.rpc('increment_unread_count', { conv_id: conversationId }).catch(() => {
+      // Fallback if RPC doesn't exist - just update to at least 1
+      supabase.from("conversations").update({ unread_count: 1 }).eq("id", conversationId).eq("unread_count", 0);
+    });
+
+    console.log(`[incoming] Updated conversation ${conversationId}`);
+  }
+
+  // Insert the incoming message
+  const { error: msgError } = await supabase
+    .from("messages")
+    .insert({
+      account_id: accountId,
+      conversation_id: conversationId,
+      content: content,
+      direction: 'incoming',
+      status: 'delivered',
+      delivered_at: now,
+      telegram_message_id: telegramMessageId,
+    });
+
+  if (msgError) {
+    console.log(`[incoming] Error inserting message: ${msgError.message}`);
+  } else {
+    console.log(`[incoming] Saved message from ${senderName || senderId} to conversation ${conversationId}`);
+  }
 }
 
 function jsonResponse(data: any, status = 200) {
