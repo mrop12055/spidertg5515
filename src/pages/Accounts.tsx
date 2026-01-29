@@ -66,16 +66,34 @@ interface SessionFile {
 }
 
 interface JsonMetadata {
+  // API credentials (multiple naming conventions)
   app_id?: number | string;
+  api_id?: number | string;
   app_hash?: string;
+  api_hash?: string;
+  
+  // Device fingerprint (multiple naming conventions)
   sdk?: string;  // Maps to system_version
+  system_version?: string;
   device?: string;  // Maps to device_model
+  device_model?: string;
   app_version?: string;
+  build_id?: string;
+  
+  // Language settings
   lang_pack?: string;  // Maps to lang_code
+  lang_code?: string;
   system_lang_pack?: string;  // Maps to system_lang_code
+  system_lang_code?: string;
+  
+  // Session/Phone
   session_file?: string;
   phone?: string;
+  
+  // 2FA (multiple naming conventions)
   twoFA?: string;
+  two_fa_password?: string;
+  '2fa'?: string;
 }
 
 interface ParsedAccount {
@@ -128,6 +146,7 @@ const Accounts: React.FC = () => {
   } | null>(null);
   const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
   const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
+  const [autoAssignProxy, setAutoAssignProxy] = useState(true); // Auto-assign proxies during upload
   const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0, currentChunk: 0, totalChunks: 0 });
   
   // Bulk selection state
@@ -723,22 +742,25 @@ const Accounts: React.FC = () => {
 
     try {
       // Build account data with JSON metadata if available
+      // Handle all known field name variations from different JSON formats
       const accountsToUpload = sessionFiles.map(sf => {
         const metadata = (sf as any).metadata as JsonMetadata | undefined;
         return {
           phone_number: sf.phoneNumber,
           session_data: sf.base64Data,
-          // Include per-account API credentials from JSON
-          api_id: metadata?.app_id?.toString(),
-          api_hash: metadata?.app_hash,
-          // Include device fingerprint from JSON
-          device_model: metadata?.device,
-          system_version: metadata?.sdk,
+          // API credentials - try multiple field names (api_id/app_id, api_hash/app_hash)
+          api_id: (metadata?.api_id || metadata?.app_id)?.toString(),
+          api_hash: metadata?.api_hash || metadata?.app_hash,
+          // Device fingerprint - try multiple field names (device_model/device, system_version/sdk)
+          device_model: metadata?.device_model || metadata?.device,
+          system_version: metadata?.system_version || metadata?.sdk,
           app_version: metadata?.app_version,
-          lang_code: metadata?.lang_pack,
-          system_lang_code: metadata?.system_lang_pack,
-          // Include 2FA password from JSON
-          two_fa_password: metadata?.twoFA,
+          build_id: metadata?.build_id,
+          // Language settings - try multiple field names
+          lang_code: metadata?.lang_code || metadata?.lang_pack,
+          system_lang_code: metadata?.system_lang_code || metadata?.system_lang_pack,
+          // 2FA - try multiple field names (two_fa_password/twoFA/2fa)
+          two_fa_password: metadata?.two_fa_password || metadata?.twoFA || metadata?.['2fa'],
         };
       });
 
@@ -817,7 +839,53 @@ const Accounts: React.FC = () => {
         const statsMsg = aggregatedStats.with_json_api > 0 
           ? ` (${aggregatedStats.with_json_api} with API, ${aggregatedStats.with_json_fingerprint} with fingerprint${aggregatedStats.with_2fa > 0 ? `, ${aggregatedStats.with_2fa} with 2FA` : ''})`
           : '';
-        toast.success(`Uploaded ${totalSuccessful} account(s)${statsMsg} - verifying...`);
+        toast.success(`Uploaded ${totalSuccessful} account(s)${statsMsg}`);
+        
+        // Auto-assign proxies if enabled
+        if (autoAssignProxy && allAccountIds.length > 0) {
+          try {
+            // Get available proxies (not assigned to any account)
+            const { data: availableProxies } = await supabase
+              .from('proxies')
+              .select('id')
+              .is('assigned_account_id', null)
+              .eq('status', 'active')
+              .limit(allAccountIds.length);
+            
+            if (availableProxies && availableProxies.length > 0) {
+              let assignedCount = 0;
+              const proxyAssignments = allAccountIds.slice(0, availableProxies.length).map((accountId, index) => ({
+                accountId,
+                proxyId: availableProxies[index].id
+              }));
+              
+              // Assign proxies in parallel
+              await Promise.all(proxyAssignments.map(async ({ accountId, proxyId }) => {
+                const { error: proxyError } = await supabase
+                  .from('proxies')
+                  .update({ assigned_account_id: accountId })
+                  .eq('id', proxyId);
+                
+                if (!proxyError) {
+                  await supabase
+                    .from('telegram_accounts')
+                    .update({ proxy_id: proxyId })
+                    .eq('id', accountId);
+                  assignedCount++;
+                }
+              }));
+              
+              const unassigned = allAccountIds.length - assignedCount;
+              if (assignedCount > 0) {
+                toast.success(`Assigned ${assignedCount} proxies${unassigned > 0 ? `, ${unassigned} waiting for proxies` : ''}`);
+              }
+            } else {
+              toast.warning(`${allAccountIds.length} accounts need proxies - none available`);
+            }
+          } catch (proxyErr) {
+            console.error('Auto-assign proxy error:', proxyErr);
+          }
+        }
         
         // Auto-verify after upload (batch the verification too)
         if (allAccountIds.length > 0) {
@@ -2811,6 +2879,26 @@ const Accounts: React.FC = () => {
                             {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
                           </p>
                         )}
+                      </div>
+                    )}
+
+                    {/* Auto-assign proxy option */}
+                    {sessionFiles.length > 0 && (
+                      <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+                        <Checkbox
+                          id="auto-assign-proxy"
+                          checked={autoAssignProxy}
+                          onCheckedChange={(checked) => setAutoAssignProxy(checked === true)}
+                        />
+                        <div className="flex-1">
+                          <Label htmlFor="auto-assign-proxy" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                            <Globe className="w-4 h-4" />
+                            Auto-assign available proxies
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Automatically assign idle proxies to new accounts
+                          </p>
+                        </div>
                       </div>
                     )}
 

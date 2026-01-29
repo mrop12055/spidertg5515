@@ -263,6 +263,7 @@ serve(async (req) => {
           device_model: acc.device_model,
           system_version: acc.system_version,
           app_version: acc.app_version,
+          build_id: acc.build_id,
           lang_code: acc.lang_code || 'en',
           system_lang_code: acc.system_lang_code || 'en-US',
           two_fa_password: acc.two_fa_password,
