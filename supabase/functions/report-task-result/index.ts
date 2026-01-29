@@ -1459,6 +1459,72 @@ serve(async (req) => {
         break;
       }
 
+      case "proxy_timeout_disable": {
+        // Proxy connection failed after 3-minute timeout - IMMEDIATE DISABLE
+        // Session was already killed in Python runner - now mark account as inactive
+        // CRITICAL: Proxy is NEVER removed - admin must fix manually
+        const { account_id, proxy_id, reason } = result;
+
+        console.log(`[report-task-result] Account ${account_id} PROXY TIMEOUT - DISABLING IMMEDIATELY`);
+
+        // Mark account as disconnected + auto_disabled with clear reason
+        await supabase
+          .from("telegram_accounts")
+          .update({
+            status: "disconnected",
+            auto_disabled: true,
+            disabled_reason: "Connection timeout - proxy failed after 3 minutes",
+            ban_reason: reason || "Proxy connection timeout",
+            last_active: new Date().toISOString()
+            // IMPORTANT: proxy_id is NOT changed - stays assigned
+          })
+          .eq("id", account_id);
+
+        console.log(`[report-task-result] Account ${account_id} marked DISCONNECTED + auto_disabled`);
+
+        // Mark the proxy as "error" status (but keep it assigned to account)
+        if (proxy_id) {
+          await supabase
+            .from("proxies")
+            .update({
+              status: "error",
+              last_checked: new Date().toISOString()
+            })
+            .eq("id", proxy_id);
+          console.log(`[report-task-result] Proxy ${proxy_id} marked as ERROR status`);
+
+          // Log to proxy_errors table for visibility
+          await supabase
+            .from("proxy_errors")
+            .insert({
+              proxy_id: proxy_id,
+              error_message: reason || "Proxy connection timeout after 3 minutes",
+              error_type: "connection_timeout"
+            });
+        } else if (account_id) {
+          // Fallback: get proxy from account and mark it as error
+          const { data: account } = await supabase
+            .from("telegram_accounts")
+            .select("proxy_id")
+            .eq("id", account_id)
+            .single();
+
+          if (account?.proxy_id) {
+            await supabase
+              .from("proxies")
+              .update({
+                status: "error",
+                last_checked: new Date().toISOString()
+              })
+              .eq("id", account.proxy_id);
+            console.log(`[report-task-result] Proxy ${account.proxy_id} marked as ERROR (from account)`);
+          }
+        }
+
+        console.log(`[report-task-result] PROXY TIMEOUT handled: Account disabled, proxy marked error, proxy_id UNCHANGED`);
+        break;
+      }
+
       case "proxy_max_retries_exceeded": {
         // Account has failed proxy connection with 3-minute delays between attempts
         // Mark as DISCONNECTED with auto_disabled so it won't be picked up until admin fixes

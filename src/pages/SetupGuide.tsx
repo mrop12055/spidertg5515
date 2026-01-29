@@ -805,24 +805,23 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
             print(f"  [DB ERROR] Could not create client for {phone}: {last_db_error}")
             return None
         
-        print(f"  [CONNECT] {account['phone_number']} (180s proxy timeout, no quick retries)...")
+        print(f"  [CONNECT] {account['phone_number']} (180s proxy timeout, NO RETRY on failure)...")
         if not await connect_with_retry(client):
-            # PROXY FAILED - IMMEDIATELY DISCONNECT and schedule 3-min cooldown retry
-            # We can't know session status if we can't connect via proxy
-            print(f"  [PROXY ERROR] Connection failed for {phone} - adding to 3-min retry queue")
+            # PROXY FAILED AFTER 3-MINUTE TIMEOUT - IMMEDIATELY KILL SESSION AND DISABLE
+            # Session MUST be terminated to prevent any unproxied connection attempt
+            print(f"  [CONNECTION TIMEOUT] {phone} - Proxy failed after 180s - DISABLING ACCOUNT IMMEDIATELY")
             
-            # STEP 1: IMMEDIATE DISCONNECT - clear any partial session
-            await force_disconnect_session(account_id, "proxy_connection_failed")
+            # STEP 1: KILL SESSION IMMEDIATELY - no retries, no waiting
+            await force_disconnect_session(account_id, "proxy_connection_timeout")
             
-            # STEP 2: Report proxy error to backend
-            asyncio.create_task(report_result("proxy_error", {
+            # STEP 2: Report to backend - mark account disconnected + auto_disabled + proxy as error
+            asyncio.create_task(report_result("proxy_timeout_disable", {
                 "account_id": account_id,
                 "proxy_id": proxy_id,
-                "reason": "Connection failed after 3 retries - proxy may be dead or blocked"
+                "reason": "Proxy connection failed after 3-minute timeout - session killed and account disabled"
             }))
             
-            # STEP 3: Add to retry queue (tracks count and schedules 3-min retry)
-            await add_to_proxy_retry_queue(account_id, account, task_proxy)
+            # NO RETRY QUEUE - immediate disable. Admin must fix and re-enable manually.
             return None
         
         # Connected via proxy - NOW we can check session status
@@ -832,21 +831,20 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
             # Authorization check failed - could be proxy or session issue
             err_str = str(auth_err).lower()
             if any(p in err_str for p in PROXY_ERROR_PATTERNS):
-                print(f"  [PROXY ERROR] Auth check failed for {phone}: {auth_err}")
+                print(f"  [CONNECTION TIMEOUT] Auth check failed for {phone}: {auth_err} - DISABLING IMMEDIATELY")
                 
-                # IMMEDIATE DISCONNECT on proxy error
+                # KILL SESSION on proxy error - no retry
                 await force_disconnect_session(account_id, "proxy_auth_check_failed")
                 
-                asyncio.create_task(report_result("proxy_error", {
+                asyncio.create_task(report_result("proxy_timeout_disable", {
                     "account_id": account_id,
                     "proxy_id": proxy_id,
-                    "reason": f"Auth check failed: {str(auth_err)[:100]}"
+                    "reason": f"Auth check failed (proxy timeout): {str(auth_err)[:100]}"
                 }))
-                # Add to retry queue with 3-min delay
-                await add_to_proxy_retry_queue(account_id, account, task_proxy)
+                # NO RETRY QUEUE - immediate disable
             else:
                 print(f"  [SESSION ERROR] Auth check failed for {phone}: {auth_err}")
-                asyncio.create_task(report_result("account_disconnected", {"account_id": account_id, "reason": str(auth_err)}))
+                asyncio.create_task(log_error("livechat", f"{phone}: Auth check failed - {str(auth_err)[:100]}"))
             return None
         
         if not is_authorized:
@@ -860,7 +858,7 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                 me = await asyncio.wait_for(client.get_me(), timeout=5)
                 if not me:
                     print(f"  [BANNED] Account deleted: {account['phone_number']}")
-                    asyncio.create_task(report_session_check(account_id, success=False, error="Account deleted - get_me returned None"))
+                    asyncio.create_task(log_error("livechat", f"{phone}: Account deleted - get_me returned None"))
                     return None
                 
                 # SUCCESS - Only report if NOT a reconnection (to avoid spamming session checks)
@@ -874,29 +872,29 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
                 
             except AuthKeyUnregisteredError:
                 print(f"  [EXPIRED] {account['phone_number']}: Auth key unregistered")
-                asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
+                asyncio.create_task(log_error("livechat", f"{phone}: Auth key unregistered - session expired"))
                 return None
             except SessionRevokedError:
                 print(f"  [EXPIRED] {account['phone_number']}: Session revoked")
-                asyncio.create_task(report_session_check(account_id, success=False, error="Session revoked"))
+                asyncio.create_task(log_error("livechat", f"{phone}: Session revoked - session expired"))
                 return None
             except UserDeactivatedBanError:
                 print(f"  [BANNED] {account['phone_number']}: User deactivated/banned")
-                asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated or banned"))
+                asyncio.create_task(log_error("livechat", f"{phone}: User deactivated or banned"))
                 return None
             except PhoneNumberBannedError:
                 print(f"  [BANNED] {account['phone_number']}: Phone number banned")
-                asyncio.create_task(report_session_check(account_id, success=False, error="Phone number banned"))
+                asyncio.create_task(log_error("livechat", f"{phone}: Phone number banned"))
                 return None
             except InputUserDeactivatedError:
                 print(f"  [BANNED] {account['phone_number']}: Input user deactivated")
-                asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated"))
+                asyncio.create_task(log_error("livechat", f"{phone}: User deactivated"))
                 return None
             except Exception as me_err:
                 err_str = str(me_err).lower()
                 status = detect_account_status(err_str)
                 print(f"  [{status.upper()}] {account['phone_number']}: {me_err}")
-                asyncio.create_task(report_session_check(account_id, success=False, error=str(me_err)))
+                asyncio.create_task(log_error("livechat", f"{phone}: {status} - {str(me_err)[:100]}"))
                 return None
         
         if setup_handler:
@@ -921,21 +919,21 @@ async def _get_or_create_client_internal(account: dict, setup_handler=None, task
         return client
     except AuthKeyUnregisteredError:
         print(f"  [EXPIRED] {account['phone_number']}: Auth key unregistered")
-        asyncio.create_task(report_session_check(account_id, success=False, error="Auth key unregistered"))
+        asyncio.create_task(log_error("livechat", f"{phone}: Auth key unregistered (outer exception)"))
         return None
     except SessionRevokedError:
         print(f"  [EXPIRED] {account['phone_number']}: Session revoked")
-        asyncio.create_task(report_session_check(account_id, success=False, error="Session revoked"))
+        asyncio.create_task(log_error("livechat", f"{phone}: Session revoked (outer exception)"))
         return None
     except UserDeactivatedBanError:
         print(f"  [BANNED] {account['phone_number']}: User deactivated")
-        asyncio.create_task(report_session_check(account_id, success=False, error="User deactivated"))
+        asyncio.create_task(log_error("livechat", f"{phone}: User deactivated (outer exception)"))
         return None
     except Exception as e:
         err_str = str(e).lower()
         status = detect_account_status(err_str)
         print(f"  [{status.upper()}] {account['phone_number']}: {e}")
-        asyncio.create_task(report_session_check(account_id, success=False, error=str(e)))
+        asyncio.create_task(log_error("livechat", f"{phone}: {status} - {str(e)[:100]} (outer exception)"))
         return None
 
 
@@ -2657,7 +2655,7 @@ SUPABASE_URL_BASE = f"{_u.scheme}://{_u.netloc}" if _u.scheme and _u.netloc else
 RUNNING = True
 CLEANUP_INTERVAL = 180  # 3 minutes - faster cleanup
 HEARTBEAT_INTERVAL = 30  # 30 seconds - more frequent status
-CONNECT_TIMEOUT_SECONDS = 30  # Timeout for stable connections
+CONNECT_TIMEOUT_SECONDS = 200  # 3+ minutes to allow full proxy timeout (180s) + overhead
 RECIPIENT_REFRESH_INTERVAL = 60  # Refresh known recipients every 60 seconds
 
 # ========== NETWORK ERROR HANDLING ==========
@@ -3721,8 +3719,9 @@ async def main_loop():
                                 await disconnect_and_schedule_retry(acc_id, f"network: {error[:30]}")
                             elif error == "TIMEOUT":
                                 timeout_count += 1
-                                # Timeout - disconnect and schedule 60s retry
-                                await disconnect_and_schedule_retry(acc_id, "connection timeout")
+                                # Timeout already handled in get_or_create_client with immediate disable
+                                # Session killed there, account marked disconnected + auto_disabled
+                                pass
                             else:
                                 error_count += 1
                                 # Other errors - disconnect and schedule 60s retry
