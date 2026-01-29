@@ -8,27 +8,18 @@ interface RunnerInfo {
   lastSeen: Date | null;
 }
 
-// Maps Python runner script names to display names
-// warmup_runner.py reports both 'warmup' and 'warmup_chat' - we track both but show as single card
+// Single unified runner that handles all functions
 const runnerNames: Record<string, string> = {
-  campaign: 'Campaign Runner',
-  livechat: 'LiveChat Runner',
-  account: 'Account Runner',
-  warmup: 'Warmup Runner',
+  unified: 'Unified Runner',
 };
 
 const OFFLINE_THRESHOLD_MS = 60000; // 1 minute
 const OFFLINE_GRACE_PERIOD_MS = 15000; // 15 seconds grace period before showing red dot
 
-const normalizeRunnerKey = (runnerName: string) => {
-  // Legacy split livechat runners
-  if (runnerName === 'livechat_sender' || runnerName === 'livechat_receiver') return 'livechat';
-
-  // Normalize variants like warmup_chat, warmup_batch, warmup_chat_batch, campaign_batch, etc.
-  let key = runnerName;
-  key = key.replace(/_batch$/, '');
-  key = key.replace(/_chat$/, '');
-  return key;
+const normalizeRunnerKey = (runnerName: string): string => {
+  // All runner names map to the single unified runner
+  // This handles legacy names (campaign, livechat, account, warmup) and new unified name
+  return 'unified';
 };
 
 export const useRunnerStatus = () => {
