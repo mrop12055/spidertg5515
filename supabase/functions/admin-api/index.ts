@@ -231,32 +231,67 @@ serve(async (req) => {
 
     // ==================== UPLOAD ACCOUNTS ====================
     if (path === '/upload-accounts' && method === 'POST') {
-      const { accounts } = body;
+      const { accounts, tags } = body;
       if (!accounts?.length) return jsonResponse({ error: "accounts array required" }, 400);
 
-      const insertData = accounts.map((acc: any) => ({
-        phone_number: acc.phone_number || acc.phone,
-        session_data: acc.session_data || acc.session,
-        first_name: acc.first_name,
-        last_name: acc.last_name,
-        username: acc.username,
-        telegram_id: acc.telegram_id,
-        api_id: acc.api_id,
-        api_hash: acc.api_hash,
-        device_model: acc.device_model,
-        system_version: acc.system_version,
-        app_version: acc.app_version,
-        lang_code: acc.lang_code || 'en',
-        system_lang_code: acc.system_lang_code || 'en-US',
-        status: 'disconnected',
-      }));
+      let successful = 0;
+      let failed = 0;
+      const accountIds: string[] = [];
+      const metadataStats = {
+        with_json_api: 0,
+        with_json_fingerprint: 0,
+        with_generated_fingerprint: 0,
+        with_2fa: 0,
+      };
 
-      const { data, error } = await supabase.from('telegram_accounts').insert(insertData).select();
-      if (error) throw error;
+      // Process accounts one by one to handle duplicates gracefully
+      for (const acc of accounts) {
+        // Track metadata stats
+        if (acc.api_id && acc.api_hash) metadataStats.with_json_api++;
+        if (acc.device_model || acc.system_version) metadataStats.with_json_fingerprint++;
+        if (acc.two_fa_password) metadataStats.with_2fa++;
+
+        const insertData = {
+          phone_number: acc.phone_number || acc.phone,
+          session_data: acc.session_data || acc.session,
+          first_name: acc.first_name,
+          last_name: acc.last_name,
+          username: acc.username,
+          telegram_id: acc.telegram_id,
+          api_id: acc.api_id,
+          api_hash: acc.api_hash,
+          device_model: acc.device_model,
+          system_version: acc.system_version,
+          app_version: acc.app_version,
+          lang_code: acc.lang_code || 'en',
+          system_lang_code: acc.system_lang_code || 'en-US',
+          two_fa_password: acc.two_fa_password,
+          tags: tags || [],
+          status: 'disconnected',
+        };
+
+        // Try to insert, skip if duplicate (phone_number is unique)
+        const { data, error } = await supabase
+          .from('telegram_accounts')
+          .insert(insertData)
+          .select('id')
+          .single();
+
+        if (error) {
+          console.log(`[admin-api] Account ${acc.phone_number || acc.phone} failed: ${error.message}`);
+          failed++;
+        } else {
+          successful++;
+          if (data?.id) accountIds.push(data.id);
+        }
+      }
 
       return jsonResponse({
         success: true,
-        imported: data.length,
+        successful,
+        failed,
+        account_ids: accountIds,
+        metadata_stats: metadataStats,
       });
     }
 
