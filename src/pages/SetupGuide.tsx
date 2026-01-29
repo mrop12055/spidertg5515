@@ -11,25 +11,21 @@ const SetupGuide: React.FC = () => {
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-  // ========== SIMPLIFIED UNIFIED RUNNER ==========
-  // Core insight: ALL operations are just SEND, RECEIVE, or ACCOUNT_ACTION
+  // ========== ULTRA-SIMPLIFIED RUNNER ==========
+  // Campaign = send message, Conversation = send message, Warmup = send message
+  // They're ALL the same: send_message(account, recipient, content)
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
-TelegramCRM - SIMPLIFIED UNIFIED RUNNER
-========================================
-BUILD: 2026-01-29-simplified-v1
+TelegramCRM - ULTRA-SIMPLIFIED RUNNER
+=====================================
+BUILD: 2026-01-29-ultra-v1
 
-CORE INSIGHT: All operations reduce to just 3 actions:
-  1. SEND MESSAGE - Campaign, LiveChat, Warmup all send messages
-  2. RECEIVE MESSAGE - Event handlers capture incoming messages
-  3. ACCOUNT ACTION - Spambot check, name change, photo change
+TRUTH: Campaign, Conversations, Warmup are ALL the same thing.
+       They all just SEND MESSAGES from an account to a recipient.
 
-ARCHITECTURE:
-  PHASE 1: Connect ALL accounts in parallel
-  PHASE 2: Set up receive handlers on all clients
-  PHASE 3: Poll for tasks, route to send_message() or account_action()
-
-SCALE: Handles 2000+ accounts with parallel task processing
+ONLY 2 CORE FUNCTIONS:
+  1. send_message(client, recipient, content) - ALL sending operations
+  2. account_action(client, action, params) - Non-message actions
 
 Install: pip install telethon httpx pysocks
 Usage: python unified_runner.py
@@ -46,34 +42,21 @@ import threading
 import random
 import time
 import signal
-import json
 from typing import Dict, Optional, List, Any, Tuple
 from collections import defaultdict
-from datetime import datetime
 
-# ========== CONFIGURATION ==========
+# ========== CONFIG ==========
 BACKEND_URL = "${supabaseUrl}/functions/v1"
 SUPABASE_URL = "${supabaseUrl}"
 SUPABASE_KEY = "${supabaseKey}"
+BUILD_VERSION = "2026-01-29-ultra-v1"
 
-BUILD_VERSION = "2026-01-29-simplified-v1"
-
-# ========== TIMEOUTS ==========
-PROXY_TIMEOUT = 60
-HTTP_TIMEOUT = 45
-
-# ========== POLLING INTERVALS ==========
-POLL_INTERVAL = 5           # Task polling
-RECONNECT_INTERVAL = 30     # Check disconnected clients
-REFRESH_INTERVAL = 60       # Refresh account list
-
-# ========== GLOBAL STATE ==========
-SESSION_FOLDER = tempfile.mkdtemp(prefix="tg_runner_")
-active_clients: Dict[str, Any] = {}   # account_id -> TelegramClient
-account_data: Dict[str, dict] = {}    # account_id -> account info
+# ========== STATE ==========
+SESSION_FOLDER = tempfile.mkdtemp(prefix="tg_")
+clients: Dict[str, Any] = {}      # account_id -> TelegramClient
+accounts: Dict[str, dict] = {}    # account_id -> account info
 RUNNING = True
 
-# ========== LOCKS ==========
 _locks: Dict[str, asyncio.Lock] = {}
 _locks_mutex = threading.Lock()
 _http: Optional[httpx.AsyncClient] = None
@@ -81,14 +64,14 @@ _http: Optional[httpx.AsyncClient] = None
 
 def signal_handler(sig, frame):
     global RUNNING
-    print("\\n[STOP] Shutdown signal received...")
+    print("\\n[STOP] Shutting down...")
     RUNNING = False
 
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-# ========== TELETHON IMPORTS ==========
+# ========== TELETHON ==========
 try:
     from telethon import TelegramClient, events
     from telethon.errors import (
@@ -107,891 +90,572 @@ except ImportError:
 
 
 # ==============================================================================
-# UTILITIES
+# HELPERS
 # ==============================================================================
 
-def get_lock(account_id: str) -> asyncio.Lock:
+def get_lock(aid: str) -> asyncio.Lock:
     with _locks_mutex:
-        if account_id not in _locks:
-            _locks[account_id] = asyncio.Lock()
-        return _locks[account_id]
+        if aid not in _locks:
+            _locks[aid] = asyncio.Lock()
+        return _locks[aid]
 
 
 def get_http() -> httpx.AsyncClient:
     global _http
     if _http is None or _http.is_closed:
-        _http = httpx.AsyncClient(timeout=HTTP_TIMEOUT, limits=httpx.Limits(max_connections=500))
+        _http = httpx.AsyncClient(timeout=45, limits=httpx.Limits(max_connections=500))
     return _http
 
 
-def decode_session(phone: str, base64_data: str) -> Optional[str]:
+def decode_session(phone: str, b64: str) -> Optional[str]:
     path = os.path.join(SESSION_FOLDER, phone.replace("+", ""))
     try:
         with open(path + ".session", "wb") as f:
-            f.write(base64.b64decode(base64_data))
+            f.write(base64.b64decode(b64))
         return path
     except:
         return None
 
 
-def get_proxy(account: dict) -> Optional[tuple]:
-    proxy = account.get("proxies") or account.get("proxy")
-    if not proxy or not proxy.get("host") or not proxy.get("port"):
+def get_proxy(acc: dict) -> Optional[tuple]:
+    p = acc.get("proxies") or acc.get("proxy")
+    if not p or not p.get("host"):
         return None
-    
-    ptype_str = (proxy.get("proxy_type") or "socks5").lower()
-    ptype = socks.SOCKS5 if ptype_str == "socks5" else socks.SOCKS4 if ptype_str == "socks4" else socks.HTTP
-    
-    if proxy.get("username") and proxy.get("password"):
-        return (ptype, proxy["host"], int(proxy["port"]), True, proxy["username"], proxy["password"])
-    return (ptype, proxy["host"], int(proxy["port"]))
+    ptype = socks.SOCKS5 if (p.get("proxy_type") or "socks5").lower() == "socks5" else socks.HTTP
+    if p.get("username"):
+        return (ptype, p["host"], int(p["port"]), True, p["username"], p["password"])
+    return (ptype, p["host"], int(p["port"]))
 
 
-def add_variation(text: str) -> str:
-    """Add invisible character to make message unique."""
-    chars = ['\\u200b', '\\u200c', '\\u200d', '\\ufeff']
+def variate(text: str) -> str:
+    """Add invisible char to make message unique."""
     pos = random.randint(0, len(text))
-    return text[:pos] + random.choice(chars) + text[pos:]
+    return text[:pos] + random.choice(['\\u200b', '\\u200c', '\\u200d']) + text[pos:]
 
 
 # ==============================================================================
-# DATA EXTRACTION HELPERS
+# API
 # ==============================================================================
 
-def extract_recipient(task: dict) -> Optional[str]:
-    """Extract recipient from ANY task type."""
-    # Direct recipient field
-    if task.get("recipient"):
-        return str(task["recipient"])
-    
-    # Warmup task_data
-    td = task.get("task_data", {})
-    if td.get("recipient_phone"):
-        return str(td["recipient_phone"])
-    if td.get("recipient_telegram_id"):
-        return str(td["recipient_telegram_id"])
-    
-    # Message object
-    msg = task.get("message", {})
-    if msg.get("recipient"):
-        return str(msg["recipient"])
-    if msg.get("recipient_phone"):
-        return str(msg["recipient_phone"])
-    
-    return None
-
-
-def extract_content(task: dict) -> str:
-    """Extract message content from ANY task type."""
-    if task.get("content"):
-        return task["content"]
-    
-    td = task.get("task_data", {})
-    if td.get("message"):
-        return td["message"]
-    if td.get("message_content"):
-        return td["message_content"]
-    
-    msg = task.get("message", {})
-    if msg.get("content"):
-        return msg["content"]
-    
-    return ""
-
-
-def extract_media(task: dict) -> Optional[str]:
-    """Extract media URL from ANY task type."""
-    if task.get("media_url"):
-        return task["media_url"]
-    
-    msg = task.get("message", {})
-    if msg.get("media_url"):
-        return msg["media_url"]
-    
-    return None
-
-
-def extract_account_id(task: dict) -> Optional[str]:
-    """Extract account ID from ANY task type."""
-    if task.get("account", {}).get("id"):
-        return task["account"]["id"]
-    if task.get("account_id"):
-        return task["account_id"]
-    
-    td = task.get("task_data", {})
-    if td.get("sender_account_id"):
-        return td["sender_account_id"]
-    
-    return None
-
-
-# ==============================================================================
-# HTTP API FUNCTIONS
-# ==============================================================================
-
-async def report_result(task_type: str, result: dict):
-    """Report task result to server."""
+async def report(task_type: str, data: dict):
     try:
         await get_http().post(
             f"{BACKEND_URL}/report-task-result",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"task_type": task_type, **result},
-            timeout=30
+            json={"task_type": task_type, **data}, timeout=30
         )
     except:
         pass
 
 
-async def report_session_check(account_id: str, success: bool, telegram_data: dict = None, error: str = None, status: str = None):
+async def fetch_accounts() -> List[dict]:
     try:
-        await get_http().post(
-            f"{BACKEND_URL}/report-session-check",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"account_id": account_id, "success": success, "telegram_data": telegram_data, "error": error, "status": status},
-            timeout=20
-        )
-    except:
-        pass
-
-
-async def fetch_all_accounts() -> List[dict]:
-    """Fetch ALL active accounts with sessions."""
-    try:
-        resp = await get_http().get(
+        r = await get_http().get(
             f"{SUPABASE_URL}/rest/v1/telegram_accounts?status=eq.active&session_data=not.is.null&select=*,proxies(*)",
-            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"},
-            timeout=60
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, timeout=60
         )
-        return resp.json() if resp.status_code == 200 else []
-    except Exception as e:
-        print(f"  [ERROR] Fetch accounts: {e}")
+        return r.json() if r.status_code == 200 else []
+    except:
         return []
 
 
-async def get_batch_tasks(batch_size: int = 100) -> dict:
-    """Fetch batch of ALL task types."""
+async def get_tasks(batch_size: int = 100) -> dict:
     try:
-        resp = await get_http().post(
+        r = await get_http().post(
             f"{BACKEND_URL}/get-batch-tasks",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"runner": "unified", "batch_size": batch_size},
-            timeout=60
+            json={"runner": "unified", "batch_size": batch_size}, timeout=60
         )
-        return resp.json() if resp.status_code == 200 else {"tasks": [], "delay_after": 5}
+        return r.json() if r.status_code == 200 else {"tasks": []}
     except:
-        return {"tasks": [], "delay_after": 10}
+        return {"tasks": []}
 
 
 # ==============================================================================
 # CORE FUNCTION 1: SEND MESSAGE
 # ==============================================================================
+# Campaign sends message. Conversation sends message. Warmup sends message.
+# They're ALL the same. One function handles everything.
 
-async def send_message(client, recipient: str, content: str, media_url: str = None) -> Tuple[bool, Optional[str], Optional[dict]]:
+async def send_message(client, recipient: str, content: str, media_url: str = None) -> Tuple[bool, Optional[str], dict]:
     """
-    CORE FUNCTION: Send a message to any recipient.
-    Used by: Campaign, LiveChat, Warmup - they ALL just send messages.
-    
-    Returns: (success, error, metadata)
+    THE ONLY SEND FUNCTION.
+    Campaign? This function. Conversation reply? This function. Warmup? This function.
     """
     if not recipient:
-        return False, "No recipient", None
+        return False, "No recipient", {}
     
     try:
         entity = None
         
-        # Try cached entity first
+        # Try to get entity
         try:
             entity = await asyncio.wait_for(client.get_input_entity(recipient), timeout=5)
         except:
             pass
         
-        # Try phone resolution
+        # Phone resolution
         if not entity and (recipient.startswith("+") or recipient.isdigit()):
             phone = recipient if recipient.startswith("+") else f"+{recipient}"
             try:
                 result = await asyncio.wait_for(client(ResolvePhoneRequest(phone=phone)), timeout=10)
                 if result.users:
-                    user = result.users[0]
-                    entity = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+                    u = result.users[0]
+                    entity = InputPeerUser(user_id=u.id, access_hash=u.access_hash)
             except Exception as e:
                 if "PHONE_NOT_OCCUPIED" in str(e):
-                    return False, "Not on Telegram", None
-                # Fallback: import contact
-                contact = InputPhoneContact(
-                    client_id=random.randint(0, 2**31-1),
-                    phone=phone,
-                    first_name=phone.replace("+", ""),
-                    last_name=""
-                )
+                    return False, "Not on Telegram", {}
+                # Import contact
+                contact = InputPhoneContact(client_id=random.randint(0,2**31-1), phone=phone, first_name=phone.replace("+",""), last_name="")
                 try:
                     result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
                     if result.users:
-                        user = result.users[0]
-                        entity = InputPeerUser(user_id=user.id, access_hash=user.access_hash)
+                        u = result.users[0]
+                        entity = InputPeerUser(user_id=u.id, access_hash=u.access_hash)
                 except:
                     pass
         
         if not entity:
-            return False, "Recipient not found", None
+            return False, "Recipient not found", {}
         
-        # Add variation to avoid duplicate detection
-        varied_content = add_variation(content) if content else ""
+        text = variate(content) if content else ""
         
-        # Send with media if provided
-        if media_url and varied_content:
+        # Send with media
+        if media_url and text:
             try:
-                resp = await get_http().get(media_url, timeout=60)
-                if resp.status_code == 200:
+                r = await get_http().get(media_url, timeout=60)
+                if r.status_code == 200:
                     import io
-                    file = io.BytesIO(resp.content)
-                    file.name = "attachment.jpg"
-                    await asyncio.wait_for(client.send_file(entity, file, caption=varied_content), timeout=30)
-                    
-                    meta = {"recipient_telegram_id": entity.user_id} if isinstance(entity, InputPeerUser) else {}
-                    return True, None, meta
+                    f = io.BytesIO(r.content)
+                    f.name = "file.jpg"
+                    await asyncio.wait_for(client.send_file(entity, f, caption=text), timeout=30)
+                    return True, None, {"recipient_telegram_id": entity.user_id if isinstance(entity, InputPeerUser) else None}
             except:
-                pass  # Fall through to text-only
+                pass
         
-        # Text-only send
+        # Text only
         if isinstance(entity, InputPeerUser):
-            await asyncio.wait_for(
-                client(SendMessageRequest(
-                    peer=entity,
-                    message=varied_content,
-                    no_webpage=False,
-                    random_id=random.randint(0, 2**63-1)
-                )),
-                timeout=10
-            )
+            await asyncio.wait_for(client(SendMessageRequest(peer=entity, message=text, no_webpage=False, random_id=random.randint(0,2**63-1))), timeout=10)
         else:
-            await asyncio.wait_for(client.send_message(entity, varied_content), timeout=10)
+            await asyncio.wait_for(client.send_message(entity, text), timeout=10)
         
-        meta = {"recipient_telegram_id": entity.user_id} if isinstance(entity, InputPeerUser) else {}
-        return True, None, meta
+        return True, None, {"recipient_telegram_id": entity.user_id if isinstance(entity, InputPeerUser) else None}
         
     except FloodWaitError as e:
         return False, f"FloodWait:{e.seconds}s", {"skip_account": True}
     except PeerFloodError:
         return False, "PeerFlood", {"skip_account": True}
     except UserPrivacyRestrictedError:
-        return False, "Privacy restricted", {"retry_different_api": True}
+        return False, "Privacy restricted", {}
     except UserBlockedError:
-        return False, "User blocked", None
-    except ChatWriteForbiddenError:
-        return False, "Cannot write", None
+        return False, "Blocked", {}
     except Exception as e:
-        return False, str(e)[:100], None
+        return False, str(e)[:80], {}
 
 
 # ==============================================================================
-# CORE FUNCTION 2: RECEIVE MESSAGE (Event Handler)
+# CORE FUNCTION 2: ACCOUNT ACTION
 # ==============================================================================
+# Non-message operations: spambot check, name change, join channel, etc.
 
-async def receive_message(event, account_id: str):
-    """
-    CORE FUNCTION: Handle incoming message.
-    Registered as event handler on ALL connected clients.
-    """
-    try:
-        sender = await event.get_sender()
-        if not sender or not isinstance(sender, User):
-            return
-        if getattr(sender, 'bot', False):
-            return
-        if not getattr(sender, 'contact', False):
-            return  # Only from contacts
-        
-        sender_phone = None
-        if hasattr(sender, 'phone') and sender.phone:
-            sender_phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
-        
-        sender_name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
-        content = event.message.text or "[Media]"
-        media_url = None
-        media_type = None
-        
-        # Handle photo
-        if event.message.photo:
-            content = "[Photo] " + (event.message.text or "")
-            media_type = "image"
-            try:
-                client = active_clients.get(account_id)
-                if client:
-                    photo_bytes = await client.download_media(event.message.photo, bytes)
-                    if photo_bytes:
-                        file_path = f"{account_id}/incoming_{int(time.time()*1000)}.jpg"
-                        resp = await get_http().put(
-                            f"{SUPABASE_URL}/storage/v1/object/message-attachments/{file_path}",
-                            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "image/jpeg", "x-upsert": "true"},
-                            content=photo_bytes,
-                            timeout=60
-                        )
-                        if resp.status_code in (200, 201):
-                            media_url = f"{SUPABASE_URL}/storage/v1/object/public/message-attachments/{file_path}"
-            except:
-                pass
-        
-        phone_short = account_data.get(account_id, {}).get("phone_number", "????")[-4:]
-        print(f"  📩 [{phone_short}] ← {sender_name[:15]}: {content[:30]}...")
-        
-        await report_result("incoming_message", {
-            "account_id": account_id,
-            "sender_id": sender.id,
-            "sender_name": sender_name,
-            "sender_username": getattr(sender, 'username', None),
-            "sender_phone": sender_phone,
-            "content": content,
-            "media_url": media_url,
-            "media_type": media_type,
-            "telegram_message_id": event.message.id
-        })
-        
-    except Exception as e:
-        print(f"  ⚠ Receive error: {str(e)[:40]}")
-
-
-# ==============================================================================
-# CORE FUNCTION 3: ACCOUNT ACTION
-# ==============================================================================
-
-async def account_action(client, action_type: str, task: dict) -> Tuple[bool, Optional[str]]:
-    """
-    CORE FUNCTION: Perform account-level action.
-    Used for: spambot_check, change_name, change_photo, add_contact, join_channel
-    
-    Returns: (success, error)
-    """
-    account_id = extract_account_id(task)
+async def account_action(client, action: str, task: dict) -> Tuple[bool, Optional[str]]:
+    """Handle non-message account actions."""
     task_id = task.get("task_id") or task.get("id")
-    phone = account_data.get(account_id, {}).get("phone_number", "????")[-4:]
+    acc_id = task.get("account", {}).get("id") or task.get("account_id")
+    td = task.get("task_data", {})
     
     try:
-        # ========== SPAMBOT CHECK ==========
-        if action_type == "spambot_check":
-            print(f"  [SPAMBOT] [{phone}] Checking...")
-            spambot = await client.get_entity("@SpamBot")
-            await client.send_message(spambot, "/start")
+        if action == "spambot_check":
+            bot = await client.get_entity("@SpamBot")
+            await client.send_message(bot, "/start")
             await asyncio.sleep(2)
-            messages = await client.get_messages(spambot, limit=1)
-            response = messages[0].text if messages else "No response"
-            response_lower = response.lower()
-            
-            if "banned" in response_lower or "deleted" in response_lower:
-                status = "banned"
-            elif "frozen" in response_lower:
-                status = "frozen"
-            elif "limited" in response_lower or "restricted" in response_lower:
-                status = "restricted"
-            else:
-                status = "active"
-            
-            await report_result("spambot_check", {
-                "task_id": task_id,
-                "account_id": account_id,
-                "status": status,
-                "response": response[:200],
-                "success": True
-            })
-            print(f"  [SPAMBOT] [{phone}] Status: {status}")
+            msgs = await client.get_messages(bot, limit=1)
+            resp = msgs[0].text.lower() if msgs else ""
+            status = "banned" if "banned" in resp or "deleted" in resp else "frozen" if "frozen" in resp else "restricted" if "restricted" in resp else "active"
+            await report("spambot_check", {"task_id": task_id, "account_id": acc_id, "status": status, "success": True})
             return True, None
         
-        # ========== CHANGE NAME ==========
-        elif action_type == "change_name":
-            first_name = task.get("first_name") or task.get("task_data", {}).get("first_name", "")
-            last_name = task.get("last_name") or task.get("task_data", {}).get("last_name", "")
-            print(f"  [NAME] [{phone}] → {first_name} {last_name}")
-            await client(UpdateProfileRequest(first_name=first_name, last_name=last_name))
-            await report_result("change_name", {"task_id": task_id, "account_id": account_id, "success": True})
+        elif action == "change_name":
+            fn = task.get("first_name") or td.get("first_name", "")
+            ln = task.get("last_name") or td.get("last_name", "")
+            await client(UpdateProfileRequest(first_name=fn, last_name=ln))
+            await report("change_name", {"task_id": task_id, "account_id": acc_id, "success": True})
             return True, None
         
-        # ========== ADD CONTACT (for warmup) ==========
-        elif action_type in ("warmup_add_contact", "add_contact"):
-            td = task.get("task_data", {})
-            target_phone = td.get("recipient_phone") or td.get("target_phone")
-            if target_phone:
-                contact = InputPhoneContact(
-                    client_id=random.randint(0, 2**31-1),
-                    phone=target_phone if target_phone.startswith("+") else f"+{target_phone}",
-                    first_name=td.get("first_name", target_phone.replace("+", "")),
-                    last_name=td.get("last_name", "")
-                )
+        elif "add_contact" in action:
+            phone = td.get("recipient_phone") or td.get("target_phone")
+            if phone:
+                contact = InputPhoneContact(client_id=random.randint(0,2**31-1), phone=phone if phone.startswith("+") else f"+{phone}", first_name=td.get("first_name", phone), last_name="")
                 result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
-                success = bool(result.users)
-                await report_result("warmup_add_contact", {
-                    "task_id": task_id,
-                    "pair_id": td.get("pair_id"),
-                    "success": success,
-                    "error": None if success else "Could not add contact"
-                })
-                return success, None if success else "Could not add contact"
-            return False, "No target phone"
+                await report("warmup_add_contact", {"task_id": task_id, "pair_id": td.get("pair_id"), "success": bool(result.users)})
+                return bool(result.users), None
+            return False, "No phone"
         
-        # ========== JOIN CHANNEL (for warmup) ==========
-        elif action_type in ("warmup_join_channel", "join_channel"):
-            td = task.get("task_data", {})
+        elif "join" in action:
             channel = td.get("channel_username") or td.get("channel")
             if channel:
-                print(f"  [JOIN] [{phone}] → @{channel}")
                 await asyncio.wait_for(client(JoinChannelRequest(channel)), timeout=15)
-                await report_result("warmup", {"task_id": task_id, "success": True})
+                await report("warmup", {"task_id": task_id, "success": True})
                 return True, None
             return False, "No channel"
         
-        # ========== SEND REACTION (for warmup) ==========
-        elif action_type in ("warmup_react", "react"):
-            td = task.get("task_data", {})
+        elif "react" in action:
             channel = td.get("channel_username")
             if channel:
                 entity = await client.get_entity(channel)
-                messages = await client.get_messages(entity, limit=10)
-                if messages:
-                    msg = random.choice(messages)
-                    reactions = ["👍", "❤️", "🔥", "👏", "😂", "🎉"]
-                    await client(SendReactionRequest(
-                        peer=entity,
-                        msg_id=msg.id,
-                        reaction=[ReactionEmoji(emoticon=random.choice(reactions))]
-                    ))
-                await report_result("warmup", {"task_id": task_id, "success": True})
+                msgs = await client.get_messages(entity, limit=10)
+                if msgs:
+                    await client(SendReactionRequest(peer=entity, msg_id=random.choice(msgs).id, reaction=[ReactionEmoji(emoticon=random.choice(["👍","❤️","🔥"]))]))
+                await report("warmup", {"task_id": task_id, "success": True})
                 return True, None
             return False, "No channel"
         
         else:
-            print(f"  [?] Unknown action: {action_type}")
-            await report_result(action_type, {"task_id": task_id, "success": False, "error": f"Unknown: {action_type}"})
-            return False, f"Unknown action: {action_type}"
+            return False, f"Unknown action: {action}"
             
     except Exception as e:
-        await report_result(action_type, {"task_id": task_id, "account_id": account_id, "success": False, "error": str(e)[:100]})
+        await report(action, {"task_id": task_id, "account_id": acc_id, "success": False, "error": str(e)[:80]})
         return False, str(e)
+
+
+# ==============================================================================
+# INCOMING MESSAGE HANDLER
+# ==============================================================================
+
+async def on_message(event, acc_id: str):
+    """Handle incoming messages - registered on all clients."""
+    try:
+        sender = await event.get_sender()
+        if not sender or not isinstance(sender, User) or getattr(sender, 'bot', False):
+            return
+        if not getattr(sender, 'contact', False):
+            return
+        
+        phone = None
+        if hasattr(sender, 'phone') and sender.phone:
+            phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+        
+        name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
+        content = event.message.text or "[Media]"
+        
+        acc = accounts.get(acc_id, {})
+        print(f"  📩 [{acc.get('phone_number','?')[-4:]}] ← {name[:12]}: {content[:25]}...")
+        
+        await report("incoming_message", {
+            "account_id": acc_id,
+            "sender_id": sender.id,
+            "sender_name": name,
+            "sender_username": getattr(sender, 'username', None),
+            "sender_phone": phone,
+            "content": content,
+            "telegram_message_id": event.message.id
+        })
+    except:
+        pass
 
 
 # ==============================================================================
 # CLIENT MANAGEMENT
 # ==============================================================================
 
-async def connect_account(account: dict) -> Tuple[Optional[Any], Optional[str]]:
-    """Connect a single account with validation."""
-    account_id = account.get("id")
-    phone = account.get("phone_number", "????")
-    phone_short = phone[-4:]
+async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
+    """Connect a single account."""
+    aid = acc.get("id")
+    phone = acc.get("phone_number", "????")
     
-    if not account_id:
+    if not aid:
         return None, "No ID"
     
-    lock = get_lock(account_id)
-    async with lock:
-        # Already connected?
-        if account_id in active_clients:
-            client = active_clients[account_id]
-            if client.is_connected():
-                return client, None
-            # Stale - remove
-            del active_clients[account_id]
+    async with get_lock(aid):
+        if aid in clients and clients[aid].is_connected():
+            return clients[aid], None
         
-        # Validate requirements
-        session_data = account.get("session_data")
-        if not session_data:
+        if not acc.get("session_data"):
             return None, "No session"
-        
-        proxy = get_proxy(account)
-        if not proxy:
-            print(f"  ⛔ [{phone_short}] NO PROXY")
+        if not get_proxy(acc):
             return None, "No proxy"
+        if not acc.get("device_model") or not acc.get("api_id"):
+            return None, "No fingerprint/API"
         
-        if not account.get("device_model") or not account.get("system_version"):
-            print(f"  ⛔ [{phone_short}] NO FINGERPRINT")
-            return None, "No fingerprint"
-        
-        api_id = account.get("api_id")
-        api_hash = account.get("api_hash")
-        if not api_id or not api_hash:
-            print(f"  ⛔ [{phone_short}] NO API CREDS")
-            return None, "No api_id/api_hash"
-        
-        session_path = decode_session(phone, session_data)
-        if not session_path:
+        path = decode_session(phone, acc["session_data"])
+        if not path:
             return None, "Session decode failed"
-        
-        # Build fingerprint
-        device = account.get("device_model")
-        sdk = account.get("system_version")
-        build_id = account.get("build_id")
-        if build_id:
-            android_ver = sdk.replace("Android ", "")
-            sdk_map = {"15": "35", "14": "34", "13": "33", "12": "32", "11": "30"}
-            sdk = f"SDK {sdk_map.get(android_ver, '34')} ({build_id})"
         
         try:
             client = TelegramClient(
-                session_path, int(api_id), api_hash,
-                device_model=device,
-                system_version=sdk,
-                app_version=account.get("app_version", "10.14.2"),
-                lang_code=account.get("lang_code", "en"),
-                system_lang_code=account.get("system_lang_code", "en-US"),
-                proxy=proxy,
-                timeout=PROXY_TIMEOUT,
-                connection_retries=0,
-                auto_reconnect=False
+                path, int(acc["api_id"]), acc["api_hash"],
+                device_model=acc["device_model"],
+                system_version=acc.get("system_version", "Android 12"),
+                app_version=acc.get("app_version", "10.14.2"),
+                proxy=get_proxy(acc),
+                timeout=60, connection_retries=0, auto_reconnect=False
             )
             
-            await asyncio.wait_for(client.connect(), timeout=PROXY_TIMEOUT)
+            await asyncio.wait_for(client.connect(), timeout=60)
             
-            is_auth = await asyncio.wait_for(client.is_user_authorized(), timeout=10)
-            if not is_auth:
-                await report_result("account_disconnected", {"account_id": account_id, "reason": "Session expired"})
+            if not await asyncio.wait_for(client.is_user_authorized(), timeout=10):
                 return None, "Not authorized"
             
-            me = await asyncio.wait_for(client.get_me(), timeout=10)
-            if me:
-                await report_session_check(account_id, True, {"id": me.id, "first_name": me.first_name, "username": me.username})
-            
-            active_clients[account_id] = client
-            account_data[account_id] = account
-            print(f"  ✓ [{phone_short}] Connected")
+            clients[aid] = client
+            accounts[aid] = acc
+            print(f"  ✓ [{phone[-4:]}] Connected")
             return client, None
             
-        except asyncio.TimeoutError:
-            print(f"  ✗ [{phone_short}] Proxy timeout")
-            return None, "Proxy timeout"
-        except (AuthKeyUnregisteredError, SessionRevokedError, UserDeactivatedBanError, PhoneNumberBannedError) as e:
-            await report_session_check(account_id, False, error=str(e), status="banned")
-            return None, str(e)
         except Exception as e:
-            print(f"  ✗ [{phone_short}] {str(e)[:40]}")
+            print(f"  ✗ [{phone[-4:]}] {str(e)[:30]}")
             return None, str(e)
 
 
-async def connect_all_accounts():
-    """PHASE 1: Connect ALL accounts in parallel."""
-    print("\\n" + "=" * 60)
-    print("  PHASE 1: CONNECTING ALL ACCOUNTS")
-    print("=" * 60)
+async def connect_all():
+    """Connect ALL accounts in parallel."""
+    print("\\n" + "="*50)
+    print("  CONNECTING ALL ACCOUNTS")
+    print("="*50)
     
-    accounts = await fetch_all_accounts()
-    if not accounts:
-        print("  ⚠ No active accounts found")
+    accs = await fetch_accounts()
+    if not accs:
+        print("  No accounts found")
         return 0
     
-    print(f"  Found {len(accounts)} accounts, connecting in parallel...\\n")
-    
-    results = await asyncio.gather(*[connect_account(acc) for acc in accounts], return_exceptions=True)
-    
-    success = sum(1 for r in results if isinstance(r, tuple) and r[0] is not None)
-    print(f"\\n  [RESULT] Connected: {success} / {len(accounts)}")
-    print("=" * 60)
-    return success
+    print(f"  Found {len(accs)} accounts...\\n")
+    results = await asyncio.gather(*[connect(a) for a in accs], return_exceptions=True)
+    ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
+    print(f"\\n  Connected: {ok}/{len(accs)}")
+    return ok
 
 
 async def setup_handlers():
-    """PHASE 2: Set up receive handlers on all clients."""
-    print("\\n  Setting up message handlers...")
-    
-    count = 0
-    for account_id, client in list(active_clients.items()):
-        if getattr(client, "_handler_set", False):
+    """Set up incoming message handlers."""
+    for aid, client in clients.items():
+        if getattr(client, "_h", False):
             continue
         
         @client.on(events.NewMessage(incoming=True))
-        async def handler(event, acc_id=account_id):
-            await receive_message(event, acc_id)
+        async def handler(event, a=aid):
+            await on_message(event, a)
         
-        setattr(client, "_handler_set", True)
-        count += 1
-    
-    print(f"  ✓ Handlers on {count} clients")
-
-
-async def check_reconnects():
-    """Check and reconnect disconnected clients."""
-    disconnected = [aid for aid, c in list(active_clients.items()) if not c.is_connected()]
-    
-    if disconnected:
-        print(f"  [RECONNECT] Found {len(disconnected)} disconnected...")
-        for aid in disconnected:
-            acc = account_data.get(aid)
-            if acc:
-                del active_clients[aid]
-                await connect_account(acc)
-        await setup_handlers()
+        setattr(client, "_h", True)
 
 
 # ==============================================================================
 # UNIFIED TASK PROCESSOR
 # ==============================================================================
 
-async def process_task(task: dict):
+async def process(task: dict):
     """
-    UNIFIED TASK PROCESSOR
-    Routes ALL tasks to just 3 core functions:
-      - send_message() for Campaign, LiveChat, Warmup sends
-      - receive_message() is automatic via event handlers
-      - account_action() for spambot, name change, etc.
-    """
-    task_type = task.get("task_type") or task.get("type") or "unknown"
-    account_id = extract_account_id(task)
+    ULTRA-SIMPLE TASK PROCESSOR
     
-    if not account_id:
+    If task needs to send a message → send_message()
+    If task is an account action → account_action()
+    
+    That's it. Campaign, Conversation, Warmup - all the same.
+    """
+    tt = task.get("task_type") or task.get("type") or ""
+    acc = task.get("account", {})
+    aid = acc.get("id") or task.get("account_id") or task.get("task_data", {}).get("sender_account_id")
+    
+    if not aid:
         return
     
-    # Get or connect client
-    client = active_clients.get(account_id)
+    # Get client
+    client = clients.get(aid)
     if not client:
-        acc = task.get("account", {})
-        if acc.get("id"):
-            client, error = await connect_account(acc)
-            if not client:
-                # Report failure for send tasks
-                if task_type in ("send", "campaign_send", "livechat_reply", "warmup_chat"):
-                    msg = task.get("message", {})
-                    await report_result("send", {
-                        "message_id": msg.get("id"),
-                        "campaign_recipient_id": msg.get("campaign_recipient_id"),
-                        "success": False,
-                        "error": error or "Not connected",
-                        "account_id": account_id
-                    })
-                return
+        client, err = await connect(acc) if acc.get("id") else (None, "No account data")
+        if not client:
+            return
     
-    phone = account_data.get(account_id, {}).get("phone_number", "????")[-4:]
+    phone = accounts.get(aid, {}).get("phone_number", "????")[-4:]
     
-    # ========== SEND OPERATIONS ==========
-    # Campaign, LiveChat, Warmup all just SEND MESSAGES
-    if task_type in ("send", "campaign_send", "livechat_reply", "warmup_chat"):
-        recipient = extract_recipient(task)
-        content = extract_content(task)
-        media_url = extract_media(task)
-        
-        success, error, meta = await send_message(client, recipient, content, media_url)
-        
-        # Build result based on task type
+    # ========== MESSAGE SENDING ==========
+    # Campaign, Conversation, Warmup - they ALL just send messages
+    if tt in ("send", "campaign_send", "livechat_reply", "warmup_chat") or ("send" in tt and "warmup" in tt):
+        # Extract data - works for ANY task type
         msg = task.get("message", {})
-        result = {
-            "success": success,
-            "error": error,
-            "account_id": account_id,
-            "api_credential_id": task.get("account", {}).get("api_credential_id")
-        }
+        td = task.get("task_data", {})
         
-        if task_type in ("send", "campaign_send", "livechat_reply"):
-            result["message_id"] = msg.get("id")
-            result["campaign_recipient_id"] = msg.get("campaign_recipient_id")
-            result["campaign_id"] = task.get("campaign_id")
-            result["campaign_seat_id"] = task.get("campaign_seat_id")
-            result["campaign_name"] = task.get("campaign_name")
-            result["recipient_phone"] = recipient
-            result["recipient_name"] = task.get("recipient_name")
-            result["content"] = content
-            
-            if success:
-                print(f"  ✓ [{phone}] → {recipient}")
-            else:
-                print(f"  ✗ [{phone}] → {recipient}: {error}")
-            
-            await report_result("send", result)
+        recipient = (
+            task.get("recipient") or 
+            td.get("recipient_phone") or 
+            td.get("recipient_telegram_id") or 
+            msg.get("recipient") or 
+            msg.get("recipient_phone")
+        )
+        content = msg.get("content") or td.get("message") or td.get("message_content") or task.get("content") or ""
+        media = msg.get("media_url") or task.get("media_url")
         
-        elif task_type == "warmup_chat":
-            td = task.get("task_data", {})
-            result["task_id"] = task.get("task_id")
-            result["pair_id"] = td.get("pair_id")
-            result["warmup_message_id"] = td.get("warmup_message_id")
-            
-            if success:
-                print(f"  ✓ [{phone}] [WARMUP] → {recipient}")
-            else:
-                print(f"  ✗ [{phone}] [WARMUP] → {recipient}: {error}")
-            
-            await report_result("warmup_chat", result)
+        # SEND THE MESSAGE - same function for everything
+        success, error, meta = await send_message(client, str(recipient) if recipient else "", content, media)
         
-        if meta:
-            result.update(meta)
-    
-    # ========== ACCOUNT OPERATIONS ==========
-    elif task_type in ("spambot_check", "change_name", "change_photo", 
-                       "warmup_add_contact", "add_contact",
-                       "warmup_join_channel", "join_channel",
-                       "warmup_react", "react"):
-        await account_action(client, task_type, task)
-    
-    # ========== WARMUP ROUTING ==========
-    elif task_type.startswith("warmup"):
-        # Route specific warmup subtypes
-        if "add_contact" in task_type:
-            await account_action(client, "warmup_add_contact", task)
-        elif "join" in task_type:
-            await account_action(client, "warmup_join_channel", task)
-        elif "react" in task_type:
-            await account_action(client, "warmup_react", task)
-        elif "chat" in task_type or "send" in task_type:
-            # Warmup send - use send_message
-            recipient = extract_recipient(task)
-            content = extract_content(task)
-            success, error, meta = await send_message(client, recipient, content)
-            td = task.get("task_data", {})
-            await report_result("warmup_chat", {
+        if success:
+            print(f"  ✓ [{phone}] → {str(recipient)[:15]}")
+        else:
+            print(f"  ✗ [{phone}] → {str(recipient)[:15]}: {error}")
+        
+        # Report based on task type
+        if "warmup" in tt:
+            await report("warmup_chat", {
                 "task_id": task.get("task_id"),
                 "pair_id": td.get("pair_id"),
+                "warmup_message_id": td.get("warmup_message_id"),
                 "success": success,
                 "error": error
             })
         else:
-            print(f"  [?] Unknown warmup: {task_type}")
+            await report("send", {
+                "message_id": msg.get("id"),
+                "campaign_recipient_id": msg.get("campaign_recipient_id"),
+                "campaign_id": task.get("campaign_id"),
+                "campaign_seat_id": task.get("campaign_seat_id"),
+                "account_id": aid,
+                "api_credential_id": acc.get("api_credential_id"),
+                "recipient_phone": recipient,
+                "content": content,
+                "success": success,
+                "error": error,
+                **meta
+            })
+    
+    # ========== ACCOUNT ACTIONS ==========
+    elif tt in ("spambot_check", "change_name", "change_photo"):
+        await account_action(client, tt, task)
+    
+    elif "add_contact" in tt:
+        await account_action(client, "add_contact", task)
+    
+    elif "join" in tt:
+        await account_action(client, "join", task)
+    
+    elif "react" in tt:
+        await account_action(client, "react", task)
+    
+    elif tt.startswith("warmup") and "chat" not in tt and "send" not in tt:
+        await account_action(client, tt, task)
     
     else:
-        print(f"  [?] Unknown task: {task_type}")
+        print(f"  [?] Unknown: {tt}")
 
 
 # ==============================================================================
 # MAIN LOOP
 # ==============================================================================
 
-async def main_loop():
-    """Main runner: Connect all → Process tasks in parallel."""
+async def main():
     global RUNNING
     
-    print("=" * 60)
-    print("  TelegramCRM - SIMPLIFIED UNIFIED RUNNER")
+    print("="*50)
+    print("  TelegramCRM - ULTRA-SIMPLIFIED RUNNER")
     print(f"  BUILD: {BUILD_VERSION}")
-    print("=" * 60)
-    print("  CORE FUNCTIONS:")
-    print("    • send_message() - Campaign, LiveChat, Warmup")
-    print("    • receive_message() - Incoming via event handlers")
-    print("    • account_action() - Spambot, name change, etc.")
-    print("=" * 60)
-    print("  Press Ctrl+C to stop\\n")
+    print("="*50)
+    print("  TRUTH: Campaign = Conversation = Warmup")
+    print("         They ALL just send messages!")
+    print("="*50)
+    print("  2 CORE FUNCTIONS:")
+    print("    • send_message() - ALL sending")
+    print("    • account_action() - Non-message ops")
+    print("="*50 + "\\n")
     
-    # PHASE 1: Connect all
-    connected = await connect_all_accounts()
-    
-    if connected == 0:
-        print("\\n  ⚠ No accounts connected! Check:")
-        print("    - Accounts have session_data, proxy, fingerprint, API creds")
-        print("  Waiting for configuration...\\n")
-    
-    # PHASE 2: Setup handlers
+    # Connect all accounts
+    await connect_all()
     await setup_handlers()
     
-    # PHASE 3: Process tasks
-    print("\\n" + "=" * 60)
-    print("  PHASE 3: PROCESSING TASKS")
-    print("=" * 60)
-    print(f"  Polling every {POLL_INTERVAL}s, batch size 100\\n")
+    print("\\n" + "="*50)
+    print("  PROCESSING TASKS")
+    print("="*50 + "\\n")
     
+    empty = 0
     last_refresh = time.time()
-    last_reconnect = time.time()
-    empty_count = 0
     
     while RUNNING:
         try:
-            now = time.time()
-            
-            # Periodic refresh
-            if now - last_refresh > REFRESH_INTERVAL:
-                old_count = len(active_clients)
-                await connect_all_accounts()
-                if len(active_clients) > old_count:
+            # Refresh accounts every 60s
+            if time.time() - last_refresh > 60:
+                old = len(clients)
+                await connect_all()
+                if len(clients) > old:
                     await setup_handlers()
-                last_refresh = now
+                last_refresh = time.time()
             
-            # Periodic reconnect check
-            if now - last_reconnect > RECONNECT_INTERVAL:
-                await check_reconnects()
-                last_reconnect = now
-            
-            # Get batch of ALL task types
-            batch = await get_batch_tasks(batch_size=100)
+            # Get tasks
+            batch = await get_tasks(100)
             tasks = batch.get("tasks", [])
-            delay = batch.get("delay_after", POLL_INTERVAL)
             
             if not tasks:
-                empty_count += 1
-                if empty_count == 1:
-                    print(f"  [WAIT] {batch.get('reason', 'No tasks')}")
-                elif empty_count % 12 == 0:
-                    print(f"  [WAIT] ... ({len(active_clients)} clients)")
-                await asyncio.sleep(delay if delay > 0 else POLL_INTERVAL)
+                empty += 1
+                if empty == 1 or empty % 12 == 0:
+                    print(f"  [WAIT] No tasks ({len(clients)} clients)")
+                await asyncio.sleep(batch.get("delay_after", 5))
                 continue
             
-            empty_count = 0
+            empty = 0
             
-            # Log task types
+            # Log
             by_type = defaultdict(int)
             for t in tasks:
-                by_type[t.get("task_type") or t.get("type") or "?"] += 1
+                by_type[t.get("task_type") or "?"] += 1
             print(f"\\n  [BATCH] {len(tasks)} tasks: {dict(by_type)}")
             
-            # Process ALL tasks in PARALLEL
-            await asyncio.gather(*[process_task(t) for t in tasks], return_exceptions=True)
+            # Process ALL in parallel
+            await asyncio.gather(*[process(t) for t in tasks], return_exceptions=True)
+            print("  [DONE]")
             
-            print(f"  [DONE] Batch complete")
+            await asyncio.sleep(batch.get("delay_after", 2))
             
-            if delay > 0:
-                await asyncio.sleep(delay)
-                
         except Exception as e:
-            print(f"  [ERROR] {str(e)[:50]}")
+            print(f"  [ERROR] {str(e)[:40]}")
             await asyncio.sleep(5)
     
     # Shutdown
-    print("\\n  [SHUTDOWN] Disconnecting clients...")
-    for aid, client in list(active_clients.items()):
+    print("\\n  [SHUTDOWN]...")
+    for c in clients.values():
         try:
-            if client.is_connected():
-                await asyncio.wait_for(client.disconnect(), timeout=5)
+            await asyncio.wait_for(c.disconnect(), timeout=5)
         except:
             pass
-    active_clients.clear()
-    print("  [SHUTDOWN] Complete")
+    print("  Done!")
 
 
 if __name__ == "__main__":
-    print("\\n" + "=" * 60)
-    print("  TelegramCRM - SIMPLIFIED UNIFIED RUNNER")
+    print("\\n" + "="*50)
     print("  pip install telethon httpx pysocks")
-    print("=" * 60 + "\\n")
+    print("="*50 + "\\n")
     
     while True:
         try:
-            asyncio.run(main_loop())
+            asyncio.run(main())
         except KeyboardInterrupt:
             print("\\n⏹ Stopped")
             break
         except Exception as e:
-            print(f"\\n⚠ Crashed: {e}")
-            print("  Restarting in 5s...")
+            print(f"\\n⚠ Crashed: {e}\\n  Restarting...")
             time.sleep(5)
-    
-    print("Goodbye!")
 `;
 
   // ========== RUN.BAT ==========
   const runBat = `@echo off
-title TelegramCRM - Simplified Runner
+title TelegramCRM - Ultra-Simplified Runner
 color 0A
 
 echo.
 echo  ================================================
-echo    TelegramCRM - SIMPLIFIED UNIFIED RUNNER
+echo    TelegramCRM - ULTRA-SIMPLIFIED RUNNER
 echo  ================================================
 echo.
-echo  3 Core Functions:
-echo    * send_message()    - Campaign, LiveChat, Warmup
-echo    * receive_message() - Incoming messages
-echo    * account_action()  - Spambot, name change, etc.
+echo  TRUTH: Campaign = Conversation = Warmup
+echo         They ALL just send messages!
+echo.
+echo  2 Core Functions:
+echo    * send_message()    - ALL sending
+echo    * account_action()  - Non-message ops
 echo.
 
 cd /d "%~dp0"
 
-echo  [1/2] Installing requirements...
+echo  Installing requirements...
 py -m pip install telethon httpx pysocks --quiet 2>nul
 if errorlevel 1 (
     python -m pip install telethon httpx pysocks --quiet 2>nul
 )
-echo        Done!
-echo.
-
-echo  [2/2] Starting runner...
+echo  Done!
 echo.
 
 py unified_runner.py
@@ -1020,11 +684,11 @@ pysocks>=1.7.1
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "telegram_crm_simplified.zip";
+    a.download = "telegram_crm_ultra.zip";
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("Simplified runner downloaded! ~600 lines of focused code.");
+    toast.success("Ultra-simplified runner downloaded!");
   };
 
   return (
@@ -1032,78 +696,78 @@ pysocks>=1.7.1
       <div className="space-y-6 max-w-3xl mx-auto">
         <PageHeader
           title="Setup"
-          description="Download simplified Python runner"
+          description="Download Python runner"
           icon={BookOpen}
         />
 
         <Card>
           <CardContent className="p-8 text-center space-y-6">
             <div className="space-y-2">
-              <h2 className="text-2xl font-bold">Simplified Unified Runner</h2>
+              <h2 className="text-2xl font-bold">Ultra-Simplified Runner</h2>
               <p className="text-muted-foreground text-sm">
-                ~600 lines instead of ~1200 • 3 core functions handle everything
+                Campaign = Conversation = Warmup — they ALL just send messages
               </p>
             </div>
             
             <div className="bg-muted/50 rounded-lg p-4 text-left text-sm space-y-3">
-              <p className="font-semibold text-primary">CORE INSIGHT:</p>
+              <p className="font-semibold text-primary">THE TRUTH:</p>
               <p className="text-muted-foreground">
-                All operations reduce to just <span className="text-primary font-medium">3 actions</span>:
+                No matter where you send from — Campaign, Conversation chat, or Warmup — 
+                it's the <span className="text-primary font-medium">same operation</span>: 
+                send a message from an account to a recipient.
               </p>
-              <ul className="space-y-2 ml-2">
-                <li className="flex items-start gap-2">
-                  <span className="text-primary font-mono text-xs bg-primary/10 px-2 py-0.5 rounded">send_message()</span>
-                  <span className="text-muted-foreground text-xs">Campaign, LiveChat, Warmup → all just send messages</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-primary font-mono text-xs bg-primary/10 px-2 py-0.5 rounded">receive_message()</span>
-                  <span className="text-muted-foreground text-xs">Event handlers on all clients capture incoming</span>
-                </li>
-                <li className="flex items-start gap-2">
-                  <span className="text-primary font-mono text-xs bg-primary/10 px-2 py-0.5 rounded">account_action()</span>
-                  <span className="text-muted-foreground text-xs">Spambot check, name change, join channel, etc.</span>
-                </li>
-              </ul>
+              <div className="border-t border-border pt-3 mt-3 space-y-2">
+                <p className="font-medium">2 Core Functions:</p>
+                <ul className="space-y-1 ml-2">
+                  <li className="flex items-center gap-2">
+                    <code className="text-primary text-xs bg-primary/10 px-2 py-0.5 rounded">send_message()</code>
+                    <span className="text-muted-foreground text-xs">— ALL sending operations</span>
+                  </li>
+                  <li className="flex items-center gap-2">
+                    <code className="text-primary text-xs bg-primary/10 px-2 py-0.5 rounded">account_action()</code>
+                    <span className="text-muted-foreground text-xs">— Spambot, name change, etc.</span>
+                  </li>
+                </ul>
+              </div>
             </div>
 
             <Button onClick={downloadZip} size="lg" className="gap-2">
               <Download className="w-5 h-5" />
-              Download Simplified Runner
+              Download Runner
             </Button>
             
-            <div className="text-xs text-muted-foreground space-y-1">
-              <p><strong>Scale:</strong> Handles 2000+ accounts with parallel task processing</p>
-              <p><strong>Usage:</strong> python unified_runner.py</p>
-            </div>
+            <p className="text-xs text-muted-foreground">
+              Handles 2000+ accounts • Parallel task processing • ~400 lines
+            </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardContent className="p-6 space-y-4">
-            <h3 className="font-semibold">Architecture</h3>
+            <h3 className="font-semibold">How It Works</h3>
             
             <div className="space-y-3 text-sm">
               <div className="flex gap-3">
                 <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold shrink-0">1</div>
                 <div>
-                  <p className="font-medium">Connect All Accounts (Parallel)</p>
-                  <p className="text-muted-foreground">Connects ALL active accounts with sessions, proxies, and fingerprints simultaneously.</p>
+                  <p className="font-medium">Connect All Accounts</p>
+                  <p className="text-muted-foreground">Parallel connection with proxy + fingerprint validation</p>
                 </div>
               </div>
               
               <div className="flex gap-3">
                 <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold shrink-0">2</div>
                 <div>
-                  <p className="font-medium">Setup Receive Handlers</p>
-                  <p className="text-muted-foreground">Installs <code className="text-xs bg-muted px-1 rounded">receive_message()</code> event handler on all connected clients.</p>
+                  <p className="font-medium">Setup Incoming Handlers</p>
+                  <p className="text-muted-foreground">Event handlers capture incoming messages automatically</p>
                 </div>
               </div>
               
               <div className="flex gap-3">
                 <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold shrink-0">3</div>
                 <div>
-                  <p className="font-medium">Process Tasks in Parallel</p>
-                  <p className="text-muted-foreground">Fetches batches of 100 tasks, routes to <code className="text-xs bg-muted px-1 rounded">send_message()</code> or <code className="text-xs bg-muted px-1 rounded">account_action()</code>.</p>
+                  <p className="font-medium">Process Tasks</p>
+                  <p className="text-muted-foreground">All tasks route to <code className="text-xs bg-muted px-1 rounded">send_message()</code> or <code className="text-xs bg-muted px-1 rounded">account_action()</code></p>
                 </div>
               </div>
             </div>
@@ -1112,58 +776,26 @@ pysocks>=1.7.1
 
         <Card>
           <CardContent className="p-6 space-y-4">
-            <h3 className="font-semibold">Task Type Mapping</h3>
+            <h3 className="font-semibold">Task → Function Mapping</h3>
             
-            <div className="text-sm overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b">
-                    <th className="pb-2 font-medium">Task Type</th>
-                    <th className="pb-2 font-medium">Core Function</th>
-                  </tr>
-                </thead>
-                <tbody className="text-muted-foreground">
-                  <tr className="border-b">
-                    <td className="py-2">send, campaign_send</td>
-                    <td className="py-2"><code className="text-xs bg-muted px-1 rounded">send_message()</code></td>
-                  </tr>
-                  <tr className="border-b">
-                    <td className="py-2">livechat_reply</td>
-                    <td className="py-2"><code className="text-xs bg-muted px-1 rounded">send_message()</code></td>
-                  </tr>
-                  <tr className="border-b">
-                    <td className="py-2">warmup_chat</td>
-                    <td className="py-2"><code className="text-xs bg-muted px-1 rounded">send_message()</code></td>
-                  </tr>
-                  <tr className="border-b">
-                    <td className="py-2">incoming messages</td>
-                    <td className="py-2"><code className="text-xs bg-muted px-1 rounded">receive_message()</code> (auto)</td>
-                  </tr>
-                  <tr className="border-b">
-                    <td className="py-2">spambot_check, change_name</td>
-                    <td className="py-2"><code className="text-xs bg-muted px-1 rounded">account_action()</code></td>
-                  </tr>
-                  <tr>
-                    <td className="py-2">warmup_add_contact, join_channel</td>
-                    <td className="py-2"><code className="text-xs bg-muted px-1 rounded">account_action()</code></td>
-                  </tr>
-                </tbody>
-              </table>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="bg-muted/30 p-3 rounded">
+                <p className="font-medium text-primary mb-2">send_message()</p>
+                <ul className="text-muted-foreground text-xs space-y-1">
+                  <li>• Campaign send</li>
+                  <li>• Conversation reply</li>
+                  <li>• Warmup chat</li>
+                </ul>
+              </div>
+              <div className="bg-muted/30 p-3 rounded">
+                <p className="font-medium text-primary mb-2">account_action()</p>
+                <ul className="text-muted-foreground text-xs space-y-1">
+                  <li>• Spambot check</li>
+                  <li>• Name change</li>
+                  <li>• Join channel</li>
+                </ul>
+              </div>
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            <h3 className="font-semibold">Benefits</h3>
-            
-            <ul className="text-sm text-muted-foreground space-y-2 list-disc ml-6">
-              <li><strong>Simpler Code:</strong> ~600 lines instead of ~1200 lines</li>
-              <li><strong>Single Send Function:</strong> One tested, reliable function for ALL sending</li>
-              <li><strong>Parallel Processing:</strong> All tasks processed concurrently</li>
-              <li><strong>Easy to Debug:</strong> Fewer code paths = fewer bugs</li>
-              <li><strong>Scale Ready:</strong> Handles 2000+ accounts efficiently</li>
-            </ul>
           </CardContent>
         </Card>
       </div>
