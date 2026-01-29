@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { selectNextApiCredential, selectMultipleApiCredentials, getNextApiCredential, getMultipleApiCredentials, hasAvailableApis } from "../_shared/api-helper.ts";
+import { selectNextApiCredential, selectMultipleApiCredentials, getNextApiCredential, getMultipleApiCredentials, hasAvailableApis, getApiCredentialsForAccount } from "../_shared/api-helper.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -146,10 +146,10 @@ serve(async (req) => {
             
             const proxy = Array.isArray(account.proxies) ? account.proxies[0] : account.proxies;
             
-            // ROUND-ROBIN API: Get API credentials from pool (NO INCREMENT - happens on success)
-            const accountFreshApi = await selectNextApiCredential(supabase);
-            if (!accountFreshApi) {
-              console.log('[get-next-task] No API credentials available for livechat batch');
+            // PER-ACCOUNT API PRIORITY: Use account's own credentials first, then pool
+            const accountCreds = await getApiCredentialsForAccount(supabase, account);
+            if (!accountCreds) {
+              console.log(`[get-next-task] No API credentials available for account ${account.id} (no per-account, pool empty)`);
               continue;
             }
             
@@ -164,9 +164,9 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: accountFreshApi.api_id,
-                api_hash: accountFreshApi.api_hash,
-                api_credential_id: accountFreshApi.id, // Track for usage reporting on success
+                api_id: accountCreds.api_id,
+                api_hash: accountCreds.api_hash,
+                api_credential_id: accountCreds.api_credential_id, // null for per-account, UUID for pool
                 proxy_id: account.proxy_id,
               },
               proxy: {
@@ -178,10 +178,9 @@ serve(async (req) => {
                 proxy_type: proxy.proxy_type,
                 type: proxy.proxy_type,
               },
-              // ROUND-ROBIN API: Each message gets API from the pool (NO INCREMENT - happens on success)
-              messages: await Promise.all(msgs.map(async (msg) => {
+              // Use same account credentials for all messages in batch (consistency)
+              messages: msgs.map((msg) => {
                 const conv = (msg as any).conversations || {};
-                const messageFreshApi = await selectNextApiCredential(supabase);
                 return {
                   id: msg.id,
                   content: msg.content,
@@ -192,15 +191,15 @@ serve(async (req) => {
                   recipient_username: conv.recipient_username,
                   recipient_phone: conv.recipient_phone,
                   recipient_name: conv.recipient_name,
-                  api_id: messageFreshApi?.api_id || accountFreshApi.api_id,
-                  api_hash: messageFreshApi?.api_hash || accountFreshApi.api_hash,
-                  api_credential_id: messageFreshApi?.id || accountFreshApi.id, // Track for usage reporting
+                  api_id: accountCreds.api_id,
+                  api_hash: accountCreds.api_hash,
+                  api_credential_id: accountCreds.api_credential_id,
                 };
-              })),
+              }),
             });
           }
           
-          console.log(`[get-next-task] PARALLEL livechat: ${allMsgIds.length} messages across ${batches.length} accounts`);
+          console.log(`[get-next-task] PARALLEL livechat: ${allMsgIds.length} messages across ${batches.length} accounts (per-account API priority)`);
           
           // Get all valid accounts for listening
           const { data: livechatAccounts } = await supabase
@@ -213,9 +212,9 @@ serve(async (req) => {
             .map(async (acc) => {
               const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
               if (!proxy || proxy.status !== "active") return null;
-              // ROUND-ROBIN API: Get from pool (NO INCREMENT - happens on success)
-              const freshApi = await selectNextApiCredential(supabase);
-              if (!freshApi) return null;
+              // PER-ACCOUNT API PRIORITY: Use account's own credentials first
+              const creds = await getApiCredentialsForAccount(supabase, acc);
+              if (!creds) return null;
               return {
                 id: acc.id,
                 phone_number: acc.phone_number,
@@ -226,9 +225,9 @@ serve(async (req) => {
                 app_version: acc.app_version,
                 lang_code: acc.lang_code,
                 system_lang_code: acc.system_lang_code,
-                api_id: freshApi.api_id,
-                api_hash: freshApi.api_hash,
-                api_credential_id: freshApi.id, // Track for usage reporting
+                api_id: creds.api_id,
+                api_hash: creds.api_hash,
+                api_credential_id: creds.api_credential_id,
                 proxy_id: acc.proxy_id,
                 proxy: {
                   id: proxy.id,
@@ -273,14 +272,14 @@ serve(async (req) => {
               .eq("status", "pending");
 
             const conv = (msg as any).conversations || {};
-            // ROUND-ROBIN API: Get from pool (NO INCREMENT - happens on success)
-            const freshApi = await selectNextApiCredential(supabase);
-            if (!freshApi) {
-              console.log('[get-next-task] No API credentials available for single livechat');
+            // PER-ACCOUNT API PRIORITY: Use account's own credentials first, then pool
+            const creds = await getApiCredentialsForAccount(supabase, account);
+            if (!creds) {
+              console.log(`[get-next-task] No API credentials available for single livechat (account ${account.id})`);
               continue;
             }
             
-            console.log(`[get-next-task] SINGLE livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority})`);
+            console.log(`[get-next-task] SINGLE livechat: msg ${msg.id.slice(0, 8)} (priority=${msg.priority}, per-account API: ${!!account.api_id})`);
             
             return new Response(JSON.stringify({
               task: "send",
@@ -306,9 +305,9 @@ serve(async (req) => {
                 app_version: account.app_version,
                 lang_code: account.lang_code,
                 system_lang_code: account.system_lang_code,
-                api_id: freshApi.api_id,
-                api_hash: freshApi.api_hash,
-                api_credential_id: freshApi.id, // Track for usage reporting on success
+                api_id: creds.api_id,
+                api_hash: creds.api_hash,
+                api_credential_id: creds.api_credential_id,
                 proxy: proxy,
               },
               mode: "live",
@@ -337,9 +336,9 @@ serve(async (req) => {
         .map(async (acc) => {
           const proxy = Array.isArray(acc.proxies) ? acc.proxies[0] : acc.proxies;
           if (!proxy || proxy.status !== "active") return null;
-          // ROUND-ROBIN API: Get from pool (NO INCREMENT - happens on success)
-          const freshApi = await selectNextApiCredential(supabase);
-          if (!freshApi) return null;
+          // PER-ACCOUNT API PRIORITY: Use account's own credentials first, then pool
+          const creds = await getApiCredentialsForAccount(supabase, acc);
+          if (!creds) return null;
           return {
             id: acc.id,
             phone_number: acc.phone_number,
@@ -350,9 +349,9 @@ serve(async (req) => {
             app_version: acc.app_version,
             lang_code: acc.lang_code,
             system_lang_code: acc.system_lang_code,
-            api_id: freshApi.api_id,
-            api_hash: freshApi.api_hash,
-            api_credential_id: freshApi.id, // Track for usage reporting
+            api_id: creds.api_id,
+            api_hash: creds.api_hash,
+            api_credential_id: creds.api_credential_id,
             proxy_id: acc.proxy_id,
             proxy: {
               id: proxy.id,

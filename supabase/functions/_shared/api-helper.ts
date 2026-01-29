@@ -246,3 +246,75 @@ export function hasApiCredentials(account: {
 }): boolean {
   return getAccountApiCredentials(account) !== null;
 }
+
+/**
+ * Get effective API credentials for an account.
+ * Priority order:
+ * 1. Account's own api_id + api_hash (from JSON import)
+ * 2. Pool credential (round-robin from telegram_api_credentials table)
+ * 
+ * @param account - Account with optional api_id and api_hash
+ * @param poolCredential - Optional pool credential as fallback
+ * @returns Effective credentials with api_credential_id for tracking (null if from account)
+ */
+export function getEffectiveApiCredentials(
+  account: { api_id?: string | null; api_hash?: string | null },
+  poolCredential: { id: string; api_id: string; api_hash: string } | null
+): { api_id: string; api_hash: string; api_credential_id: string | null } | null {
+  // Priority 1: Account's own credentials (from JSON import)
+  if (account.api_id && account.api_hash) {
+    console.log(`[api-helper] Using per-account credentials: ${account.api_id}`);
+    return {
+      api_id: account.api_id,
+      api_hash: account.api_hash,
+      api_credential_id: null, // No pool tracking for per-account credentials
+    };
+  }
+  
+  // Priority 2: Pool credential (round-robin)
+  if (poolCredential) {
+    console.log(`[api-helper] Using pool credential: ${poolCredential.api_id}`);
+    return {
+      api_id: poolCredential.api_id,
+      api_hash: poolCredential.api_hash,
+      api_credential_id: poolCredential.id,
+    };
+  }
+  
+  console.warn('[api-helper] No API credentials available (account has none, pool is empty)');
+  return null;
+}
+
+/**
+ * Get API credentials for an account, using per-account first then pool fallback.
+ * This is the main function to use for task dispatch.
+ * 
+ * @param supabase - Supabase client
+ * @param account - Account with optional api_id and api_hash
+ * @returns Credentials object or null if none available
+ */
+export async function getApiCredentialsForAccount(
+  supabase: any,
+  account: { api_id?: string | null; api_hash?: string | null }
+): Promise<{ api_id: string; api_hash: string; api_credential_id: string | null } | null> {
+  // Check account's own credentials first
+  if (account.api_id && account.api_hash) {
+    return {
+      api_id: account.api_id,
+      api_hash: account.api_hash,
+      api_credential_id: null,
+    };
+  }
+  
+  // Fallback to pool
+  const poolCred = await selectNextApiCredential(supabase);
+  if (poolCred) {
+    return {
+      api_id: poolCred.api_id,
+      api_hash: poolCred.api_hash,
+      api_credential_id: poolCred.id,
+    };
+  }
+  
+  return null;
+}

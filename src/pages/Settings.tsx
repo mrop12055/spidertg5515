@@ -13,14 +13,12 @@ import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { ApiCredentialsManager } from '@/components/settings/ApiCredentialsManager';
 import { 
   Bell, 
   Loader2,
   Save,
   Settings as SettingsIcon,
   MessageSquare,
-  Key
 } from 'lucide-react';
 
 const Settings: React.FC = () => {
@@ -34,9 +32,6 @@ const Settings: React.FC = () => {
     saveAllSettings, 
     updateSettings: updateDbSettings 
   } = useAppSettings();
-  
-  // Track active tab to conditionally show Save button
-  const [activeTab, setActiveTab] = useState('api');
   
   // Local UI settings
   const [localSettings, setLocalSettings] = useState({
@@ -100,12 +95,8 @@ const Settings: React.FC = () => {
           </Card>
         )}
 
-        <Tabs defaultValue="api" className="space-y-6" onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3 h-11">
-            <TabsTrigger value="api" className="gap-2">
-              <Key className="w-4 h-4" />
-              API Keys
-            </TabsTrigger>
+        <Tabs defaultValue="livechat" className="space-y-6">
+          <TabsList className="grid w-full grid-cols-2 h-11">
             <TabsTrigger value="livechat" className="gap-2">
               <MessageSquare className="w-4 h-4" />
               Livechat
@@ -115,11 +106,6 @@ const Settings: React.FC = () => {
               Notifications
             </TabsTrigger>
           </TabsList>
-
-          {/* API Credentials Tab */}
-          <TabsContent value="api" className="space-y-4 mt-0">
-            <ApiCredentialsManager />
-          </TabsContent>
 
           {/* Livechat Tab */}
           <TabsContent value="livechat" className="mt-0">
@@ -201,64 +187,62 @@ const Settings: React.FC = () => {
             </Card>
           </TabsContent>
 
-      {/* Notifications Tab */}
-      <TabsContent value="notifications" className="mt-0">
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg">Notification Preferences</CardTitle>
-            <CardDescription>
-              Configure how you want to be notified about events
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between py-2">
-              <div className="space-y-0.5">
-                <Label className="text-base">Reply Notifications</Label>
-                <p className="text-sm text-muted-foreground">
-                  Get notified when someone replies to your messages
-                </p>
-              </div>
-              <Switch
-                checked={localSettings.notifyOnReply}
-                onCheckedChange={(checked) => updateLocalSettings({ notifyOnReply: checked })}
-              />
-            </div>
-            <Separator />
-            <div className="flex items-center justify-between py-2">
-              <div className="space-y-0.5">
-                <Label className="text-base">Ban Alerts</Label>
-                <p className="text-sm text-muted-foreground">
-                  Get notified when an account gets banned or restricted
-                </p>
-              </div>
-              <Switch
-                checked={localSettings.notifyOnBan}
-                onCheckedChange={(checked) => updateLocalSettings({ notifyOnBan: checked })}
-              />
-            </div>
-          </CardContent>
-        </Card>
-      </TabsContent>
-    </Tabs>
+          {/* Notifications Tab */}
+          <TabsContent value="notifications" className="mt-0">
+            <Card>
+              <CardHeader className="pb-4">
+                <CardTitle className="text-lg">Notification Preferences</CardTitle>
+                <CardDescription>
+                  Configure how you want to be notified about events
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="flex items-center justify-between py-2">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Reply Notifications</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Get notified when someone replies to your messages
+                    </p>
+                  </div>
+                  <Switch
+                    checked={localSettings.notifyOnReply}
+                    onCheckedChange={(checked) => updateLocalSettings({ notifyOnReply: checked })}
+                  />
+                </div>
+                <Separator />
+                <div className="flex items-center justify-between py-2">
+                  <div className="space-y-0.5">
+                    <Label className="text-base">Ban Alerts</Label>
+                    <p className="text-sm text-muted-foreground">
+                      Get notified when an account gets banned or restricted
+                    </p>
+                  </div>
+                  <Switch
+                    checked={localSettings.notifyOnBan}
+                    onCheckedChange={(checked) => updateLocalSettings({ notifyOnBan: checked })}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
 
-        {/* Save Button - Only show for tabs that need it (not API Keys which saves immediately) */}
-        {activeTab !== 'api' && (
-          <div className="flex justify-end pt-4">
-            <Button onClick={handleSave} disabled={isSaving} size="lg" className="gap-2">
-              {isSaving ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <Save className="w-4 h-4" />
-                  Save Changes
-                </>
-              )}
-            </Button>
-          </div>
-        )}
+        {/* Save Button */}
+        <div className="flex justify-end pt-4">
+          <Button onClick={handleSave} disabled={isSaving} size="lg" className="gap-2">
+            {isSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Saving...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4" />
+                Save Changes
+              </>
+            )}
+          </Button>
+        </div>
       </div>
     </DashboardLayout>
   );

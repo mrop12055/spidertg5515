@@ -15,8 +15,15 @@ interface AccountData {
   last_name?: string;
   username?: string;
   session_data: string;
+  // Per-account API credentials from JSON metadata
   api_id?: string;
   api_hash?: string;
+  // Device fingerprint from JSON metadata
+  device_model?: string;
+  system_version?: string;
+  app_version?: string;
+  lang_code?: string;
+  system_lang_code?: string;
 }
 
 // Real device models as they appear in Telegram's device_model field
@@ -653,14 +660,30 @@ serve(async (req) => {
           finalStatus = extracted.isValid ? 'active' : 'disconnected';
         }
 
+        // Use JSON-provided device info if available, otherwise generate
+        const hasJsonFingerprint = account.device_model && account.system_version;
+        const deviceModel = hasJsonFingerprint ? account.device_model : fingerprint.device_model;
+        const systemVersion = hasJsonFingerprint ? account.system_version : fingerprint.system_version;
+        const appVersion = account.app_version || fingerprint.app_version;
+        const langCode = account.lang_code || fingerprint.lang_code;
+        const systemLangCode = account.system_lang_code || fingerprint.system_lang_code;
+        
+        if (hasJsonFingerprint) {
+          console.log(`[process-account-upload] Using JSON fingerprint for ${account.phone_number}: ${deviceModel} | ${systemVersion}`);
+        }
+        if (account.api_id && account.api_hash) {
+          console.log(`[process-account-upload] Using per-account API credentials for ${account.phone_number}: ${account.api_id}`);
+        }
+
         const accountData = {
           session_data: account.session_data,
           first_name: extracted.firstName || account.first_name || null,
           last_name: extracted.lastName || account.last_name || null,
           username: extracted.username || account.username || null,
           telegram_id: extracted.telegramId || null,
-          api_id: account.api_id,
-          api_hash: account.api_hash,
+          // Per-account API credentials from JSON
+          api_id: account.api_id || null,
+          api_hash: account.api_hash || null,
           status: finalStatus,
           last_active: extracted.isValid ? new Date().toISOString() : null,
           phone_country: phoneCountry,
@@ -668,13 +691,14 @@ serve(async (req) => {
             warmup_phase: 0,
             warmup_started_at: new Date().toISOString(),
           }),
+          // Use JSON fingerprint if provided, otherwise use generated (only for new accounts or accounts without fingerprint)
           ...(existing?.device_model ? {} : {
-            device_model: fingerprint.device_model,
-            system_version: fingerprint.system_version,
-            app_version: fingerprint.app_version,
-            lang_code: fingerprint.lang_code,
-            system_lang_code: fingerprint.system_lang_code,
-            build_id: fingerprint.build_id,
+            device_model: deviceModel,
+            system_version: systemVersion,
+            app_version: appVersion,
+            lang_code: langCode,
+            system_lang_code: systemLangCode,
+            build_id: hasJsonFingerprint ? null : fingerprint.build_id, // Don't override with generated if using JSON
           })
         };
 
@@ -691,16 +715,18 @@ serve(async (req) => {
         if (existing) {
           accountsToUpdate.push({ id: existing.id, data: accountData });
         } else {
+          // Use JSON fingerprint if provided, otherwise use generated
+          const hasJsonFingerprint = account.device_model && account.system_version;
           accountsToInsert.push({
             phone_number: account.phone_number,
             ...accountData,
             proxy_id: assignedProxyId, // Auto-assigned proxy (null if none available)
-            device_model: fingerprint.device_model,
-            system_version: fingerprint.system_version,
-            app_version: fingerprint.app_version,
-            lang_code: fingerprint.lang_code,
-            system_lang_code: fingerprint.system_lang_code,
-            build_id: fingerprint.build_id,
+            device_model: hasJsonFingerprint ? account.device_model : fingerprint.device_model,
+            system_version: hasJsonFingerprint ? account.system_version : fingerprint.system_version,
+            app_version: account.app_version || fingerprint.app_version,
+            lang_code: account.lang_code || fingerprint.lang_code,
+            system_lang_code: account.system_lang_code || fingerprint.system_lang_code,
+            build_id: hasJsonFingerprint ? null : fingerprint.build_id,
             maturity_score: 0,
             maturity_days: 0,
             daily_limit: 25,

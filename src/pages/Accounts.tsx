@@ -65,6 +65,25 @@ interface SessionFile {
   base64Data: string;
 }
 
+interface JsonMetadata {
+  app_id?: number | string;
+  app_hash?: string;
+  sdk?: string;  // Maps to system_version
+  device?: string;  // Maps to device_model
+  app_version?: string;
+  lang_pack?: string;  // Maps to lang_code
+  system_lang_pack?: string;  // Maps to system_lang_code
+  session_file?: string;
+  phone?: string;
+  twoFA?: string;
+}
+
+interface ParsedAccount {
+  phoneNumber: string;
+  sessionData: string;
+  metadata?: JsonMetadata;
+}
+
 interface VerifyResult {
   status: 'checking' | 'active' | 'disconnected' | 'banned';
   reason?: string;
@@ -538,31 +557,133 @@ const Accounts: React.FC = () => {
     });
   };
 
+  // Parse JSON metadata file
+  const parseJsonMetadata = async (file: File): Promise<{ phoneNumber: string; metadata: JsonMetadata } | null> => {
+    try {
+      const text = await file.text();
+      const json = JSON.parse(text) as JsonMetadata;
+      
+      // Extract phone from JSON or filename
+      const phone = json.phone || json.session_file || extractPhoneFromFilename(file.name).replace('+', '');
+      const phoneNumber = phone.startsWith('+') ? phone : `+${phone.replace(/\D/g, '')}`;
+      
+      return { phoneNumber, metadata: json };
+    } catch (error) {
+      console.error(`Error parsing JSON ${file.name}:`, error);
+      return null;
+    }
+  };
+
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    const validFiles = acceptedFiles.filter(f => f.name.endsWith('.session'));
+    // Separate files by type
+    const sessionFiles: File[] = [];
+    const jsonFiles: File[] = [];
+    const zipFiles: File[] = [];
     
-    if (validFiles.length === 0) {
-      toast.error('Please upload .session files');
+    for (const file of acceptedFiles) {
+      if (file.name.endsWith('.session')) {
+        sessionFiles.push(file);
+      } else if (file.name.endsWith('.json')) {
+        jsonFiles.push(file);
+      } else if (file.name.endsWith('.zip')) {
+        zipFiles.push(file);
+      }
+    }
+    
+    // Process ZIP files first (extract session + json pairs)
+    const extractedFromZip: { sessions: Map<string, File>; jsons: Map<string, File> } = { sessions: new Map(), jsons: new Map() };
+    
+    for (const zipFile of zipFiles) {
+      try {
+        const zip = await JSZip.loadAsync(zipFile);
+        for (const [filename, zipEntry] of Object.entries(zip.files)) {
+          if (zipEntry.dir) continue;
+          
+          const blob = await zipEntry.async('blob');
+          const extractedFile = new File([blob], filename.split('/').pop() || filename);
+          const phoneKey = extractPhoneFromFilename(filename).replace('+', '');
+          
+          if (filename.endsWith('.session')) {
+            extractedFromZip.sessions.set(phoneKey, extractedFile);
+          } else if (filename.endsWith('.json')) {
+            extractedFromZip.jsons.set(phoneKey, extractedFile);
+          }
+        }
+        toast.info(`Extracted ${extractedFromZip.sessions.size} sessions from ${zipFile.name}`);
+      } catch (error) {
+        console.error(`Error extracting ${zipFile.name}:`, error);
+        toast.error(`Failed to extract ${zipFile.name}`);
+      }
+    }
+    
+    // Combine extracted files with directly uploaded files
+    const allSessions = new Map<string, File>();
+    const allJsons = new Map<string, File>();
+    
+    // Add extracted files
+    extractedFromZip.sessions.forEach((file, key) => allSessions.set(key, file));
+    extractedFromZip.jsons.forEach((file, key) => allJsons.set(key, file));
+    
+    // Add directly uploaded files
+    for (const file of sessionFiles) {
+      const phoneKey = extractPhoneFromFilename(file.name).replace('+', '');
+      allSessions.set(phoneKey, file);
+    }
+    for (const file of jsonFiles) {
+      const phoneKey = extractPhoneFromFilename(file.name).replace('+', '');
+      allJsons.set(phoneKey, file);
+    }
+    
+    if (allSessions.size === 0) {
+      toast.error('No .session files found. Please upload .session files or a ZIP containing them.');
       return;
     }
 
-    toast.info(`Processing ${validFiles.length} file(s)...`);
+    toast.info(`Processing ${allSessions.size} account(s)...`);
     
     const processedFiles: SessionFile[] = [];
+    const jsonMetadataMap = new Map<string, JsonMetadata>();
     
-    for (const file of validFiles) {
+    // Parse all JSON metadata files first
+    for (const [phoneKey, jsonFile] of allJsons) {
+      const parsed = await parseJsonMetadata(jsonFile);
+      if (parsed) {
+        jsonMetadataMap.set(phoneKey, parsed.metadata);
+      }
+    }
+    
+    // Process session files with their matching JSON metadata
+    for (const [phoneKey, sessionFile] of allSessions) {
       try {
-        const base64Data = await fileToBase64(file);
-        const phoneNumber = extractPhoneFromFilename(file.name);
-        processedFiles.push({ file, phoneNumber, base64Data });
+        const base64Data = await fileToBase64(sessionFile);
+        const phoneNumber = `+${phoneKey}`;
+        const metadata = jsonMetadataMap.get(phoneKey);
+        
+        processedFiles.push({ 
+          file: sessionFile, 
+          phoneNumber, 
+          base64Data,
+          // Store metadata in a separate structure that we'll use during upload
+        });
+        
+        // Store metadata for later use
+        if (metadata) {
+          (processedFiles[processedFiles.length - 1] as any).metadata = metadata;
+        }
       } catch (error) {
-        console.error(`Error processing ${file.name}:`, error);
+        console.error(`Error processing ${sessionFile.name}:`, error);
       }
     }
 
     setSessionFiles(processedFiles);
     setUploadResults(null);
-    toast.success(`${processedFiles.length} file(s) ready`);
+    
+    const withMetadata = processedFiles.filter((f: any) => f.metadata).length;
+    if (withMetadata > 0) {
+      toast.success(`${processedFiles.length} account(s) ready (${withMetadata} with JSON metadata)`);
+    } else {
+      toast.success(`${processedFiles.length} account(s) ready`);
+    }
   }, []);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -570,6 +691,9 @@ const Accounts: React.FC = () => {
     accept: {
       'application/x-sqlite3': ['.session'],
       'application/octet-stream': ['.session'],
+      'application/json': ['.json'],
+      'application/zip': ['.zip'],
+      'application/x-zip-compressed': ['.zip'],
     },
     disabled: isUploading,
     multiple: true
@@ -585,10 +709,23 @@ const Accounts: React.FC = () => {
     setUploadResults(null);
 
     try {
-      const accountsToUpload = sessionFiles.map(sf => ({
-        phone_number: sf.phoneNumber,
-        session_data: sf.base64Data,
-      }));
+      // Build account data with JSON metadata if available
+      const accountsToUpload = sessionFiles.map(sf => {
+        const metadata = (sf as any).metadata as JsonMetadata | undefined;
+        return {
+          phone_number: sf.phoneNumber,
+          session_data: sf.base64Data,
+          // Include per-account API credentials from JSON
+          api_id: metadata?.app_id?.toString(),
+          api_hash: metadata?.app_hash,
+          // Include device fingerprint from JSON
+          device_model: metadata?.device,
+          system_version: metadata?.sdk,
+          app_version: metadata?.app_version,
+          lang_code: metadata?.lang_pack,
+          system_lang_code: metadata?.system_lang_pack,
+        };
+      });
 
       // Combine selected existing tags + new tag if entered
       const tagsToAssign = [...uploadTags];
