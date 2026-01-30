@@ -1,50 +1,64 @@
 
-# Fix Slow Sequential Unread Message Fetching
+
+# Fix: Only Fetch Incoming Messages (Skip Own Sent Messages)
 
 ## Problem
-When accounts reconnect, the runner fetches unread messages **sequentially** (one account at a time). With many accounts, this creates a bottleneck:
-- 50 accounts × ~5 seconds each = ~250 seconds (4+ minutes) of waiting
+When fetching unread messages during catch-up, the runner is also reporting messages that YOU sent. These get recorded as "recipient replied" even though they're your own outgoing messages.
 
-The issue is in `connect_all_from_response()` at lines 1166-1170:
-```python
-for aid in newly_connected:
-    if aid in clients:
-        await fetch_unread_messages(clients[aid], aid)  # Sequential!
-```
+## Root Cause
+In the `fetch_unread_messages()` function (lines 948-1006), the code fetches all messages from a dialog but never checks WHO sent each message. Telethon messages have an `out` property:
+- `msg.out = True` means YOU sent this message
+- `msg.out = False` means the OTHER person sent this message
+
+Currently, ALL messages are processed and reported as "incoming_message", even your own sent ones.
 
 ## Solution
-Change the sequential loop to use `asyncio.gather()` for parallel execution, exactly like how accounts are connected and tasks are processed.
+Add a simple check to skip outgoing messages:
+
+### File: `src/pages/SetupGuide.tsx`
+
+**Location:** Line 953-960, inside the message loop
+
+**Before:**
+```python
+for msg in reversed(messages):  # Process oldest first
+    if not msg.text and not msg.media:
+        continue
+    
+    # SKIP messages older than 24 hours
+    if msg.date and msg.date < cutoff_time:
+        skipped_old += 1
+        continue
+```
+
+**After:**
+```python
+for msg in reversed(messages):  # Process oldest first
+    if not msg.text and not msg.media:
+        continue
+    
+    # SKIP our own outgoing messages - only process incoming from recipient
+    if msg.out:
+        continue
+    
+    # SKIP messages older than 24 hours
+    if msg.date and msg.date < cutoff_time:
+        skipped_old += 1
+        continue
+```
 
 ## Technical Details
 
-### File: `src/pages/SetupGuide.tsx` (Python runner code)
+The `msg.out` property is a boolean provided by Telethon:
+- When `True`: This message was sent FROM the account (outgoing)
+- When `False`: This message was sent TO the account (incoming)
 
-**Location:** Lines 1166-1170 inside `connect_all_from_response()`
+By adding `if msg.out: continue`, we skip all outgoing messages and only process messages actually sent by the recipient.
 
-**Before (sequential):**
-```python
-for aid in newly_connected:
-    if aid in clients:
-        await fetch_unread_messages(clients[aid], aid)
-```
+## Expected Result
 
-**After (parallel):**
-```python
-# Fetch unread messages in PARALLEL for all newly connected accounts
-if newly_connected:
-    await asyncio.gather(
-        *[fetch_unread_messages(clients[aid], aid) 
-          for aid in newly_connected if aid in clients],
-        return_exceptions=True
-    )
-```
+| Before | After |
+|--------|-------|
+| Your sent messages + recipient messages all reported as "incoming" | Only recipient's messages reported |
+| Conversations show duplicate/wrong "recipient replied" entries | Clean incoming message history |
 
-## Expected Performance
-
-| Scenario | Before (Sequential) | After (Parallel) |
-|----------|---------------------|------------------|
-| 10 accounts | ~50 seconds | ~5 seconds |
-| 50 accounts | ~250 seconds | ~5-10 seconds |
-| 100 accounts | ~500 seconds | ~5-10 seconds |
-
-The parallel approach limits total time to the slowest single account rather than the sum of all accounts.
