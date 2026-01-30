@@ -1,84 +1,101 @@
 
-# Fix Campaign Page Real-Time Updates
 
-## Problem
-The campaign page shows stale values for pending, sent, and failed counts. The values only update after a full page refresh.
+# Fix Campaign Count Accuracy Issue
+
+## Problem Analysis
+
+The campaign counts (`sent_count`, `pending_count`, `failed_count`) in the `campaigns` table are completely inaccurate compared to the actual `campaign_recipients` data:
+
+**Current Database State:**
+- `campaigns` table shows: sent=378, pending=300, failed=22 (total: 700)
+- `campaign_recipients` actual data: sent=189, sending=81, pending=219, failed=11 (total: 500)
+
+The counts are nearly **double** what they should be, indicating the trigger is firing multiple times or the increment/decrement logic is not atomic.
 
 ## Root Cause
-The UI displays `campaign.sentCount`, `campaign.failedCount`, and `campaign.pendingCount` which come from the `campaigns` table via React Query. However:
 
-1. The `campaigns` table is not added to Supabase realtime publication
-2. The existing 3-second polling (`fetchRunningCampaignStats`) stores results in a separate `campaignReports` state map
-3. The UI reads from `campaign.sentCount` (React Query cache), not from `campaignReports`
-4. The database trigger updates `campaigns` table, but without realtime enabled, React Query never receives the updates
+The current trigger function `sync_campaign_counts()` executes **two separate UPDATE statements** when a status changes:
+1. First UPDATE to decrement the old status counter
+2. Second UPDATE to increment the new status counter
+
+Under high concurrency (which occurs during bulk campaign sends), these separate statements allow race conditions where:
+- Multiple transactions read stale values between the decrement and increment
+- Updates interleave and cause over-counting
 
 ## Solution
-Enable realtime on the `campaigns` table so the existing realtime subscription in `useCampaigns` can receive updates when the database trigger syncs the counts.
+
+Replace the trigger with a single **atomic UPDATE statement** that modifies multiple counters in one operation. This prevents any transaction from reading intermediate states.
 
 ## Technical Changes
 
-### 1. Enable Realtime for Campaigns Table (Database Migration)
+### 1. Replace Trigger Function with Atomic Updates
 
-Add the `campaigns` table to the Supabase realtime publication:
+Create a new version of `sync_campaign_counts()` that uses a single UPDATE statement with computed expressions:
 
 ```sql
--- Enable realtime for campaigns table so count updates are pushed to UI
-ALTER PUBLICATION supabase_realtime ADD TABLE public.campaigns;
+CREATE OR REPLACE FUNCTION public.sync_campaign_counts()
+  RETURNS trigger
+  LANGUAGE plpgsql
+AS $function$
+BEGIN
+  -- Handle INSERT: new recipient added
+  IF TG_OP = 'INSERT' THEN
+    UPDATE campaigns
+    SET 
+      pending_count = pending_count + CASE WHEN NEW.status IN ('pending', 'sending', 'queued') THEN 1 ELSE 0 END,
+      sent_count = sent_count + CASE WHEN NEW.status = 'sent' THEN 1 ELSE 0 END,
+      failed_count = failed_count + CASE WHEN NEW.status = 'failed' THEN 1 ELSE 0 END,
+      updated_at = now()
+    WHERE id = NEW.campaign_id;
+    RETURN NEW;
+  END IF;
+
+  -- Handle UPDATE: status changed - SINGLE atomic update for both decrement and increment
+  IF TG_OP = 'UPDATE' AND OLD.status IS DISTINCT FROM NEW.status THEN
+    UPDATE campaigns
+    SET 
+      pending_count = GREATEST(0, pending_count 
+        - CASE WHEN OLD.status IN ('pending', 'sending', 'queued') THEN 1 ELSE 0 END
+        + CASE WHEN NEW.status IN ('pending', 'sending', 'queued') THEN 1 ELSE 0 END),
+      sent_count = GREATEST(0, sent_count 
+        - CASE WHEN OLD.status = 'sent' THEN 1 ELSE 0 END
+        + CASE WHEN NEW.status = 'sent' THEN 1 ELSE 0 END),
+      failed_count = GREATEST(0, failed_count 
+        - CASE WHEN OLD.status = 'failed' THEN 1 ELSE 0 END
+        + CASE WHEN NEW.status = 'failed' THEN 1 ELSE 0 END),
+      updated_at = now()
+    WHERE id = NEW.campaign_id;
+  END IF;
+
+  RETURN COALESCE(NEW, OLD);
+END;
+$function$;
 ```
 
-### 2. Improve useCampaigns Hook to Immediately Refetch After Realtime Update
+### 2. Reset Corrupted Counts for Running Campaigns
 
-Currently the realtime subscription in `useCampaigns.ts` (lines 69-90) manually merges partial data from the payload. However, this may miss some fields. Update it to trigger a refetch for the specific campaign to ensure full data sync:
+The current counts are wrong. Run a one-time sync to fix them:
 
-```typescript
-// In useCampaigns.ts, around line 69-90
-} else if (payload.eventType === 'UPDATE') {
-  // For updates to counts, the trigger updates the campaigns table
-  // Merge the updated fields into the cache immediately
-  const updated = payload.new as any;
-  queryClient.setQueryData<Campaign[]>(['campaigns'], (old) => {
-    if (!old) return [];
-    return old.map(c => {
-      if (c.id !== updated.id) return c;
-      return {
-        ...c,
-        name: updated.name,
-        messageTemplate: updated.message_template,
-        status: updated.status,
-        scheduledAt: updated.scheduled_at ? new Date(updated.scheduled_at) : undefined,
-        recipientCount: updated.recipient_count ?? c.recipientCount,
-        sentCount: updated.sent_count ?? c.sentCount,
-        failedCount: updated.failed_count ?? c.failedCount,
-        pendingCount: updated.pending_count ?? c.pendingCount,
-        replyCount: updated.reply_count ?? c.replyCount,
-        updatedAt: new Date(updated.updated_at),
-      };
-    });
-  });
-}
+```sql
+-- Sync all campaign counters from actual recipient data
+UPDATE campaigns c
+SET 
+  sent_count = (SELECT COUNT(*) FROM campaign_recipients cr WHERE cr.campaign_id = c.id AND cr.status = 'sent'),
+  failed_count = (SELECT COUNT(*) FROM campaign_recipients cr WHERE cr.campaign_id = c.id AND cr.status = 'failed'),
+  pending_count = (SELECT COUNT(*) FROM campaign_recipients cr WHERE cr.campaign_id = c.id AND cr.status IN ('pending', 'sending', 'queued')),
+  recipient_count = (SELECT COUNT(*) FROM campaign_recipients cr WHERE cr.campaign_id = c.id);
 ```
 
-The current code already does this - the issue is just that realtime isn't enabled on the table.
+## Why This Works
 
-## Data Flow After Fix
+By combining the decrement and increment into a **single UPDATE statement**, PostgreSQL guarantees that:
+1. The entire operation is atomic - no other transaction can see intermediate states
+2. The row-level lock is held for the minimum time
+3. All counter changes happen together, preventing race conditions
 
-```text
-1. Runner sends message → campaign_recipient status changes to 'sent'
-2. Database trigger sync_campaign_counts fires → updates campaigns.sent_count
-3. Supabase Realtime broadcasts UPDATE event (now enabled)
-4. useCampaigns hook receives payload with new sent_count
-5. React Query cache updates → UI re-renders with new count
-```
+## Implementation Steps
 
-## Why This Approach
+1. Deploy the new trigger function (single atomic UPDATE)
+2. Execute the one-time sync to fix corrupted counts
+3. Verify counts update correctly during a running campaign
 
-- Leverages existing infrastructure (trigger already updates counts, hook already has realtime subscription)
-- Minimal code changes (just enable realtime publication)
-- No additional polling needed
-- Instant updates without network overhead of frequent polling
-
-## Testing Checklist
-
-- Start a campaign with recipients
-- Observe that sent/failed/pending counts update automatically without page refresh
-- Verify counts match after campaign completes
