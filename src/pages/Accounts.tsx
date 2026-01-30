@@ -75,9 +75,17 @@ interface JsonMetadata {
   // Device fingerprint (multiple naming conventions)
   sdk?: string;  // Maps to system_version
   system_version?: string;
+  systemVersion?: string;  // camelCase
+  os_version?: string;  // alternative
   device?: string;  // Maps to device_model
   device_model?: string;
+  deviceModel?: string;  // camelCase
+  model?: string;  // shorthand
+  device_info?: string;  // alternative
+  deviceInfo?: string;  // camelCase
   app_version?: string;
+  appVersion?: string;  // camelCase
+  version?: string;  // shorthand
   build_id?: string;
   
   // Language settings
@@ -752,10 +760,10 @@ const Accounts: React.FC = () => {
           // API credentials - try multiple field names (api_id/app_id, api_hash/app_hash)
           api_id: (metadata?.api_id || metadata?.app_id)?.toString(),
           api_hash: metadata?.api_hash || metadata?.app_hash,
-          // Device fingerprint - try multiple field names (device_model/device, system_version/sdk)
-          device_model: metadata?.device_model || metadata?.device,
-          system_version: metadata?.system_version || metadata?.sdk,
-          app_version: metadata?.app_version,
+          // Device fingerprint - try all known field name variations
+          device_model: metadata?.device_model || metadata?.device || metadata?.deviceModel || metadata?.model || metadata?.device_info || metadata?.deviceInfo,
+          system_version: metadata?.system_version || metadata?.sdk || metadata?.systemVersion || metadata?.os_version,
+          app_version: metadata?.app_version || metadata?.appVersion || metadata?.version,
           build_id: metadata?.build_id,
           // Language settings - try multiple field names
           lang_code: metadata?.lang_code || metadata?.lang_pack,
