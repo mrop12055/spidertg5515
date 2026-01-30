@@ -75,17 +75,9 @@ interface JsonMetadata {
   // Device fingerprint (multiple naming conventions)
   sdk?: string;  // Maps to system_version
   system_version?: string;
-  systemVersion?: string;  // camelCase
-  os_version?: string;  // alternative
   device?: string;  // Maps to device_model
   device_model?: string;
-  deviceModel?: string;  // camelCase
-  model?: string;  // shorthand
-  device_info?: string;  // alternative
-  deviceInfo?: string;  // camelCase
   app_version?: string;
-  appVersion?: string;  // camelCase
-  version?: string;  // shorthand
   build_id?: string;
   
   // Language settings
@@ -576,10 +568,7 @@ const Accounts: React.FC = () => {
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
-    // Remove BOTH .session and .json extensions to ensure proper matching
-    const baseName = filename
-      .replace(/\.session$/i, '')
-      .replace(/\.json$/i, '');
+    const baseName = filename.replace(/\.session$/i, '');
     const digits = baseName.replace(/\D/g, '');
     if (!digits) {
       return `+unknown_${Date.now()}`;
@@ -689,28 +678,19 @@ const Accounts: React.FC = () => {
     const jsonMetadataMap = new Map<string, JsonMetadata>();
     
     // Parse all JSON metadata files first
-    console.log('[JSON Parsing] Found JSON files:', Array.from(allJsons.keys()));
     for (const [phoneKey, jsonFile] of allJsons) {
       const parsed = await parseJsonMetadata(jsonFile);
       if (parsed) {
-        console.log(`[JSON Parsing] Parsed ${jsonFile.name} -> key: "${phoneKey}", metadata:`, parsed.metadata);
         jsonMetadataMap.set(phoneKey, parsed.metadata);
       }
     }
-    console.log('[JSON Parsing] Metadata map keys:', Array.from(jsonMetadataMap.keys()));
     
     // Process session files with their matching JSON metadata
-    console.log('[Session Matching] Session file keys:', Array.from(allSessions.keys()));
     for (const [phoneKey, sessionFile] of allSessions) {
       try {
         const base64Data = await fileToBase64(sessionFile);
         const phoneNumber = `+${phoneKey}`;
         const metadata = jsonMetadataMap.get(phoneKey);
-        
-        console.log(`[Session Matching] ${phoneKey}: metadata found = ${!!metadata}`);
-        if (!metadata) {
-          console.log(`[Session Matching] Available keys in map:`, Array.from(jsonMetadataMap.keys()));
-        }
         
         processedFiles.push({ 
           file: sessionFile, 
@@ -766,30 +746,16 @@ const Accounts: React.FC = () => {
       // Handle all known field name variations from different JSON formats
       const accountsToUpload = sessionFiles.map(sf => {
         const metadata = (sf as any).metadata as JsonMetadata | undefined;
-        
-        // Debug: Log metadata detection for troubleshooting
-        if (metadata) {
-          console.log(`[Upload] ${sf.phoneNumber} metadata keys:`, Object.keys(metadata));
-          console.log(`[Upload] ${sf.phoneNumber} device_model candidates:`, {
-            device_model: metadata.device_model,
-            device: metadata.device,
-            deviceModel: metadata.deviceModel,
-            model: metadata.model,
-          });
-        } else {
-          console.log(`[Upload] ${sf.phoneNumber} has NO metadata attached`);
-        }
-        
         return {
           phone_number: sf.phoneNumber,
           session_data: sf.base64Data,
           // API credentials - try multiple field names (api_id/app_id, api_hash/app_hash)
           api_id: (metadata?.api_id || metadata?.app_id)?.toString(),
           api_hash: metadata?.api_hash || metadata?.app_hash,
-          // Device fingerprint - try all known field name variations
-          device_model: metadata?.device_model || metadata?.device || metadata?.deviceModel || metadata?.model || metadata?.device_info || metadata?.deviceInfo,
-          system_version: metadata?.system_version || metadata?.sdk || metadata?.systemVersion || metadata?.os_version,
-          app_version: metadata?.app_version || metadata?.appVersion || metadata?.version,
+          // Device fingerprint - try multiple field names (device_model/device, system_version/sdk)
+          device_model: metadata?.device_model || metadata?.device,
+          system_version: metadata?.system_version || metadata?.sdk,
+          app_version: metadata?.app_version,
           build_id: metadata?.build_id,
           // Language settings - try multiple field names
           lang_code: metadata?.lang_code || metadata?.lang_pack,
