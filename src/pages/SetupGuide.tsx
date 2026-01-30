@@ -209,13 +209,13 @@ async def update_proxy_status(proxy_id: str, status: str, error_msg: str = None)
         pass
 
 
-async def get_tasks(batch_size: int = 100) -> dict:
-    """Fetch tasks AND accounts from unified endpoint."""
+async def get_tasks() -> dict:
+    """Fetch tasks AND accounts from unified endpoint. Backend controls batch size."""
     try:
         r = await get_http().post(
             f"{BACKEND_URL}/runner-tasks/get",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"runner": "unified", "batch_size": batch_size}, timeout=60
+            json={"runner": "unified"}, timeout=60
         )
         return r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
     except:
@@ -1414,10 +1414,6 @@ async def main():
     _, _ = await connect_all_from_response(initial_accounts)
     await setup_handlers()
     
-    # Get configured batch size from settings (default 100)
-    config_batch_size = initial.get("config", {}).get("campaignBatchSize", 100)
-    print(f"  Using batch size: {config_batch_size} (from settings)")
-    
     print("\\n" + "="*50)
     print("  PROCESSING TASKS + LISTENING FOR MESSAGES")
     print("="*50 + "\\n")
@@ -1427,8 +1423,8 @@ async def main():
     
     while RUNNING:
         try:
-            # Get tasks using configured batch size
-            batch = await get_tasks(config_batch_size)
+            # Get tasks (backend controls batch size from admin settings)
+            batch = await get_tasks()
             tasks = batch.get("tasks", [])
             batch_accounts = batch.get("accounts", [])
             
