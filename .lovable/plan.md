@@ -1,141 +1,121 @@
 
 
-# Fetch Messages Based on Runner's Last Offline Time
+# Remove Batch Control from Python Runner
 
-## Current Behavior
-The runner uses a fixed **24-hour cutoff** when fetching unread messages during catch-up:
-```python
-cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+## Problem
+Currently, the Python runner fetches `campaignBatchSize` from settings on startup and uses it to request tasks. This means:
+1. Changing batch size in Admin UI requires runner restart
+2. Runner is unnecessarily controlling batch size when backend already handles it
+
+## Current Flow
+```
+Runner startup → Get campaignBatchSize (100) → Use for all get_tasks() calls
+Admin changes batch to 500 → Runner still uses 100 (until restart)
 ```
 
-This is wasteful - if the runner was only offline for 5 minutes, it still tries to process messages from the last 24 hours.
-
 ## Solution
-Use the `last_offline_at` timestamp from the `runner_heartbeats` table to determine the actual offline duration, and only fetch messages from that time onwards.
+Remove batch_size control from Python runner entirely. The backend's `/get` endpoint already:
+- Reads `campaignBatchSize` from `app_settings` on every request
+- Applies it to the `.limit(batch_size)` in queries
+- Returns only the appropriate number of tasks
+
+The runner should just ask for tasks without specifying a limit, and process whatever it receives.
 
 ## Technical Changes
 
-### 1. Backend: Include `last_offline_at` in `/get` Response
+### File: `src/pages/SetupGuide.tsx`
 
-**File:** `supabase/functions/runner-tasks/index.ts`
+**Change 1: Simplify `get_tasks()` function (lines 212-222)**
 
-**Location:** Inside `handleGetTasks()`, after recording heartbeat (around line 180-183)
-
-```typescript
-// After the heartbeat upsert, fetch the previous offline timestamp
-let lastOfflineAt: string | null = null;
-if (runner) {
-  const { data: heartbeat } = await supabase
-    .from("runner_heartbeats")
-    .select("last_offline_at")
-    .eq("runner_name", runner)
-    .single();
-  
-  lastOfflineAt = heartbeat?.last_offline_at || null;
-}
-```
-
-**Location:** At the response (around line 548-559), add `last_offline_at` to the response:
-
-```typescript
-return jsonResponse({
-  tasks,
-  accounts: listeningAccounts,
-  delay_after: tasks.length > 0 ? config.campaignPollingInterval : 5,
-  settings: config.livechatSettings,
-  last_offline_at: lastOfflineAt,  // NEW
-  config: {
-    // ... existing config
-  },
-});
-```
-
-### 2. Python Runner: Track and Use Last Offline Time
-
-**File:** `src/pages/SetupGuide.tsx`
-
-**Change 1:** Add global variable to track last offline time (near line 59-60)
+Remove the `batch_size` parameter - let backend decide:
 
 ```python
-# Track when the runner was last offline (fetched from backend)
-last_offline_at: Optional[str] = None
-```
-
-**Change 2:** Update `fetch_unread_messages()` to use dynamic cutoff (lines 920-928)
-
-```python
-async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str] = None):
-    """Fetch and report unread messages from contacts after reconnection."""
-    global last_offline_at
-    acc = accounts.get(acc_id, {})
-    phone = acc.get("phone_number", "????")[-4:]
-    
-    from datetime import datetime, timedelta, timezone
-    
-    # Use last_offline_at if available, otherwise default to 24h
-    if offline_since:
-        try:
-            cutoff_time = datetime.fromisoformat(offline_since.replace('Z', '+00:00'))
-            # Add small buffer (5 min before offline) to catch edge cases
-            cutoff_time = cutoff_time - timedelta(minutes=5)
-        except:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
-    elif last_offline_at:
-        try:
-            cutoff_time = datetime.fromisoformat(last_offline_at.replace('Z', '+00:00'))
-            cutoff_time = cutoff_time - timedelta(minutes=5)
-        except:
-            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
-    else:
-        # First startup or unknown - use 24h default
-        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
-    
-    hours_back = (datetime.now(timezone.utc) - cutoff_time).total_seconds() / 3600
-    
+# Before:
+async def get_tasks(batch_size: int = 100) -> dict:
+    """Fetch tasks AND accounts from unified endpoint."""
     try:
-        print(f"  [CATCHUP] [{phone}] Fetching unread messages (last {hours_back:.1f}h)...")
+        r = await get_http().post(
+            f"{BACKEND_URL}/runner-tasks/get",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+            json={"runner": "unified", "batch_size": batch_size}, timeout=60
+        )
+        return r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
+    except:
+        return {"tasks": [], "accounts": []}
+
+# After:
+async def get_tasks() -> dict:
+    """Fetch tasks AND accounts from unified endpoint."""
+    try:
+        r = await get_http().post(
+            f"{BACKEND_URL}/runner-tasks/get",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+            json={"runner": "unified"}, timeout=60
+        )
+        return r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
+    except:
+        return {"tasks": [], "accounts": []}
 ```
 
-**Change 3:** Store `last_offline_at` when getting initial tasks (lines 1365-1370)
+**Change 2: Remove batch size fetching from initial setup (lines 1417-1419)**
+
+Remove these lines that fetch and store the batch size:
 
 ```python
-initial = await get_tasks(100)
-initial_accounts = initial.get("accounts", [])
-
-# Store the last offline timestamp from backend
-last_offline_at = initial.get("last_offline_at")
-if last_offline_at:
-    print(f"  Runner last offline at: {last_offline_at}")
-
-_, _ = await connect_all_from_response(initial_accounts)
+# Remove these lines:
+    # Get configured batch size from settings (default 100)
+    config_batch_size = initial.get("config", {}).get("campaignBatchSize", 100)
+    print(f"  Using batch size: {config_batch_size} (from settings)")
 ```
 
-**Change 4:** Pass offline time to catch-up function (inside `connect_all_from_response`, lines 1186-1192)
+**Change 3: Simplify main loop task fetching (lines 1430-1431)**
+
+Update to call `get_tasks()` without parameter:
 
 ```python
-# Fetch unread messages in PARALLEL, using last_offline_at for cutoff
-if newly_connected:
-    await asyncio.gather(
-        *[fetch_unread_messages(clients[aid], aid, last_offline_at) 
-          for aid in newly_connected if aid in clients],
-        return_exceptions=True
-    )
+# Before:
+            batch = await get_tasks(config_batch_size)
+
+# After:
+            batch = await get_tasks()
 ```
 
-## Expected Behavior
+### File: `supabase/functions/runner-tasks/index.ts`
+
+**Change: Use settings-based batch size as default (line 173)**
+
+Update to use the configured batch size from settings when runner doesn't specify one:
+
+```typescript
+// Before:
+const { runner, batch_size = 100, account_ids } = body;
+
+// After:
+async function handleGetTasks(supabase: any, body: any) {
+  const { runner, account_ids } = body;
+  const nowIso = new Date().toISOString();
+  
+  // Get settings first (cached)
+  const settingsData = await getCachedSettings(supabase);
+  const config = parseSettings(settingsData);
+  
+  // Use configured batch size from settings, not from runner request
+  const batch_size = config.campaignBatchSize;
+  
+  console.log(`[runner-tasks/get] Runner: ${runner}, batch_size: ${batch_size} (from settings)`);
+  // ... rest of function
+```
+
+## Expected Behavior After Changes
 
 | Scenario | Before | After |
 |----------|--------|-------|
-| Runner offline 5 minutes | Fetches 24h of messages | Fetches ~10 minutes of messages |
-| Runner offline 2 hours | Fetches 24h of messages | Fetches ~2h 5min of messages |
-| First startup (no data) | Fetches 24h of messages | Fetches 24h of messages (default) |
-| Runner offline 3 days | Fetches 24h of messages | Fetches 24h of messages (capped) |
+| Admin changes batch 100→500 | Runner keeps using 100 until restart | Immediately uses 500 on next request |
+| Runner requests tasks | Sends `batch_size: 100` in request | No batch_size in request, backend decides |
+| Backend returns tasks | Limited by runner's requested batch | Limited by admin-configured batch |
 
-Note: We cap at 24 hours maximum since older messages are unlikely to be relevant, and Telegram dialogs may not have them cached anyway.
-
-## Safety Measures
-
-1. **5-minute buffer**: We subtract 5 minutes from the offline timestamp to catch any messages that arrived just before the runner went offline
-2. **24-hour fallback**: If parsing fails or no data exists, we default to the existing 24-hour window
-3. **Backend deduplication still active**: Even if we fetch duplicates, the backend's `telegram_message_id` deduplication prevents issues
+## Benefits
+1. **No restart required** - Admin can change batch size dynamically
+2. **Single source of truth** - Backend controls all speed settings
+3. **Simpler runner code** - Runner just processes what it receives
 
