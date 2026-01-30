@@ -846,9 +846,9 @@ async def on_message(event, acc_id: str):
         if not sender or not isinstance(sender, User) or getattr(sender, 'bot', False):
             return
         
-        # Only process messages from contacts (imported campaign recipients)
-        if not getattr(sender, 'contact', False):
-            return
+        # REMOVED contact filter - let backend handle conversation matching
+        # All private messages from real users are now reported
+        # Backend will create/update conversations based on existing campaign recipients
         
         phone = None
         if hasattr(sender, 'phone') and sender.phone:
@@ -899,8 +899,10 @@ async def on_message(event, acc_id: str):
             "media_url": media_url,
             "media_type": media_type
         })
-    except:
-        pass
+    except Exception as e:
+        acc = accounts.get(acc_id, {})
+        phone = acc.get('phone_number', '?')[-4:]
+        print(f"  [MSG-ERR] [{phone}] Error handling incoming: {str(e)[:80]}")
 
 
 # ==============================================================================
@@ -922,9 +924,7 @@ async def fetch_unread_messages(client, acc_id: str):
         
         total_fetched = 0
         skipped_old = 0
-        
-        contacts_found = 0
-        non_contacts_skipped = 0
+        users_with_messages = 0
         
         for dialog in dialogs:
             # Only process direct user chats (not groups/channels)
@@ -937,16 +937,8 @@ async def fetch_unread_messages(client, acc_id: str):
             if getattr(entity, 'bot', False):
                 continue
             
-            # Only sync messages from contacts (imported campaign recipients)
-            is_contact = getattr(entity, 'contact', False)
-            if not is_contact:
-                if dialog.unread_count > 0:
-                    name = f"{getattr(entity, 'first_name', '') or ''} {getattr(entity, 'last_name', '') or ''}".strip() or str(entity.id)
-                    print(f"    [SKIP] {name} has {dialog.unread_count} unread but is NOT a contact")
-                    non_contacts_skipped += 1
-                continue
-            
-            contacts_found += 1
+            # REMOVED contact filter - sync all unread messages from users
+            # Backend will handle conversation matching
             
             # Skip if no unread messages
             if dialog.unread_count == 0:
@@ -1014,13 +1006,15 @@ async def fetch_unread_messages(client, acc_id: str):
                 })
                 total_fetched += 1
             
+            users_with_messages += 1
+            
             # Always mark messages as read (even old ones)
             await client.send_read_acknowledge(dialog.entity)
         
-        if total_fetched > 0 or skipped_old > 0 or non_contacts_skipped > 0:
-            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages, skipped {skipped_old} old, {non_contacts_skipped} non-contacts (found {contacts_found} contacts)")
+        if total_fetched > 0 or skipped_old > 0:
+            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages from {users_with_messages} users, skipped {skipped_old} old")
         else:
-            print(f"  [CATCHUP] [{phone}] No unread messages (found {contacts_found} contacts in dialogs)")
+            print(f"  [CATCHUP] [{phone}] No unread messages")
             
     except Exception as e:
         print(f"  [CATCHUP] [{phone}] Error: {str(e)[:50]}")
