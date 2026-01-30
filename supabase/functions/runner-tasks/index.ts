@@ -773,11 +773,13 @@ async function handleReportResults(supabase: any, body: any) {
 
     if (taskType === "send") {
       if (isAccountError && r.account_id) {
-        // === ACCOUNT ERROR: Put account in cooldown, reset recipient for retry ===
-        console.log(`[runner-tasks/report] Account error detected: ${r.error} - putting account ${r.account_id} in cooldown`);
+        // === ACCOUNT ERROR: Put account in cooldown/restricted, reset recipient for retry ===
+        const isPeerFlood = errorLower.includes('peerflood');
         
-        // Extract FloodWait duration if present (e.g., "FloodWait:300s" -> 300 seconds)
-        let cooldownMinutes = 30; // Default 30 minutes
+        // PeerFlood = 12 hours (serious restriction, can't message new users)
+        // FloodWait = extract duration + 5 min buffer
+        // Other errors = 30 minutes default
+        let cooldownMinutes = isPeerFlood ? 720 : 30; // 720 = 12 hours
         const floodWaitMatch = (r.error || '').match(/floodwait[:\s]*(\d+)/i);
         if (floodWaitMatch) {
           const waitSeconds = parseInt(floodWaitMatch[1], 10);
@@ -785,12 +787,16 @@ async function handleReportResults(supabase: any, body: any) {
         }
         
         const cooldownUntil = new Date(Date.now() + cooldownMinutes * 60 * 1000).toISOString();
+        const newStatus = isPeerFlood ? "restricted" : "cooldown";
         
-        // Put account in cooldown
+        console.log(`[runner-tasks/report] Account error: ${r.error} - setting ${r.account_id} to ${newStatus} for ${cooldownMinutes} minutes`);
+        
+        // Put account in cooldown or restricted
         await supabase.from("telegram_accounts")
           .update({ 
-            status: "cooldown", 
+            status: newStatus, 
             cooldown_until: cooldownUntil,
+            restricted_until: cooldownUntil, // Set both for compatibility
             ban_reason: r.error 
           })
           .eq("id", r.account_id);
@@ -861,12 +867,17 @@ async function handleReportResults(supabase: any, body: any) {
           .eq("id", r.pair_id);
       }
       
-      // Also put account in cooldown for account-level errors during warmup
+      // Also put account in cooldown/restricted for account-level errors during warmup
       if (isAccountError && r.account_id) {
+        const isPeerFlood = errorLower.includes('peerflood');
+        const cooldownMinutes = isPeerFlood ? 720 : 30;
+        const cooldownUntil = new Date(Date.now() + cooldownMinutes * 60 * 1000).toISOString();
+        
         await supabase.from("telegram_accounts")
           .update({ 
-            status: "cooldown", 
-            cooldown_until: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            status: isPeerFlood ? "restricted" : "cooldown", 
+            cooldown_until: cooldownUntil,
+            restricted_until: cooldownUntil,
             ban_reason: r.error 
           })
           .eq("id", r.account_id);
