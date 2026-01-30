@@ -175,8 +175,18 @@ async function handleGetTasks(supabase: any, body: any) {
 
   console.log(`[runner-tasks/get] Runner: ${runner}, batch_size: ${batch_size}`);
 
-  // Record heartbeat
+  // Fetch last_offline_at BEFORE updating heartbeat (to know when we were last offline)
+  let lastOfflineAt: string | null = null;
   if (runner) {
+    const { data: heartbeat } = await supabase
+      .from("runner_heartbeats")
+      .select("last_offline_at")
+      .eq("runner_name", runner)
+      .single();
+    
+    lastOfflineAt = heartbeat?.last_offline_at || null;
+    
+    // Now record the heartbeat (this updates last_seen)
     supabase.from("runner_heartbeats")
       .upsert({ runner_name: runner, last_seen: nowIso, status: 'online' }, { onConflict: 'runner_name' })
       .then(() => {});
@@ -550,6 +560,7 @@ async function handleGetTasks(supabase: any, body: any) {
     accounts: listeningAccounts,
     delay_after: tasks.length > 0 ? config.campaignPollingInterval : 5,
     settings: config.livechatSettings,
+    last_offline_at: lastOfflineAt,  // Include runner's last offline time for smart catch-up
     config: {
       campaignBatchSize: config.campaignBatchSize,
       warmupBatchSize: config.warmupBatchSize,
