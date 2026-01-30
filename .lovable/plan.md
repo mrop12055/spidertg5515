@@ -1,131 +1,229 @@
 
+# Plan: Fix Incoming Media (Picture) Receiving
 
-# Plan: Fix Profile Sync to Update Account Avatar
+## Overview
 
-## The Problem
-
-When you run "Sync Profile", the account's name, username, and telegram_id are updated correctly, but the **profile picture is never synced** to the admin dashboard.
-
-**Root Cause:**
-
-| Component | Current Behavior | Issue |
-|-----------|------------------|-------|
-| Python Runner | Reports `avatar_id` (just a reference ID) | Does NOT download the actual photo |
-| Edge Function | Ignores `avatar_id` completely | Never updates `avatar_url` in database |
-| Result | Avatar never appears | Missing end-to-end implementation |
+Modify the Python runner and Edge Function to properly download, store, and display incoming media (photos, videos, documents) in the admin dashboard.
 
 ---
 
-## Solution
+## Current vs Fixed Flow
 
-Modify the Python runner to **download the actual profile photo** and upload it to Supabase Storage, then update the Edge Function to save the URL.
+```text
+CURRENT (Broken):
+1. User receives photo on Telegram
+2. Python runner reports: {"content": "[Media]"}
+3. Edge saves message with no media_url
+4. UI shows "[Media]" text - no picture!
+
+FIXED:
+1. User receives photo on Telegram
+2. Python downloads photo as bytes
+3. Python sends base64 to Edge Function
+4. Edge uploads to Supabase Storage
+5. Edge saves message with media_url
+6. UI displays the actual image!
+```
 
 ---
 
 ## Technical Changes
 
-### 1. Python Runner (`src/pages/SetupGuide.tsx`)
+### 1. Python Runner - Download Incoming Media
 
-**Location**: Lines 622-650 (sync_profile action)
+**File**: `src/pages/SetupGuide.tsx`
 
-**Changes**:
-- Download the profile photo from Telegram
-- Upload it to Supabase Storage (`message-attachments` bucket)
-- Report the public URL instead of just an ID
+**Change 1**: Update `on_message()` handler (lines 819-846) to download media
 
 ```python
-elif action == "sync_profile":
-    print(f"  [SYNC] [{phone}] Fetching profile from Telegram...")
-    me = await asyncio.wait_for(client.get_me(), timeout=15)
-    
-    if me:
-        avatar_url = None
-        try:
-            # Download profile photo directly
-            photo_bytes = await client.download_profile_photo(me, bytes)
-            if photo_bytes:
-                import base64
-                # Upload to Supabase storage
-                filename = f"avatars/{acc_id}_{me.id}.jpg"
-                b64 = base64.b64encode(photo_bytes).decode()
-                
-                # Report with base64 for edge function to upload
-                avatar_url = f"data:image/jpeg;base64,{b64}"  # Will be processed by edge
-        except Exception as e:
-            print(f"  [SYNC] [{phone}] Photo download failed: {e}")
+async def on_message(event, acc_id: str):
+    """Handle incoming messages - registered on all clients."""
+    try:
+        sender = await event.get_sender()
+        if not sender or not isinstance(sender, User) or getattr(sender, 'bot', False):
+            return
+        if not getattr(sender, 'contact', False):
+            return
         
-        await report("sync_profile", {
-            "task_id": task_id,
+        phone = None
+        if hasattr(sender, 'phone') and sender.phone:
+            phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
+        
+        name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
+        content = event.message.text or ""
+        
+        # Download media if present
+        media_url = None
+        media_type = None
+        if event.message.media:
+            try:
+                import base64
+                media_bytes = await event.message.download_media(bytes)
+                if media_bytes:
+                    b64 = base64.b64encode(media_bytes).decode()
+                    # Determine media type
+                    if event.message.photo:
+                        media_type = "image"
+                        media_url = f"data:image/jpeg;base64,{b64}"
+                    elif event.message.video:
+                        media_type = "video"
+                        media_url = f"data:video/mp4;base64,{b64}"
+                    elif event.message.document:
+                        media_type = "document"
+                        media_url = f"data:application/octet-stream;base64,{b64}"
+                    
+                    if not content:
+                        content = f"[{media_type.capitalize()}]"
+            except Exception as e:
+                print(f"  [MEDIA] Download failed: {e}")
+                if not content:
+                    content = "[Media]"
+        
+        acc = accounts.get(acc_id, {})
+        print(f"  📩 [{acc.get('phone_number','?')[-4:]}] ← {name[:12]}: {content[:25]}...")
+        
+        await report("incoming_message", {
             "account_id": acc_id,
-            "success": True,
-            "telegram_id": me.id,
-            "first_name": me.first_name,
-            "last_name": me.last_name,
-            "username": me.username,
-            "phone": me.phone,
-            "avatar_url": avatar_url  # Now contains actual photo data
+            "sender_id": sender.id,
+            "sender_name": name,
+            "sender_username": getattr(sender, 'username', None),
+            "sender_phone": phone,
+            "content": content,
+            "telegram_message_id": event.message.id,
+            "media_url": media_url,
+            "media_type": media_type
         })
-        return True, None
+    except:
+        pass
 ```
 
-### 2. Edge Function (`supabase/functions/runner-tasks/index.ts`)
+**Change 2**: Update `fetch_unread_messages()` similarly (lines 885-916)
 
-**Location**: Lines 675-679 (sync_profile handler)
-
-**Changes**:
-- Process the avatar data (base64 or URL)
-- Upload to Supabase Storage if base64
-- Update `avatar_url` in the database
-
-```typescript
-} else if (taskType === "sync_profile" || taskType === "get_me") {
-  if (r.first_name) accountUpdates.first_name = r.first_name;
-  if (r.last_name !== undefined) accountUpdates.last_name = r.last_name;
-  if (r.username !== undefined) accountUpdates.username = r.username;
-  if (r.telegram_id) accountUpdates.telegram_id = r.telegram_id;
-  
-  // Handle avatar from sync_profile
-  if (r.avatar_url) {
-    if (r.avatar_url.startsWith('data:image')) {
-      // Base64 image - upload to storage
-      try {
-        const base64Data = r.avatar_url.split(',')[1];
-        const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
-        const filename = `avatars/${r.account_id}_${Date.now()}.jpg`;
-        
-        const { error: uploadError } = await supabase.storage
-          .from('message-attachments')
-          .upload(filename, binaryData, { contentType: 'image/jpeg', upsert: true });
-        
-        if (!uploadError) {
-          const { data: urlData } = supabase.storage
-            .from('message-attachments')
-            .getPublicUrl(filename);
-          accountUpdates.avatar_url = urlData.publicUrl;
-        }
-      } catch (e) {
-        console.error('[sync_profile] Avatar upload failed:', e);
-      }
-    } else {
-      // Direct URL
-      accountUpdates.avatar_url = r.avatar_url;
-    }
-  }
-}
+```python
+for msg in reversed(messages):
+    if not msg.text and not msg.media:
+        continue
+    
+    # SKIP messages older than 24 hours
+    if msg.date and msg.date < cutoff_time:
+        skipped_old += 1
+        continue
+    
+    content = msg.text or ""
+    media_url = None
+    media_type = None
+    
+    # Download media if present
+    if msg.media:
+        try:
+            import base64
+            media_bytes = await client.download_media(msg, bytes)
+            if media_bytes:
+                b64 = base64.b64encode(media_bytes).decode()
+                if msg.photo:
+                    media_type = "image"
+                    media_url = f"data:image/jpeg;base64,{b64}"
+                elif msg.video:
+                    media_type = "video"
+                    media_url = f"data:video/mp4;base64,{b64}"
+                else:
+                    media_type = "document"
+                    media_url = f"data:application/octet-stream;base64,{b64}"
+                
+                if not content:
+                    content = f"[{media_type.capitalize()}]"
+        except:
+            if not content:
+                content = "[Media]"
+    
+    await report("incoming_message", {
+        "account_id": acc_id,
+        "sender_id": entity.id,
+        "sender_name": name,
+        "sender_username": getattr(entity, 'username', None),
+        "sender_phone": sender_phone,
+        "content": content,
+        "telegram_message_id": msg.id,
+        "media_url": media_url,
+        "media_type": media_type
+    })
 ```
 
 ---
 
-## Flow After Fix
+### 2. Edge Function - Process Incoming Media
 
-```text
-1. User clicks "Sync Profile"
-2. Python runner downloads photo from Telegram
-3. Python sends base64 photo data to Edge Function
-4. Edge Function uploads to Supabase Storage
-5. Edge Function updates avatar_url in telegram_accounts
-6. Realtime sync updates the UI
-7. Avatar appears in admin dashboard
+**File**: `supabase/functions/runner-tasks/index.ts`
+
+**Update** `processIncomingMessage()` function (around line 887) to handle media upload:
+
+```typescript
+async function processIncomingMessage(supabase: any, r: any, now: string) {
+  const accountId = r.account_id;
+  const senderId = r.sender_id || r.recipient_telegram_id;
+  const senderPhone = r.sender_phone || r.recipient_phone;
+  const senderName = r.sender_name || r.recipient_name;
+  const senderUsername = r.sender_username || r.recipient_username;
+  const content = r.content || "[Media]";
+  const telegramMessageId = r.telegram_message_id;
+
+  // Process media if provided
+  let mediaUrl: string | null = null;
+  let mediaType: string | null = r.media_type || null;
+  
+  if (r.media_url && r.media_url.startsWith('data:')) {
+    try {
+      const base64Data = r.media_url.split(',')[1];
+      const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+      
+      const ext = mediaType === 'image' ? 'jpg' : mediaType === 'video' ? 'mp4' : 'bin';
+      const filename = `incoming/${accountId}/${Date.now()}_${telegramMessageId || 'msg'}.${ext}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('message-attachments')
+        .upload(filename, binaryData, { 
+          contentType: mediaType === 'image' ? 'image/jpeg' : 
+                       mediaType === 'video' ? 'video/mp4' : 
+                       'application/octet-stream',
+          upsert: true 
+        });
+      
+      if (!uploadError) {
+        const { data: urlData } = supabase.storage
+          .from('message-attachments')
+          .getPublicUrl(filename);
+        mediaUrl = urlData.publicUrl;
+        console.log(`[incoming] Uploaded media: ${filename}`);
+      } else {
+        console.error('[incoming] Media upload error:', uploadError);
+      }
+    } catch (e) {
+      console.error('[incoming] Media processing failed:', e);
+    }
+  } else if (r.media_url) {
+    // Direct URL (already hosted)
+    mediaUrl = r.media_url;
+  }
+
+  // ... existing conversation lookup code ...
+
+  // Insert the incoming message WITH media
+  const { error: msgError } = await supabase
+    .from("messages")
+    .insert({
+      account_id: accountId,
+      conversation_id: conversationId,
+      content: content,
+      direction: 'incoming',
+      status: 'delivered',
+      delivered_at: now,
+      telegram_message_id: telegramMessageId,
+      media_url: mediaUrl,      // NEW
+      media_type: mediaType,    // NEW
+    });
+  
+  // ...
+}
 ```
 
 ---
@@ -134,15 +232,27 @@ elif action == "sync_profile":
 
 | File | Change |
 |------|--------|
-| `src/pages/SetupGuide.tsx` | Download actual profile photo and send as base64 |
-| `supabase/functions/runner-tasks/index.ts` | Process avatar data and upload to storage |
+| `src/pages/SetupGuide.tsx` | Download incoming media in `on_message()` and `fetch_unread_messages()`, send as base64 |
+| `supabase/functions/runner-tasks/index.ts` | Process base64 media in `processIncomingMessage()`, upload to storage, save URL |
 
 ---
 
 ## Edge Cases Handled
 
-- **No profile photo**: `avatar_url` remains null, no error
-- **Photo download fails**: Logs error, continues with other profile data
-- **Large photos**: Compressed by Telegram, typically under 100KB
-- **Storage upload fails**: Logs error, other profile data still saved
+| Scenario | Handling |
+|----------|----------|
+| Text-only message | No media processing, works as before |
+| Photo message | Downloads, uploads as JPG, displays in UI |
+| Video message | Downloads, uploads as MP4, displays in UI |
+| Large files | Telegram compresses photos; videos may be larger |
+| Download fails | Falls back to `[Media]` text |
+| Upload fails | Logs error, message still saved without media |
+| Duplicate messages | Existing deduplication by `telegram_message_id` |
 
+---
+
+## Result After Fix
+
+- **Outgoing media**: Already works (uploads from UI)
+- **Incoming media**: Will now download from Telegram, upload to storage, and display in chat
+- **Avatar sync**: Already fixed in previous change
