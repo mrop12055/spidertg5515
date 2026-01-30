@@ -440,29 +440,51 @@ const Accounts: React.FC = () => {
     
     const fetchUniqueConversations = async () => {
       const counts = new Map<string, { total: number; withReplies: number }>();
+      const PAGE_SIZE = 1000;
+      const MAX_RECORDS = 50000;
       
       try {
-        // Use count-based aggregation for performance - single query with grouping
-        const { data, error } = await supabase
+        // Get total count first
+        const { count: totalCount, error: countError } = await supabase
           .from('conversations')
-          .select('account_id, has_reply')
-          .eq('first_message_sent', true)
-          .limit(50000); // Reasonable limit for UI display
+          .select('*', { count: 'exact', head: true })
+          .eq('first_message_sent', true);
         
-        if (error || !data) {
-          console.error('Error fetching conversations:', error);
+        if (countError) {
+          console.error('Error getting conversation count:', countError);
           return;
         }
         
-        // Process in-memory (much faster than multiple DB queries)
-        data.forEach((conv: any) => {
-          const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
-          existing.total += 1;
-          if (conv.has_reply) existing.withReplies += 1;
-          counts.set(conv.account_id, existing);
-        });
+        const effectiveCount = Math.min(totalCount || 0, MAX_RECORDS);
+        const totalPages = Math.ceil(effectiveCount / PAGE_SIZE);
         
-        console.log(`Fetched unique conversations for ${counts.size} accounts`);
+        // Fetch all pages (bypasses 1000 row limit)
+        for (let page = 0; page < totalPages; page++) {
+          const from = page * PAGE_SIZE;
+          const to = from + PAGE_SIZE - 1;
+          
+          const { data, error } = await supabase
+            .from('conversations')
+            .select('account_id, has_reply')
+            .eq('first_message_sent', true)
+            .range(from, to);
+          
+          if (error) {
+            console.error('Error fetching conversations page', page, error);
+            break;
+          }
+          if (!data || data.length === 0) break;
+          
+          // Process in-memory (much faster than multiple DB queries)
+          data.forEach((conv: any) => {
+            const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
+            existing.total += 1;
+            if (conv.has_reply) existing.withReplies += 1;
+            counts.set(conv.account_id, existing);
+          });
+        }
+        
+        console.log(`Fetched unique conversations for ${counts.size} accounts from ${effectiveCount} records`);
         setUniqueConversations(counts);
         conversationsFetchedRef.current = true;
       } catch (err) {
