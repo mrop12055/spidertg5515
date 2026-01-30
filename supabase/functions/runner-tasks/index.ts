@@ -213,7 +213,9 @@ async function handleGetTasks(supabase: any, body: any) {
   if (isLivechat) {
     accountsQuery = accountsQuery.in("status", ["active", "restricted", "cooldown", "frozen"]);
   } else {
-    accountsQuery = accountsQuery.eq("status", "active");
+    // Include restricted/cooldown accounts so they can LISTEN for incoming messages
+    // Campaign task assignment will still filter them out (only 'active' can send to new recipients)
+    accountsQuery = accountsQuery.in("status", ["active", "cooldown", "restricted"]);
   }
   
   if (account_ids?.length > 0) {
@@ -226,17 +228,26 @@ async function handleGetTasks(supabase: any, body: any) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No active accounts" });
   }
 
-  // Filter accounts with active proxy
-  const usableAccounts = accounts.filter((a: any) => {
+  // Accounts that can SEND new campaign messages (active only, under daily limit)
+  const sendableAccounts = accounts.filter((a: any) => {
     if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
-    if (!isLivechat) {
-      const limit = config.campaignMessagesPerAccountPerDay || a.daily_limit || config.dailyLimit;
-      if ((a.messages_sent_today ?? 0) >= limit) return false;
-    }
+    if (a.status !== 'active') return false; // Only active accounts can send to new recipients
+    const limit = config.campaignMessagesPerAccountPerDay || a.daily_limit || config.dailyLimit;
+    if ((a.messages_sent_today ?? 0) >= limit) return false;
     return true;
   });
 
-  if (usableAccounts.length === 0) {
+  // Accounts that can LISTEN for incoming messages (broader list includes cooldown/restricted)
+  const connectableAccounts = accounts.filter((a: any) => {
+    if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
+    // cooldown/restricted accounts can still listen for incoming messages
+    return ['active', 'cooldown', 'restricted'].includes(a.status);
+  });
+
+  // For livechat, we use all connectable accounts as "usable" for reply purposes
+  const usableAccounts = isLivechat ? connectableAccounts : sendableAccounts;
+
+  if (connectableAccounts.length === 0) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No usable accounts" });
   }
 
@@ -509,8 +520,9 @@ async function handleGetTasks(supabase: any, body: any) {
     }
   }
 
-  // Build accounts list for listening
-  const listeningAccounts = await Promise.all(usableAccounts.map(async (acc: any) => {
+  // Build accounts list for listening - use connectableAccounts to include cooldown/restricted
+  // This allows accounts on cooldown to still receive incoming messages from existing conversations
+  const listeningAccounts = await Promise.all(connectableAccounts.map(async (acc: any) => {
     const creds = await getApiCredentialsForAccount(supabase, acc);
     if (!creds) return null;
     return {
@@ -527,6 +539,7 @@ async function handleGetTasks(supabase: any, body: any) {
       api_hash: creds.api_hash,
       api_credential_id: creds.api_credential_id,
       proxy: acc.proxies,
+      status: acc.status, // Include status so runner knows account state
     };
   })).then(results => results.filter(Boolean));
 
