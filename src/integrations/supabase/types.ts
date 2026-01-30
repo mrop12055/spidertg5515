@@ -1106,6 +1106,7 @@ export type Database = {
           avatar_url: string | null
           ban_reason: string | null
           build_id: string | null
+          cooldown_until: string | null
           created_at: string | null
           daily_limit: number | null
           device_model: string | null
@@ -1152,6 +1153,7 @@ export type Database = {
           avatar_url?: string | null
           ban_reason?: string | null
           build_id?: string | null
+          cooldown_until?: string | null
           created_at?: string | null
           daily_limit?: number | null
           device_model?: string | null
@@ -1198,6 +1200,7 @@ export type Database = {
           avatar_url?: string | null
           ban_reason?: string | null
           build_id?: string | null
+          cooldown_until?: string | null
           created_at?: string | null
           daily_limit?: number | null
           device_model?: string | null
