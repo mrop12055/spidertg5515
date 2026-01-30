@@ -611,8 +611,20 @@ const Accounts: React.FC = () => {
   };
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    // Debug: Log what files made it through the dropzone
-    console.log('[Upload Debug] Accepted files:', acceptedFiles.map(f => ({
+    // Filter to only allowed extensions (bypass unreliable MIME type detection)
+    const allowedExtensions = ['.session', '.json', '.zip'];
+    const validFiles = acceptedFiles.filter(f => {
+      const ext = f.name.toLowerCase().match(/\.[^.]+$/)?.[0];
+      return ext && allowedExtensions.includes(ext);
+    });
+    
+    const rejectedCount = acceptedFiles.length - validFiles.length;
+    if (rejectedCount > 0) {
+      toast.warning(`${rejectedCount} files skipped (unsupported format)`);
+    }
+    
+    // Debug: Log what files passed extension validation
+    console.log('[Upload Debug] Accepted files:', validFiles.map(f => ({
       name: f.name,
       type: f.type,
       size: f.size
@@ -623,7 +635,7 @@ const Accounts: React.FC = () => {
     const jsonFiles: File[] = [];
     const zipFiles: File[] = [];
     
-    for (const file of acceptedFiles) {
+    for (const file of validFiles) {
       if (file.name.endsWith('.session')) {
         sessionFiles.push(file);
       } else if (file.name.endsWith('.json')) {
@@ -737,28 +749,8 @@ const Accounts: React.FC = () => {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    onDropRejected: (rejectedFiles) => {
-      console.log('[Upload Debug] Rejected files:', rejectedFiles.map(f => ({
-        name: f.file.name,
-        type: f.file.type,
-        errors: f.errors
-      })));
-      if (rejectedFiles.length > 0) {
-        toast.warning(`${rejectedFiles.length} files were rejected. Check console for details.`);
-      }
-    },
-    accept: {
-      // Accept common MIME types but also use wildcard fallback
-      'application/x-sqlite3': ['.session'],
-      'application/octet-stream': ['.session', '.json'],
-      'application/json': ['.json'],
-      'text/json': ['.json'],
-      'text/plain': ['.json', '.session'],
-      'application/zip': ['.zip'],
-      'application/x-zip-compressed': ['.zip'],
-      // Fallback for any file type - we filter by extension in onDrop
-      '*/*': ['.session', '.json', '.zip'],
-    },
+    // No accept filter - we validate extensions manually in onDrop
+    // This bypasses unreliable browser MIME type detection
     disabled: isUploading,
     multiple: true
   });
