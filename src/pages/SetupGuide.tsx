@@ -624,16 +624,19 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
             me = await asyncio.wait_for(client.get_me(), timeout=15)
             
             if me:
-                from telethon.tl.functions.photos import GetUserPhotosRequest
+                import base64
                 
-                avatar_id = None
+                avatar_url = None
                 try:
-                    photos = await client(GetUserPhotosRequest(user_id=me.id, offset=0, max_id=0, limit=1))
-                    if photos.photos:
-                        photo = photos.photos[0]
-                        avatar_id = f"telegram_photo_{me.id}_{photo.id}"
-                except:
-                    pass
+                    # Download profile photo directly as bytes
+                    photo_bytes = await client.download_profile_photo(me, bytes)
+                    if photo_bytes:
+                        # Convert to base64 for edge function to upload
+                        b64 = base64.b64encode(photo_bytes).decode()
+                        avatar_url = f"data:image/jpeg;base64,{b64}"
+                        print(f"  [SYNC] [{phone}] Downloaded profile photo ({len(photo_bytes)} bytes)")
+                except Exception as e:
+                    print(f"  [SYNC] [{phone}] Photo download failed: {e}")
                 
                 await report("sync_profile", {
                     "task_id": task_id,
@@ -644,7 +647,7 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
                     "last_name": me.last_name,
                     "username": me.username,
                     "phone": me.phone,
-                    "avatar_id": avatar_id
+                    "avatar_url": avatar_url
                 })
                 print(f"  [SYNC] [{phone}] ✓ {me.first_name or ''} {me.last_name or ''} (@{me.username or 'none'})")
                 return True, None
