@@ -1,86 +1,97 @@
 
 
-# Fix: Support More JSON Field Names for Device Info
+# Fix: JSON Metadata Not Matching & Incorrect Upload Count
 
-## Problem
-When uploading session JSON files, the device_model field isn't being extracted for some accounts because their JSON uses different field names than what the code currently supports.
+## Problems Identified
 
-## Current Supported Fields
-```javascript
-device_model: metadata?.device_model || metadata?.device
-system_version: metadata?.system_version || metadata?.sdk
+### Problem 1: JSON files not matching session files
+The `extractPhoneFromFilename` function (line 578-585) only removes `.session` extension:
+
+```typescript
+const baseName = filename.replace(/\.session$/i, '');  // Only removes .session!
 ```
+
+When you upload:
+- `+123456789.session` -> extracts to `123456789` 
+- `+123456789.json` -> extracts to `123456789json` (WRONG - .json not removed!)
+
+This causes the JSON metadata map to use wrong keys, so session files can't find their matching JSON metadata.
+
+### Problem 2: Backend returns "2 new" but UI shows "0 successful"
+The backend logs confirm accounts ARE being inserted, but the frontend may not be correctly aggregating results. Need to add debug logging.
 
 ## Solution
-Expand the field name mapping to support all common variations from different Telegram session export tools.
 
-## Changes to `src/pages/Accounts.tsx`
+### Fix 1: Update `extractPhoneFromFilename` to handle both extensions
 
-### 1. Update `JsonMetadata` Interface (lines 68-97)
+**File:** `src/pages/Accounts.tsx` (lines 578-585)
 
-Add additional field name variations:
+**Before:**
 ```typescript
-interface JsonMetadata {
-  // ... existing fields ...
-  
-  // Device fingerprint - add more variations
-  deviceModel?: string;      // camelCase (NEW)
-  model?: string;            // shorthand (NEW)
-  device_info?: string;      // alternative (NEW)
-  deviceInfo?: string;       // camelCase (NEW)
-  
-  sdk?: string;
-  system_version?: string;
-  systemVersion?: string;    // camelCase (NEW)
-  os_version?: string;       // alternative (NEW)
-  
-  // App version variations
-  appVersion?: string;       // camelCase (NEW)
-  app_version?: string;
-  version?: string;          // shorthand (NEW)
-}
+const extractPhoneFromFilename = (filename: string): string => {
+  const baseName = filename.replace(/\.session$/i, '');  // Only .session
+  const digits = baseName.replace(/\D/g, '');
+  ...
+};
 ```
 
-### 2. Update Upload Mapping (lines 755-758)
-
-Expand the fallback chain:
+**After:**
 ```typescript
-// Device fingerprint - try all known field name variations
-device_model: metadata?.device_model 
-  || metadata?.device 
-  || metadata?.deviceModel 
-  || metadata?.model 
-  || metadata?.device_info 
-  || metadata?.deviceInfo,
-  
-system_version: metadata?.system_version 
-  || metadata?.sdk 
-  || metadata?.systemVersion 
-  || metadata?.os_version,
-  
-app_version: metadata?.app_version 
-  || metadata?.appVersion 
-  || metadata?.version,
+const extractPhoneFromFilename = (filename: string): string => {
+  // Remove BOTH .session and .json extensions
+  const baseName = filename
+    .replace(/\.session$/i, '')
+    .replace(/\.json$/i, '');
+  const digits = baseName.replace(/\D/g, '');
+  ...
+};
 ```
 
-### 3. Add Debug Logging (Optional)
+### Fix 2: Add debug logging for upload flow
 
-Add console logging during JSON parsing to help identify unrecognized field names:
+Add console logs to track:
+1. What phone keys are extracted from session files
+2. What phone keys are extracted from JSON files  
+3. How many matches are found
+4. What metadata is attached to each account
+5. What the backend response contains
+
+### Fix 3: Improve metadata detection logging
+
+In the upload mapping, log when device_model is found vs missing:
+
 ```typescript
-// In parseJsonMetadata function
-console.log('[JSON Metadata] Parsed fields:', Object.keys(json));
-if (!json.device_model && !json.device && !json.deviceModel) {
-  console.log('[JSON Metadata] No device field found. Available fields:', json);
-}
+const accountsToUpload = sessionFiles.map(sf => {
+  const metadata = (sf as any).metadata;
+  
+  // Debug: Log what fields are available
+  if (metadata) {
+    console.log(`[Upload] ${sf.phoneNumber} metadata keys:`, Object.keys(metadata));
+    console.log(`[Upload] ${sf.phoneNumber} device_model candidates:`, {
+      device_model: metadata.device_model,
+      device: metadata.device,
+      deviceModel: metadata.deviceModel,
+      model: metadata.model,
+    });
+  } else {
+    console.log(`[Upload] ${sf.phoneNumber} has NO metadata`);
+  }
+  
+  return { ... };
+});
 ```
 
 ## Files to Modify
 
-| File | Changes |
-|------|---------|
-| `src/pages/Accounts.tsx` | Expand `JsonMetadata` interface and upload mapping |
+| File | Change |
+|------|--------|
+| `src/pages/Accounts.tsx` | Fix `extractPhoneFromFilename` to remove `.json` extension; Add debug logging for upload flow |
 
-## Alternative: User Action
+## Expected Outcome
 
-If your JSON uses a completely different field name, please share a sample JSON structure so I can add specific support for it.
+After fix:
+- JSON files will correctly match their session files
+- Device info will be extracted and saved to database
+- Console logs will help debug any remaining issues
+- Upload count will accurately reflect backend results
 
