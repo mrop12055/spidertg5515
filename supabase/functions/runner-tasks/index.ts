@@ -1084,10 +1084,16 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
       .eq("id", conversationId);
 
     // Increment unread_count atomically
-    await supabase.rpc('increment_unread_count', { conv_id: conversationId }).catch(() => {
-      // Fallback if RPC doesn't exist - just update to at least 1
-      supabase.from("conversations").update({ unread_count: 1 }).eq("id", conversationId).eq("unread_count", 0);
-    });
+    try {
+      const { error: rpcError } = await supabase.rpc('increment_unread_count', { conv_id: conversationId });
+      if (rpcError) {
+        // Fallback if RPC doesn't exist - just update to at least 1
+        await supabase.from("conversations").update({ unread_count: 1 }).eq("id", conversationId).eq("unread_count", 0);
+      }
+    } catch {
+      // Fallback if RPC doesn't exist
+      await supabase.from("conversations").update({ unread_count: 1 }).eq("id", conversationId).eq("unread_count", 0);
+    }
 
     console.log(`[incoming] Updated conversation ${conversationId}`);
   }
