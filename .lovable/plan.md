@@ -1,139 +1,148 @@
 
 
-# Plan: Add 24-Hour Time Window Filter to Catch-Up Sync
+# Plan: Fix Profile Sync to Update Account Avatar
 
-## Overview
+## The Problem
 
-Modify the `fetch_unread_messages` function in the Python runner to only synchronize messages from the last 24 hours during offline catch-up. This prevents syncing old messages when the runner reconnects after extended downtime.
+When you run "Sync Profile", the account's name, username, and telegram_id are updated correctly, but the **profile picture is never synced** to the admin dashboard.
 
----
+**Root Cause:**
 
-## Current Behavior
-
-The catch-up sync currently:
-1. Gets dialogs with unread messages
-2. Fetches ALL unread messages from contacts
-3. Reports them to the backend
-4. Marks as read on Telegram
-
-**Problem**: If the runner was offline for days, it would sync ALL accumulated messages, including very old ones.
+| Component | Current Behavior | Issue |
+|-----------|------------------|-------|
+| Python Runner | Reports `avatar_id` (just a reference ID) | Does NOT download the actual photo |
+| Edge Function | Ignores `avatar_id` completely | Never updates `avatar_url` in database |
+| Result | Avatar never appears | Missing end-to-end implementation |
 
 ---
 
-## New Behavior
+## Solution
 
-After the change:
-1. Gets dialogs with unread messages
-2. Filters messages to only include those from the **last 24 hours**
-3. Skips older messages but still marks the dialog as read
-4. Reports only recent messages to the backend
+Modify the Python runner to **download the actual profile photo** and upload it to Supabase Storage, then update the Edge Function to save the URL.
 
 ---
 
 ## Technical Changes
 
-### File: `src/pages/SetupGuide.tsx`
+### 1. Python Runner (`src/pages/SetupGuide.tsx`)
 
-**Location**: Lines 852-913 (`fetch_unread_messages` function)
+**Location**: Lines 622-650 (sync_profile action)
 
 **Changes**:
-
-1. Import `datetime` and `timedelta` at the top of the Python script (add to imports around line 34-46)
-
-2. Modify the message filtering logic to check message timestamps:
+- Download the profile photo from Telegram
+- Upload it to Supabase Storage (`message-attachments` bucket)
+- Report the public URL instead of just an ID
 
 ```python
-async def fetch_unread_messages(client, acc_id: str):
-    """Fetch and report unread messages from contacts after reconnection (24h window)."""
-    acc = accounts.get(acc_id, {})
-    phone = acc.get("phone_number", "????")[-4:]
+elif action == "sync_profile":
+    print(f"  [SYNC] [{phone}] Fetching profile from Telegram...")
+    me = await asyncio.wait_for(client.get_me(), timeout=15)
     
-    # 24-hour cutoff for message sync
-    from datetime import datetime, timedelta, timezone
-    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
-    
-    try:
-        print(f"  [CATCHUP] [{phone}] Fetching unread messages (last 24h)...")
-        dialogs = await client.get_dialogs(limit=100)
-        
-        total_fetched = 0
-        skipped_old = 0
-        
-        for dialog in dialogs:
-            # Only process direct user chats (not groups/channels)
-            if not dialog.is_user:
-                continue
-            
-            # Only process contacts
-            entity = dialog.entity
-            if not getattr(entity, 'contact', False):
-                continue
-            
-            # Skip if no unread messages
-            if dialog.unread_count == 0:
-                continue
-            
-            # Fetch unread messages from this contact
-            messages = await client.get_messages(
-                dialog.entity, 
-                limit=min(dialog.unread_count, 50)
-            )
-            
-            for msg in reversed(messages):  # Process oldest first
-                if not msg.text and not msg.media:
-                    continue
+    if me:
+        avatar_url = None
+        try:
+            # Download profile photo directly
+            photo_bytes = await client.download_profile_photo(me, bytes)
+            if photo_bytes:
+                import base64
+                # Upload to Supabase storage
+                filename = f"avatars/{acc_id}_{me.id}.jpg"
+                b64 = base64.b64encode(photo_bytes).decode()
                 
-                # SKIP messages older than 24 hours
-                if msg.date and msg.date < cutoff_time:
-                    skipped_old += 1
-                    continue
-                    
-                sender_phone = None
-                if hasattr(entity, 'phone') and entity.phone:
-                    sender_phone = f"+{entity.phone}" if not entity.phone.startswith('+') else entity.phone
-                
-                name = f"{entity.first_name or ''} {entity.last_name or ''}".strip() or str(entity.id)
-                content = msg.text or "[Media]"
-                
-                await report("incoming_message", {
-                    "account_id": acc_id,
-                    "sender_id": entity.id,
-                    "sender_name": name,
-                    "sender_username": getattr(entity, 'username', None),
-                    "sender_phone": sender_phone,
-                    "content": content,
-                    "telegram_message_id": msg.id
-                })
-                total_fetched += 1
-            
-            # Always mark messages as read (even old ones)
-            await client.send_read_acknowledge(dialog.entity)
+                # Report with base64 for edge function to upload
+                avatar_url = f"data:image/jpeg;base64,{b64}"  # Will be processed by edge
+        except Exception as e:
+            print(f"  [SYNC] [{phone}] Photo download failed: {e}")
         
-        if total_fetched > 0 or skipped_old > 0:
-            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages (skipped {skipped_old} older than 24h)")
-        else:
-            print(f"  [CATCHUP] [{phone}] No recent unread messages from contacts")
-            
-    except Exception as e:
-        print(f"  [CATCHUP] [{phone}] Error: {str(e)[:50]}")
+        await report("sync_profile", {
+            "task_id": task_id,
+            "account_id": acc_id,
+            "success": True,
+            "telegram_id": me.id,
+            "first_name": me.first_name,
+            "last_name": me.last_name,
+            "username": me.username,
+            "phone": me.phone,
+            "avatar_url": avatar_url  # Now contains actual photo data
+        })
+        return True, None
+```
+
+### 2. Edge Function (`supabase/functions/runner-tasks/index.ts`)
+
+**Location**: Lines 675-679 (sync_profile handler)
+
+**Changes**:
+- Process the avatar data (base64 or URL)
+- Upload to Supabase Storage if base64
+- Update `avatar_url` in the database
+
+```typescript
+} else if (taskType === "sync_profile" || taskType === "get_me") {
+  if (r.first_name) accountUpdates.first_name = r.first_name;
+  if (r.last_name !== undefined) accountUpdates.last_name = r.last_name;
+  if (r.username !== undefined) accountUpdates.username = r.username;
+  if (r.telegram_id) accountUpdates.telegram_id = r.telegram_id;
+  
+  // Handle avatar from sync_profile
+  if (r.avatar_url) {
+    if (r.avatar_url.startsWith('data:image')) {
+      // Base64 image - upload to storage
+      try {
+        const base64Data = r.avatar_url.split(',')[1];
+        const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+        const filename = `avatars/${r.account_id}_${Date.now()}.jpg`;
+        
+        const { error: uploadError } = await supabase.storage
+          .from('message-attachments')
+          .upload(filename, binaryData, { contentType: 'image/jpeg', upsert: true });
+        
+        if (!uploadError) {
+          const { data: urlData } = supabase.storage
+            .from('message-attachments')
+            .getPublicUrl(filename);
+          accountUpdates.avatar_url = urlData.publicUrl;
+        }
+      } catch (e) {
+        console.error('[sync_profile] Avatar upload failed:', e);
+      }
+    } else {
+      // Direct URL
+      accountUpdates.avatar_url = r.avatar_url;
+    }
+  }
+}
 ```
 
 ---
 
-## Key Improvements
+## Flow After Fix
 
-| Aspect | Before | After |
-|--------|--------|-------|
-| Time filter | None | 24 hours |
-| Old messages | Synced | Skipped (but marked read) |
-| Logging | Basic count | Shows synced + skipped counts |
-| Timezone | Not handled | Uses UTC-aware comparison |
+```text
+1. User clicks "Sync Profile"
+2. Python runner downloads photo from Telegram
+3. Python sends base64 photo data to Edge Function
+4. Edge Function uploads to Supabase Storage
+5. Edge Function updates avatar_url in telegram_accounts
+6. Realtime sync updates the UI
+7. Avatar appears in admin dashboard
+```
 
 ---
 
-## Summary
+## Files to Change
 
 | File | Change |
 |------|--------|
-| `src/pages/SetupGuide.tsx` | Update `fetch_unread_messages` to filter messages older than 24 hours |
+| `src/pages/SetupGuide.tsx` | Download actual profile photo and send as base64 |
+| `supabase/functions/runner-tasks/index.ts` | Process avatar data and upload to storage |
+
+---
+
+## Edge Cases Handled
+
+- **No profile photo**: `avatar_url` remains null, no error
+- **Photo download fails**: Logs error, continues with other profile data
+- **Large photos**: Compressed by Telegram, typically under 100KB
+- **Storage upload fails**: Logs error, other profile data still saved
 
