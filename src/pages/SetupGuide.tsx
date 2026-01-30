@@ -57,6 +57,10 @@ clients: Dict[str, Any] = {}      # account_id -> TelegramClient
 accounts: Dict[str, dict] = {}    # account_id -> account info
 RUNNING = True
 
+# Track processed message IDs to avoid re-sending to backend
+# Key format: "{account_id}_{telegram_message_id}"
+processed_message_ids = set()
+
 _locks: Dict[str, asyncio.Lock] = {}
 _locks_mutex = threading.Lock()
 _http: Optional[httpx.AsyncClient] = None
@@ -888,6 +892,10 @@ async def on_message(event, acc_id: str):
         acc = accounts.get(acc_id, {})
         print(f"  📩 [{acc.get('phone_number','?')[-4:]}] ← {name[:12]}: {content[:25]}...")
         
+        # Track message to avoid duplicate processing in catch-up
+        msg_key = f"{acc_id}_{event.message.id}"
+        processed_message_ids.add(msg_key)
+        
         await report("incoming_message", {
             "account_id": acc_id,
             "sender_id": sender.id,
@@ -997,6 +1005,11 @@ async def fetch_unread_messages(client, acc_id: str):
                 if not content:
                     content = "[Media]"
                 
+                # Skip if we already processed this message (client-side deduplication)
+                msg_key = f"{acc_id}_{msg.id}"
+                if msg_key in processed_message_ids:
+                    continue
+                
                 await report("incoming_message", {
                     "account_id": acc_id,
                     "sender_id": entity.id,
@@ -1008,6 +1021,9 @@ async def fetch_unread_messages(client, acc_id: str):
                     "media_url": media_url,
                     "media_type": media_type
                 })
+                
+                # Mark as processed
+                processed_message_ids.add(msg_key)
                 total_fetched += 1
             
             users_with_messages += 1
