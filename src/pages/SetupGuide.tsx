@@ -923,6 +923,9 @@ async def fetch_unread_messages(client, acc_id: str):
         total_fetched = 0
         skipped_old = 0
         
+        contacts_found = 0
+        non_contacts_skipped = 0
+        
         for dialog in dialogs:
             # Only process direct user chats (not groups/channels)
             if not dialog.is_user:
@@ -930,13 +933,20 @@ async def fetch_unread_messages(client, acc_id: str):
             
             entity = dialog.entity
             
-            # Only sync messages from contacts (imported campaign recipients)
-            if not getattr(entity, 'contact', False):
-                continue
-            
             # Skip bots
             if getattr(entity, 'bot', False):
                 continue
+            
+            # Only sync messages from contacts (imported campaign recipients)
+            is_contact = getattr(entity, 'contact', False)
+            if not is_contact:
+                if dialog.unread_count > 0:
+                    name = f"{getattr(entity, 'first_name', '') or ''} {getattr(entity, 'last_name', '') or ''}".strip() or str(entity.id)
+                    print(f"    [SKIP] {name} has {dialog.unread_count} unread but is NOT a contact")
+                    non_contacts_skipped += 1
+                continue
+            
+            contacts_found += 1
             
             # Skip if no unread messages
             if dialog.unread_count == 0:
@@ -1007,10 +1017,10 @@ async def fetch_unread_messages(client, acc_id: str):
             # Always mark messages as read (even old ones)
             await client.send_read_acknowledge(dialog.entity)
         
-        if total_fetched > 0 or skipped_old > 0:
-            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages (skipped {skipped_old} older than 24h)")
+        if total_fetched > 0 or skipped_old > 0 or non_contacts_skipped > 0:
+            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages, skipped {skipped_old} old, {non_contacts_skipped} non-contacts (found {contacts_found} contacts)")
         else:
-            print(f"  [CATCHUP] [{phone}] No recent unread messages from contacts")
+            print(f"  [CATCHUP] [{phone}] No unread messages (found {contacts_found} contacts in dialogs)")
             
     except Exception as e:
         print(f"  [CATCHUP] [{phone}] Error: {str(e)[:50]}")
