@@ -937,15 +937,15 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
     if offline_since:
         try:
             cutoff_time = datetime.fromisoformat(offline_since.replace('Z', '+00:00'))
-            # Add 5-min buffer to catch edge cases
-            cutoff_time = cutoff_time - timedelta(minutes=5)
+            # Add 1-hour buffer to catch edge cases
+            cutoff_time = cutoff_time - timedelta(hours=1)
             cutoff_source = "last_offline_at"
         except:
             pass
     elif last_offline_at:
         try:
             cutoff_time = datetime.fromisoformat(last_offline_at.replace('Z', '+00:00'))
-            cutoff_time = cutoff_time - timedelta(minutes=5)
+            cutoff_time = cutoff_time - timedelta(hours=1)
             cutoff_source = "global last_offline_at"
         except:
             pass
