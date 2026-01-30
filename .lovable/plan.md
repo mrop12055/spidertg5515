@@ -1,126 +1,107 @@
 
-
-# Plan: Fix Daily Message Limit Enforcement for Campaigns
+# Plan: Allow Restricted/Cooldown Accounts to Receive Messages
 
 ## Problem
 
-Campaigns ignore the `messagesPerAccountPerDay` setting (e.g., set to 5 in your database) because the `messages_sent_today` counter is never incremented when messages are sent.
+When the runner is set to "unified" mode, it only fetches accounts with `status = 'active'`. This means accounts in `cooldown` or `restricted` status are completely excluded from the runner. The consequence:
 
-### Evidence
+- Accounts on cooldown can't receive incoming messages from existing conversations
+- Accounts with PeerFlood restriction can't continue chatting with people who already replied
 
-```sql
--- Your current settings
-campaign_speed: { messagesPerAccountPerDay: 5 }
+These accounts should still be connected so they can listen for incoming messages - they just shouldn't be used for sending new campaign messages.
 
--- But all accounts show
-messages_sent_today: 0  -- Never incremented!
+## Current Behavior
+
+```
+Runner fetches accounts:
+├── livechat runner → status IN ('active', 'restricted', 'cooldown', 'frozen')
+└── unified runner  → status = 'active' ONLY ← Problem!
+
+Result: cooldown/restricted accounts are disconnected entirely
 ```
 
-### Root Cause
+## Proposed Solution
 
-The edge function (`runner-tasks`) checks the limit:
-```typescript
-// Line 233-234 - This check exists
-const limit = config.campaignMessagesPerAccountPerDay || ...;
-if ((a.messages_sent_today ?? 0) >= limit) return false;
-```
-
-But **never increments** the counter when a message is successfully sent. The counter stays at 0 forever.
-
----
+Change the account fetching logic for the "unified" runner to:
+1. Fetch accounts with status IN `('active', 'cooldown', 'restricted')` for **listening purposes**
+2. Keep the existing filtering that excludes cooldown/restricted accounts from **campaign task assignment**
 
 ## Technical Changes
 
-### 1. Increment Counter After Successful Campaign Send
+### File: `supabase/functions/runner-tasks/index.ts`
 
-**File**: `supabase/functions/runner-tasks/index.ts`
+**Change 1: Expand account status filter for unified runner (lines 209-217)**
 
-Add increment logic after a campaign message is successfully sent (inside the success handler, around line 648):
-
+Currently:
 ```typescript
-// After incrementing campaign count (line 647-648)
-if (!wasAlreadySent) {
-  await supabase.rpc('increment_campaign_sent_count', { cid: r.campaign_id });
-  
-  // INCREMENT MESSAGES_SENT_TODAY for the account
-  if (r.account_id) {
-    await supabase.from("telegram_accounts")
-      .update({ 
-        messages_sent_today: supabase.sql`messages_sent_today + 1`,
-        last_active: now 
-      })
-      .eq("id", r.account_id);
-  }
+if (isLivechat) {
+  accountsQuery = accountsQuery.in("status", ["active", "restricted", "cooldown", "frozen"]);
+} else {
+  accountsQuery = accountsQuery.eq("status", "active");  // ← Too restrictive
 }
 ```
 
-Since Supabase JS doesn't support raw SQL in update, we need to use an RPC function instead.
-
-### 2. Create Database Function to Increment Counter
-
-**Migration**: Create an RPC function for atomic increment:
-
-```sql
-CREATE OR REPLACE FUNCTION public.increment_messages_sent_today(acc_id uuid)
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path TO 'public'
-AS $$
-BEGIN
-  UPDATE telegram_accounts 
-  SET messages_sent_today = COALESCE(messages_sent_today, 0) + 1,
-      last_active = now()
-  WHERE id = acc_id;
-END;
-$$;
-```
-
-### 3. Call the RPC After Successful Send
-
-**File**: `supabase/functions/runner-tasks/index.ts`
-
-Update the success handler:
-
+Change to:
 ```typescript
-// After campaign sent_count increment
-if (!wasAlreadySent) {
-  await supabase.rpc('increment_campaign_sent_count', { cid: r.campaign_id });
-  
-  // Increment account's daily message counter
-  if (r.account_id) {
-    await supabase.rpc('increment_messages_sent_today', { acc_id: r.account_id });
-  }
+if (isLivechat) {
+  accountsQuery = accountsQuery.in("status", ["active", "restricted", "cooldown", "frozen"]);
+} else {
+  // Include restricted/cooldown accounts so they can LISTEN for messages
+  // Campaign task assignment will still filter them out
+  accountsQuery = accountsQuery.in("status", ["active", "cooldown", "restricted"]);
 }
 ```
 
----
+**Change 2: Separate "usable for sending" vs "usable for listening" (lines 229-241)**
+
+Split the logic:
+- `sendableAccounts` - accounts that can be assigned new campaign tasks (active only, under daily limit)
+- `listeningAccounts` - all connected accounts that should receive incoming messages (includes cooldown/restricted)
+
+```typescript
+// Accounts that can SEND new campaign messages
+const sendableAccounts = accounts.filter((a: any) => {
+  if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
+  if (a.status !== 'active') return false;  // Only active can send to new recipients
+  const limit = config.campaignMessagesPerAccountPerDay || a.daily_limit || config.dailyLimit;
+  if ((a.messages_sent_today ?? 0) >= limit) return false;
+  return true;
+});
+
+// Accounts that can LISTEN for incoming messages (broader list)
+const connectableAccounts = accounts.filter((a: any) => {
+  if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
+  // cooldown/restricted can still listen
+  return ['active', 'cooldown', 'restricted'].includes(a.status);
+});
+```
+
+**Change 3: Use `sendableAccounts` for campaign task assignment, `connectableAccounts` for listener list**
+
+- Campaign tasks loop uses `sendableAccounts` (line 271)
+- Livechat outgoing messages use account from message (already correct)
+- The `listeningAccounts` array returned to runner uses `connectableAccounts`
+
+## Result After Fix
+
+| Scenario | Before | After |
+|----------|--------|-------|
+| Account hits PeerFlood | Disconnected from runner | Stays connected, listens for messages |
+| Account in cooldown | Disconnected from runner | Stays connected, listens for messages |
+| New campaign messages | Excludes cooldown/restricted | Still excludes (correct) |
+| Reply to existing chat | Account disconnected, can't receive | Account connected, receives instantly |
 
 ## Files to Change
 
 | File | Change |
 |------|--------|
-| Database migration | Create `increment_messages_sent_today` RPC function |
-| `supabase/functions/runner-tasks/index.ts` | Call `increment_messages_sent_today` after successful campaign send |
-
----
-
-## Result After Fix
-
-| Aspect | Before | After |
-|--------|--------|-------|
-| `messages_sent_today` | Always 0 | Increments with each send |
-| Daily limit check | Always passes (0 < 5) | Enforced correctly |
-| Account rotation | Doesn't respect limits | Skips accounts at limit |
-| Your setting (5/day) | Ignored | Enforced |
-
----
+| `supabase/functions/runner-tasks/index.ts` | Update account filtering logic to separate sending vs listening |
 
 ## Testing
 
 After implementing:
-1. Start a campaign with 20 recipients and 4 accounts
-2. Each account should send max 5 messages (if `messagesPerAccountPerDay: 5`)
-3. Check `messages_sent_today` in database - should show actual counts
-4. Accounts at limit should be skipped for remaining recipients
-
+1. Put an account in cooldown (manually or via PeerFlood)
+2. Verify the runner still connects and maintains the client for that account
+3. Have someone reply to an existing conversation with that account
+4. Verify the message appears in Conversations page
+5. Start a new campaign - verify the cooldown account is NOT used for sending
