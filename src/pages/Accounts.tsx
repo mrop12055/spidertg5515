@@ -576,7 +576,10 @@ const Accounts: React.FC = () => {
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
-    const baseName = filename.replace(/\.session$/i, '');
+    // Remove BOTH .session and .json extensions to ensure proper matching
+    const baseName = filename
+      .replace(/\.session$/i, '')
+      .replace(/\.json$/i, '');
     const digits = baseName.replace(/\D/g, '');
     if (!digits) {
       return `+unknown_${Date.now()}`;
@@ -754,6 +757,20 @@ const Accounts: React.FC = () => {
       // Handle all known field name variations from different JSON formats
       const accountsToUpload = sessionFiles.map(sf => {
         const metadata = (sf as any).metadata as JsonMetadata | undefined;
+        
+        // Debug: Log metadata detection for troubleshooting
+        if (metadata) {
+          console.log(`[Upload] ${sf.phoneNumber} metadata keys:`, Object.keys(metadata));
+          console.log(`[Upload] ${sf.phoneNumber} device_model candidates:`, {
+            device_model: metadata.device_model,
+            device: metadata.device,
+            deviceModel: metadata.deviceModel,
+            model: metadata.model,
+          });
+        } else {
+          console.log(`[Upload] ${sf.phoneNumber} has NO metadata attached`);
+        }
+        
         return {
           phone_number: sf.phoneNumber,
           session_data: sf.base64Data,
