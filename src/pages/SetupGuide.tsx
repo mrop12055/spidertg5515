@@ -1163,10 +1163,13 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
             if aid:
                 newly_connected.add(aid)
     
-    # Fetch unread messages ONLY for newly connected accounts (catch-up)
-    for aid in newly_connected:
-        if aid in clients:
-            await fetch_unread_messages(clients[aid], aid)
+    # Fetch unread messages in PARALLEL for all newly connected accounts (catch-up)
+    if newly_connected:
+        await asyncio.gather(
+            *[fetch_unread_messages(clients[aid], aid) 
+              for aid in newly_connected if aid in clients],
+            return_exceptions=True
+        )
     
     return len(already_connected) + ok, newly_connected
 
