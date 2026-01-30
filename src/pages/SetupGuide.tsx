@@ -830,7 +830,35 @@ async def on_message(event, acc_id: str):
             phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
         
         name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
-        content = event.message.text or "[Media]"
+        content = event.message.text or ""
+        
+        # Download media if present
+        media_url = None
+        media_type = None
+        if event.message.media:
+            try:
+                media_bytes = await event.message.download_media(bytes)
+                if media_bytes:
+                    b64 = base64.b64encode(media_bytes).decode()
+                    if event.message.photo:
+                        media_type = "image"
+                        media_url = f"data:image/jpeg;base64,{b64}"
+                    elif event.message.video:
+                        media_type = "video"
+                        media_url = f"data:video/mp4;base64,{b64}"
+                    elif event.message.document:
+                        media_type = "document"
+                        media_url = f"data:application/octet-stream;base64,{b64}"
+                    
+                    if not content:
+                        content = f"[{media_type.capitalize()}]"
+            except Exception as e:
+                print(f"  [MEDIA] Download failed: {e}")
+                if not content:
+                    content = "[Media]"
+        
+        if not content:
+            content = "[Media]"
         
         acc = accounts.get(acc_id, {})
         print(f"  📩 [{acc.get('phone_number','?')[-4:]}] ← {name[:12]}: {content[:25]}...")
@@ -842,7 +870,9 @@ async def on_message(event, acc_id: str):
             "sender_username": getattr(sender, 'username', None),
             "sender_phone": phone,
             "content": content,
-            "telegram_message_id": event.message.id
+            "telegram_message_id": event.message.id,
+            "media_url": media_url,
+            "media_type": media_type
         })
     except:
         pass
@@ -902,7 +932,34 @@ async def fetch_unread_messages(client, acc_id: str):
                     sender_phone = f"+{entity.phone}" if not entity.phone.startswith('+') else entity.phone
                 
                 name = f"{entity.first_name or ''} {entity.last_name or ''}".strip() or str(entity.id)
-                content = msg.text or "[Media]"
+                content = msg.text or ""
+                
+                # Download media if present
+                media_url = None
+                media_type = None
+                if msg.media:
+                    try:
+                        media_bytes = await client.download_media(msg, bytes)
+                        if media_bytes:
+                            b64 = base64.b64encode(media_bytes).decode()
+                            if msg.photo:
+                                media_type = "image"
+                                media_url = f"data:image/jpeg;base64,{b64}"
+                            elif msg.video:
+                                media_type = "video"
+                                media_url = f"data:video/mp4;base64,{b64}"
+                            else:
+                                media_type = "document"
+                                media_url = f"data:application/octet-stream;base64,{b64}"
+                            
+                            if not content:
+                                content = f"[{media_type.capitalize()}]"
+                    except:
+                        if not content:
+                            content = "[Media]"
+                
+                if not content:
+                    content = "[Media]"
                 
                 await report("incoming_message", {
                     "account_id": acc_id,
@@ -911,7 +968,9 @@ async def fetch_unread_messages(client, acc_id: str):
                     "sender_username": getattr(entity, 'username', None),
                     "sender_phone": sender_phone,
                     "content": content,
-                    "telegram_message_id": msg.id
+                    "telegram_message_id": msg.id,
+                    "media_url": media_url,
+                    "media_type": media_type
                 })
                 total_fetched += 1
             

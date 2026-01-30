@@ -893,6 +893,44 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
   const content = r.content || "[Media]";
   const telegramMessageId = r.telegram_message_id;
 
+  // Process media if provided
+  let mediaUrl: string | null = null;
+  let mediaType: string | null = r.media_type || null;
+  
+  if (r.media_url && r.media_url.startsWith('data:')) {
+    try {
+      const base64Data = r.media_url.split(',')[1];
+      const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+      
+      const ext = mediaType === 'image' ? 'jpg' : mediaType === 'video' ? 'mp4' : 'bin';
+      const filename = `incoming/${accountId}/${Date.now()}_${telegramMessageId || 'msg'}.${ext}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('message-attachments')
+        .upload(filename, binaryData, { 
+          contentType: mediaType === 'image' ? 'image/jpeg' : 
+                       mediaType === 'video' ? 'video/mp4' : 
+                       'application/octet-stream',
+          upsert: true 
+        });
+      
+      if (!uploadError) {
+        const { data: urlData } = supabase.storage
+          .from('message-attachments')
+          .getPublicUrl(filename);
+        mediaUrl = urlData.publicUrl;
+        console.log(`[incoming] Uploaded media: ${filename}`);
+      } else {
+        console.error('[incoming] Media upload error:', uploadError);
+      }
+    } catch (e) {
+      console.error('[incoming] Media processing failed:', e);
+    }
+  } else if (r.media_url) {
+    // Direct URL (already hosted)
+    mediaUrl = r.media_url;
+  }
+
   if (!accountId) {
     console.log("[incoming] Skipping - no account_id");
     return;
@@ -1006,7 +1044,7 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
     console.log(`[incoming] Updated conversation ${conversationId}`);
   }
 
-  // Insert the incoming message
+  // Insert the incoming message with media
   const { error: msgError } = await supabase
     .from("messages")
     .insert({
@@ -1017,12 +1055,14 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
       status: 'delivered',
       delivered_at: now,
       telegram_message_id: telegramMessageId,
+      media_url: mediaUrl,
+      media_type: mediaType,
     });
 
   if (msgError) {
     console.log(`[incoming] Error inserting message: ${msgError.message}`);
   } else {
-    console.log(`[incoming] Saved message from ${senderName || senderId} to conversation ${conversationId}`);
+    console.log(`[incoming] Saved message from ${senderName || senderId} to conversation ${conversationId}${mediaUrl ? ' (with media)' : ''}`);
   }
 }
 
