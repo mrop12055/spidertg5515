@@ -1,30 +1,49 @@
 
+# Plan: Fix Live Chat Message Reception
 
-# Plan: Restore Contact-Only Filter for Incoming Messages
+## Problem Identified
 
-## What You Want
+You're not seeing incoming messages in the admin dashboard. After investigation, I found **three issues**:
 
-You want the runner to **only process messages from contacts**, not from all users. This makes sense because:
+### Issue 1: Contact Filter is Too Strict
 
-1. All your campaign recipients are first imported as contacts (via `ImportContactsRequest`)
-2. You don't want random spam or messages from strangers in your dashboard
-3. Only messages from known contacts (campaign recipients) should appear
+The `on_message()` handler checks `if not getattr(sender, 'contact', False): return`
 
-## Current State
+**Why this fails:**
+- When you send a campaign, `ImportContactsRequest` is used to resolve the recipient's phone number
+- BUT this is a one-way import - it adds them to YOUR contacts temporarily
+- Telegram's `sender.contact` attribute only returns `True` if:
+  - They are in YOUR saved contacts AND
+  - The contact relationship is recognized by Telegram
+- In practice, campaign recipients often have `sender.contact = False` even after you messaged them
 
-The contact-only filters were **removed** in the previous fix. Now the runner accepts messages from anyone.
+**Result:** Most replies from campaign recipients are silently ignored.
 
-## Changes Required
-
-### 1. Restore Contact Filter in Live Message Handler
-
-**File:** `src/pages/SetupGuide.tsx` (line ~848)
-
-Add back the contact check in `on_message()`:
+### Issue 2: Silent Error Handling (Bare `except: pass`)
 
 ```python
 async def on_message(event, acc_id: str):
-    """Handle incoming messages - only from contacts."""
+    try:
+        # ... handler code
+    except:
+        pass  # ← ALL ERRORS SILENTLY SWALLOWED
+```
+
+This hides ALL errors - if anything fails (network, parsing, reporting), you get no logs.
+
+### Issue 3: No Debug Logging for Skipped Messages
+
+When a message is filtered out (non-contact), there's no log entry. You can't tell if messages are being received and filtered vs. not received at all.
+
+## Solution
+
+### 1. Change Filter Logic: Use Conversation-Based Filtering
+
+Instead of filtering by `sender.contact`, check if a conversation already exists for this sender (meaning you messaged them first via a campaign):
+
+```python
+async def on_message(event, acc_id: str):
+    """Handle incoming messages - only from users we've messaged first."""
     try:
         if not event.is_private:
             return
@@ -33,64 +52,89 @@ async def on_message(event, acc_id: str):
         if not sender or not isinstance(sender, User) or getattr(sender, 'bot', False):
             return
         
-        # Only process messages from contacts (imported campaign recipients)
-        if not getattr(sender, 'contact', False):
-            return
+        sender_id = sender.id
+        phone = None
+        if hasattr(sender, 'phone') and sender.phone:
+            phone = f"+{sender.phone}" if not sender.phone.startswith('+') else sender.phone
         
-        # ... rest of handler
+        name = f"{sender.first_name or ''} {sender.last_name or ''}".strip() or str(sender.id)
+        
+        # Always report to backend - let backend filter based on existing conversations
+        # This way, only replies to campaign recipients will create/update conversations
+        # (Backend already handles: find conversation → if none exists for unknown sender, create it)
+        # ...
 ```
 
-### 2. Restore Contact Filter in Unread Sync
+**Alternative approach (stricter):** Check if this sender matches an existing conversation or campaign recipient in the database before processing. This would require an API call to check.
 
-**File:** `src/pages/SetupGuide.tsx` (line ~928)
+### 2. Add Proper Error Logging
 
-Add back the contact check in `fetch_unread_messages()`:
+Replace silent `except: pass` with logged errors:
 
 ```python
-for dialog in dialogs:
-    if not dialog.is_user:
-        continue
-    
-    entity = dialog.entity
-    
-    # Only sync messages from contacts (imported campaign recipients)
-    if not getattr(entity, 'contact', False):
-        continue
-    
-    # Skip bots
-    if getattr(entity, 'bot', False):
-        continue
-    
-    # ... rest of sync logic
+async def on_message(event, acc_id: str):
+    try:
+        # ... handler code
+    except Exception as e:
+        acc = accounts.get(acc_id, {})
+        phone = acc.get('phone_number', '?')[-4:]
+        print(f"  [MSG-ERR] [{phone}] Error handling incoming: {str(e)[:50]}")
 ```
 
-## How It Works
+### 3. Add Debug Logging for Contact Filter
 
-```text
-Campaign Flow:
-  1. You send campaign → Runner imports recipient as CONTACT
-  2. Message sent successfully
-  3. Recipient is now in your contact list
+If keeping the contact filter, add visibility:
 
-Reply Flow:
-  1. Recipient replies to your message
-  2. on_message() fires
-  3. Checks: Is sender a contact? YES → Process
-  4. Reports to backend → Appears in dashboard
-
-Random Person Flow:
-  1. Random person messages you
-  2. on_message() fires
-  3. Checks: Is sender a contact? NO → Ignored
-  4. Nothing happens (spam filtered out)
+```python
+# Log when we skip non-contacts (so you can see if messages are being received)
+if not getattr(sender, 'contact', False):
+    acc = accounts.get(acc_id, {})
+    phone = acc.get('phone_number', '?')[-4:]
+    name = f"{sender.first_name or ''} {sender.last_name or ''}".strip()[:15]
+    print(f"  [SKIP] [{phone}] Non-contact: {name} (ID: {sender.id})")
+    return
 ```
 
-## Summary
+### 4. Same Fix for `fetch_unread_messages()`
 
-| Location | What Changes |
-|----------|--------------|
-| `on_message()` | Add `if not getattr(sender, 'contact', False): return` |
-| `fetch_unread_messages()` | Add `if not getattr(entity, 'contact', False): continue` |
+Apply the same logic to the unread sync function.
 
-After this change, only replies from your campaign recipients (who were imported as contacts) will appear in the dashboard.
+## Implementation Summary
 
+| Location | Change |
+|----------|--------|
+| `on_message()` | Remove contact filter OR add logging for skipped messages |
+| `on_message()` exception | Add proper error logging instead of `except: pass` |
+| `fetch_unread_messages()` | Same: remove/log contact filter |
+| `report()` | Add error logging for failed API calls |
+
+## Recommended Approach
+
+**Option A: Remove contact filter entirely** (simpler)
+- All incoming private messages are reported
+- Backend already filters/creates conversations
+- Non-campaign messages will create new conversations (you can filter in UI)
+
+**Option B: Keep contact filter with debug logging** (current approach)
+- Add print statements for skipped messages
+- You can see what's being filtered
+- Relies on ImportContacts working (may miss replies)
+
+**Option C: Backend-validated filtering** (most accurate)
+- Before processing, call backend to check if sender matches existing conversation
+- Most accurate but adds latency to every incoming message
+
+I recommend **Option A** (remove contact filter) because:
+1. The backend already has conversation logic
+2. Conversations are only created for users you messaged first (campaigns)
+3. You can always filter "spam" in the UI later
+4. It's the simplest fix
+
+## Files to Modify
+
+**File:** `src/pages/SetupGuide.tsx` (the unified_runner.py script)
+
+Lines to change:
+- ~850: Remove or modify contact filter in `on_message()`
+- ~902-903: Replace `except: pass` with proper logging
+- ~937-940: Remove or modify contact filter in `fetch_unread_messages()`
