@@ -24,30 +24,42 @@ const transformConversation = (c: any): Conversation => ({
 });
 
 const fetchConversations = async (): Promise<Conversation[]> => {
-  // Fetch only conversations with first_message_sent=true to reduce data by ~70%
+  // Use count query + pagination to fetch all conversations (bypasses 1000 limit)
   const PAGE_SIZE = 1000;
-  const MAX_PAGES = 100;
+  
+  // First get the total count
+  const { count: totalCount, error: countError } = await supabase
+    .from('conversations')
+    .select('*', { count: 'exact', head: true })
+    .not('last_message_at', 'is', null);
+  
+  if (countError) throw countError;
+  if (!totalCount || totalCount === 0) return [];
+  
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
   const all: any[] = [];
 
-  for (let page = 0; page < MAX_PAGES; page++) {
+  for (let page = 0; page < totalPages; page++) {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
 
     const { data, error } = await supabase
       .from('conversations')
       .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
-      // Removed first_message_sent filter - incoming-only conversations also have replies
       .not('last_message_at', 'is', null)
       .order('last_message_at', { ascending: false })
       .range(from, to);
 
-    if (error) throw error;
+    if (error) {
+      console.error('[Conversations] Error fetching page', page, error);
+      throw error;
+    }
     if (!data || data.length === 0) break;
     
     all.push(...data);
-    if (data.length < PAGE_SIZE) break;
   }
 
+  console.log('[Conversations] Fetched', all.length, 'of', totalCount, 'conversations');
   return all.map(transformConversation);
 };
 
