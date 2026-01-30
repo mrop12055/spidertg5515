@@ -1401,7 +1401,7 @@ async def main():
     # Initial fetch to get accounts and connect them
     global last_offline_at
     print("  Fetching accounts from backend...")
-    initial = await get_tasks(100)
+    initial = await get_tasks()
     initial_accounts = initial.get("accounts", [])
     
     # Store the last offline timestamp from backend for smart catch-up
