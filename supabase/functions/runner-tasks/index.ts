@@ -185,17 +185,25 @@ async function handleGetTasks(supabase: any, body: any) {
   const settingsData = await getCachedSettings(supabase);
   const config = parseSettings(settingsData);
 
-  // Auto-restore expired cooldowns
+  // Auto-restore expired cooldowns (check both restricted_until and cooldown_until)
   const { data: expiredCooldowns } = await supabase
     .from("telegram_accounts")
-    .select("id")
-    .in("status", ["cooldown", "restricted"])
-    .lt("restricted_until", nowIso);
+    .select("id, status, restricted_until, cooldown_until")
+    .in("status", ["cooldown", "restricted"]);
   
-  if (expiredCooldowns?.length > 0) {
+  // Filter accounts where either cooldown has expired
+  const accountsToRestore = (expiredCooldowns || []).filter((a: any) => {
+    const restrictedExpired = a.restricted_until && new Date(a.restricted_until) < new Date(nowIso);
+    const cooldownExpired = a.cooldown_until && new Date(a.cooldown_until) < new Date(nowIso);
+    // Restore if either timer expired (or both null for legacy accounts stuck in cooldown)
+    return restrictedExpired || cooldownExpired || (!a.restricted_until && !a.cooldown_until);
+  });
+  
+  if (accountsToRestore.length > 0) {
     await supabase.from("telegram_accounts")
-      .update({ status: "active", restricted_until: null, ban_reason: null })
-      .in("id", expiredCooldowns.map((a: any) => a.id));
+      .update({ status: "active", restricted_until: null, cooldown_until: null, ban_reason: null })
+      .in("id", accountsToRestore.map((a: any) => a.id));
+    console.log(`[runner-tasks/get] Restored ${accountsToRestore.length} accounts from cooldown`);
   }
 
   // Load accounts with proxies
@@ -257,7 +265,13 @@ async function handleGetTasks(supabase: any, body: any) {
         let bestAccount: any = null;
         let lowestUsage = Infinity;
         
+        // Get the list of accounts that already failed for this recipient (e.g., due to PeerFlood)
+        const failedAccountIds = r.failed_account_ids || [];
+        
         for (const acc of usableAccounts) {
+          // Skip accounts that already failed for this recipient
+          if (failedAccountIds.includes(acc.id)) continue;
+          
           const sentToday = acc.messages_sent_today ?? 0;
           const assignedInBatch = assignedCountByAccountId[acc.id] ?? 0;
           const effectiveUsage = sentToday + assignedInBatch;
@@ -690,6 +704,11 @@ async function handleReportResults(supabase: any, body: any) {
     const taskType = r.task_type || task_type;
     const errorLower = (r.error || '').toLowerCase();
 
+    // === ACCOUNT-LEVEL ERRORS (PeerFlood, FloodWait, etc.) ===
+    // These errors mean the SENDER account is rate-limited, not that the recipient is unreachable
+    const accountLevelErrors = ['peerflood', 'floodwait', 'userdeactivated', 'authkeyunregistered'];
+    const isAccountError = accountLevelErrors.some(e => errorLower.includes(e.toLowerCase()));
+
     // Check for frozen account
     if (errorLower.includes('frozen')) {
       await supabase.from("telegram_accounts")
@@ -698,19 +717,82 @@ async function handleReportResults(supabase: any, body: any) {
     }
 
     if (taskType === "send") {
-      if (r.campaign_recipient_id) {
-        await supabase.from("campaign_recipients")
-          .update({ status: "failed", failed_reason: r.error })
-          .eq("id", r.campaign_recipient_id);
-        await supabase.rpc('increment_campaign_failed_count', { cid: r.campaign_id });
-      } else if (r.message_id) {
-        await supabase.from("messages")
-          .update({ status: "failed", failed_reason: r.error })
-          .eq("id", r.message_id);
-      }
-
-      if (r.account_id) {
+      if (isAccountError && r.account_id) {
+        // === ACCOUNT ERROR: Put account in cooldown, reset recipient for retry ===
+        console.log(`[runner-tasks/report] Account error detected: ${r.error} - putting account ${r.account_id} in cooldown`);
+        
+        // Extract FloodWait duration if present (e.g., "FloodWait:300s" -> 300 seconds)
+        let cooldownMinutes = 30; // Default 30 minutes
+        const floodWaitMatch = (r.error || '').match(/floodwait[:\s]*(\d+)/i);
+        if (floodWaitMatch) {
+          const waitSeconds = parseInt(floodWaitMatch[1], 10);
+          cooldownMinutes = Math.ceil(waitSeconds / 60) + 5; // Add 5 min buffer
+        }
+        
+        const cooldownUntil = new Date(Date.now() + cooldownMinutes * 60 * 1000).toISOString();
+        
+        // Put account in cooldown
+        await supabase.from("telegram_accounts")
+          .update({ 
+            status: "cooldown", 
+            cooldown_until: cooldownUntil,
+            ban_reason: r.error 
+          })
+          .eq("id", r.account_id);
+        
+        // Reset recipient to pending for retry by another account
+        if (r.campaign_recipient_id) {
+          await supabase.from("campaign_recipients")
+            .update({ 
+              status: "pending", 
+              failed_reason: null,
+              sent_by_account_id: null,
+              // Add the failed account to failed_account_ids to avoid retrying with same account
+            })
+            .eq("id", r.campaign_recipient_id);
+          
+          // Also append this account to failed_account_ids array
+          const { data: recipient } = await supabase
+            .from("campaign_recipients")
+            .select("failed_account_ids")
+            .eq("id", r.campaign_recipient_id)
+            .single();
+          
+          const failedIds = recipient?.failed_account_ids || [];
+          if (!failedIds.includes(r.account_id)) {
+            failedIds.push(r.account_id);
+            await supabase.from("campaign_recipients")
+              .update({ failed_account_ids: failedIds })
+              .eq("id", r.campaign_recipient_id);
+          }
+          
+          console.log(`[runner-tasks/report] Reset recipient ${r.campaign_recipient_id} to pending for retry`);
+        } else if (r.message_id) {
+          // For livechat, just mark as failed since we can't reassign to another account
+          await supabase.from("messages")
+            .update({ status: "failed", failed_reason: `Account cooldown: ${r.error}` })
+            .eq("id", r.message_id);
+        }
+        
+        // Increment failure for the account
         await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
+        
+      } else {
+        // === RECIPIENT ERROR: Mark recipient as failed ===
+        if (r.campaign_recipient_id) {
+          await supabase.from("campaign_recipients")
+            .update({ status: "failed", failed_reason: r.error })
+            .eq("id", r.campaign_recipient_id);
+          await supabase.rpc('increment_campaign_failed_count', { cid: r.campaign_id });
+        } else if (r.message_id) {
+          await supabase.from("messages")
+            .update({ status: "failed", failed_reason: r.error })
+            .eq("id", r.message_id);
+        }
+
+        if (r.account_id) {
+          await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
+        }
       }
 
     } else if (taskType === "warmup_chat" || taskType === "warmup_add_contact") {
@@ -722,6 +804,17 @@ async function handleReportResults(supabase: any, body: any) {
         await supabase.from("warmup_pairs")
           .update({ status: "failed", failed_reason: r.error })
           .eq("id", r.pair_id);
+      }
+      
+      // Also put account in cooldown for account-level errors during warmup
+      if (isAccountError && r.account_id) {
+        await supabase.from("telegram_accounts")
+          .update({ 
+            status: "cooldown", 
+            cooldown_until: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+            ban_reason: r.error 
+          })
+          .eq("id", r.account_id);
       }
     } else if (isAccountActionType(taskType)) {
       // Account action failure
