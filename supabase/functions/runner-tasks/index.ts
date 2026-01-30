@@ -1035,12 +1035,29 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
 
   // Create new conversation if not found
   if (!conversationId) {
-    // Get account's seat_id for new conversation
-    const { data: account } = await supabase
-      .from("telegram_accounts")
-      .select("id")
-      .eq("id", accountId)
-      .single();
+    // Try to find seat_id from campaign_recipients that sent to this phone number
+    let seatId: string | null = null;
+    
+    // Normalize phone for lookup (strip +, spaces, etc.)
+    const normalizedPhone = (senderPhone || '').replace(/[^0-9]/g, '');
+    
+    if (normalizedPhone) {
+      // Find campaign_recipient that was sent to this phone number by this account
+      const { data: campaignRecipient } = await supabase
+        .from("campaign_recipients")
+        .select("seat_id, campaigns(seat_id)")
+        .eq("sent_by_account_id", accountId)
+        .eq("status", "sent")
+        .or(`phone_number.eq.${senderPhone},phone_number.eq.+${normalizedPhone},phone_number.like.%${normalizedPhone}`)
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (campaignRecipient) {
+        seatId = campaignRecipient.seat_id || (campaignRecipient.campaigns as any)?.seat_id || null;
+        console.log(`[incoming] Found seat_id ${seatId} from campaign_recipients`);
+      }
+    }
 
     const { data: newConv, error: convError } = await supabase
       .from("conversations")
@@ -1056,6 +1073,7 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
         last_message_content: content.substring(0, 200),
         last_message_direction: 'incoming',
         unread_count: 1,
+        seat_id: seatId,
       })
       .select()
       .single();
