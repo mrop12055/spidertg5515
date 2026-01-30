@@ -838,11 +838,14 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
 async def on_message(event, acc_id: str):
     """Handle incoming messages - registered on all clients."""
     try:
+        # Only process private messages (DMs)
+        if not event.is_private:
+            return
+        
         sender = await event.get_sender()
         if not sender or not isinstance(sender, User) or getattr(sender, 'bot', False):
             return
-        if not getattr(sender, 'contact', False):
-            return
+        # REMOVED: Contact-only filter - we need to receive replies from campaign recipients too!
         
         phone = None
         if hasattr(sender, 'phone') and sender.phone:
@@ -922,9 +925,11 @@ async def fetch_unread_messages(client, acc_id: str):
             if not dialog.is_user:
                 continue
             
-            # Only process contacts
+            # REMOVED: Contact-only filter - we need to sync replies from campaign recipients too!
             entity = dialog.entity
-            if not getattr(entity, 'contact', False):
+            
+            # Skip bots
+            if getattr(entity, 'bot', False):
                 continue
             
             # Skip if no unread messages
