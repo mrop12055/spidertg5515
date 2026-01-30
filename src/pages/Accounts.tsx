@@ -2222,10 +2222,10 @@ const Accounts: React.FC = () => {
     ),
     // Frozen: accounts with frozen status
     frozen: filteredAccounts.filter(a => a.status === 'frozen'),
-    // Inactive: banned or disconnected
+    // Inactive: banned or disconnected, but only accounts with device fingerprint (from matched JSON)
     inactive: filteredAccounts.filter(a => 
-      a.status === 'banned' || 
-      a.status === 'disconnected'
+      (a.status === 'banned' || a.status === 'disconnected') &&
+      a.deviceModel // Has device fingerprint - indicates JSON was matched during import
     ),
   };
 
@@ -2315,8 +2315,8 @@ const Accounts: React.FC = () => {
       a.status === 'frozen'
     ).length,
     inactive: accounts.filter(a => 
-      a.status === 'banned' || 
-      a.status === 'disconnected'
+      (a.status === 'banned' || a.status === 'disconnected') &&
+      a.deviceModel // Only count accounts with device fingerprint (from JSON metadata)
     ).length,
   };
 
