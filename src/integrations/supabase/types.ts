@@ -1817,6 +1817,10 @@ export type Database = {
         Args: { cid: string }
         Returns: undefined
       }
+      increment_messages_sent_today: {
+        Args: { acc_id: string }
+        Returns: undefined
+      }
       increment_unread_count: { Args: { conv_id: string }; Returns: undefined }
       is_admin: { Args: never; Returns: boolean }
       is_authenticated: { Args: never; Returns: boolean }

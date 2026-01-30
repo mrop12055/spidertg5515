@@ -642,9 +642,14 @@ async function handleReportResults(supabase: any, body: any) {
           });
         }
 
-        // Update campaign count - ONLY if not already counted
+        // Update campaign count and account daily counter - ONLY if not already counted
         if (!wasAlreadySent) {
           await supabase.rpc('increment_campaign_sent_count', { cid: r.campaign_id });
+          
+          // Increment account's daily message counter for limit enforcement
+          if (r.account_id) {
+            await supabase.rpc('increment_messages_sent_today', { acc_id: r.account_id });
+          }
         }
 
       } else if (r.message_id) {
