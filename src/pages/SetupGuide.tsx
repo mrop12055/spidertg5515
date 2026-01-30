@@ -954,6 +954,10 @@ async def fetch_unread_messages(client, acc_id: str):
                 if not msg.text and not msg.media:
                     continue
                 
+                # SKIP our own outgoing messages - only process incoming from recipient
+                if msg.out:
+                    continue
+                
                 # SKIP messages older than 24 hours
                 if msg.date and msg.date < cutoff_time:
                     skipped_old += 1
