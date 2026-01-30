@@ -1,81 +1,141 @@
 
 
-# Optimize Runner: Client-Side Message Deduplication
+# Fetch Messages Based on Runner's Last Offline Time
 
 ## Current Behavior
-The backend already deduplicates messages by `telegram_message_id` - this works correctly. However, the Python runner still sends ALL messages to the backend every time, even ones that were already processed in previous fetch cycles.
+The runner uses a fixed **24-hour cutoff** when fetching unread messages during catch-up:
+```python
+cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+```
 
-## Problem
-On each startup/reconnect, the runner:
-1. Fetches up to 50 messages per contact
-2. Sends ALL of them to the backend
-3. Backend queries database for each one to check if duplicate
-4. Skips duplicates but still wastes network + DB calls
-
-With 100 contacts × 50 messages = 5,000 API calls + 5,000 DB queries, even if most are duplicates.
+This is wasteful - if the runner was only offline for 5 minutes, it still tries to process messages from the last 24 hours.
 
 ## Solution
-Add client-side tracking of processed message IDs in the Python runner to skip sending messages we already reported.
+Use the `last_offline_at` timestamp from the `runner_heartbeats` table to determine the actual offline duration, and only fetch messages from that time onwards.
 
-### File: `src/pages/SetupGuide.tsx`
+## Technical Changes
 
-**Change 1: Add global set to track processed messages**
+### 1. Backend: Include `last_offline_at` in `/get` Response
 
-Location: Near top of Python runner code (around line 100-120, with other global variables)
+**File:** `supabase/functions/runner-tasks/index.ts`
 
-```python
-# Track processed message IDs to avoid re-sending to backend
-processed_message_ids = set()
+**Location:** Inside `handleGetTasks()`, after recording heartbeat (around line 180-183)
+
+```typescript
+// After the heartbeat upsert, fetch the previous offline timestamp
+let lastOfflineAt: string | null = null;
+if (runner) {
+  const { data: heartbeat } = await supabase
+    .from("runner_heartbeats")
+    .select("last_offline_at")
+    .eq("runner_name", runner)
+    .single();
+  
+  lastOfflineAt = heartbeat?.last_offline_at || null;
+}
 ```
 
-**Change 2: Check before reporting and add to set after**
+**Location:** At the response (around line 548-559), add `last_offline_at` to the response:
 
-Location: Inside `fetch_unread_messages()`, before the `await report("incoming_message", ...)` call (around line 1000-1010)
-
-```python
-# Before:
-await report("incoming_message", {
-    ...
-    "telegram_message_id": msg.id,
-    ...
-})
-
-# After:
-# Skip if we already processed this message
-msg_key = f"{acc_id}_{msg.id}"
-if msg_key in processed_message_ids:
-    continue
-
-await report("incoming_message", {
-    ...
-    "telegram_message_id": msg.id,
-    ...
-})
-
-# Mark as processed
-processed_message_ids.add(msg_key)
+```typescript
+return jsonResponse({
+  tasks,
+  accounts: listeningAccounts,
+  delay_after: tasks.length > 0 ? config.campaignPollingInterval : 5,
+  settings: config.livechatSettings,
+  last_offline_at: lastOfflineAt,  // NEW
+  config: {
+    // ... existing config
+  },
+});
 ```
 
-**Change 3: Also track messages from real-time handler**
+### 2. Python Runner: Track and Use Last Offline Time
 
-Location: Inside the real-time `NewMessage` event handler, after reporting
+**File:** `src/pages/SetupGuide.tsx`
+
+**Change 1:** Add global variable to track last offline time (near line 59-60)
 
 ```python
-# After reporting incoming message in real-time handler
-processed_message_ids.add(f"{acc_id}_{event.message.id}")
+# Track when the runner was last offline (fetched from backend)
+last_offline_at: Optional[str] = None
 ```
 
-## Expected Performance Improvement
+**Change 2:** Update `fetch_unread_messages()` to use dynamic cutoff (lines 920-928)
+
+```python
+async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str] = None):
+    """Fetch and report unread messages from contacts after reconnection."""
+    global last_offline_at
+    acc = accounts.get(acc_id, {})
+    phone = acc.get("phone_number", "????")[-4:]
+    
+    from datetime import datetime, timedelta, timezone
+    
+    # Use last_offline_at if available, otherwise default to 24h
+    if offline_since:
+        try:
+            cutoff_time = datetime.fromisoformat(offline_since.replace('Z', '+00:00'))
+            # Add small buffer (5 min before offline) to catch edge cases
+            cutoff_time = cutoff_time - timedelta(minutes=5)
+        except:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    elif last_offline_at:
+        try:
+            cutoff_time = datetime.fromisoformat(last_offline_at.replace('Z', '+00:00'))
+            cutoff_time = cutoff_time - timedelta(minutes=5)
+        except:
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    else:
+        # First startup or unknown - use 24h default
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    
+    hours_back = (datetime.now(timezone.utc) - cutoff_time).total_seconds() / 3600
+    
+    try:
+        print(f"  [CATCHUP] [{phone}] Fetching unread messages (last {hours_back:.1f}h)...")
+```
+
+**Change 3:** Store `last_offline_at` when getting initial tasks (lines 1365-1370)
+
+```python
+initial = await get_tasks(100)
+initial_accounts = initial.get("accounts", [])
+
+# Store the last offline timestamp from backend
+last_offline_at = initial.get("last_offline_at")
+if last_offline_at:
+    print(f"  Runner last offline at: {last_offline_at}")
+
+_, _ = await connect_all_from_response(initial_accounts)
+```
+
+**Change 4:** Pass offline time to catch-up function (inside `connect_all_from_response`, lines 1186-1192)
+
+```python
+# Fetch unread messages in PARALLEL, using last_offline_at for cutoff
+if newly_connected:
+    await asyncio.gather(
+        *[fetch_unread_messages(clients[aid], aid, last_offline_at) 
+          for aid in newly_connected if aid in clients],
+        return_exceptions=True
+    )
+```
+
+## Expected Behavior
 
 | Scenario | Before | After |
 |----------|--------|-------|
-| First startup (100 contacts, 50 msgs each) | 5,000 API calls | 5,000 API calls (same) |
-| Second startup (same messages) | 5,000 API calls, all duplicates | 0 API calls (all skipped client-side) |
-| Reconnect after 1 hour | 5,000+ API calls | Only new messages |
+| Runner offline 5 minutes | Fetches 24h of messages | Fetches ~10 minutes of messages |
+| Runner offline 2 hours | Fetches 24h of messages | Fetches ~2h 5min of messages |
+| First startup (no data) | Fetches 24h of messages | Fetches 24h of messages (default) |
+| Runner offline 3 days | Fetches 24h of messages | Fetches 24h of messages (capped) |
 
-## Technical Notes
+Note: We cap at 24 hours maximum since older messages are unlikely to be relevant, and Telegram dialogs may not have them cached anyway.
 
-- The set uses `f"{account_id}_{telegram_message_id}"` as key to handle multi-account scenarios
-- Set is in-memory only (clears on runner restart), which is fine since backend still deduplicates
-- This is an optimization layer on top of backend deduplication, not a replacement
+## Safety Measures
+
+1. **5-minute buffer**: We subtract 5 minutes from the offline timestamp to catch any messages that arrived just before the runner went offline
+2. **24-hour fallback**: If parsing fails or no data exists, we default to the existing 24-hour window
+3. **Backend deduplication still active**: Even if we fetch duplicates, the backend's `telegram_message_id` deduplication prevents issues
 
