@@ -22,7 +22,7 @@ const fetchDashboardStats = async (): Promise<DashboardStats> => {
     { count: messagesLifetime },
     { count: repliesLifetime },
   ] = await Promise.all([
-    supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }),
+    supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }).not('device_model', 'is', null),
     supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('proxies').select('id', { count: 'exact', head: true }).eq('status', 'active'),
     supabase.from('messages').select('id', { count: 'exact', head: true })
