@@ -546,14 +546,20 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
                         Cannot be used for new campaigns.
                       </p>
                       <div className="mt-2 space-y-1 max-h-24 overflow-y-auto">
-                        {restrictedAccounts.slice(0, 5).map((acc) => (
-                          <div key={acc.id} className="flex items-center justify-between text-xs text-yellow-600">
-                            <span>• {acc.firstName || acc.phoneNumber}</span>
-                            {acc.restrictedUntil && new Date(acc.restrictedUntil) > now && (
-                              <CountdownTimer targetDate={new Date(acc.restrictedUntil)} className="text-yellow-600" />
-                            )}
-                          </div>
-                        ))}
+                        {restrictedAccounts.slice(0, 5).map((acc) => {
+                          // Show countdown from restrictedUntil
+                          const cooldownEnd = acc.restrictedUntil && new Date(acc.restrictedUntil) > now 
+                            ? new Date(acc.restrictedUntil) 
+                            : null;
+                          return (
+                            <div key={acc.id} className="flex items-center justify-between text-xs text-yellow-600">
+                              <span>• {acc.firstName || acc.phoneNumber} {acc.status === 'restricted' ? '(PeerFlood)' : acc.status === 'cooldown' ? '(Cooldown)' : ''}</span>
+                              {cooldownEnd && (
+                                <CountdownTimer targetDate={cooldownEnd} className="text-yellow-600" />
+                              )}
+                            </div>
+                          );
+                        })}
                         {restrictedAccounts.length > 5 && (
                           <p className="text-xs text-yellow-600">+{restrictedAccounts.length - 5} more</p>
                         )}
