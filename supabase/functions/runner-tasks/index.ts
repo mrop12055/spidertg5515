@@ -170,10 +170,15 @@ serve(async (req) => {
 
 // ==================== GET TASKS ====================
 async function handleGetTasks(supabase: any, body: any) {
-  const { runner, batch_size = 100, account_ids } = body;
+  const { runner, account_ids } = body;
   const nowIso = new Date().toISOString();
 
-  console.log(`[runner-tasks/get] Runner: ${runner}, batch_size: ${batch_size}`);
+  // Get settings first to use admin-configured batch size
+  const settingsData = await getCachedSettings(supabase);
+  const config = parseSettings(settingsData);
+  const batch_size = config.campaignBatchSize;
+
+  console.log(`[runner-tasks/get] Runner: ${runner}, batch_size: ${batch_size} (from settings)`);
 
   // Fetch last_offline_at BEFORE updating heartbeat (to know when we were last offline)
   let lastOfflineAt: string | null = null;
@@ -192,8 +197,6 @@ async function handleGetTasks(supabase: any, body: any) {
       .then(() => {});
   }
 
-  const settingsData = await getCachedSettings(supabase);
-  const config = parseSettings(settingsData);
 
   // Auto-restore expired cooldowns (check both restricted_until and cooldown_until)
   const { data: expiredCooldowns } = await supabase
