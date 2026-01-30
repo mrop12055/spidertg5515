@@ -1,64 +1,81 @@
 
 
-# Fix: Only Fetch Incoming Messages (Skip Own Sent Messages)
+# Optimize Runner: Client-Side Message Deduplication
+
+## Current Behavior
+The backend already deduplicates messages by `telegram_message_id` - this works correctly. However, the Python runner still sends ALL messages to the backend every time, even ones that were already processed in previous fetch cycles.
 
 ## Problem
-When fetching unread messages during catch-up, the runner is also reporting messages that YOU sent. These get recorded as "recipient replied" even though they're your own outgoing messages.
+On each startup/reconnect, the runner:
+1. Fetches up to 50 messages per contact
+2. Sends ALL of them to the backend
+3. Backend queries database for each one to check if duplicate
+4. Skips duplicates but still wastes network + DB calls
 
-## Root Cause
-In the `fetch_unread_messages()` function (lines 948-1006), the code fetches all messages from a dialog but never checks WHO sent each message. Telethon messages have an `out` property:
-- `msg.out = True` means YOU sent this message
-- `msg.out = False` means the OTHER person sent this message
-
-Currently, ALL messages are processed and reported as "incoming_message", even your own sent ones.
+With 100 contacts × 50 messages = 5,000 API calls + 5,000 DB queries, even if most are duplicates.
 
 ## Solution
-Add a simple check to skip outgoing messages:
+Add client-side tracking of processed message IDs in the Python runner to skip sending messages we already reported.
 
 ### File: `src/pages/SetupGuide.tsx`
 
-**Location:** Line 953-960, inside the message loop
+**Change 1: Add global set to track processed messages**
 
-**Before:**
+Location: Near top of Python runner code (around line 100-120, with other global variables)
+
 ```python
-for msg in reversed(messages):  # Process oldest first
-    if not msg.text and not msg.media:
-        continue
-    
-    # SKIP messages older than 24 hours
-    if msg.date and msg.date < cutoff_time:
-        skipped_old += 1
-        continue
+# Track processed message IDs to avoid re-sending to backend
+processed_message_ids = set()
 ```
 
-**After:**
+**Change 2: Check before reporting and add to set after**
+
+Location: Inside `fetch_unread_messages()`, before the `await report("incoming_message", ...)` call (around line 1000-1010)
+
 ```python
-for msg in reversed(messages):  # Process oldest first
-    if not msg.text and not msg.media:
-        continue
-    
-    # SKIP our own outgoing messages - only process incoming from recipient
-    if msg.out:
-        continue
-    
-    # SKIP messages older than 24 hours
-    if msg.date and msg.date < cutoff_time:
-        skipped_old += 1
-        continue
+# Before:
+await report("incoming_message", {
+    ...
+    "telegram_message_id": msg.id,
+    ...
+})
+
+# After:
+# Skip if we already processed this message
+msg_key = f"{acc_id}_{msg.id}"
+if msg_key in processed_message_ids:
+    continue
+
+await report("incoming_message", {
+    ...
+    "telegram_message_id": msg.id,
+    ...
+})
+
+# Mark as processed
+processed_message_ids.add(msg_key)
 ```
 
-## Technical Details
+**Change 3: Also track messages from real-time handler**
 
-The `msg.out` property is a boolean provided by Telethon:
-- When `True`: This message was sent FROM the account (outgoing)
-- When `False`: This message was sent TO the account (incoming)
+Location: Inside the real-time `NewMessage` event handler, after reporting
 
-By adding `if msg.out: continue`, we skip all outgoing messages and only process messages actually sent by the recipient.
+```python
+# After reporting incoming message in real-time handler
+processed_message_ids.add(f"{acc_id}_{event.message.id}")
+```
 
-## Expected Result
+## Expected Performance Improvement
 
-| Before | After |
-|--------|-------|
-| Your sent messages + recipient messages all reported as "incoming" | Only recipient's messages reported |
-| Conversations show duplicate/wrong "recipient replied" entries | Clean incoming message history |
+| Scenario | Before | After |
+|----------|--------|-------|
+| First startup (100 contacts, 50 msgs each) | 5,000 API calls | 5,000 API calls (same) |
+| Second startup (same messages) | 5,000 API calls, all duplicates | 0 API calls (all skipped client-side) |
+| Reconnect after 1 hour | 5,000+ API calls | Only new messages |
+
+## Technical Notes
+
+- The set uses `f"{account_id}_{telegram_message_id}"` as key to handle multi-account scenarios
+- Set is in-memory only (clears on runner restart), which is fine since backend still deduplicates
+- This is an optimization layer on top of backend deduplication, not a replacement
 
