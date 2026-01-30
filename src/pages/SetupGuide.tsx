@@ -61,6 +61,9 @@ RUNNING = True
 # Key format: "{account_id}_{telegram_message_id}"
 processed_message_ids = set()
 
+# Track when the runner was last offline (fetched from backend)
+last_offline_at: Optional[str] = None
+
 _locks: Dict[str, asyncio.Lock] = {}
 _locks_mutex = threading.Lock()
 _http: Optional[httpx.AsyncClient] = None
@@ -917,17 +920,50 @@ async def on_message(event, acc_id: str):
 # FETCH UNREAD MESSAGES (CATCH-UP ON RECONNECTION)
 # ==============================================================================
 
-async def fetch_unread_messages(client, acc_id: str):
-    """Fetch and report unread messages from contacts after reconnection (24h window)."""
+async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str] = None):
+    """Fetch and report unread messages from contacts after reconnection.
+    Uses last_offline_at if available, otherwise defaults to 24h window."""
+    global last_offline_at
     acc = accounts.get(acc_id, {})
     phone = acc.get("phone_number", "????")[-4:]
     
-    # 24-hour cutoff for message sync
     from datetime import datetime, timedelta, timezone
-    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    
+    # Determine cutoff time based on last offline timestamp
+    # Priority: 1) Function parameter, 2) Global last_offline_at, 3) 24h default
+    cutoff_time = None
+    cutoff_source = "24h default"
+    
+    if offline_since:
+        try:
+            cutoff_time = datetime.fromisoformat(offline_since.replace('Z', '+00:00'))
+            # Add 5-min buffer to catch edge cases
+            cutoff_time = cutoff_time - timedelta(minutes=5)
+            cutoff_source = "last_offline_at"
+        except:
+            pass
+    elif last_offline_at:
+        try:
+            cutoff_time = datetime.fromisoformat(last_offline_at.replace('Z', '+00:00'))
+            cutoff_time = cutoff_time - timedelta(minutes=5)
+            cutoff_source = "global last_offline_at"
+        except:
+            pass
+    
+    # Fallback to 24h window, also cap at 24h max
+    if cutoff_time is None:
+        cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    else:
+        # Cap at 24h maximum (older messages unlikely to be relevant)
+        min_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        if cutoff_time < min_cutoff:
+            cutoff_time = min_cutoff
+            cutoff_source += " (capped at 24h)"
+    
+    hours_back = (datetime.now(timezone.utc) - cutoff_time).total_seconds() / 3600
     
     try:
-        print(f"  [CATCHUP] [{phone}] Fetching unread messages (last 24h)...")
+        print(f"  [CATCHUP] [{phone}] Fetching unread messages (last {hours_back:.1f}h, {cutoff_source})...")
         dialogs = await client.get_dialogs(limit=100)
         
         total_fetched = 0
@@ -1184,9 +1220,10 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
                 newly_connected.add(aid)
     
     # Fetch unread messages in PARALLEL for all newly connected accounts (catch-up)
+    # Uses last_offline_at for smart time-based fetching
     if newly_connected:
         await asyncio.gather(
-            *[fetch_unread_messages(clients[aid], aid) 
+            *[fetch_unread_messages(clients[aid], aid, last_offline_at) 
               for aid in newly_connected if aid in clients],
             return_exceptions=True
         )
@@ -1362,9 +1399,18 @@ async def main():
     print("="*50 + "\\n")
     
     # Initial fetch to get accounts and connect them
+    global last_offline_at
     print("  Fetching accounts from backend...")
     initial = await get_tasks(100)
     initial_accounts = initial.get("accounts", [])
+    
+    # Store the last offline timestamp from backend for smart catch-up
+    last_offline_at = initial.get("last_offline_at")
+    if last_offline_at:
+        print(f"  Runner last offline at: {last_offline_at}")
+    else:
+        print("  No last_offline_at found, using 24h default for catch-up")
+    
     _, _ = await connect_all_from_response(initial_accounts)
     await setup_handlers()
     
