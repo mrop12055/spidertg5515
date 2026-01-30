@@ -1018,29 +1018,50 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             return None, error_str
 
 
-async def connect_all_from_response(accs: List[dict]) -> int:
-    """Connect accounts from /runner-tasks/get response and fetch missed messages."""
+async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
+    """
+    Connect accounts from /runner-tasks/get response.
+    Returns (count_connected, set_of_newly_connected_account_ids).
+    Only prints header and runs catch-up for accounts that actually needed connecting.
+    """
+    if not accs:
+        return 0, set()
+    
+    # Snapshot which accounts are already connected
+    already_connected = {aid for aid, c in clients.items() if c and c.is_connected()}
+    
+    # Find accounts that need connecting (missing or disconnected)
+    to_connect = [acc for acc in accs if acc.get("id") not in already_connected]
+    
+    # If nothing to connect, return silently
+    if not to_connect:
+        return len(already_connected), set()
+    
+    # Print header only when we actually have something to connect
     print("\\n" + "="*50)
     print("  CONNECTING ACCOUNTS")
     print("="*50)
+    print(f"  Found {len(to_connect)} account(s) to connect (already connected: {len(already_connected)})...\\n")
     
-    if not accs:
-        print("  No accounts in response")
-        return 0
-    
-    print(f"  Found {len(accs)} accounts...\\n")
-    results = await asyncio.gather(*[connect(a) for a in accs], return_exceptions=True)
+    # Connect only the accounts that need it
+    results = await asyncio.gather(*[connect(a) for a in to_connect], return_exceptions=True)
     ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
-    print(f"\\n  Connected: {ok}/{len(accs)}")
+    print(f"\\n  Connected: {ok}/{len(to_connect)} (total active: {len(already_connected) + ok})")
     
-    # Fetch unread messages for newly connected accounts (catch-up)
-    for i, acc in enumerate(accs):
+    # Track which accounts were newly connected
+    newly_connected = set()
+    for i, acc in enumerate(to_connect):
         if isinstance(results[i], tuple) and results[i][0]:
             aid = acc.get("id")
-            if aid and aid in clients:
-                await fetch_unread_messages(clients[aid], aid)
+            if aid:
+                newly_connected.add(aid)
     
-    return ok
+    # Fetch unread messages ONLY for newly connected accounts (catch-up)
+    for aid in newly_connected:
+        if aid in clients:
+            await fetch_unread_messages(clients[aid], aid)
+    
+    return len(already_connected) + ok, newly_connected
 
 
 async def setup_handlers():
@@ -1214,7 +1235,7 @@ async def main():
     print("  Fetching accounts from backend...")
     initial = await get_tasks(100)
     initial_accounts = initial.get("accounts", [])
-    await connect_all_from_response(initial_accounts)
+    _, _ = await connect_all_from_response(initial_accounts)
     await setup_handlers()
     
     print("\\n" + "="*50)
@@ -1231,11 +1252,11 @@ async def main():
             tasks = batch.get("tasks", [])
             batch_accounts = batch.get("accounts", [])
             
-            # Reconnect/add new accounts every 60s or if we have fewer clients than accounts
+            # Check for new/disconnected accounts every 60s
             if time.time() - last_refresh > 60 or len(clients) < len(batch_accounts):
-                old = len(clients)
-                await connect_all_from_response(batch_accounts)
-                if len(clients) > old:
+                old_count = len(clients)
+                _, newly_connected = await connect_all_from_response(batch_accounts)
+                if newly_connected:
                     await setup_handlers()
                 last_refresh = time.time()
             
@@ -1274,12 +1295,20 @@ async def main():
     print("  Done!")
 
 
+BOOT_COUNT = 0
+
 if __name__ == "__main__":
     print("\\n" + "="*50)
     print("  pip install telethon httpx pysocks")
     print("="*50 + "\\n")
     
     while True:
+        BOOT_COUNT += 1
+        boot_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\\n[BOOT] #{BOOT_COUNT} at {boot_time}")
+        if BOOT_COUNT > 1:
+            print(f"  ↑ This is a RESTART (boot #{BOOT_COUNT}), not a periodic refresh")
+        
         try:
             asyncio.run(main())
             # If main() exits cleanly (RUNNING = False), break the loop
