@@ -187,6 +187,10 @@ serve(async (req) => {
       const { error: resetError } = await supabase.rpc('reset_daily_message_counts');
       results.daily_counts_reset = !resetError;
 
+      // Sync messages_sent_today with actual counts from messages table
+      const { error: syncError } = await supabase.rpc('sync_messages_sent_today');
+      results.messages_sent_today_synced = !syncError;
+
       // Auto-restore expired cooldowns
       const { data: expiredCooldowns } = await supabase
         .from('telegram_accounts')

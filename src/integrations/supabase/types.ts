@@ -1826,6 +1826,7 @@ export type Database = {
       is_authenticated: { Args: never; Returns: boolean }
       reset_daily_message_counts: { Args: never; Returns: undefined }
       sync_campaign_counters: { Args: { cid: string }; Returns: undefined }
+      sync_messages_sent_today: { Args: never; Returns: undefined }
     }
     Enums: {
       account_status:
