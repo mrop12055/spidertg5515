@@ -845,7 +845,10 @@ async def on_message(event, acc_id: str):
         sender = await event.get_sender()
         if not sender or not isinstance(sender, User) or getattr(sender, 'bot', False):
             return
-        # REMOVED: Contact-only filter - we need to receive replies from campaign recipients too!
+        
+        # Only process messages from contacts (imported campaign recipients)
+        if not getattr(sender, 'contact', False):
+            return
         
         phone = None
         if hasattr(sender, 'phone') and sender.phone:
@@ -925,8 +928,11 @@ async def fetch_unread_messages(client, acc_id: str):
             if not dialog.is_user:
                 continue
             
-            # REMOVED: Contact-only filter - we need to sync replies from campaign recipients too!
             entity = dialog.entity
+            
+            # Only sync messages from contacts (imported campaign recipients)
+            if not getattr(entity, 'contact', False):
+                continue
             
             # Skip bots
             if getattr(entity, 'bot', False):
