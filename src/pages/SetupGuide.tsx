@@ -850,15 +850,21 @@ async def on_message(event, acc_id: str):
 # ==============================================================================
 
 async def fetch_unread_messages(client, acc_id: str):
-    """Fetch and report unread messages from contacts after reconnection."""
+    """Fetch and report unread messages from contacts after reconnection (24h window)."""
     acc = accounts.get(acc_id, {})
     phone = acc.get("phone_number", "????")[-4:]
     
+    # 24-hour cutoff for message sync
+    from datetime import datetime, timedelta, timezone
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    
     try:
-        print(f"  [CATCHUP] [{phone}] Fetching unread messages...")
+        print(f"  [CATCHUP] [{phone}] Fetching unread messages (last 24h)...")
         dialogs = await client.get_dialogs(limit=100)
         
         total_fetched = 0
+        skipped_old = 0
+        
         for dialog in dialogs:
             # Only process direct user chats (not groups/channels)
             if not dialog.is_user:
@@ -882,6 +888,11 @@ async def fetch_unread_messages(client, acc_id: str):
             for msg in reversed(messages):  # Process oldest first
                 if not msg.text and not msg.media:
                     continue
+                
+                # SKIP messages older than 24 hours
+                if msg.date and msg.date < cutoff_time:
+                    skipped_old += 1
+                    continue
                     
                 sender_phone = None
                 if hasattr(entity, 'phone') and entity.phone:
@@ -901,13 +912,13 @@ async def fetch_unread_messages(client, acc_id: str):
                 })
                 total_fetched += 1
             
-            # Mark messages as read
+            # Always mark messages as read (even old ones)
             await client.send_read_acknowledge(dialog.entity)
         
-        if total_fetched > 0:
-            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} missed messages")
+        if total_fetched > 0 or skipped_old > 0:
+            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages (skipped {skipped_old} older than 24h)")
         else:
-            print(f"  [CATCHUP] [{phone}] No unread messages from contacts")
+            print(f"  [CATCHUP] [{phone}] No recent unread messages from contacts")
             
     except Exception as e:
         print(f"  [CATCHUP] [{phone}] Error: {str(e)[:50]}")
