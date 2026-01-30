@@ -611,6 +611,13 @@ const Accounts: React.FC = () => {
   };
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
+    // Debug: Log what files made it through the dropzone
+    console.log('[Upload Debug] Accepted files:', acceptedFiles.map(f => ({
+      name: f.name,
+      type: f.type,
+      size: f.size
+    })));
+    
     // Separate files by type
     const sessionFiles: File[] = [];
     const jsonFiles: File[] = [];
@@ -730,14 +737,27 @@ const Accounts: React.FC = () => {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected: (rejectedFiles) => {
+      console.log('[Upload Debug] Rejected files:', rejectedFiles.map(f => ({
+        name: f.file.name,
+        type: f.file.type,
+        errors: f.errors
+      })));
+      if (rejectedFiles.length > 0) {
+        toast.warning(`${rejectedFiles.length} files were rejected. Check console for details.`);
+      }
+    },
     accept: {
+      // Accept common MIME types but also use wildcard fallback
       'application/x-sqlite3': ['.session'],
-      'application/octet-stream': ['.session'],
+      'application/octet-stream': ['.session', '.json'],
       'application/json': ['.json'],
       'text/json': ['.json'],
-      'text/plain': ['.json'],
+      'text/plain': ['.json', '.session'],
       'application/zip': ['.zip'],
       'application/x-zip-compressed': ['.zip'],
+      // Fallback for any file type - we filter by extension in onDrop
+      '*/*': ['.session', '.json', '.zip'],
     },
     disabled: isUploading,
     multiple: true
