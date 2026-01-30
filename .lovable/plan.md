@@ -1,50 +1,86 @@
 
-# Fix Slow Sequential Unread Message Fetching
+
+# Fix: Support More JSON Field Names for Device Info
 
 ## Problem
-When accounts reconnect, the runner fetches unread messages **sequentially** (one account at a time). With many accounts, this creates a bottleneck:
-- 50 accounts × ~5 seconds each = ~250 seconds (4+ minutes) of waiting
+When uploading session JSON files, the device_model field isn't being extracted for some accounts because their JSON uses different field names than what the code currently supports.
 
-The issue is in `connect_all_from_response()` at lines 1166-1170:
-```python
-for aid in newly_connected:
-    if aid in clients:
-        await fetch_unread_messages(clients[aid], aid)  # Sequential!
+## Current Supported Fields
+```javascript
+device_model: metadata?.device_model || metadata?.device
+system_version: metadata?.system_version || metadata?.sdk
 ```
 
 ## Solution
-Change the sequential loop to use `asyncio.gather()` for parallel execution, exactly like how accounts are connected and tasks are processed.
+Expand the field name mapping to support all common variations from different Telegram session export tools.
 
-## Technical Details
+## Changes to `src/pages/Accounts.tsx`
 
-### File: `src/pages/SetupGuide.tsx` (Python runner code)
+### 1. Update `JsonMetadata` Interface (lines 68-97)
 
-**Location:** Lines 1166-1170 inside `connect_all_from_response()`
-
-**Before (sequential):**
-```python
-for aid in newly_connected:
-    if aid in clients:
-        await fetch_unread_messages(clients[aid], aid)
+Add additional field name variations:
+```typescript
+interface JsonMetadata {
+  // ... existing fields ...
+  
+  // Device fingerprint - add more variations
+  deviceModel?: string;      // camelCase (NEW)
+  model?: string;            // shorthand (NEW)
+  device_info?: string;      // alternative (NEW)
+  deviceInfo?: string;       // camelCase (NEW)
+  
+  sdk?: string;
+  system_version?: string;
+  systemVersion?: string;    // camelCase (NEW)
+  os_version?: string;       // alternative (NEW)
+  
+  // App version variations
+  appVersion?: string;       // camelCase (NEW)
+  app_version?: string;
+  version?: string;          // shorthand (NEW)
+}
 ```
 
-**After (parallel):**
-```python
-# Fetch unread messages in PARALLEL for all newly connected accounts
-if newly_connected:
-    await asyncio.gather(
-        *[fetch_unread_messages(clients[aid], aid) 
-          for aid in newly_connected if aid in clients],
-        return_exceptions=True
-    )
+### 2. Update Upload Mapping (lines 755-758)
+
+Expand the fallback chain:
+```typescript
+// Device fingerprint - try all known field name variations
+device_model: metadata?.device_model 
+  || metadata?.device 
+  || metadata?.deviceModel 
+  || metadata?.model 
+  || metadata?.device_info 
+  || metadata?.deviceInfo,
+  
+system_version: metadata?.system_version 
+  || metadata?.sdk 
+  || metadata?.systemVersion 
+  || metadata?.os_version,
+  
+app_version: metadata?.app_version 
+  || metadata?.appVersion 
+  || metadata?.version,
 ```
 
-## Expected Performance
+### 3. Add Debug Logging (Optional)
 
-| Scenario | Before (Sequential) | After (Parallel) |
-|----------|---------------------|------------------|
-| 10 accounts | ~50 seconds | ~5 seconds |
-| 50 accounts | ~250 seconds | ~5-10 seconds |
-| 100 accounts | ~500 seconds | ~5-10 seconds |
+Add console logging during JSON parsing to help identify unrecognized field names:
+```typescript
+// In parseJsonMetadata function
+console.log('[JSON Metadata] Parsed fields:', Object.keys(json));
+if (!json.device_model && !json.device && !json.deviceModel) {
+  console.log('[JSON Metadata] No device field found. Available fields:', json);
+}
+```
 
-The parallel approach limits total time to the slowest single account rather than the sum of all accounts.
+## Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/pages/Accounts.tsx` | Expand `JsonMetadata` interface and upload mapping |
+
+## Alternative: User Action
+
+If your JSON uses a completely different field name, please share a sample JSON structure so I can add specific support for it.
+
