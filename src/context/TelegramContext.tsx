@@ -148,30 +148,56 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       setIsLoading(true);
       
       // Only fetch what's NOT handled by cached hooks
-      const [campaignsResult, conversationsResult, messagesResult] = await Promise.all([
-        // Fetch campaigns (usually small, no paging needed)
-        supabase
-          .from('campaigns')
-          .select('*, campaign_accounts(account_id)')
-          .order('created_at', { ascending: false }),
+      // Fetch campaigns
+      const campaignsResult = await supabase
+        .from('campaigns')
+        .select('*, campaign_accounts(account_id)')
+        .order('created_at', { ascending: false });
 
-        // Fetch conversations - limit for performance
-        // Show all conversations with messages (removed first_message_sent filter to include reply-only convos)
-        supabase
+      // Fetch conversations with pagination to bypass 1000 limit (up to 10k)
+      const PAGE_SIZE = 1000;
+      const MAX_CONVERSATIONS = 10000;
+      
+      // Get total count first
+      const { count: totalConvCount } = await supabase
+        .from('conversations')
+        .select('*', { count: 'exact', head: true })
+        .not('last_message_at', 'is', null);
+      
+      const effectiveConvCount = Math.min(totalConvCount || 0, MAX_CONVERSATIONS);
+      const totalConvPages = Math.ceil(effectiveConvCount / PAGE_SIZE);
+      const allConversations: any[] = [];
+      
+      for (let page = 0; page < totalConvPages; page++) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        
+        const { data, error } = await supabase
           .from('conversations')
           .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
           .not('last_message_at', 'is', null)
           .order('last_message_at', { ascending: false })
-          .limit(5000), // Limit to most recent conversations
+          .range(from, to);
+        
+        if (error) {
+          console.error('Error fetching conversations page', page, error);
+          break;
+        }
+        if (!data || data.length === 0) break;
+        allConversations.push(...data);
+      }
+      
+      console.log('[TelegramContext] Fetched', allConversations.length, 'of', totalConvCount, 'conversations');
+      
+      const conversationsResult = { data: allConversations, error: null };
 
-        // Fetch messages - LIMIT to last 3 days for performance
-        supabase
-          .from('messages')
-          .select('*, conversations(recipient_phone)')
-          .gte('created_at', new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())
-          .order('created_at', { ascending: false })
-          .limit(5000),
-      ]);
+      // Fetch messages - LIMIT to last 3 days for performance
+      const messagesResult = await supabase
+        .from('messages')
+        .select('*, conversations(recipient_phone)')
+        .gte('created_at', new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())
+        .order('created_at', { ascending: false })
+        .limit(5000);
 
       // Process campaigns
       if (campaignsResult.data) {
