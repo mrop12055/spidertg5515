@@ -347,7 +347,7 @@ const SeatChat: React.FC = () => {
   }, [token]);
 
   // Fetch conversations for this seat - campaign conversations OR conversations with replies
-  // Limited to last 5 days
+  // Limited to last 5 days, with pagination to support up to 10k conversations
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
 
@@ -356,18 +356,43 @@ const SeatChat: React.FC = () => {
       const fiveDaysAgo = new Date();
       fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
       
-      // Fetch conversations: either we sent first OR they replied (incoming messages exist)
-      const { data, error } = await supabase
+      const PAGE_SIZE = 1000;
+      const MAX_CONVERSATIONS = 10000;
+      const allData: any[] = [];
+      
+      // First get total count
+      const { count: totalCount } = await supabase
         .from('conversations')
-        .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
+        .select('*', { count: 'exact', head: true })
         .eq('seat_id', seat.id)
-        .gte('last_message_at', fiveDaysAgo.toISOString())
-        .order('last_message_at', { ascending: false, nullsFirst: false });
+        .gte('last_message_at', fiveDaysAgo.toISOString());
+      
+      const pagesToFetch = Math.min(Math.ceil((totalCount || 0) / PAGE_SIZE), MAX_CONVERSATIONS / PAGE_SIZE);
+      
+      // Fetch all pages
+      for (let page = 0; page < pagesToFetch; page++) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        
+        const { data, error } = await supabase
+          .from('conversations')
+          .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
+          .eq('seat_id', seat.id)
+          .gte('last_message_at', fiveDaysAgo.toISOString())
+          .order('last_message_at', { ascending: false, nullsFirst: false })
+          .range(from, to);
 
-      if (error) throw error;
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        
+        allData.push(...data);
+        if (data.length < PAGE_SIZE) break;
+      }
       
       // Filter: show if first_message_sent OR has_reply
-      const filtered = (data || []).filter(conv => conv.first_message_sent || conv.has_reply);
+      const filtered = allData.filter(conv => conv.first_message_sent || conv.has_reply);
+      
+      console.log('[SeatChat] Fetched', allData.length, 'conversations,', filtered.length, 'after filter');
       
       // Use the conversation's stored values directly (updated by trigger)
       setConversations(filtered.map(conv => ({
