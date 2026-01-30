@@ -537,6 +537,12 @@ async function handleGetTasks(supabase: any, body: any) {
     accounts: listeningAccounts,
     delay_after: tasks.length > 0 ? config.campaignPollingInterval : 5,
     settings: config.livechatSettings,
+    config: {
+      campaignBatchSize: config.campaignBatchSize,
+      warmupBatchSize: config.warmupBatchSize,
+      dailyLimit: config.dailyLimit,
+      campaignMessagesPerAccountPerDay: config.campaignMessagesPerAccountPerDay,
+    },
   });
 }
 
@@ -576,10 +582,21 @@ async function handleReportResults(supabase: any, body: any) {
 
     if (taskType === "send") {
       if (r.campaign_recipient_id) {
-        // Campaign message success
-        await supabase.from("campaign_recipients")
-          .update({ status: "sent", sent_at: now, api_credential_id: r.api_credential_id })
-          .eq("id", r.campaign_recipient_id);
+        // Campaign message success - check if already counted to prevent double-counting on retries
+        const { data: recipientData } = await supabase
+          .from("campaign_recipients")
+          .select("status")
+          .eq("id", r.campaign_recipient_id)
+          .single();
+
+        // Only update and count if recipient wasn't already marked as sent
+        const wasAlreadySent = recipientData?.status === 'sent';
+        
+        if (!wasAlreadySent) {
+          await supabase.from("campaign_recipients")
+            .update({ status: "sent", sent_at: now, api_credential_id: r.api_credential_id })
+            .eq("id", r.campaign_recipient_id);
+        }
 
         // Create/update conversation
         let conversationId: string | null = null;
@@ -625,8 +642,10 @@ async function handleReportResults(supabase: any, body: any) {
           });
         }
 
-        // Update campaign count
-        await supabase.rpc('increment_campaign_sent_count', { cid: r.campaign_id });
+        // Update campaign count - ONLY if not already counted
+        if (!wasAlreadySent) {
+          await supabase.rpc('increment_campaign_sent_count', { cid: r.campaign_id });
+        }
 
       } else if (r.message_id) {
         // Livechat message success

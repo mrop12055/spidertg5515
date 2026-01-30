@@ -1311,6 +1311,10 @@ async def main():
     _, _ = await connect_all_from_response(initial_accounts)
     await setup_handlers()
     
+    # Get configured batch size from settings (default 100)
+    config_batch_size = initial.get("config", {}).get("campaignBatchSize", 100)
+    print(f"  Using batch size: {config_batch_size} (from settings)")
+    
     print("\\n" + "="*50)
     print("  PROCESSING TASKS + LISTENING FOR MESSAGES")
     print("="*50 + "\\n")
@@ -1320,8 +1324,8 @@ async def main():
     
     while RUNNING:
         try:
-            # Get tasks (also returns accounts for reconnection)
-            batch = await get_tasks(100)
+            # Get tasks using configured batch size
+            batch = await get_tasks(config_batch_size)
             tasks = batch.get("tasks", [])
             batch_accounts = batch.get("accounts", [])
             
