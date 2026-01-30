@@ -677,6 +677,37 @@ async function handleReportResults(supabase: any, body: any) {
           if (r.last_name !== undefined) accountUpdates.last_name = r.last_name;
           if (r.username !== undefined) accountUpdates.username = r.username;
           if (r.telegram_id) accountUpdates.telegram_id = r.telegram_id;
+          
+          // Handle avatar from sync_profile
+          if (r.avatar_url) {
+            if (r.avatar_url.startsWith('data:image')) {
+              // Base64 image - upload to storage
+              try {
+                const base64Data = r.avatar_url.split(',')[1];
+                const binaryData = Uint8Array.from(atob(base64Data), c => c.charCodeAt(0));
+                const filename = `avatars/${r.account_id}_${Date.now()}.jpg`;
+                
+                const { error: uploadError } = await supabase.storage
+                  .from('message-attachments')
+                  .upload(filename, binaryData, { contentType: 'image/jpeg', upsert: true });
+                
+                if (!uploadError) {
+                  const { data: urlData } = supabase.storage
+                    .from('message-attachments')
+                    .getPublicUrl(filename);
+                  accountUpdates.avatar_url = urlData.publicUrl;
+                  console.log(`[sync_profile] Avatar uploaded: ${filename}`);
+                } else {
+                  console.error('[sync_profile] Avatar upload error:', uploadError);
+                }
+              } catch (e) {
+                console.error('[sync_profile] Avatar upload failed:', e);
+              }
+            } else {
+              // Direct URL
+              accountUpdates.avatar_url = r.avatar_url;
+            }
+          }
         } else if (taskType === "spambot_check") {
           if (r.status) accountUpdates.spambot_status = r.status;
           accountUpdates.last_spambot_check = now;
