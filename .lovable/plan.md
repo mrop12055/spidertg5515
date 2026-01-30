@@ -1,75 +1,139 @@
 
-# Plan: Fix PeerFlood Error Handling ✅ COMPLETED
 
-## The Problem
+# Plan: Add 24-Hour Time Window Filter to Catch-Up Sync
 
-**PeerFlood** is an error about the **sender account** being rate-limited by Telegram, NOT about the recipient being unreachable.
+## Overview
 
-**Previous behavior (wrong):**
-- When PeerFlood occurred, the recipient was marked as "failed"
-- The sender account continued as normal
-- The recipient never got the message even though there was nothing wrong with them
-
-**New behavior (fixed):**
-- PeerFlood puts the **sender account** in cooldown status
-- The recipient is reset to "pending" for retry by another account
-- The failed account is tracked in `failed_account_ids` to prevent retrying with the same account
+Modify the `fetch_unread_messages` function in the Python runner to only synchronize messages from the last 24 hours during offline catch-up. This prevents syncing old messages when the runner reconnects after extended downtime.
 
 ---
 
-## Changes Made
+## Current Behavior
 
-### 1. Database: Added `cooldown_until` column
-```sql
-ALTER TABLE telegram_accounts ADD COLUMN cooldown_until TIMESTAMPTZ;
-```
+The catch-up sync currently:
+1. Gets dialogs with unread messages
+2. Fetches ALL unread messages from contacts
+3. Reports them to the backend
+4. Marks as read on Telegram
 
-### 2. Edge Function: Account-Level Error Detection
-
-Modified `supabase/functions/runner-tasks/index.ts` to:
-
-| Error Type | Action on Recipient | Action on Account |
-|------------|---------------------|-------------------|
-| PeerFlood | Reset to "pending" | Set status="cooldown", set cooldown_until |
-| FloodWait | Reset to "pending" | Set status="cooldown" (duration from error) |
-| UserDeactivated | Reset to "pending" | Set status="cooldown" |
-| AuthKeyUnregistered | Reset to "pending" | Set status="cooldown" |
-| Privacy restricted | Mark failed | No action (recipient's choice) |
-| User blocked | Mark failed | No action |
-| Not on Telegram | Mark failed | No action |
-
-### 3. Task Dispatcher: Skip Failed Accounts
-
-- Added logic to skip accounts in the `failed_account_ids` array for each recipient
-- Auto-restore accounts from cooldown when `cooldown_until` expires
+**Problem**: If the runner was offline for days, it would sync ALL accumulated messages, including very old ones.
 
 ---
 
-## Expected Behavior After Fix
+## New Behavior
 
-**Before (current):**
-```
-Campaign: 50 recipients
-Account A: PeerFlood after 10 sends
-Result: 10 sent, 40 failed (WRONG - all 40 marked failed)
-```
+After the change:
+1. Gets dialogs with unread messages
+2. Filters messages to only include those from the **last 24 hours**
+3. Skips older messages but still marks the dialog as read
+4. Reports only recent messages to the backend
 
-**After (fixed):**
-```
-Campaign: 50 recipients  
-Account A: PeerFlood after 10 sends → Account A goes to cooldown
-Account B: Picks up remaining 40 recipients
-Result: 10 sent by A, 40 sent by B (CORRECT)
+---
+
+## Technical Changes
+
+### File: `src/pages/SetupGuide.tsx`
+
+**Location**: Lines 852-913 (`fetch_unread_messages` function)
+
+**Changes**:
+
+1. Import `datetime` and `timedelta` at the top of the Python script (add to imports around line 34-46)
+
+2. Modify the message filtering logic to check message timestamps:
+
+```python
+async def fetch_unread_messages(client, acc_id: str):
+    """Fetch and report unread messages from contacts after reconnection (24h window)."""
+    acc = accounts.get(acc_id, {})
+    phone = acc.get("phone_number", "????")[-4:]
+    
+    # 24-hour cutoff for message sync
+    from datetime import datetime, timedelta, timezone
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=24)
+    
+    try:
+        print(f"  [CATCHUP] [{phone}] Fetching unread messages (last 24h)...")
+        dialogs = await client.get_dialogs(limit=100)
+        
+        total_fetched = 0
+        skipped_old = 0
+        
+        for dialog in dialogs:
+            # Only process direct user chats (not groups/channels)
+            if not dialog.is_user:
+                continue
+            
+            # Only process contacts
+            entity = dialog.entity
+            if not getattr(entity, 'contact', False):
+                continue
+            
+            # Skip if no unread messages
+            if dialog.unread_count == 0:
+                continue
+            
+            # Fetch unread messages from this contact
+            messages = await client.get_messages(
+                dialog.entity, 
+                limit=min(dialog.unread_count, 50)
+            )
+            
+            for msg in reversed(messages):  # Process oldest first
+                if not msg.text and not msg.media:
+                    continue
+                
+                # SKIP messages older than 24 hours
+                if msg.date and msg.date < cutoff_time:
+                    skipped_old += 1
+                    continue
+                    
+                sender_phone = None
+                if hasattr(entity, 'phone') and entity.phone:
+                    sender_phone = f"+{entity.phone}" if not entity.phone.startswith('+') else entity.phone
+                
+                name = f"{entity.first_name or ''} {entity.last_name or ''}".strip() or str(entity.id)
+                content = msg.text or "[Media]"
+                
+                await report("incoming_message", {
+                    "account_id": acc_id,
+                    "sender_id": entity.id,
+                    "sender_name": name,
+                    "sender_username": getattr(entity, 'username', None),
+                    "sender_phone": sender_phone,
+                    "content": content,
+                    "telegram_message_id": msg.id
+                })
+                total_fetched += 1
+            
+            # Always mark messages as read (even old ones)
+            await client.send_read_acknowledge(dialog.entity)
+        
+        if total_fetched > 0 or skipped_old > 0:
+            print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages (skipped {skipped_old} older than 24h)")
+        else:
+            print(f"  [CATCHUP] [{phone}] No recent unread messages from contacts")
+            
+    except Exception as e:
+        print(f"  [CATCHUP] [{phone}] Error: {str(e)[:50]}")
 ```
 
 ---
 
-## Technical Details
+## Key Improvements
 
-**FloodWait duration parsing:**
-- If error contains `FloodWait:300`, cooldown = 300 seconds + 5 min buffer
-- Default cooldown = 30 minutes
+| Aspect | Before | After |
+|--------|--------|-------|
+| Time filter | None | 24 hours |
+| Old messages | Synced | Skipped (but marked read) |
+| Logging | Basic count | Shows synced + skipped counts |
+| Timezone | Not handled | Uses UTC-aware comparison |
 
-**Account tracking:**
-- `failed_account_ids` array on `campaign_recipients` prevents retrying with the same account
-- Account is restored to "active" automatically when `cooldown_until` expires
+---
+
+## Summary
+
+| File | Change |
+|------|--------|
+| `src/pages/SetupGuide.tsx` | Update `fetch_unread_messages` to filter messages older than 24 hours |
+
