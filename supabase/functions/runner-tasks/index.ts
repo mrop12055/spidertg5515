@@ -245,17 +245,40 @@ async function handleGetTasks(supabase: any, body: any) {
       .limit(batch_size);
 
     if (recipients?.length > 0) {
-      const accountMap = new Map(usableAccounts.map((a: any) => [a.id, a]));
+      // Track how many tasks we've assigned to each account in this batch
+      // This enables round-robin distribution across accounts
+      const assignedCountByAccountId: Record<string, number> = {};
       
       for (const r of recipients) {
-        // Find available account
-        const account = usableAccounts.find((a: any) => 
-          (a.messages_sent_today ?? 0) < (config.campaignMessagesPerAccountPerDay || config.dailyLimit)
-        );
-        if (!account) continue;
+        // Find the account with the lowest effective usage (sent_today + assigned_in_batch)
+        // This distributes tasks evenly across all available accounts
+        const dailyLimit = config.campaignMessagesPerAccountPerDay || config.dailyLimit;
+        
+        let bestAccount: any = null;
+        let lowestUsage = Infinity;
+        
+        for (const acc of usableAccounts) {
+          const sentToday = acc.messages_sent_today ?? 0;
+          const assignedInBatch = assignedCountByAccountId[acc.id] ?? 0;
+          const effectiveUsage = sentToday + assignedInBatch;
+          
+          // Skip if account would exceed daily limit
+          if (effectiveUsage >= dailyLimit) continue;
+          
+          // Pick the account with lowest effective usage (round-robin effect)
+          if (effectiveUsage < lowestUsage) {
+            lowestUsage = effectiveUsage;
+            bestAccount = acc;
+          }
+        }
+        
+        if (!bestAccount) continue;
 
-        const creds = await getApiCredentialsForAccount(supabase, account);
+        const creds = await getApiCredentialsForAccount(supabase, bestAccount);
         if (!creds) continue;
+
+        // Increment the assigned count for this account
+        assignedCountByAccountId[bestAccount.id] = (assignedCountByAccountId[bestAccount.id] ?? 0) + 1;
 
         const content = (r.campaigns.message_template || '')
           .replace(/{name}/g, r.name || 'there')
@@ -269,20 +292,20 @@ async function handleGetTasks(supabase: any, body: any) {
           campaign_name: r.campaigns.name,
           campaign_seat_id: r.seat_id || r.campaigns.seat_id,
           account: {
-            id: account.id,
-            phone_number: account.phone_number,
-            session_data: account.session_data,
-            device_model: account.device_model,
-            system_version: account.system_version,
-            build_id: account.build_id,
-            app_version: account.app_version,
-            lang_code: account.lang_code,
-            system_lang_code: account.system_lang_code,
+            id: bestAccount.id,
+            phone_number: bestAccount.phone_number,
+            session_data: bestAccount.session_data,
+            device_model: bestAccount.device_model,
+            system_version: bestAccount.system_version,
+            build_id: bestAccount.build_id,
+            app_version: bestAccount.app_version,
+            lang_code: bestAccount.lang_code,
+            system_lang_code: bestAccount.system_lang_code,
             api_id: creds.api_id,
             api_hash: creds.api_hash,
             api_credential_id: creds.api_credential_id,
           },
-          proxy: account.proxies,
+          proxy: bestAccount.proxies,
           recipient: {
             phone: r.phone_number,
             name: r.name,
