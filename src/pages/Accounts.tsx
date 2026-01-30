@@ -568,10 +568,7 @@ const Accounts: React.FC = () => {
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
-    // Strip both .session and .json extensions explicitly
-    const baseName = filename
-      .replace(/\.session$/i, '')
-      .replace(/\.json$/i, '');
+    const baseName = filename.replace(/\.session$/i, '');
     const digits = baseName.replace(/\D/g, '');
     if (!digits) {
       return `+unknown_${Date.now()}`;
@@ -611,31 +608,12 @@ const Accounts: React.FC = () => {
   };
 
   const onDrop = useCallback(async (acceptedFiles: File[]) => {
-    // Filter to only allowed extensions (bypass unreliable MIME type detection)
-    const allowedExtensions = ['.session', '.json', '.zip'];
-    const validFiles = acceptedFiles.filter(f => {
-      const ext = f.name.toLowerCase().match(/\.[^.]+$/)?.[0];
-      return ext && allowedExtensions.includes(ext);
-    });
-    
-    const rejectedCount = acceptedFiles.length - validFiles.length;
-    if (rejectedCount > 0) {
-      toast.warning(`${rejectedCount} files skipped (unsupported format)`);
-    }
-    
-    // Debug: Log what files passed extension validation
-    console.log('[Upload Debug] Accepted files:', validFiles.map(f => ({
-      name: f.name,
-      type: f.type,
-      size: f.size
-    })));
-    
     // Separate files by type
     const sessionFiles: File[] = [];
     const jsonFiles: File[] = [];
     const zipFiles: File[] = [];
     
-    for (const file of validFiles) {
+    for (const file of acceptedFiles) {
       if (file.name.endsWith('.session')) {
         sessionFiles.push(file);
       } else if (file.name.endsWith('.json')) {
@@ -688,12 +666,6 @@ const Accounts: React.FC = () => {
       const phoneKey = extractPhoneFromFilename(file.name).replace('+', '');
       allJsons.set(phoneKey, file);
     }
-    
-    // Debug logging for file matching
-    console.log('[Upload Debug] Session files phone keys:', Array.from(allSessions.keys()));
-    console.log('[Upload Debug] JSON files phone keys:', Array.from(allJsons.keys()));
-    const matchedCount = Array.from(allSessions.keys()).filter(key => allJsons.has(key)).length;
-    console.log(`[Upload Debug] Matched ${matchedCount}/${allSessions.size} sessions with JSON metadata`);
     
     if (allSessions.size === 0) {
       toast.error('No .session files found. Please upload .session files or a ZIP containing them.');
@@ -749,8 +721,13 @@ const Accounts: React.FC = () => {
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
-    // No accept filter - we validate extensions manually in onDrop
-    // This bypasses unreliable browser MIME type detection
+    accept: {
+      'application/x-sqlite3': ['.session'],
+      'application/octet-stream': ['.session'],
+      'application/json': ['.json'],
+      'application/zip': ['.zip'],
+      'application/x-zip-compressed': ['.zip'],
+    },
     disabled: isUploading,
     multiple: true
   });

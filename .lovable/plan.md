@@ -1,85 +1,50 @@
 
+# Fix Slow Sequential Unread Message Fetching
 
-# Fix: Remove Invalid Wildcard and Disable MIME Type Filtering
+## Problem
+When accounts reconnect, the runner fetches unread messages **sequentially** (one account at a time). With many accounts, this creates a bottleneck:
+- 50 accounts × ~5 seconds each = ~250 seconds (4+ minutes) of waiting
 
-## Problem Confirmed
-The console logs show: `Skipped "*/*" because it is not a valid MIME type`
-
-React-dropzone does NOT support wildcard MIME types like `*/*`. The JSON files are still being silently rejected because your browser reports them with a MIME type not in our list.
+The issue is in `connect_all_from_response()` at lines 1166-1170:
+```python
+for aid in newly_connected:
+    if aid in clients:
+        await fetch_unread_messages(clients[aid], aid)  # Sequential!
+```
 
 ## Solution
+Change the sequential loop to use `asyncio.gather()` for parallel execution, exactly like how accounts are connected and tasks are processed.
 
-Remove the MIME type filtering entirely and filter by file extension in code instead. This is the most reliable approach since browsers report inconsistent MIME types for `.json` files.
+## Technical Details
 
-### Change: Disable Accept Filter Completely
+### File: `src/pages/SetupGuide.tsx` (Python runner code)
 
-Remove the `accept` prop from useDropzone and validate file extensions manually in the `onDrop` function:
+**Location:** Lines 1166-1170 inside `connect_all_from_response()`
 
-**File: src/pages/Accounts.tsx (lines 738-764)**
-
-Remove the entire `accept` configuration and add extension filtering in `onDrop`:
-
-```typescript
-const { getRootProps, getInputProps, isDragActive } = useDropzone({
-  onDrop,
-  onDropRejected: (rejectedFiles) => {
-    console.log('[Upload Debug] Rejected files:', rejectedFiles.map(f => ({
-      name: f.file.name,
-      type: f.file.type,
-      errors: f.errors
-    })));
-    if (rejectedFiles.length > 0) {
-      toast.warning(`${rejectedFiles.length} files were rejected. Check console for details.`);
-    }
-  },
-  // No accept filter - we validate extensions manually in onDrop
-  disabled: isUploading,
-  multiple: true
-});
+**Before (sequential):**
+```python
+for aid in newly_connected:
+    if aid in clients:
+        await fetch_unread_messages(clients[aid], aid)
 ```
 
-Then add validation at the start of `onDrop`:
-
-```typescript
-const onDrop = useCallback(async (acceptedFiles: File[]) => {
-  // Filter to only allowed extensions
-  const allowedExtensions = ['.session', '.json', '.zip'];
-  const validFiles = acceptedFiles.filter(f => {
-    const ext = f.name.toLowerCase().match(/\.[^.]+$/)?.[0];
-    return ext && allowedExtensions.includes(ext);
-  });
-  
-  const rejectedCount = acceptedFiles.length - validFiles.length;
-  if (rejectedCount > 0) {
-    toast.warning(`${rejectedCount} files skipped (unsupported format)`);
-  }
-  
-  console.log('[Upload Debug] Accepted files:', validFiles.map(f => ({
-    name: f.name,
-    type: f.type,
-    size: f.size
-  })));
-  
-  // Use validFiles instead of acceptedFiles for the rest
-  // ...
+**After (parallel):**
+```python
+# Fetch unread messages in PARALLEL for all newly connected accounts
+if newly_connected:
+    await asyncio.gather(
+        *[fetch_unread_messages(clients[aid], aid) 
+          for aid in newly_connected if aid in clients],
+        return_exceptions=True
+    )
 ```
 
-## Files to Modify
+## Expected Performance
 
-| File | Change |
-|------|--------|
-| src/pages/Accounts.tsx | Remove `accept` prop from useDropzone, add manual extension filtering in `onDrop` |
+| Scenario | Before (Sequential) | After (Parallel) |
+|----------|---------------------|------------------|
+| 10 accounts | ~50 seconds | ~5 seconds |
+| 50 accounts | ~250 seconds | ~5-10 seconds |
+| 100 accounts | ~500 seconds | ~5-10 seconds |
 
-## Why This Works
-- Bypasses browser MIME type detection entirely
-- Filters purely by file extension (`.session`, `.json`, `.zip`)
-- Works consistently across Windows, macOS, Linux
-- Eliminates the `*/*` warning
-
-## Testing Steps
-1. Hard-refresh the page (Ctrl+F5)
-2. Delete the test account without metadata
-3. Upload session + JSON files together
-4. Check console for `[Upload Debug] Accepted files` showing both files
-5. Verify database has metadata populated
-
+The parallel approach limits total time to the slowest single account rather than the sum of all accounts.
