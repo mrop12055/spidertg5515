@@ -1821,6 +1821,7 @@ export type Database = {
       is_admin: { Args: never; Returns: boolean }
       is_authenticated: { Args: never; Returns: boolean }
       reset_daily_message_counts: { Args: never; Returns: undefined }
+      sync_campaign_counters: { Args: { cid: string }; Returns: undefined }
     }
     Enums: {
       account_status:
