@@ -1,116 +1,232 @@
 
 
-# Investigation Results: Incoming Messages Not Received
+# Plan: Fix Incoming Messages Not Being Received
 
-## Summary
+## Problem Summary
 
-After thorough investigation, the issue is confirmed to be on the **Python runner side**, not the dashboard or backend.
+You're sending campaign messages successfully, but **replies from recipients are not appearing in the dashboard**. The issue has two parts:
+
+1. **Live incoming messages** - Real-time replies are not being captured
+2. **Unread catch-up** - When the runner restarts, old unread messages are not synced
+
+Both issues stem from the **Python runner not reporting incoming messages** to the backend.
 
 ## Evidence
 
-### Database Analysis
-- Last incoming message: `2026-01-30 08:07:30` (over 3 hours ago)
-- All 64+ recent messages are `direction: outgoing`
-- All conversations show `has_reply: false`
+| Metric | Value |
+|--------|-------|
+| Incoming messages in last 24h | 1 (at 8:07 AM) |
+| Total conversations | 70 |
+| Conversations with replies (`has_reply=true`) | 1 |
+| Edge function logs with `[incoming]` | 0 |
+| Database triggers on messages table | None active |
 
-### Edge Function Logs
-- Runner heartbeat: Active (every 5-7 seconds)
-- Task fetches: "Returning 0 tasks, 15 accounts" - accounts are loaded correctly
-- Report calls: Only for campaign sends (6 calls at 10:52 AM)
-- **No incoming message reports at all**
+All 64+ recent messages are outgoing (direction: "outgoing"). The backend's `processIncomingMessage()` function is ready but never gets called because the runner isn't sending reports.
 
-### Verified Working Components
-| Component | Status | Evidence |
-|-----------|--------|----------|
-| Backend `processIncomingMessage()` | Ready | Code at lines 934-1115 handles incoming messages correctly |
-| Realtime subscriptions | Working | SeatChat subscribes to messages/conversations tables |
-| Frontend query filters | Correct | Shows `first_message_sent OR has_reply` |
-| Account status filter | Fixed | Now includes active/cooldown/restricted for listening |
+---
 
 ## Root Cause
 
-The Python runner (`unified_runner.py`) is not sending incoming messages to the backend. This is external to the Lovable dashboard.
+The Python runner (`unified_runner.py`) needs to:
 
-## What the Python Runner Needs
+1. **Listen for live incoming messages** via Telethon event handlers
+2. **Sync unread messages on startup** by scanning recent dialogs
+3. **Report all incoming messages** to `/runner-tasks/report`
 
-The runner must:
+This is **external code** that runs outside of Lovable - the dashboard backend is correctly configured.
 
-1. **Register event handlers on all connected Telethon clients:**
+---
+
+## What the Python Runner Must Do
+
+### 1. Live Message Handler (Real-Time)
+
+Register event handlers on each connected Telethon client:
+
 ```python
+from telethon import events
+
 @client.on(events.NewMessage(incoming=True))
 async def handle_incoming(event):
-    # Only process messages from users (not channels/bots)
+    # Only process private messages (DMs)
     if not event.is_private:
         return
     
     sender = await event.get_sender()
+    
+    # Report to backend
     await report_incoming_message(
-        account_id=account_uuid,
+        account_id=account_uuid,  # From your accounts list
         sender_id=sender.id,
-        sender_phone=sender.phone,
+        sender_phone=getattr(sender, 'phone', None),
         sender_name=sender.first_name,
         sender_username=sender.username,
         content=event.message.text or "[Media]",
         telegram_message_id=event.message.id,
-        media_data=await get_media_base64(event) if event.message.media else None
+        media_data=await get_media_base64(event) if event.message.media else None,
+        media_type=get_media_type(event.message.media)
     )
+    
+    # Mark as read on Telegram (optional)
+    await event.message.mark_read()
 ```
 
-2. **Report to the backend:**
+### 2. Unread Sync on Startup
+
+When the runner starts and connects accounts, scan for unread messages:
+
 ```python
-async def report_incoming_message(account_id, sender_id, sender_phone, ...):
-    await requests.post(
-        f"{SUPABASE_URL}/functions/v1/runner-tasks/report",
-        json={
-            "task_type": "incoming",
-            "result": {
-                "account_id": account_id,
-                "sender_id": sender_id,
-                "sender_phone": sender_phone,
-                "sender_name": sender_name,
-                "sender_username": sender_username,
-                "content": content,
-                "telegram_message_id": telegram_message_id,
-                "media_url": media_data,  # Base64 if present
-                "media_type": media_type   # "image", "video", etc.
-            }
-        }
-    )
+async def sync_unread_messages(client, account_id):
+    """Scan dialogs for unread messages and report them."""
+    async for dialog in client.iter_dialogs(limit=100):
+        # Only private chats with unread messages
+        if not dialog.is_user or dialog.unread_count == 0:
+            continue
+        
+        # Get unread messages (limit to last 50 per dialog)
+        async for message in client.iter_messages(
+            dialog.entity, 
+            limit=min(dialog.unread_count, 50)
+        ):
+            if message.out:  # Skip our own messages
+                continue
+            
+            # Only sync messages from last 24 hours
+            if message.date < datetime.utcnow() - timedelta(hours=24):
+                break
+            
+            await report_incoming_message(
+                account_id=account_id,
+                sender_id=dialog.entity.id,
+                sender_phone=getattr(dialog.entity, 'phone', None),
+                sender_name=dialog.entity.first_name,
+                sender_username=dialog.entity.username,
+                content=message.text or "[Media]",
+                telegram_message_id=message.id,
+                media_data=await get_media_base64(message) if message.media else None,
+                media_type=get_media_type(message.media)
+            )
+        
+        # Mark dialog as read after syncing
+        await client.send_read_acknowledge(dialog.entity)
 ```
 
-## Expected Report Format
+### 3. Report Function
 
-The backend expects this payload on `/runner-tasks/report`:
+Send incoming messages to the backend:
+
+```python
+async def report_incoming_message(
+    account_id, sender_id, sender_phone, sender_name, 
+    sender_username, content, telegram_message_id, 
+    media_data=None, media_type=None
+):
+    payload = {
+        "task_type": "incoming",
+        "result": {
+            "account_id": str(account_id),
+            "sender_id": sender_id,
+            "sender_phone": sender_phone,
+            "sender_name": sender_name,
+            "sender_username": sender_username,
+            "content": content,
+            "telegram_message_id": telegram_message_id,
+        }
+    }
+    
+    # Add media if present
+    if media_data:
+        payload["result"]["media_url"] = media_data  # Base64 string
+        payload["result"]["media_type"] = media_type  # "image", "video", etc.
+    
+    async with aiohttp.ClientSession() as session:
+        await session.post(
+            f"{SUPABASE_URL}/functions/v1/runner-tasks/report",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {SUPABASE_ANON_KEY}",
+                "Content-Type": "application/json"
+            }
+        )
+```
+
+---
+
+## Expected Payload Format
+
+The backend expects this exact format on `/runner-tasks/report`:
 
 ```json
 {
   "task_type": "incoming",
   "result": {
-    "account_id": "uuid-of-receiving-account",
+    "account_id": "47ae1ef3-e306-4ec2-bb8e-15895d9b319a",
     "sender_id": 123456789,
-    "sender_phone": "+919123456789",
-    "sender_name": "John",
-    "sender_username": "john_doe",
-    "content": "Hello, I'm interested!",
+    "sender_phone": "+919941111333",
+    "sender_name": "Customer Name",
+    "sender_username": "customer_username",
+    "content": "Yes, I'm interested!",
     "telegram_message_id": 12345,
-    "media_url": "data:image/jpeg;base64,/9j/...",
+    "media_url": "data:image/jpeg;base64,/9j/4AAQ...",
     "media_type": "image"
   }
 }
 ```
 
-## Action Required
+---
 
-**Update the Python runner** to:
-1. Set up `NewMessage` event handlers when connecting accounts
-2. Report incoming private messages to `/runner-tasks/report`
-3. Include the `telegram_message_id` for deduplication
-4. Handle media by converting to base64 (the backend will upload to storage)
+## How It Will Work Once Fixed
 
-Once the runner reports incoming messages, they will:
-- Automatically appear in the Conversations page
-- Update conversation `has_reply` flag via trigger
-- Increment `unread_count` atomically
-- Show in SeatChat for the assigned seat
-- Trigger notifications via realtime subscriptions
+```text
+┌─────────────────────────────────────────────────────────────────────┐
+│                         RUNNER LIFECYCLE                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                     │
+│  1. STARTUP                                                         │
+│     └── Connect all accounts                                        │
+│     └── FOR EACH account:                                           │
+│         └── Register NewMessage event handler (live listening)     │
+│         └── Call sync_unread_messages() (catch-up)                 │
+│                                                                     │
+│  2. RUNNING                                                         │
+│     └── Event handlers fire on each incoming private message       │
+│     └── Each incoming → POST to /runner-tasks/report               │
+│                                                                     │
+│  3. BACKEND PROCESSING                                              │
+│     └── processIncomingMessage() finds/creates conversation        │
+│     └── Inserts message with direction='incoming'                  │
+│     └── Sets has_reply=true on conversation                        │
+│     └── Increments unread_count                                    │
+│                                                                     │
+│  4. FRONTEND                                                        │
+│     └── Realtime subscription triggers                             │
+│     └── Message appears in Conversations page                      │
+│     └── Notification sound plays                                   │
+│     └── SeatChat updates for assigned seat                         │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Verification Steps
+
+After updating the Python runner:
+
+1. **Check edge function logs** for `[incoming]` entries
+2. **Query the database**: `SELECT * FROM messages WHERE direction = 'incoming' ORDER BY created_at DESC LIMIT 10`
+3. **Check conversations**: `SELECT * FROM conversations WHERE has_reply = true`
+4. **Send a test reply** from one of the recipient phones and verify it appears in the dashboard
+
+---
+
+## No Dashboard Changes Needed
+
+The backend and frontend are already correctly configured:
+- `processIncomingMessage()` is ready (lines 934-1115 in runner-tasks)
+- Realtime subscriptions are active on messages and conversations tables
+- Conversations page filters include `first_message_sent OR has_reply`
+- SeatChat fetches conversations with `has_reply` correctly
+
+The only fix required is in the **external Python runner**.
 
