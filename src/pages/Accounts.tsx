@@ -568,7 +568,10 @@ const Accounts: React.FC = () => {
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
-    const baseName = filename.replace(/\.session$/i, '');
+    // Strip both .session and .json extensions explicitly
+    const baseName = filename
+      .replace(/\.session$/i, '')
+      .replace(/\.json$/i, '');
     const digits = baseName.replace(/\D/g, '');
     if (!digits) {
       return `+unknown_${Date.now()}`;
@@ -667,6 +670,12 @@ const Accounts: React.FC = () => {
       allJsons.set(phoneKey, file);
     }
     
+    // Debug logging for file matching
+    console.log('[Upload Debug] Session files phone keys:', Array.from(allSessions.keys()));
+    console.log('[Upload Debug] JSON files phone keys:', Array.from(allJsons.keys()));
+    const matchedCount = Array.from(allSessions.keys()).filter(key => allJsons.has(key)).length;
+    console.log(`[Upload Debug] Matched ${matchedCount}/${allSessions.size} sessions with JSON metadata`);
+    
     if (allSessions.size === 0) {
       toast.error('No .session files found. Please upload .session files or a ZIP containing them.');
       return;
@@ -725,6 +734,8 @@ const Accounts: React.FC = () => {
       'application/x-sqlite3': ['.session'],
       'application/octet-stream': ['.session'],
       'application/json': ['.json'],
+      'text/json': ['.json'],
+      'text/plain': ['.json'],
       'application/zip': ['.zip'],
       'application/x-zip-compressed': ['.zip'],
     },
