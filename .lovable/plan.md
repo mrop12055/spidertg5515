@@ -1,128 +1,116 @@
 
 
-# Plan: Fix Account Daily Message Counter Sync
+# Investigation Results: Incoming Messages Not Received
 
-## Problem
+## Summary
 
-The account's `messages_sent_today` counter is stuck at 0 for all accounts, even though they have sent 64 messages today. This happens because:
+After thorough investigation, the issue is confirmed to be on the **Python runner side**, not the dashboard or backend.
 
-1. **Root Cause**: The `increment_messages_sent_today` RPC was deployed AFTER today's messages were sent
-2. **Result**: The counter was never incremented for existing messages
-3. **Impact**: 
-   - Reports page shows 0 messages sent per account
-   - SeatChat stats show 0 sent today
-   - Daily limits will work for NEW messages but existing counts are wrong
+## Evidence
 
-### Evidence from Database
+### Database Analysis
+- Last incoming message: `2026-01-30 08:07:30` (over 3 hours ago)
+- All 64+ recent messages are `direction: outgoing`
+- All conversations show `has_reply: false`
 
-| Account | Actual Messages Today | `messages_sent_today` Field |
-|---------|----------------------|----------------------------|
-| +916002921957 | 11 | 0 |
-| +916001022410 | 5 | 0 |
-| +916001023471 | 5 | 0 |
-| ... (14 accounts) | 64 total | All show 0 |
+### Edge Function Logs
+- Runner heartbeat: Active (every 5-7 seconds)
+- Task fetches: "Returning 0 tasks, 15 accounts" - accounts are loaded correctly
+- Report calls: Only for campaign sends (6 calls at 10:52 AM)
+- **No incoming message reports at all**
 
----
+### Verified Working Components
+| Component | Status | Evidence |
+|-----------|--------|----------|
+| Backend `processIncomingMessage()` | Ready | Code at lines 934-1115 handles incoming messages correctly |
+| Realtime subscriptions | Working | SeatChat subscribes to messages/conversations tables |
+| Frontend query filters | Correct | Shows `first_message_sent OR has_reply` |
+| Account status filter | Fixed | Now includes active/cooldown/restricted for listening |
 
-## Solution
+## Root Cause
 
-Create and run a **sync function** that recalculates `messages_sent_today` from actual message counts.
+The Python runner (`unified_runner.py`) is not sending incoming messages to the backend. This is external to the Lovable dashboard.
 
----
+## What the Python Runner Needs
 
-## Technical Changes
+The runner must:
 
-### 1. Create Sync Database Function
-
-Add a new PostgreSQL function to sync the counts:
-
-```sql
-CREATE OR REPLACE FUNCTION public.sync_messages_sent_today()
-RETURNS void
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path TO 'public'
-AS $$
-BEGIN
-  -- Update messages_sent_today based on actual outgoing messages created today
-  UPDATE telegram_accounts a
-  SET messages_sent_today = COALESCE(sub.count, 0)
-  FROM (
-    SELECT 
-      account_id, 
-      COUNT(*) as count
-    FROM messages 
-    WHERE direction = 'outgoing' 
-      AND created_at >= CURRENT_DATE
-    GROUP BY account_id
-  ) sub
-  WHERE a.id = sub.account_id;
-  
-  -- Reset accounts with no messages today to 0
-  UPDATE telegram_accounts
-  SET messages_sent_today = 0
-  WHERE id NOT IN (
-    SELECT DISTINCT account_id 
-    FROM messages 
-    WHERE direction = 'outgoing' 
-      AND created_at >= CURRENT_DATE
-  );
-END;
-$$;
+1. **Register event handlers on all connected Telethon clients:**
+```python
+@client.on(events.NewMessage(incoming=True))
+async def handle_incoming(event):
+    # Only process messages from users (not channels/bots)
+    if not event.is_private:
+        return
+    
+    sender = await event.get_sender()
+    await report_incoming_message(
+        account_id=account_uuid,
+        sender_id=sender.id,
+        sender_phone=sender.phone,
+        sender_name=sender.first_name,
+        sender_username=sender.username,
+        content=event.message.text or "[Media]",
+        telegram_message_id=event.message.id,
+        media_data=await get_media_base64(event) if event.message.media else None
+    )
 ```
 
-### 2. Call Sync in Utilities Edge Function
-
-Update `supabase/functions/utilities/index.ts` to call this sync function as part of the daily maintenance:
-
-```typescript
-// Add after reset_daily_message_counts
-// Sync messages_sent_today with actual counts
-const { error: syncError } = await supabase.rpc('sync_messages_sent_today');
-results.messages_sent_today_synced = !syncError;
+2. **Report to the backend:**
+```python
+async def report_incoming_message(account_id, sender_id, sender_phone, ...):
+    await requests.post(
+        f"{SUPABASE_URL}/functions/v1/runner-tasks/report",
+        json={
+            "task_type": "incoming",
+            "result": {
+                "account_id": account_id,
+                "sender_id": sender_id,
+                "sender_phone": sender_phone,
+                "sender_name": sender_name,
+                "sender_username": sender_username,
+                "content": content,
+                "telegram_message_id": telegram_message_id,
+                "media_url": media_data,  # Base64 if present
+                "media_type": media_type   # "image", "video", etc.
+            }
+        }
+    )
 ```
 
-### 3. Run Sync Manually Now
+## Expected Report Format
 
-Execute the sync function once immediately to fix current counts. After running:
-- Account +916002921957 should show `messages_sent_today = 11`
-- All other accounts should show their actual counts
+The backend expects this payload on `/runner-tasks/report`:
 
----
-
-## Files to Change
-
-| File | Change |
-|------|--------|
-| Database migration | Create `sync_messages_sent_today()` function |
-| `supabase/functions/utilities/index.ts` | Call sync function during daily maintenance |
-
----
-
-## How It Works Together
-
-```text
-Daily Cycle:
-┌─────────────────────────────────────────────────────────────┐
-│                                                             │
-│  Midnight (Utilities cron)                                  │
-│  ├── reset_daily_message_counts() → Sets all to 0          │
-│  └── sync_messages_sent_today() → Recalculates from msgs   │
-│                                                             │
-│  During Day (Runner tasks)                                  │
-│  └── increment_messages_sent_today() → +1 per send         │
-│                                                             │
-│  Result: Accurate real-time counts                          │
-│                                                             │
-└─────────────────────────────────────────────────────────────┘
+```json
+{
+  "task_type": "incoming",
+  "result": {
+    "account_id": "uuid-of-receiving-account",
+    "sender_id": 123456789,
+    "sender_phone": "+919123456789",
+    "sender_name": "John",
+    "sender_username": "john_doe",
+    "content": "Hello, I'm interested!",
+    "telegram_message_id": 12345,
+    "media_url": "data:image/jpeg;base64,/9j/...",
+    "media_type": "image"
+  }
+}
 ```
 
----
+## Action Required
 
-## Verification After Implementation
+**Update the Python runner** to:
+1. Set up `NewMessage` event handlers when connecting accounts
+2. Report incoming private messages to `/runner-tasks/report`
+3. Include the `telegram_message_id` for deduplication
+4. Handle media by converting to base64 (the backend will upload to storage)
 
-1. **Immediate**: Run sync function to fix current counts
-2. **Check Reports page**: Should show accurate "Today: X / Y" per account
-3. **Check SeatChat**: "Sent Today" stat should be accurate
-4. **Future messages**: Will increment correctly via the RPC we already deployed
+Once the runner reports incoming messages, they will:
+- Automatically appear in the Conversations page
+- Update conversation `has_reply` flag via trigger
+- Increment `unread_count` atomically
+- Show in SeatChat for the assigned seat
+- Trigger notifications via realtime subscriptions
 
