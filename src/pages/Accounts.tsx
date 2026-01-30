@@ -689,19 +689,28 @@ const Accounts: React.FC = () => {
     const jsonMetadataMap = new Map<string, JsonMetadata>();
     
     // Parse all JSON metadata files first
+    console.log('[JSON Parsing] Found JSON files:', Array.from(allJsons.keys()));
     for (const [phoneKey, jsonFile] of allJsons) {
       const parsed = await parseJsonMetadata(jsonFile);
       if (parsed) {
+        console.log(`[JSON Parsing] Parsed ${jsonFile.name} -> key: "${phoneKey}", metadata:`, parsed.metadata);
         jsonMetadataMap.set(phoneKey, parsed.metadata);
       }
     }
+    console.log('[JSON Parsing] Metadata map keys:', Array.from(jsonMetadataMap.keys()));
     
     // Process session files with their matching JSON metadata
+    console.log('[Session Matching] Session file keys:', Array.from(allSessions.keys()));
     for (const [phoneKey, sessionFile] of allSessions) {
       try {
         const base64Data = await fileToBase64(sessionFile);
         const phoneNumber = `+${phoneKey}`;
         const metadata = jsonMetadataMap.get(phoneKey);
+        
+        console.log(`[Session Matching] ${phoneKey}: metadata found = ${!!metadata}`);
+        if (!metadata) {
+          console.log(`[Session Matching] Available keys in map:`, Array.from(jsonMetadataMap.keys()));
+        }
         
         processedFiles.push({ 
           file: sessionFile, 
