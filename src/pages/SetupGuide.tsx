@@ -241,23 +241,42 @@ async def send_message(client, recipient: str, content: str, media_url: str = No
         # Phone resolution
         if not entity and (recipient.startswith("+") or recipient.isdigit()):
             phone = recipient if recipient.startswith("+") else f"+{recipient}"
+            
+            # First try ResolvePhoneRequest (works if user allows phone lookup)
             try:
                 result = await asyncio.wait_for(client(ResolvePhoneRequest(phone=phone)), timeout=10)
                 if result.users:
                     u = result.users[0]
                     entity = InputPeerUser(user_id=u.id, access_hash=u.access_hash)
             except Exception as e:
-                if "PHONE_NOT_OCCUPIED" in str(e):
+                err_str = str(e).upper()
+                if "PHONE_NOT_OCCUPIED" in err_str:
                     return False, "Not on Telegram", {}
-                # Import contact
-                contact = InputPhoneContact(client_id=random.randint(0,2**31-1), phone=phone, first_name=phone.replace("+",""), last_name="")
+                # For any other error (privacy, not found, etc.), try importing contact
+                pass
+            
+            # If ResolvePhone didn't work, try ImportContacts (works for most numbers)
+            if not entity:
                 try:
-                    result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=10)
+                    contact = InputPhoneContact(
+                        client_id=random.randint(0, 2**31-1), 
+                        phone=phone, 
+                        first_name=phone.replace("+", "")[-10:],  # Last 10 digits as name
+                        last_name=""
+                    )
+                    result = await asyncio.wait_for(client(ImportContactsRequest([contact])), timeout=15)
                     if result.users:
                         u = result.users[0]
                         entity = InputPeerUser(user_id=u.id, access_hash=u.access_hash)
-                except:
-                    pass
+                        print(f"    [CONTACT] Imported {phone} → User {u.id}")
+                    elif result.imported:
+                        # Contact imported but user list empty - try getting entity now
+                        try:
+                            entity = await asyncio.wait_for(client.get_input_entity(phone), timeout=5)
+                        except:
+                            pass
+                except Exception as e:
+                    print(f"    [CONTACT] Import failed for {phone}: {str(e)[:40]}")
         
         if not entity:
             return False, "Recipient not found", {}
