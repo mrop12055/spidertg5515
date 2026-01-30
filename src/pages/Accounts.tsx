@@ -136,6 +136,7 @@ const Accounts: React.FC = () => {
   const [sessionFiles, setSessionFiles] = useState<SessionFile[]>([]);
   const [uploadResults, setUploadResults] = useState<{ 
     successful: number; 
+    skipped: number;
     failed: number;
     metadata_stats?: {
       with_json_api: number;
@@ -775,6 +776,7 @@ const Accounts: React.FC = () => {
       const totalAccounts = accountsToUpload.length;
       const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
       let totalSuccessful = 0;
+      let totalSkipped = 0;
       let totalFailed = 0;
       const allAccountIds: string[] = [];
       // Aggregate metadata stats across chunks
@@ -808,6 +810,7 @@ const Accounts: React.FC = () => {
             totalFailed += chunk.length;
           } else {
             totalSuccessful += data.successful || 0;
+            totalSkipped += data.skipped || 0;
             totalFailed += data.failed || 0;
             if (data.account_ids) {
               allAccountIds.push(...data.account_ids);
@@ -830,6 +833,7 @@ const Accounts: React.FC = () => {
 
       setUploadResults({
         successful: totalSuccessful,
+        skipped: totalSkipped,
         failed: totalFailed,
         metadata_stats: aggregatedStats,
       });
@@ -2830,9 +2834,14 @@ const Accounts: React.FC = () => {
                         <span className="flex items-center gap-1 text-status-active">
                           <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
                         </span>
+                        {uploadResults.skipped > 0 && (
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            <AlertCircle className="w-4 h-4" /> {uploadResults.skipped} already exist
+                          </span>
+                        )}
                         {uploadResults.failed > 0 && (
-                          <span className="flex items-center gap-1 text-amber-500">
-                            <AlertCircle className="w-4 h-4" /> {uploadResults.failed} skipped
+                          <span className="flex items-center gap-1 text-destructive">
+                            <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
                           </span>
                         )}
                       </div>

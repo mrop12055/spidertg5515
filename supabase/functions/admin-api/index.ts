@@ -234,9 +234,6 @@ serve(async (req) => {
       const { accounts, tags } = body;
       if (!accounts?.length) return jsonResponse({ error: "accounts array required" }, 400);
 
-      let successful = 0;
-      let failed = 0;
-      const accountIds: string[] = [];
       const metadataStats = {
         with_json_api: 0,
         with_json_fingerprint: 0,
@@ -244,15 +241,38 @@ serve(async (req) => {
         with_2fa: 0,
       };
 
-      // Process accounts one by one to handle duplicates gracefully
+      // Extract all phone numbers from incoming accounts
+      const incomingPhones = accounts.map((acc: any) => acc.phone_number || acc.phone).filter(Boolean);
+
+      // Step 1: Fetch existing phone numbers in ONE query
+      const { data: existingAccounts, error: fetchError } = await supabase
+        .from('telegram_accounts')
+        .select('phone_number')
+        .in('phone_number', incomingPhones);
+
+      if (fetchError) {
+        console.error('[admin-api] Error fetching existing accounts:', fetchError);
+        throw fetchError;
+      }
+
+      const existingPhoneSet = new Set((existingAccounts || []).map((a: any) => a.phone_number));
+      const skipped = existingPhoneSet.size;
+
+      // Step 2: Filter out duplicates and prepare new accounts
+      const newAccounts: any[] = [];
       for (const acc of accounts) {
-        // Track metadata stats
+        const phone = acc.phone_number || acc.phone;
+        
+        // Track metadata stats for all accounts
         if (acc.api_id && acc.api_hash) metadataStats.with_json_api++;
         if (acc.device_model || acc.system_version) metadataStats.with_json_fingerprint++;
         if (acc.two_fa_password) metadataStats.with_2fa++;
 
-        const insertData = {
-          phone_number: acc.phone_number || acc.phone,
+        // Skip if already exists
+        if (existingPhoneSet.has(phone)) continue;
+
+        newAccounts.push({
+          phone_number: phone,
           session_data: acc.session_data || acc.session,
           first_name: acc.first_name,
           last_name: acc.last_name,
@@ -269,27 +289,49 @@ serve(async (req) => {
           two_fa_password: acc.two_fa_password,
           tags: tags || [],
           status: 'disconnected',
-        };
+        });
+      }
 
-        // Try to insert, skip if duplicate (phone_number is unique)
-        const { data, error } = await supabase
+      // Step 3: Batch insert new accounts (if any)
+      let successful = 0;
+      let failed = 0;
+      const accountIds: string[] = [];
+
+      if (newAccounts.length > 0) {
+        const { data: insertedAccounts, error: insertError } = await supabase
           .from('telegram_accounts')
-          .insert(insertData)
-          .select('id')
-          .single();
+          .insert(newAccounts)
+          .select('id');
 
-        if (error) {
-          console.log(`[admin-api] Account ${acc.phone_number || acc.phone} failed: ${error.message}`);
-          failed++;
+        if (insertError) {
+          console.error('[admin-api] Batch insert error:', insertError);
+          // If batch fails, try one-by-one as fallback
+          for (const acc of newAccounts) {
+            const { data, error } = await supabase
+              .from('telegram_accounts')
+              .insert(acc)
+              .select('id')
+              .single();
+            if (error) {
+              console.log(`[admin-api] Account ${acc.phone_number} failed: ${error.message}`);
+              failed++;
+            } else {
+              successful++;
+              if (data?.id) accountIds.push(data.id);
+            }
+          }
         } else {
-          successful++;
-          if (data?.id) accountIds.push(data.id);
+          successful = insertedAccounts?.length || 0;
+          accountIds.push(...(insertedAccounts || []).map((a: any) => a.id));
         }
       }
+
+      console.log(`[admin-api] Upload complete: ${successful} new, ${skipped} skipped, ${failed} failed`);
 
       return jsonResponse({
         success: true,
         successful,
+        skipped,
         failed,
         account_ids: accountIds,
         metadata_stats: metadataStats,
