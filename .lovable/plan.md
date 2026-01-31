@@ -1,74 +1,127 @@
 
-# Fix Last Message Display to Show Direction
+# Fix Last Message Direction Not Showing on Seat Pages
 
-## Problem
-The last message preview in the conversation sidebar shows only the recipient's message content, without indicating whether it was sent by you or received from them. This is inconsistent with SeatChat which correctly shows "You: " prefix for outgoing messages.
+## Problem Analysis
 
-## Root Cause
-The Conversations page uses `TelegramContext` which:
-1. Does not fetch the `last_message_direction` column from the database
-2. The `Conversation` type does not include a `lastMessageDirection` property
-3. The UI does not display any direction indicator (unlike SeatChat)
+The user reports that both the **Seat Chat page** (`/seat/:token`) and the **Seats Management page** (`/seats`) are not correctly showing whether the last message was sent by them ("You: ") or received from the recipient.
+
+### Root Cause
+
+After examining the codebase, I found:
+
+1. **Frontend is correct**: Both `SeatChat.tsx` (lines 1280-1289) and the updated `Conversations.tsx` already implement the "You: " prefix logic using `lastMessageDirection`
+2. **Data fetching is correct**: The queries include `last_message_direction` field
+3. **Database schema is correct**: The `conversations` table has the `last_message_direction` column
+
+**The real issue**: There are **4 conflicting database triggers** on the `messages` table:
+
+| Trigger Name | Function Called | Updates Direction? |
+|--------------|----------------|-------------------|
+| `update_conversation_on_new_message` | `update_conversation_details()` | ✅ YES |
+| `on_message_insert` | `update_conversation_on_message()` | ❌ NO |
+| `trg_update_conversation_on_message` | `update_conversation_on_message()` | ❌ NO |
+| `trigger_update_conversation_on_message` | `update_conversation_on_message()` | ❌ NO |
+
+When multiple triggers fire on the same event, they execute in alphabetical order. The trigger that sets `last_message_direction` correctly is likely being **overwritten** by subsequent triggers that only update `last_message_at` and `unread_count`.
+
+### Evidence from Database Migration
+
+```sql
+-- This function DOES update last_message_direction (lines 443-466)
+CREATE FUNCTION public.update_conversation_details() RETURNS trigger
+AS $$
+BEGIN
+  UPDATE public.conversations
+  SET 
+    last_message_at = NOW(),
+    last_message_content = NEW.content,
+    last_message_direction = NEW.direction::text,  -- ✅ SETS DIRECTION
+    ...
+
+-- This function does NOT update last_message_direction (lines 473-495)
+CREATE FUNCTION public.update_conversation_on_message() RETURNS trigger
+AS $$
+BEGIN
+  UPDATE public.conversations
+  SET 
+    updated_at = NOW(),
+    last_message_at = NOW(),
+    unread_count = CASE ... END  -- ❌ NO DIRECTION UPDATE
+  ...
+```
 
 ## Solution
-Add the `lastMessageDirection` field throughout the data flow and update the UI to show "You: " prefix for outgoing messages.
+
+Remove the redundant triggers that don't update `last_message_direction`, keeping only the comprehensive one.
 
 ---
 
-## Implementation Steps
+## Implementation Plan
 
-### Step 1: Update Conversation Type
-Add `lastMessageDirection` property to the `Conversation` interface.
+### Step 1: Create Database Migration
+**New migration file**: Clean up redundant triggers on the `messages` table
 
-**File:** `src/types/telegram.ts`
-- Add `lastMessageDirection?: 'incoming' | 'outgoing';` to the Conversation interface
+**SQL to execute**:
+```sql
+-- Drop redundant triggers that don't update last_message_direction
+DROP TRIGGER IF EXISTS on_message_insert ON public.messages;
+DROP TRIGGER IF EXISTS trg_update_conversation_on_message ON public.messages;
+DROP TRIGGER IF EXISTS trigger_update_conversation_on_message ON public.messages;
 
-### Step 2: Update TelegramContext Data Fetching
-Fetch and map the `last_message_direction` column from the database.
+-- Keep only the comprehensive trigger that updates all fields including direction
+-- (update_conversation_on_new_message → update_conversation_details)
 
-**File:** `src/context/TelegramContext.tsx`
-- Add `last_message_direction` to the SELECT query for conversations
-- Map the field to `lastMessageDirection` in the conversation transformer
+-- Also drop the function that doesn't update direction (no longer needed)
+DROP FUNCTION IF EXISTS public.update_conversation_on_message();
+```
 
-### Step 3: Update Conversations Page Display
-Add the "You: " prefix for outgoing messages in the conversation preview.
+### Step 2: Verify Trigger Configuration
+After the migration, only ONE trigger should remain:
+- `update_conversation_on_new_message` AFTER INSERT → `update_conversation_details()`
 
-**File:** `src/pages/Conversations.tsx`
-- Check if `conv.lastMessageDirection === 'outgoing'` and display "You: " prefix before the message preview
-
-### Step 4: Update useConversations Hook
-Also update the hook used elsewhere to include direction.
-
-**File:** `src/hooks/useConversations.ts`
-- Add `last_message_direction` to the SELECT query
-- Map the field in the transformer
+This trigger correctly updates:
+- `last_message_at`
+- `last_message_content`
+- `last_message_direction` ✅
+- `has_reply`
+- `unread_count`
 
 ---
 
 ## Technical Details
 
-### Database Structure (already exists)
-The `conversations` table has these columns that are updated by a trigger on message inserts:
-- `last_message_content` - text content of the last message
-- `last_message_direction` - 'incoming' or 'outgoing'
+### Why Multiple Triggers Were Created
+Looking at the migration history, it appears that triggers were added incrementally:
+1. Original trigger: `update_conversation_on_message()`
+2. Enhanced trigger: `update_conversation_details()` (added direction support)
+3. Multiple CREATE TRIGGER statements referencing both functions
 
-### UI Display Pattern (matching SeatChat)
-```tsx
-{conv.lastMessageDirection === 'outgoing' && (
-  <span className="text-muted-foreground/50">You: </span>
-)}
-{messagePreview}
-```
+This likely happened during iterative development, but the old triggers were never cleaned up.
+
+### Execution Order Issue
+PostgreSQL executes multiple triggers in **alphabetical order**:
+1. `on_message_insert` (first alphabetically)
+2. `trg_update_conversation_on_message`
+3. `trigger_update_conversation_on_message`
+4. `update_conversation_on_new_message` (last)
+
+Even though the last trigger sets `last_message_direction` correctly, if any of the earlier triggers issue a second UPDATE to the same conversation row within the same transaction, the last writer wins - potentially overwriting the direction field.
+
+### Impact
+After fixing the triggers:
+- Last message direction will update correctly in real-time
+- "You: " prefix will appear immediately when sending messages
+- Both Seat Chat and Seats Management pages will show correct previews
+- No frontend code changes needed (already implemented correctly)
+
+---
 
 ## Files to Modify
-1. `src/types/telegram.ts` - Add type property
-2. `src/context/TelegramContext.tsx` - Fetch and map direction field
-3. `src/pages/Conversations.tsx` - Display direction prefix
-4. `src/hooks/useConversations.ts` - Include direction in query
+- **New migration file** in `supabase/migrations/` - Remove redundant triggers
 
-## Expected Result
-The conversation sidebar will show:
-- "You: Hello!" - for messages you sent
-- "Hello!" - for messages received from the contact
-
-This matches the behavior already implemented in SeatChat.
+## Testing Steps
+1. Send a message from Seat Chat
+2. Verify the conversation list shows "You: [message]"
+3. Receive a reply from recipient
+4. Verify the conversation list shows "[message]" without "You: " prefix
+5. Check the Seats Management page (`/seats`) - should also show correct preview
