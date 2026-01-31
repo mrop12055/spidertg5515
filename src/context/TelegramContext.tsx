@@ -124,6 +124,9 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   useEffect(() => {
     conversationsRef.current = conversations;
   }, [conversations]);
+
+  // Prevent duplicate reply notifications (realtime can emit duplicate INSERTs / retries)
+  const lastNotifiedMessageKeyByConversationRef = useRef<Map<string, string>>(new Map());
   
   // Account tasks progress (persisted across navigation)
   const [accountTasksProgress, setAccountTasksProgress] = useState<AccountTasksProgress>({
@@ -335,6 +338,15 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                 console.log('Skipping notification - not a campaign conversation');
                 return;
               }
+
+              // Dedupe notifications per conversation/message (avoid double toasts)
+              const messageKey = `${m.telegram_message_id ?? m.id}-${m.created_at ?? ''}-${m.content ?? ''}`;
+              const lastKey = lastNotifiedMessageKeyByConversationRef.current.get(m.conversation_id);
+              if (lastKey === messageKey) return;
+              // Update FIRST to avoid races
+              lastNotifiedMessageKeyByConversationRef.current.set(m.conversation_id, messageKey);
+
+              const toastId = `reply-${m.conversation_id}-${m.telegram_message_id ?? m.id}`;
               
               try {
                 // Check if AudioContext is available
@@ -372,18 +384,15 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                     }
                   }, 100);
                 }
-
-                // Show toast notification
-                toast.info('New reply received!', {
-                  description: m.content?.substring(0, 50) || 'You have a new message',
-                });
               } catch (e) {
                 console.log('Could not play notification:', e);
-                // Still show toast even if audio fails
-                toast.info('New reply received!', {
-                  description: m.content?.substring(0, 50) || 'You have a new message',
-                });
               }
+
+              // Show toast notification ONCE (deduped via id)
+              toast.info('New reply received!', {
+                id: toastId,
+                description: m.content?.substring(0, 50) || 'You have a new message',
+              });
             }
           } else if (payload.eventType === 'UPDATE') {
             const m = payload.new as any;
