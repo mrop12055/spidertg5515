@@ -654,6 +654,9 @@ async function handleReportResults(supabase: any, body: any) {
   }
 
   console.log(`[runner-tasks/report] Processing ${allResults.length} results`);
+  
+  // Track campaign IDs that were affected for completion check
+  const affectedCampaignIds = new Set<string>();
 
   // Handle incoming messages separately (they don't have success/failure status in same way)
   const incomingMessages = allResults.filter((r: any) => 
@@ -680,9 +683,14 @@ async function handleReportResults(supabase: any, body: any) {
         // Campaign message success - check if already counted to prevent double-counting on retries
         const { data: recipientData } = await supabase
           .from("campaign_recipients")
-          .select("status")
+          .select("status, campaign_id")
           .eq("id", r.campaign_recipient_id)
           .single();
+
+        // Track campaign for completion check
+        if (recipientData?.campaign_id) {
+          affectedCampaignIds.add(recipientData.campaign_id);
+        }
 
         // Only update and count if recipient wasn't already marked as sent
         const wasAlreadySent = recipientData?.status === 'sent';
@@ -938,6 +946,17 @@ async function handleReportResults(supabase: any, body: any) {
         // === RECIPIENT ERROR: Mark recipient as failed ===
         // NOTE: Campaign failed_count is updated automatically by trigger when recipient status changes to 'failed'
         if (r.campaign_recipient_id) {
+          // Get campaign_id for completion tracking
+          const { data: recipientInfo } = await supabase
+            .from("campaign_recipients")
+            .select("campaign_id")
+            .eq("id", r.campaign_recipient_id)
+            .single();
+          
+          if (recipientInfo?.campaign_id) {
+            affectedCampaignIds.add(recipientInfo.campaign_id);
+          }
+          
           await supabase.from("campaign_recipients")
             .update({ status: "failed", sent_by_account_id: r.account_id, failed_reason: r.error })
             .eq("id", r.campaign_recipient_id);
@@ -1005,12 +1024,42 @@ async function handleReportResults(supabase: any, body: any) {
 
   console.log(`[runner-tasks/report] Processed: ${successResults.length} success, ${failedResults.length} failed, ${incomingMessages.length} incoming`);
 
+  // === AUTO-COMPLETE CAMPAIGNS ===
+  // Check if any affected campaigns are now complete (0 pending recipients)
+  let campaignsCompleted = 0;
+  for (const campaignId of affectedCampaignIds) {
+    // Check if campaign is still running and has no pending recipients
+    const { data: campaign } = await supabase
+      .from('campaigns')
+      .select('id, status')
+      .eq('id', campaignId)
+      .eq('status', 'running')
+      .single();
+    
+    if (campaign) {
+      const { count: pendingCount } = await supabase
+        .from('campaign_recipients')
+        .select('*', { count: 'exact', head: true })
+        .eq('campaign_id', campaignId)
+        .in('status', ['pending', 'sending', 'queued']);
+
+      if (pendingCount === 0) {
+        await supabase.from('campaigns')
+          .update({ status: 'completed', updated_at: now })
+          .eq('id', campaignId);
+        campaignsCompleted++;
+        console.log(`[runner-tasks/report] Campaign ${campaignId} auto-completed (0 pending recipients)`);
+      }
+    }
+  }
+
   return jsonResponse({
     success: true,
     processed: allResults.length,
     succeeded: successResults.length,
     failed: failedResults.length,
     incoming: incomingMessages.length,
+    campaignsCompleted,
   });
 }
 
