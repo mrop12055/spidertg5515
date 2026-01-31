@@ -874,9 +874,9 @@ const SeatChat: React.FC = () => {
     }
   };
 
-  // Get display name - prefer phone number, fallback to name
+  // Get display name - prefer recipient name, fallback to phone number
   const getDisplayName = (conv: Conversation) => {
-    return conv.recipient_phone || conv.recipient_name || 'Unknown';
+    return conv.recipient_name || conv.recipient_phone || 'Unknown';
   };
 
   // Get avatar initials from phone number or username
@@ -1402,10 +1402,10 @@ const SeatChat: React.FC = () => {
                               {formatConversationTime(conv.last_message_at)}
                             </span>
                           </div>
-                          {/* Show name below phone number if both exist */}
+                          {/* Show phone number if name is displayed */}
                           {conv.recipient_name && conv.recipient_phone && (
                             <p className="text-xs text-muted-foreground/60 truncate mt-0.5">
-                              {conv.recipient_name}
+                              {conv.recipient_phone}
                             </p>
                           )}
                           <div className="flex items-center justify-between gap-2 mt-1">
