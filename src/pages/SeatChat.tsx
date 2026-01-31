@@ -147,6 +147,7 @@ const SeatChat: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
   const lastNotifiedMessageRef = useRef<string | null>(null);
   const selectedConversationRef = useRef<Conversation | null>(null);
   const conversationsRef = useRef<Conversation[]>([]);
@@ -790,6 +791,11 @@ const SeatChat: React.FC = () => {
       setMessageInput('');
       clearSelectedImage();
       fetchMessages();
+      
+      // Refocus input after sending so user can continue typing
+      setTimeout(() => {
+        messageInputRef.current?.focus();
+      }, 50);
     } catch (err) {
       console.error('Error sending message:', err);
       toast.error('Failed to send message');
@@ -1731,6 +1737,7 @@ const SeatChat: React.FC = () => {
                         {/* Input Container */}
                         <div className="flex-1 relative">
                           <Textarea
+                            ref={messageInputRef}
                             placeholder="Type your message..."
                             value={messageInput}
                             onChange={(e) => setMessageInput(e.target.value)}
