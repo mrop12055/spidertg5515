@@ -1,74 +1,87 @@
 
 
-# Fix Campaign Statistics Showing Wrong Values
+# Fix Account Data Not Showing in Campaign Reports
 
 ## Problem Summary
 
-Campaign statistics are displaying incorrect values:
-- **Sent count** shows double the actual number (e.g., 1742 instead of 871)
-- **Failed count** shows double the actual number (e.g., 612 instead of 306)
-- **Pending count** is correct
+The "Accounts" tab in campaign reports shows "No Account Data" because the `sent_by_account_id` field in the `campaign_recipients` table is never being populated when messages are sent.
 
 ## Root Cause
 
-The campaign counts were being updated **twice**:
-1. Once by the database trigger (`sync_campaign_counts`) when recipient status changes
-2. Once by the edge function calling `increment_campaign_sent_count` / `increment_campaign_failed_count`
+In the `runner-tasks` edge function, when a campaign recipient is processed:
 
-The edge function fix was applied in the last edit, but existing data still has the doubled values.
+**Success case (line 691-693):**
+```typescript
+await supabase.from("campaign_recipients")
+  .update({ status: "sent", sent_at: now, api_credential_id: r.api_credential_id })
+  .eq("id", r.campaign_recipient_id);
+```
 
-## Data That Needs Fixing
+**Failure case (line 941-943):**
+```typescript
+await supabase.from("campaign_recipients")
+  .update({ status: "failed", failed_reason: r.error })
+  .eq("id", r.campaign_recipient_id);
+```
 
-| Campaign | Stored Sent | Actual Sent | Stored Failed | Actual Failed |
-|----------|-------------|-------------|---------------|---------------|
-| asdfsfsewgew | 1742 | 871 | 612 | 306 |
-| (other campaigns) | Already correct | - | Already correct | - |
-
-Only **1 campaign** currently has incorrect statistics that need repair.
+Both cases are **missing** `sent_by_account_id: r.account_id`.
 
 ---
 
 ## Solution
 
-### Step 1: Repair Existing Campaign Data
+### Step 1: Update the Edge Function
 
-Run a SQL update to recalculate all campaign counters from the actual `campaign_recipients` records:
+Modify `supabase/functions/runner-tasks/index.ts` to include `sent_by_account_id` when updating campaign recipients.
 
-```sql
-UPDATE campaigns c
-SET 
-  sent_count = sub.actual_sent,
-  failed_count = sub.actual_failed,
-  pending_count = sub.actual_pending
-FROM (
-  SELECT 
-    campaign_id,
-    COUNT(*) FILTER (WHERE status = 'sent') as actual_sent,
-    COUNT(*) FILTER (WHERE status = 'failed') as actual_failed,
-    COUNT(*) FILTER (WHERE status IN ('pending', 'queued', 'sending')) as actual_pending
-  FROM campaign_recipients
-  GROUP BY campaign_id
-) sub
-WHERE c.id = sub.campaign_id;
+**Success case (around line 691):**
+```typescript
+await supabase.from("campaign_recipients")
+  .update({ 
+    status: "sent", 
+    sent_at: now, 
+    sent_by_account_id: r.account_id,  // ADD THIS
+    api_credential_id: r.api_credential_id 
+  })
+  .eq("id", r.campaign_recipient_id);
 ```
 
-This will fix all campaigns at once, ensuring stored values match actual recipient records.
+**Failure case (around line 941):**
+```typescript
+await supabase.from("campaign_recipients")
+  .update({ 
+    status: "failed", 
+    sent_by_account_id: r.account_id,  // ADD THIS
+    failed_reason: r.error 
+  })
+  .eq("id", r.campaign_recipient_id);
+```
 
-### Step 2: Verify the Edge Function Fix
+### Step 2: Backfill Existing Data (Optional)
 
-The previous edit already removed the duplicate RPC calls from `runner-tasks/index.ts`. This prevents future double-counting - new campaigns will have correct statistics.
+For campaigns that have already run, we can attempt to backfill the `sent_by_account_id` by matching the `campaign_recipient_id` in the messages table:
+
+```sql
+UPDATE campaign_recipients cr
+SET sent_by_account_id = m.account_id
+FROM messages m
+WHERE m.campaign_recipient_id = cr.id
+  AND cr.sent_by_account_id IS NULL
+  AND m.direction = 'outgoing';
+```
 
 ---
 
-## Technical Details
+## Files to Modify
 
-**Files to modify:** None (code fix already applied)
+| File | Change |
+|------|--------|
+| `supabase/functions/runner-tasks/index.ts` | Add `sent_by_account_id: r.account_id` to both success and failure update queries |
 
-**Database changes:**
-- Execute data repair query to sync `sent_count`, `failed_count`, and `pending_count` with actual recipient records
+## Expected Result
 
-**Expected result after fix:**
-- Campaign "asdfsfsewgew" will show: Sent=871, Failed=306, Pending=612
-- All other campaigns will retain their already-correct values
-- Future campaigns will count correctly due to the edge function fix
+After this fix:
+- New campaign messages will properly track which account sent/attempted to send each message
+- The "Accounts" tab in campaign reports will show per-account statistics
+- Existing data can be backfilled using the messages table
 
