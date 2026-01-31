@@ -332,6 +332,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
             // Play notification sound for incoming messages - ONLY for campaign conversations
             if (m.direction === 'incoming') {
+              // IMPORTANT: SeatChat (/seat/:token) has its own notifications.
+              // If we also notify from the global context, users see duplicates.
+              const isSeatRoute =
+                typeof window !== 'undefined' && window.location.pathname.startsWith('/seat/');
+              if (isSeatRoute) return;
+
               // Check if this is from a campaign conversation (where we messaged first)
               const conversation = conversationsRef.current.find(c => c.id === m.conversation_id);
               
