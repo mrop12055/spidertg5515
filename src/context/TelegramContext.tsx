@@ -125,8 +125,10 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     conversationsRef.current = conversations;
   }, [conversations]);
 
-  // Prevent duplicate reply notifications (realtime can emit duplicate INSERTs / retries)
-  const lastNotifiedMessageKeyByConversationRef = useRef<Map<string, string>>(new Map());
+  // Prevent duplicate reply notifications using message DB id (most unique identifier)
+  // We use a Set of processed message IDs to guarantee exactly-once notification
+  const processedMessageIdsRef = useRef<Set<string>>(new Set());
+  const PROCESSED_MESSAGE_IDS_LIMIT = 2000;
   
   // Account tasks progress (persisted across navigation)
   const [accountTasksProgress, setAccountTasksProgress] = useState<AccountTasksProgress>({
@@ -339,14 +341,25 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
                 return;
               }
 
-              // Dedupe notifications per conversation/message (avoid double toasts)
-              const messageKey = `${m.telegram_message_id ?? m.id}-${m.created_at ?? ''}-${m.content ?? ''}`;
-              const lastKey = lastNotifiedMessageKeyByConversationRef.current.get(m.conversation_id);
-              if (lastKey === messageKey) return;
-              // Update FIRST to avoid races
-              lastNotifiedMessageKeyByConversationRef.current.set(m.conversation_id, messageKey);
+              // Dedupe by message DB id (most unique identifier)
+              // This guarantees exactly-once notification even if realtime sends duplicates
+              if (processedMessageIdsRef.current.has(m.id)) {
+                console.log('Skipping notification - already processed message ID:', m.id);
+                return;
+              }
+              
+              // Add to processed set FIRST to prevent races
+              processedMessageIdsRef.current.add(m.id);
+              
+              // Prune old entries to prevent memory growth (keep last N)
+              if (processedMessageIdsRef.current.size > PROCESSED_MESSAGE_IDS_LIMIT) {
+                const idsArray = Array.from(processedMessageIdsRef.current);
+                const toRemove = idsArray.slice(0, idsArray.length - PROCESSED_MESSAGE_IDS_LIMIT);
+                toRemove.forEach(id => processedMessageIdsRef.current.delete(id));
+              }
 
-              const toastId = `reply-${m.conversation_id}-${m.telegram_message_id ?? m.id}`;
+              // Use message DB id for stable toast id (Sonner will collapse duplicates)
+              const toastId = `reply-${m.id}`;
               
               try {
                 // Check if AudioContext is available

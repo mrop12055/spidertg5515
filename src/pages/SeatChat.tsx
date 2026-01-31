@@ -546,8 +546,9 @@ const SeatChat: React.FC = () => {
     }, delay);
   }, []);
 
-  // Track last notified conversation timestamps to prevent duplicate notifications
-  const lastNotifiedByConversationRef = useRef<Map<string, string>>(new Map());
+  // Track last notified conversation data to prevent duplicate notifications
+  // Uses normalized timestamp (ms) + content for bulletproof deduplication
+  const lastNotifiedByConversationRef = useRef<Map<string, { timeMs: number; content: string; wallClockMs: number }>>(new Map());
 
   // Real-time subscription for CONVERSATIONS (seat-filtered)
   // Handles: conversation list updates, notifications based on last_message_direction
@@ -566,37 +567,66 @@ const SeatChat: React.FC = () => {
         },
         (payload) => {
           if (payload.eventType === 'UPDATE') {
-            const c = payload.new as any;
+            const newC = payload.new as any;
+            const oldC = payload.old as any;
             
-            // Check if we should notify - incoming message that we haven't notified about
-            if (c.last_message_direction === 'incoming' && c.last_message_at) {
-              const lastNotifiedAt = lastNotifiedByConversationRef.current.get(c.id);
+            // === NOTIFICATION LOGIC ===
+            // Only notify when last_message_* fields ACTUALLY changed (not just unread_count/has_reply/updated_at)
+            const lastMsgChanged = 
+              newC.last_message_at !== oldC?.last_message_at ||
+              newC.last_message_content !== oldC?.last_message_content ||
+              newC.last_message_direction !== oldC?.last_message_direction;
+            
+            if (
+              newC.last_message_direction === 'incoming' &&
+              newC.last_message_at &&
+              lastMsgChanged
+            ) {
+              // Normalize timestamp to milliseconds for stable comparison
+              const msgTimeMs = new Date(newC.last_message_at).getTime();
+              const msgContent = (newC.last_message_content ?? '').slice(0, 100);
+              const now = Date.now();
               
-              // Only notify if this is a NEW message timestamp we haven't seen before
-              if (lastNotifiedAt !== c.last_message_at) {
-                // Update notification tracking FIRST to prevent any race conditions
-                lastNotifiedByConversationRef.current.set(c.id, c.last_message_at);
+              const lastNotified = lastNotifiedByConversationRef.current.get(newC.id);
+              
+              // Dedupe conditions:
+              // 1) Same normalized timestamp AND same content = already notified
+              // 2) Same content within 2 seconds = duplicate realtime event
+              const isDuplicate = lastNotified && (
+                (lastNotified.timeMs === msgTimeMs && lastNotified.content === msgContent) ||
+                (lastNotified.content === msgContent && now - lastNotified.wallClockMs < 2000)
+              );
+              
+              if (!isDuplicate) {
+                // Update tracking FIRST to prevent races
+                lastNotifiedByConversationRef.current.set(newC.id, {
+                  timeMs: msgTimeMs,
+                  content: msgContent,
+                  wallClockMs: now,
+                });
                 
                 // Play notification sound
                 playNotificationSound();
                 
                 // Show browser notification (browser handles deduplication via tag)
                 if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                  const senderName = c.recipient_name || c.recipient_phone || 'Someone';
+                  const senderName = newC.recipient_name || newC.recipient_phone || 'Someone';
                   new Notification('New Reply', {
-                    body: `${senderName}: ${c.last_message_content?.substring(0, 100) || 'You received a new message'}`,
+                    body: `${senderName}: ${newC.last_message_content?.substring(0, 100) || 'You received a new message'}`,
                     icon: '/favicon.ico',
-                    tag: `conv-${c.id}-${c.last_message_at}`
+                    tag: `conv-${newC.id}-${msgTimeMs}`
                   });
                 }
                 
-                // Show toast notification with unique id to prevent duplicates
+                // Show toast notification with stable id derived from normalized time + content prefix
                 toast.info('New reply received!', {
-                  id: `reply-${c.id}-${c.last_message_at}`,
-                  description: c.last_message_content?.substring(0, 50) || 'You have a new message',
+                  id: `reply-${newC.id}-${msgTimeMs}-${msgContent.slice(0, 20)}`,
+                  description: newC.last_message_content?.substring(0, 50) || 'You have a new message',
                 });
               }
             }
+            
+            const c = newC;
             
             // Incremental update for conversations with time-based sorting
             setConversations(prev => 
