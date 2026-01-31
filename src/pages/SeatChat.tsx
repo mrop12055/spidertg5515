@@ -874,9 +874,9 @@ const SeatChat: React.FC = () => {
     }
   };
 
-  // Get display name - only phone number
+  // Get display name - prefer recipient name, fallback to phone number
   const getDisplayName = (conv: Conversation) => {
-    return conv.recipient_phone || 'Unknown';
+    return conv.recipient_name || conv.recipient_phone || 'Unknown';
   };
 
   // Get avatar initials from phone number or username
@@ -1383,10 +1383,10 @@ const SeatChat: React.FC = () => {
                           )}
                         </div>
                         
-                        <div className="flex-1 min-w-0">
+                        <div className="flex-1 min-w-0 overflow-hidden">
                           <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <p className="font-semibold text-base text-foreground truncate">
+                            <div className="flex items-center gap-2 min-w-0 flex-1">
+                              <p className="font-semibold text-base text-foreground truncate max-w-[180px]">
                                 {getDisplayName(conv)}
                               </p>
                               {conv.first_message_sent && (
@@ -1402,9 +1402,15 @@ const SeatChat: React.FC = () => {
                               {formatConversationTime(conv.last_message_at)}
                             </span>
                           </div>
-                          <div className="flex items-center justify-between gap-2 mt-1.5">
+                          {/* Show phone number if name is displayed */}
+                          {conv.recipient_name && conv.recipient_phone && (
+                            <p className="text-xs text-muted-foreground/60 truncate mt-0.5">
+                              {conv.recipient_phone}
+                            </p>
+                          )}
+                          <div className="flex items-center justify-between gap-2 mt-1">
                             <p className={cn(
-                              "text-sm truncate",
+                              "text-sm truncate flex-1",
                               conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
                             )}>
                             {conv.last_message_content ? (
@@ -1412,7 +1418,7 @@ const SeatChat: React.FC = () => {
                                   {conv.last_message_direction === 'outgoing' && (
                                     <span className="text-muted-foreground/50">You: </span>
                                   )}
-                                  {conv.last_message_content.slice(0, 45)}{conv.last_message_content.length > 45 ? '...' : ''}
+                                  {conv.last_message_content.slice(0, 40)}{conv.last_message_content.length > 40 ? '...' : ''}
                                 </>
                               ) : conv.last_message_at ? (
                                 <>
