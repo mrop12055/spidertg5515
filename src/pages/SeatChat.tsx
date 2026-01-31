@@ -20,6 +20,7 @@ import { supabase } from '@/integrations/supabase/client';
 import { format, isToday, isYesterday, subDays, differenceInMinutes } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
+import { playNotificationSound } from '@/hooks/useNotifications';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -146,6 +147,14 @@ const SeatChat: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const lastNotifiedMessageRef = useRef<string | null>(null);
+
+  // Request notification permission on mount
+  useEffect(() => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission();
+    }
+  }, []);
 
   // Toggle pin conversation in database
   const togglePinConversation = async (convId: string, currentlyPinned: boolean) => {
@@ -543,10 +552,44 @@ const SeatChat: React.FC = () => {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'messages' },
         (payload) => {
-          // Incremental update for messages if we have a selected conversation
-          if (selectedConversation && payload.eventType === 'INSERT') {
+          // Handle new incoming messages - trigger notifications
+          if (payload.eventType === 'INSERT') {
             const m = payload.new as any;
-            if (m.conversation_id === selectedConversation.id) {
+            
+            // Check if this is an incoming message we haven't notified about
+            if (m.direction === 'incoming' && lastNotifiedMessageRef.current !== m.id) {
+              // Check if this message belongs to a conversation for this seat
+              // We need to verify the conversation_id exists in our conversations list
+              setConversations(prevConvs => {
+                const targetConv = prevConvs.find(c => c.id === m.conversation_id);
+                if (targetConv) {
+                  // Mark as notified to prevent duplicates
+                  lastNotifiedMessageRef.current = m.id;
+                  
+                  // Play notification sound
+                  playNotificationSound();
+                  
+                  // Show browser notification
+                  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                    const senderName = targetConv.recipient_name || targetConv.recipient_phone || 'Someone';
+                    new Notification('New Reply', {
+                      body: `${senderName}: ${m.content?.substring(0, 100) || 'You received a new message'}`,
+                      icon: '/favicon.ico',
+                      tag: m.id
+                    });
+                  }
+                  
+                  // Show toast notification
+                  toast.info('New reply received!', {
+                    description: m.content?.substring(0, 50) || 'You have a new message',
+                  });
+                }
+                return prevConvs; // Don't modify state, just reading
+              });
+            }
+            
+            // Incremental update for messages if we have a selected conversation
+            if (selectedConversation && m.conversation_id === selectedConversation.id) {
               setMessages(prev => {
                 if (prev.some(msg => msg.id === m.id)) return prev;
                 return [...prev, {
