@@ -574,31 +574,13 @@ const SeatChat: React.FC = () => {
         (payload) => {
           if (payload.eventType === 'UPDATE') {
             const newC = payload.new as any;
-            const oldC = payload.old as any;
             
             // === NOTIFICATION LOGIC ===
-            // Only notify when last_message_* fields ACTUALLY changed (not just unread_count/has_reply/updated_at)
-            // NOTE: payload.old can be missing depending on realtime config.
-            // Prefer comparing against our last-known local state.
-            const prevLocal = conversationsRef.current.find(conv => conv.id === newC.id);
-
-            const lastMsgChanged =
-              (prevLocal
-                ? (
-                    newC.last_message_at !== prevLocal.last_message_at ||
-                    newC.last_message_content !== prevLocal.last_message_content ||
-                    newC.last_message_direction !== prevLocal.last_message_direction
-                  )
-                : (
-                    newC.last_message_at !== oldC?.last_message_at ||
-                    newC.last_message_content !== oldC?.last_message_content ||
-                    newC.last_message_direction !== oldC?.last_message_direction
-                  ));
-            
+            // Check for incoming message and dedupe FIRST using the notification ref (not local state)
+            // This prevents race conditions where local state updates between realtime events
             if (
               newC.last_message_direction === 'incoming' &&
-              newC.last_message_at &&
-              lastMsgChanged
+              newC.last_message_at
             ) {
               // Normalize timestamp to milliseconds for stable comparison
               const msgTimeMs = new Date(newC.last_message_at).getTime();
@@ -607,17 +589,16 @@ const SeatChat: React.FC = () => {
               
               const lastNotified = lastNotifiedByConversationRef.current.get(newC.id);
               
-              // Dedupe conditions:
+              // Dedupe conditions (check BEFORE any other logic):
               // 1) Same normalized timestamp AND same content = already notified
-              // 2) Same content within 2 seconds = duplicate realtime event
+              // 2) Same content within 10 seconds = duplicate realtime event for same message
               const isDuplicate = lastNotified && (
                 (lastNotified.timeMs === msgTimeMs && lastNotified.content === msgContent) ||
-                // Longer cooldown because the backend can emit delayed follow-up UPDATEs for the same message
                 (lastNotified.content === msgContent && now - lastNotified.wallClockMs < 10000)
               );
               
               if (!isDuplicate) {
-                // Update tracking FIRST to prevent races
+                // Update tracking FIRST to prevent any races
                 lastNotifiedByConversationRef.current.set(newC.id, {
                   timeMs: msgTimeMs,
                   content: msgContent,
