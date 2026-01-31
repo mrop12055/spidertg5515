@@ -1,127 +1,79 @@
 
-# Fix: Account Stats Showing 0 Due to 1000 Row Limit
+# Speed Up Accounts Page Loading
 
-## Problem Identified
-The "Unique Conversations" stat (displayed as a number next to the Users icon on each account card) shows **0** for many accounts even though they have sent messages. This happens because:
+## Problem
+When entering the Accounts tab, lifetime messages, proxy info, and profile pictures take 2-3 seconds to appear. This is caused by:
 
-1. The query at line 446-450 fetches conversations to calculate per-account stats
-2. It uses `.limit(50000)` but Supabase enforces a maximum of **1000 rows** per request
-3. With ~3000 conversations in the database, only the first 1000 are returned
-4. Accounts whose conversations are not in that first 1000 show 0 unique conversations
+1. **Intentional delays** - Unique conversations fetch has a 500ms delay, proxy errors have a 1000ms delay
+2. **No persistent cache** - Stats are stored in component state, causing re-fetches on every page visit
+3. **Sequential pagination** - Conversations are fetched page-by-page instead of in parallel
 
 ## Solution
-Implement paginated fetching for the unique conversations query, similar to how it was fixed for the Conversations page.
+Move secondary data (unique conversations, proxy errors) into React Query hooks with proper caching, remove artificial delays, and add parallel fetching.
 
 ---
 
-## Implementation Steps
+## Changes
 
-### Step 1: Update the `fetchUniqueConversations` function in `src/pages/Accounts.tsx`
+### 1. Create `useUniqueConversations` Hook
+Create a new cached hook similar to `useAccounts` that persists data across navigations.
 
-Replace the single query with a paginated loop:
+**New file: `src/hooks/useUniqueConversations.ts`**
+- Fetches conversation stats with parallel pagination (not sequential)
+- Uses React Query with `staleTime: 60000` (1 minute cache)
+- Returns a Map of account_id to conversation counts
+- Eliminates the 500ms delay
 
-**Current code (lines 441-470):**
-```typescript
-const fetchUniqueConversations = async () => {
-  const counts = new Map<string, { total: number; withReplies: number }>();
-  
-  try {
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('account_id, has_reply')
-      .eq('first_message_sent', true)
-      .limit(50000);
-    
-    if (error || !data) {
-      console.error('Error fetching conversations:', error);
-      return;
-    }
-    
-    data.forEach((conv: any) => {
-      // ... process
-    });
-    
-    setUniqueConversations(counts);
-    conversationsFetchedRef.current = true;
-  } catch (err) {
-    console.error('Error in fetchUniqueConversations:', err);
-  }
-};
-```
+### 2. Create `useProxyErrors` Hook  
+Create a cached hook for proxy error data.
 
-**New code with pagination:**
-```typescript
-const fetchUniqueConversations = async () => {
-  const counts = new Map<string, { total: number; withReplies: number }>();
-  const PAGE_SIZE = 1000;
-  const MAX_RECORDS = 50000;
-  
-  try {
-    // Get total count first
-    const { count: totalCount, error: countError } = await supabase
-      .from('conversations')
-      .select('*', { count: 'exact', head: true })
-      .eq('first_message_sent', true);
-    
-    if (countError) {
-      console.error('Error getting conversation count:', countError);
-      return;
-    }
-    
-    const effectiveCount = Math.min(totalCount || 0, MAX_RECORDS);
-    const totalPages = Math.ceil(effectiveCount / PAGE_SIZE);
-    
-    // Fetch all pages
-    for (let page = 0; page < totalPages; page++) {
-      const from = page * PAGE_SIZE;
-      const to = from + PAGE_SIZE - 1;
-      
-      const { data, error } = await supabase
-        .from('conversations')
-        .select('account_id, has_reply')
-        .eq('first_message_sent', true)
-        .range(from, to);
-      
-      if (error) {
-        console.error('Error fetching conversations page', page, error);
-        break;
-      }
-      if (!data || data.length === 0) break;
-      
-      // Process in-memory
-      data.forEach((conv: any) => {
-        const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
-        existing.total += 1;
-        if (conv.has_reply) existing.withReplies += 1;
-        counts.set(conv.account_id, existing);
-      });
-    }
-    
-    console.log(`Fetched unique conversations for ${counts.size} accounts from ${effectiveCount} records`);
-    setUniqueConversations(counts);
-    conversationsFetchedRef.current = true;
-  } catch (err) {
-    console.error('Error in fetchUniqueConversations:', err);
-  }
-};
-```
+**New file: `src/hooks/useProxyErrors.ts`**
+- Fetches proxy errors once and caches
+- Uses React Query with `staleTime: 60000` (1 minute cache)
+- Eliminates the 1000ms delay
+
+### 3. Update Accounts Page
+**File: `src/pages/Accounts.tsx`**
+- Replace inline `fetchUniqueConversations` effect with `useUniqueConversations()` hook
+- Replace inline `fetchProxyErrors` effect with `useProxyErrors()` hook
+- Remove local state for these: `uniqueConversations`, `proxyErrors`
+- Remove the ref-based fetching logic
 
 ---
 
 ## Technical Details
 
-| Aspect | Before | After |
-|--------|--------|-------|
-| Max rows fetched | 1000 (Supabase limit) | Up to 50,000 (paginated) |
-| Pages per fetch | 1 | Calculated dynamically |
-| Accounts with stats | ~30% | 100% |
+### Before (Current Flow)
+```
+Page loads → accounts (cached) → 500ms wait → fetch conversations (sequential) → 1000ms wait → fetch proxy errors
+Total: ~2-3 seconds for full data
+```
 
-## Files Changed
-- `src/pages/Accounts.tsx` - Update the `fetchUniqueConversations` function (lines 441-470)
+### After (Optimized Flow)
+```
+Page loads → accounts (cached) + conversations (cached) + proxy errors (cached) → All instant if within cache window
+First load: parallel fetches with no artificial delays
+```
 
-## Testing
-After implementation:
-1. Navigate to the Accounts page
-2. Verify that accounts with messages show non-zero values for the "Unique Conversations" stat (Users icon)
-3. Hover over the stat to see the tooltip with reply rate
+### Caching Strategy
+| Data | Cache Duration | Realtime Updates |
+|------|----------------|------------------|
+| Accounts | 30 seconds | Yes (already implemented) |
+| Proxies | 30 seconds | Yes (already implemented) |
+| Unique Conversations | 60 seconds | No (low update frequency) |
+| Proxy Errors | 60 seconds | No (low update frequency) |
 
+### Parallel Pagination
+The new `useUniqueConversations` hook will fetch all pages in parallel using `Promise.all()`, reducing fetch time from ~2s to ~500ms for 3000+ records.
+
+---
+
+## Files to Create/Modify
+1. **Create** `src/hooks/useUniqueConversations.ts` - New cached hook for conversation stats
+2. **Create** `src/hooks/useProxyErrors.ts` - New cached hook for proxy errors  
+3. **Modify** `src/pages/Accounts.tsx` - Use new hooks, remove inline fetching logic
+
+## Expected Result
+- Stats appear instantly on subsequent visits (within cache window)
+- First load is ~1-2 seconds faster (no artificial delays)
+- Parallel fetching reduces initial load time further
