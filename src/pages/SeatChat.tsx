@@ -548,89 +548,56 @@ const SeatChat: React.FC = () => {
     }, delay);
   }, []);
 
-  // Real-time subscriptions with incremental updates
+  // Track last notified conversation timestamps to prevent duplicate notifications
+  const lastNotifiedByConversationRef = useRef<Map<string, string>>(new Map());
+
+  // Real-time subscription for CONVERSATIONS (seat-filtered)
+  // Handles: conversation list updates, notifications based on last_message_direction
   useEffect(() => {
     if (!seat) return;
 
     const channel = supabase
-      .channel(`seat-${seat.id}-realtime`)
+      .channel(`seat-${seat.id}-conversations`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'messages' },
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'conversations', 
+          filter: `seat_id=eq.${seat.id}` 
+        },
         (payload) => {
-          // Handle new incoming messages - trigger notifications
-          if (payload.eventType === 'INSERT') {
-            const m = payload.new as any;
-            
-            // Check if this is an incoming message we haven't notified about
-            if (m.direction === 'incoming' && lastNotifiedMessageRef.current !== m.id) {
-              // Check if this message belongs to a conversation for this seat
-              // We need to verify the conversation_id exists in our conversations list
-              setConversations(prevConvs => {
-                const targetConv = prevConvs.find(c => c.id === m.conversation_id);
-                if (targetConv) {
-                  // Mark as notified to prevent duplicates
-                  lastNotifiedMessageRef.current = m.id;
-                  
-                  // Play notification sound
-                  playNotificationSound();
-                  
-                  // Show browser notification
-                  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-                    const senderName = targetConv.recipient_name || targetConv.recipient_phone || 'Someone';
-                    new Notification('New Reply', {
-                      body: `${senderName}: ${m.content?.substring(0, 100) || 'You received a new message'}`,
-                      icon: '/favicon.ico',
-                      tag: m.id
-                    });
-                  }
-                  
-                  // Show toast notification
-                  toast.info('New reply received!', {
-                    description: m.content?.substring(0, 50) || 'You have a new message',
-                  });
-                }
-                return prevConvs; // Don't modify state, just reading
-              });
-            }
-            
-            // Incremental update for messages if we have a selected conversation (use ref for current value)
-            const currentConv = selectedConversationRef.current;
-            if (currentConv && m.conversation_id === currentConv.id) {
-              setMessages(prev => {
-                if (prev.some(msg => msg.id === m.id)) return prev;
-                return [...prev, {
-                  id: m.id,
-                  content: m.content,
-                  direction: m.direction,
-                  status: m.status,
-                  created_at: m.created_at,
-                  media_url: m.media_url,
-                  media_type: m.media_type
-                }];
-              });
-            }
-          } else if (payload.eventType === 'UPDATE') {
-            const m = payload.new as any;
-            setMessages(prev => prev.map(msg => 
-              msg.id === m.id ? { ...msg, status: m.status } : msg
-            ));
-          }
-          
-          // Debounced conversation/stats update
-          debouncedRefetch(() => {
-            fetchConversations();
-            fetchStats();
-          }, 1000);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'conversations', filter: `seat_id=eq.${seat.id}` },
-        (payload) => {
-          // Incremental update for conversations
           if (payload.eventType === 'UPDATE') {
             const c = payload.new as any;
+            
+            // Check if we should notify - incoming message that we haven't notified about
+            if (c.last_message_direction === 'incoming' && c.last_message_at) {
+              const lastNotifiedAt = lastNotifiedByConversationRef.current.get(c.id);
+              if (lastNotifiedAt !== c.last_message_at) {
+                // Update notification tracking
+                lastNotifiedByConversationRef.current.set(c.id, c.last_message_at);
+                
+                // Play notification sound
+                playNotificationSound();
+                
+                // Show browser notification
+                if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                  const senderName = c.recipient_name || c.recipient_phone || 'Someone';
+                  new Notification('New Reply', {
+                    body: `${senderName}: ${c.last_message_content?.substring(0, 100) || 'You received a new message'}`,
+                    icon: '/favicon.ico',
+                    tag: `conv-${c.id}-${c.last_message_at}`
+                  });
+                }
+                
+                // Show toast notification
+                toast.info('New reply received!', {
+                  description: c.last_message_content?.substring(0, 50) || 'You have a new message',
+                });
+              }
+            }
+            
+            // Incremental update for conversations
             setConversations(prev => prev.map(conv => 
               conv.id === c.id ? {
                 ...conv,
@@ -643,10 +610,17 @@ const SeatChat: React.FC = () => {
                 is_hidden: c.is_hidden ?? conv.is_hidden,
               } : conv
             ));
-          } else {
-            // For INSERT/DELETE, do a debounced full refetch
+          } else if (payload.eventType === 'INSERT') {
+            // New conversation added to this seat - full refetch to get complete data
             debouncedRefetch(fetchConversations, 500);
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = (payload.old as any)?.id;
+            if (deletedId) {
+              setConversations(prev => prev.filter(conv => conv.id !== deletedId));
+            }
           }
+          
+          // Debounced stats update
           debouncedRefetch(fetchStats, 1000);
         }
       )
@@ -659,6 +633,58 @@ const SeatChat: React.FC = () => {
       supabase.removeChannel(channel);
     };
   }, [seat, fetchConversations, fetchStats, debouncedRefetch]);
+
+  // Real-time subscription for MESSAGES (selected conversation only)
+  // Handles: live message updates for the currently open chat
+  useEffect(() => {
+    if (!seat || !selectedConversation) return;
+
+    const channel = supabase
+      .channel(`seat-${seat.id}-messages-${selectedConversation.id}`)
+      .on(
+        'postgres_changes',
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'messages', 
+          filter: `conversation_id=eq.${selectedConversation.id}` 
+        },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const m = payload.new as any;
+            // Append new message to the list (dedupe by id)
+            setMessages(prev => {
+              if (prev.some(msg => msg.id === m.id)) return prev;
+              return [...prev, {
+                id: m.id,
+                content: m.content,
+                direction: m.direction,
+                status: m.status,
+                created_at: m.created_at,
+                media_url: m.media_url,
+                media_type: m.media_type
+              }];
+            });
+          } else if (payload.eventType === 'UPDATE') {
+            const m = payload.new as any;
+            // Update message status
+            setMessages(prev => prev.map(msg => 
+              msg.id === m.id ? { ...msg, status: m.status } : msg
+            ));
+          } else if (payload.eventType === 'DELETE') {
+            const deletedId = (payload.old as any)?.id;
+            if (deletedId) {
+              setMessages(prev => prev.filter(msg => msg.id !== deletedId));
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [seat, selectedConversation?.id]);
 
   // Refresh every 30 seconds (less aggressive than 10s)
   useEffect(() => {
