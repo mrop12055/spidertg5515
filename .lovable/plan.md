@@ -1,92 +1,112 @@
 
-Problem diagnosis (why the same reply toast shows 2–3 times)
-- This is not “duplicate code” in the UI; it’s multiple realtime events for the same incoming message.
-- In Seat Chat (`src/pages/SeatChat.tsx`) notifications are triggered from `conversations` UPDATE events (not from `messages` INSERT). A single incoming message can cause multiple UPDATEs on the same conversation row (e.g., one update sets last_message_* fields, later update adjusts unread_count/has_reply/updated_at).  
-- Your current dedupe in Seat Chat uses `last_message_at` as a raw string. If UPDATE #2 carries the same time with slightly different formatting OR if last_message_at is recomputed/updated again (even by milliseconds), the “new vs old” check fails and it notifies again (often 1–2 seconds later, matching what you’re seeing).
-- I also checked the database for your example content (`asdfasd`) and there was only one message row inserted, so the duplicates are not coming from multiple DB rows.
 
-Goal
-- Show exactly 1 toast per incoming reply (both in Seat Chat and Admin /conversations), even if realtime sends multiple events.
+# Fix: Campaign Account Selection Not Being Respected
 
-Implementation plan
+## Problem Summary
 
-A) Fix Seat Chat notification dedupe (primary culprit)
-File: `src/pages/SeatChat.tsx`
+When you select specific accounts for a campaign (e.g., 210 accounts), the system saves this selection correctly to the `campaign_accounts` table. However, when the runner processes campaign messages, it **ignores this selection** and distributes messages across **all 809 active accounts** instead of just the 210 you selected.
 
-1) Notify ONLY when the incoming “last message” actually changed
-- In the seat conversations realtime handler (currently around the block that checks `c.last_message_direction === 'incoming'`), use `payload.old` to detect whether this UPDATE represents a new incoming message.
-- New condition:
-  - `newC.last_message_direction === 'incoming'`
-  - AND `newC.last_message_at` is present
-  - AND at least one of these changed compared to `oldC`:
-    - `oldC.last_message_at !== newC.last_message_at`
-    - OR `oldC.last_message_content !== newC.last_message_content`
-    - OR `oldC.last_message_direction !== newC.last_message_direction`
-- If only `unread_count`/`has_reply`/`updated_at` changes while last_message_* stays the same, we do NOT notify.
+This happens because the `runner-tasks` edge function fetches all active accounts and never filters them by the `campaign_accounts` table.
 
-2) Normalize timestamps for dedupe (avoid string-format differences)
-- Replace the current map `lastNotifiedByConversationRef: Map<string, string>` with a map that stores a number (milliseconds):
-  - `const lastNotifiedByConversationRef = useRef<Map<string, number>>(new Map());`
-- Convert `newC.last_message_at` into a stable number:
-  - `const msgTimeMs = new Date(newC.last_message_at).getTime();`
-- Compare numbers instead of strings.
+---
 
-3) Use a stable toast “id” derived from normalized time (and optionally content)
-- Update the `toast.info` id so Sonner can collapse/replace duplicates:
-  - `id: reply-${newC.id}-${msgTimeMs}`
-- If you still see edge cases where msgTimeMs changes slightly across updates for the same message, add content into the key:
-  - `id: reply-${newC.id}-${msgTimeMs}-${(newC.last_message_content ?? '').slice(0, 20)}`
-  (Keeps it stable for “same message”, still unique across different messages.)
+## Root Cause
 
-4) Add a short safety cooldown per conversation (belt-and-suspenders)
-- Add a second check: if we already notified the same conversation within the last ~2 seconds for the same content, skip.  
-This prevents “triple toast” even if timestamps jitter.
-- Implementation approach:
-  - Store `{ lastTimeMs, lastContent }` per conversation in a ref map and skip if:
-    - `now - lastNotifyWallClock < 2000` AND `content same`.
+In `supabase/functions/runner-tasks/index.ts`, lines 319-346:
 
-5) Keep everything else the same
-- Conversation list sorting updates stay unchanged (we already made it time-based).
-- Stats refetch stays debounced as-is.
+1. The code fetches **all active accounts** into `usableAccounts`
+2. When assigning campaign tasks, it iterates over this full list
+3. It **never checks** the `campaign_accounts` table to filter down to the campaign's selected accounts
 
-B) Harden Admin (/conversations) notifications against duplicate deliveries (secondary hardening)
-File: `src/context/TelegramContext.tsx`
+---
 
-Even though it already has dedupe, we’ll make it “bulletproof”:
+## Solution
 
-1) Deduplicate by message row id (best unique identifier)
-- Use a `useRef<Set<string>>` (or module-level Set) for processed message IDs:
-  - Key: `m.id` (DB primary key)
-- If `processedMessageIds.has(m.id)` return early; else add it and show toast.
-- Keep your existing “campaign conversation only” rule.
+Modify the runner-tasks edge function to respect the `campaign_accounts` linkage when assigning campaign messages.
 
-2) Keep Sonner toast id stable
-- Set toast id to use the message row id:
-  - `id: reply-${m.id}`
-This guarantees identical incoming message cannot create multiple separate toast entries.
+### Step 1: Fetch Campaign-Linked Accounts
 
-3) Optional: prune the Set to avoid memory growth
-- Keep only last N ids (e.g., 2000) or prune after 10 minutes.
+When processing campaign recipients, for each recipient:
+1. Look up the campaign ID
+2. Query the `campaign_accounts` table to get the list of account IDs linked to that campaign
+3. Filter `usableAccounts` to only include accounts that are in the campaign's linked list
 
-C) Verification steps (what you should test after I implement)
-1) Seat Chat
-- Open `/seat/:token`.
-- Receive 1 new reply on a conversation that’s not selected.
-- Confirm:
-  - Only 1 toast appears.
-  - Wait 3–5 seconds: no second “same reply” toast appears.
-2) Admin Conversations
-- Open `/conversations`.
-- Receive 1 new reply.
-- Confirm only 1 toast appears.
+### Step 2: Optimize with Batch Lookup
 
-Notes / edge cases handled
-- If browser Notification permission is denied/default, toast still shows once.
-- If realtime sends UPDATE events that only modify unread_count/has_reply, no toast.
-- If last_message_at string formatting changes across events, normalization prevents duplicates.
+Since multiple recipients may belong to the same campaign:
+1. Collect all unique campaign IDs from the batch of recipients
+2. Fetch all linked account IDs for these campaigns in a single query
+3. Build a map of `campaign_id -> Set<account_id>`
+4. When assigning each recipient, filter `usableAccounts` to only include accounts in that campaign's set
 
-Files that will be changed
-- `src/pages/SeatChat.tsx` (main fix)
-- `src/context/TelegramContext.tsx` (hardening; ensures /conversations never duplicates)
+---
 
-If, after this, you still see duplicates, the next step will be to temporarily add console logs for the realtime payload (old/new last_message fields + computed key) to confirm exactly which field is changing between the repeated events and tighten the filter further.
+## Technical Implementation
+
+```text
++----------------------------------+
+|   Current Flow (Broken)          |
++----------------------------------+
+| 1. Fetch pending recipients      |
+| 2. Get ALL active accounts       |
+| 3. Round-robin across ALL        |
+|    809 accounts                  |
++----------------------------------+
+
+           ↓ FIX ↓
+
++----------------------------------+
+|   Fixed Flow                     |
++----------------------------------+
+| 1. Fetch pending recipients      |
+| 2. Get campaign IDs from batch   |
+| 3. Lookup campaign_accounts for  |
+|    those campaigns               |
+| 4. Filter usableAccounts to only |
+|    include linked accounts       |
+| 5. Round-robin across SELECTED   |
+|    accounts only                 |
++----------------------------------+
+```
+
+### Code Changes in `runner-tasks/index.ts`
+
+**After fetching recipients (around line 279), add:**
+
+1. Extract unique campaign IDs from recipients batch
+2. Query `campaign_accounts` table for all linked account IDs
+3. Build a lookup map: `campaignAccountMap[campaign_id] = Set<account_id>`
+
+**In the account assignment loop (around line 330), modify:**
+
+1. Get the current recipient's campaign ID
+2. Look up allowed accounts from `campaignAccountMap`
+3. Filter the account loop to only consider accounts in that set
+4. If no accounts are linked (empty set), fall back to all usable accounts for backward compatibility
+
+---
+
+## Files to Modify
+
+| File | Change |
+|------|--------|
+| `supabase/functions/runner-tasks/index.ts` | Add campaign_accounts lookup and filter logic in the campaign tasks section |
+
+---
+
+## Edge Cases Handled
+
+1. **No accounts selected** (old campaigns or user skipped selection): Fall back to all usable accounts
+2. **All selected accounts at daily limit**: Recipient stays pending until next day
+3. **Selected account banned/restricted**: Naturally filtered out by existing status checks
+4. **Multiple campaigns in same batch**: Each recipient uses its own campaign's account list
+
+---
+
+## Verification
+
+After implementation:
+1. Create a new campaign selecting only 5 specific accounts
+2. Start the campaign
+3. Check `campaign_recipients.sent_by_account_id` to verify messages only went through the 5 selected accounts
+
