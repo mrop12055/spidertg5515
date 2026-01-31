@@ -792,9 +792,12 @@ const SeatChat: React.FC = () => {
       clearSelectedImage();
       fetchMessages();
       
-      // Refocus input after sending so user can continue typing
+      // Refocus input and reset height after sending
       setTimeout(() => {
-        messageInputRef.current?.focus();
+        if (messageInputRef.current) {
+          messageInputRef.current.style.height = 'auto';
+          messageInputRef.current.focus();
+        }
       }, 50);
     } catch (err) {
       console.error('Error sending message:', err);
@@ -1740,7 +1743,13 @@ const SeatChat: React.FC = () => {
                             ref={messageInputRef}
                             placeholder="Type your message..."
                             value={messageInput}
-                            onChange={(e) => setMessageInput(e.target.value)}
+                            onChange={(e) => {
+                              setMessageInput(e.target.value);
+                              // Auto-expand textarea height based on content
+                              const target = e.target;
+                              target.style.height = 'auto';
+                              target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
+                            }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter' && !e.shiftKey) {
                                 e.preventDefault();
@@ -1748,7 +1757,7 @@ const SeatChat: React.FC = () => {
                               }
                             }}
                             disabled={isSending}
-                            className="w-full bg-muted/40 border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 min-h-[48px] max-h-[140px] rounded-2xl text-[15px] leading-6 px-5 py-3 transition-all shadow-inner resize-none"
+                            className="w-full bg-muted/40 border-border/50 text-foreground placeholder:text-muted-foreground/50 focus:ring-2 focus:ring-primary/30 focus:border-primary/50 min-h-[48px] max-h-[200px] rounded-2xl text-[15px] leading-6 px-5 py-3 transition-all shadow-inner resize-none overflow-y-auto"
                             rows={1}
                           />
                         </div>
