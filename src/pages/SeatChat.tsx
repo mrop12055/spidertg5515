@@ -295,10 +295,8 @@ const SeatChat: React.FC = () => {
       }
     }
     
-    // Sort: pinned first, then by last message time
+    // Sort by last message time only (newest first)
     return deduplicateConversations(filtered).sort((a, b) => {
-      if (a.is_pinned && !b.is_pinned) return -1;
-      if (!a.is_pinned && b.is_pinned) return 1;
       const timeA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
       const timeB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
       return timeB - timeA;
@@ -604,19 +602,25 @@ const SeatChat: React.FC = () => {
               }
             }
             
-            // Incremental update for conversations
-            setConversations(prev => prev.map(conv => 
-              conv.id === c.id ? {
-                ...conv,
-                unread_count: c.unread_count ?? conv.unread_count,
-                last_message_at: c.last_message_at ?? conv.last_message_at,
-                last_message_content: c.last_message_content ?? conv.last_message_content,
-                last_message_direction: c.last_message_direction ?? conv.last_message_direction,
-                has_reply: c.has_reply ?? conv.has_reply,
-                is_pinned: c.is_pinned ?? conv.is_pinned,
-                is_hidden: c.is_hidden ?? conv.is_hidden,
-              } : conv
-            ));
+            // Incremental update for conversations with time-based sorting
+            setConversations(prev => 
+              prev.map(conv => 
+                conv.id === c.id ? {
+                  ...conv,
+                  unread_count: c.unread_count ?? conv.unread_count,
+                  last_message_at: c.last_message_at ?? conv.last_message_at,
+                  last_message_content: c.last_message_content ?? conv.last_message_content,
+                  last_message_direction: c.last_message_direction ?? conv.last_message_direction,
+                  has_reply: c.has_reply ?? conv.has_reply,
+                  is_pinned: c.is_pinned ?? conv.is_pinned,
+                  is_hidden: c.is_hidden ?? conv.is_hidden,
+                } : conv
+              ).sort((a, b) => {
+                const timeA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+                const timeB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+                return timeB - timeA;
+              })
+            );
           } else if (payload.eventType === 'INSERT') {
             // New conversation added to this seat - full refetch to get complete data
             debouncedRefetch(fetchConversations, 500);
