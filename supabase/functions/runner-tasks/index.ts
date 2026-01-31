@@ -689,7 +689,7 @@ async function handleReportResults(supabase: any, body: any) {
         
         if (!wasAlreadySent) {
           await supabase.from("campaign_recipients")
-            .update({ status: "sent", sent_at: now, api_credential_id: r.api_credential_id })
+            .update({ status: "sent", sent_at: now, sent_by_account_id: r.account_id, api_credential_id: r.api_credential_id })
             .eq("id", r.campaign_recipient_id);
         }
 
@@ -939,7 +939,7 @@ async function handleReportResults(supabase: any, body: any) {
         // NOTE: Campaign failed_count is updated automatically by trigger when recipient status changes to 'failed'
         if (r.campaign_recipient_id) {
           await supabase.from("campaign_recipients")
-            .update({ status: "failed", failed_reason: r.error })
+            .update({ status: "failed", sent_by_account_id: r.account_id, failed_reason: r.error })
             .eq("id", r.campaign_recipient_id);
         } else if (r.message_id) {
           await supabase.from("messages")
