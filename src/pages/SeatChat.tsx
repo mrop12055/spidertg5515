@@ -149,11 +149,17 @@ const SeatChat: React.FC = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastNotifiedMessageRef = useRef<string | null>(null);
   const selectedConversationRef = useRef<Conversation | null>(null);
+  const conversationsRef = useRef<Conversation[]>([]);
 
   // Keep ref in sync with state for realtime callback
   useEffect(() => {
     selectedConversationRef.current = selectedConversation;
   }, [selectedConversation]);
+
+  // Keep ref in sync with state for realtime callback
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
 
   // Request notification permission on mount
   useEffect(() => {
@@ -572,10 +578,22 @@ const SeatChat: React.FC = () => {
             
             // === NOTIFICATION LOGIC ===
             // Only notify when last_message_* fields ACTUALLY changed (not just unread_count/has_reply/updated_at)
-            const lastMsgChanged = 
-              newC.last_message_at !== oldC?.last_message_at ||
-              newC.last_message_content !== oldC?.last_message_content ||
-              newC.last_message_direction !== oldC?.last_message_direction;
+            // NOTE: payload.old can be missing depending on realtime config.
+            // Prefer comparing against our last-known local state.
+            const prevLocal = conversationsRef.current.find(conv => conv.id === newC.id);
+
+            const lastMsgChanged =
+              (prevLocal
+                ? (
+                    newC.last_message_at !== prevLocal.last_message_at ||
+                    newC.last_message_content !== prevLocal.last_message_content ||
+                    newC.last_message_direction !== prevLocal.last_message_direction
+                  )
+                : (
+                    newC.last_message_at !== oldC?.last_message_at ||
+                    newC.last_message_content !== oldC?.last_message_content ||
+                    newC.last_message_direction !== oldC?.last_message_direction
+                  ));
             
             if (
               newC.last_message_direction === 'incoming' &&
@@ -594,7 +612,8 @@ const SeatChat: React.FC = () => {
               // 2) Same content within 2 seconds = duplicate realtime event
               const isDuplicate = lastNotified && (
                 (lastNotified.timeMs === msgTimeMs && lastNotified.content === msgContent) ||
-                (lastNotified.content === msgContent && now - lastNotified.wallClockMs < 2000)
+                // Longer cooldown because the backend can emit delayed follow-up UPDATEs for the same message
+                (lastNotified.content === msgContent && now - lastNotified.wallClockMs < 10000)
               );
               
               if (!isDuplicate) {
