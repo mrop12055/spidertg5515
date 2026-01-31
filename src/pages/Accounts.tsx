@@ -4,6 +4,8 @@ import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
 import { useAccounts } from '@/hooks/useAccounts';
 import { useProxies } from '@/hooks/useProxies';
+import { useUniqueConversations } from '@/hooks/useUniqueConversations';
+import { useProxyErrors } from '@/hooks/useProxyErrors';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -123,6 +125,8 @@ const Accounts: React.FC = () => {
   // Use cached hooks for fast data loading
   const { accounts, isLoading, isFetching, refetch: refetchAccounts } = useAccounts();
   const { proxies, refetch: refetchProxies } = useProxies();
+  const { uniqueConversations } = useUniqueConversations();
+  const { proxyErrors } = useProxyErrors();
   
   const { 
     refreshData,
@@ -235,15 +239,11 @@ const Accounts: React.FC = () => {
   const [isSpamBotChecking, setIsSpamBotChecking] = useState(false);
   const [spamBotProgress, setSpamBotProgress] = useState<{ total: number; completed: number; results: Map<string, { status: string; result?: string }> }>({ total: 0, completed: 0, results: new Map() });
   
-  
-  // Unique conversations per account (how many unique people they've messaged)
-  const [uniqueConversations, setUniqueConversations] = useState<Map<string, { total: number; withReplies: number }>>(new Map());
 
   // Processing tasks state
   const [processingTasks, setProcessingTasks] = useState<Map<string, string>>(new Map());
   
-  // Proxy errors - map of proxy_id to latest error info
-  const [proxyErrors, setProxyErrors] = useState<Map<string, { error_type: string; error_message: string; created_at: string }>>(new Map());
+  // NOTE: uniqueConversations and proxyErrors are now provided by hooks (useUniqueConversations, useProxyErrors)
   const [proxyErrorFilter, setProxyErrorFilter] = useState<string>('all'); // 'all' | 'with_error' | 'no_error'
   
   // NOTE: Realtime subscription for accounts is now handled by useAccounts hook
@@ -430,72 +430,7 @@ const Accounts: React.FC = () => {
     };
   }, [isAccountTaskRunning, accountTasksProgress]);
    
-  // Fetch unique conversations per account - LAZY: only when accounts are loaded and non-empty
-  // Optimized to run once per session, not on every render
-  const conversationsFetchedRef = useRef(false);
-  
-  useEffect(() => {
-    // Skip if already fetched or no accounts yet
-    if (conversationsFetchedRef.current || accounts.length === 0) return;
-    
-    const fetchUniqueConversations = async () => {
-      const counts = new Map<string, { total: number; withReplies: number }>();
-      const PAGE_SIZE = 1000;
-      const MAX_RECORDS = 50000;
-      
-      try {
-        // Get total count first
-        const { count: totalCount, error: countError } = await supabase
-          .from('conversations')
-          .select('*', { count: 'exact', head: true })
-          .eq('first_message_sent', true);
-        
-        if (countError) {
-          console.error('Error getting conversation count:', countError);
-          return;
-        }
-        
-        const effectiveCount = Math.min(totalCount || 0, MAX_RECORDS);
-        const totalPages = Math.ceil(effectiveCount / PAGE_SIZE);
-        
-        // Fetch all pages (bypasses 1000 row limit)
-        for (let page = 0; page < totalPages; page++) {
-          const from = page * PAGE_SIZE;
-          const to = from + PAGE_SIZE - 1;
-          
-          const { data, error } = await supabase
-            .from('conversations')
-            .select('account_id, has_reply')
-            .eq('first_message_sent', true)
-            .range(from, to);
-          
-          if (error) {
-            console.error('Error fetching conversations page', page, error);
-            break;
-          }
-          if (!data || data.length === 0) break;
-          
-          // Process in-memory (much faster than multiple DB queries)
-          data.forEach((conv: any) => {
-            const existing = counts.get(conv.account_id) || { total: 0, withReplies: 0 };
-            existing.total += 1;
-            if (conv.has_reply) existing.withReplies += 1;
-            counts.set(conv.account_id, existing);
-          });
-        }
-        
-        console.log(`Fetched unique conversations for ${counts.size} accounts from ${effectiveCount} records`);
-        setUniqueConversations(counts);
-        conversationsFetchedRef.current = true;
-      } catch (err) {
-        console.error('Error in fetchUniqueConversations:', err);
-      }
-    };
-    
-    // Delay to let critical UI render first
-    const timeout = setTimeout(fetchUniqueConversations, 500);
-    return () => clearTimeout(timeout);
-  }, [accounts.length]);
+  // NOTE: uniqueConversations are now provided by useUniqueConversations hook with caching
 
   // Extract unique tags from all accounts
   useEffect(() => {
@@ -506,87 +441,7 @@ const Accounts: React.FC = () => {
     setAvailableTags(Array.from(allTags).sort());
   }, [accounts]);
 
-  // Fetch proxy errors - LAZY: only when proxyErrorFilter is active or on demand
-  const proxyErrorsFetchedRef = useRef(false);
-  
-  useEffect(() => {
-    // Skip if already fetched or filter not active
-    if (proxyErrorsFetchedRef.current && proxyErrorFilter === 'all') return;
-    if (proxies.length === 0) return;
-    
-    const fetchProxyErrors = async () => {
-      try {
-        // Only fetch if there are proxies with error status (count first for performance)
-        const { count, error: countError } = await supabase
-          .from('proxies')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'error');
-        
-        if (countError || (count ?? 0) === 0) {
-          setProxyErrors(new Map());
-          proxyErrorsFetchedRef.current = true;
-          return;
-        }
-        
-        // Get proxies with error status
-        const { data: errorProxies, error: proxyError } = await supabase
-          .from('proxies')
-          .select('id')
-          .eq('status', 'error')
-          .limit(1000);
-        
-        if (proxyError) {
-          console.error('Error fetching error proxies:', proxyError);
-          return;
-        }
-        
-        const errorProxyIds = new Set((errorProxies || []).map(p => p.id));
-        
-        // Get latest error for each proxy - limit to recent errors only
-        const { data: errors, error: errorsError } = await supabase
-          .from('proxy_errors')
-          .select('proxy_id, error_type, error_message, created_at')
-          .order('created_at', { ascending: false })
-          .limit(500);
-        
-        if (errorsError) {
-          console.error('Error fetching proxy errors:', errorsError);
-          return;
-        }
-        
-        // Build map of proxy_id -> latest error
-        const errorMap = new Map<string, { error_type: string; error_message: string; created_at: string }>();
-        
-        // First mark all error-status proxies
-        errorProxyIds.forEach(proxyId => {
-          if (!errorMap.has(proxyId)) {
-            errorMap.set(proxyId, { error_type: 'error', error_message: 'Proxy marked as error', created_at: new Date().toISOString() });
-          }
-        });
-        
-        // Then add actual error messages where available
-        (errors || []).forEach(err => {
-          if (!errorProxyIds.has(err.proxy_id)) return;
-          if (!errorMap.has(err.proxy_id)) {
-            errorMap.set(err.proxy_id, {
-              error_type: err.error_type || 'unknown',
-              error_message: err.error_message || 'Unknown error',
-              created_at: err.created_at
-            });
-          }
-        });
-        
-        setProxyErrors(errorMap);
-        proxyErrorsFetchedRef.current = true;
-      } catch (err) {
-        console.error('Error in fetchProxyErrors:', err);
-      }
-    };
-    
-    // Delay to let critical UI render first
-    const timeout = setTimeout(fetchProxyErrors, 1000);
-    return () => clearTimeout(timeout);
-  }, [proxies.length, proxyErrorFilter]);
+  // NOTE: proxyErrors are now provided by useProxyErrors hook with caching
 
   // Extract phone number from filename
   const extractPhoneFromFilename = (filename: string): string => {
