@@ -550,6 +550,8 @@ const SeatChat: React.FC = () => {
 
   // Track last notified conversation timestamps to prevent duplicate notifications
   const lastNotifiedByConversationRef = useRef<Map<string, string>>(new Map());
+  // Track last notification time to debounce rapid-fire events
+  const lastNotificationTimeRef = useRef<number>(0);
 
   // Real-time subscription for CONVERSATIONS (seat-filtered)
   // Handles: conversation list updates, notifications based on last_message_direction
@@ -573,14 +575,19 @@ const SeatChat: React.FC = () => {
             // Check if we should notify - incoming message that we haven't notified about
             if (c.last_message_direction === 'incoming' && c.last_message_at) {
               const lastNotifiedAt = lastNotifiedByConversationRef.current.get(c.id);
-              if (lastNotifiedAt !== c.last_message_at) {
+              const now = Date.now();
+              const timeSinceLastNotification = now - lastNotificationTimeRef.current;
+              
+              // Only notify if: different timestamp AND at least 2 seconds since last notification
+              if (lastNotifiedAt !== c.last_message_at && timeSinceLastNotification > 2000) {
                 // Update notification tracking
                 lastNotifiedByConversationRef.current.set(c.id, c.last_message_at);
+                lastNotificationTimeRef.current = now;
                 
                 // Play notification sound
                 playNotificationSound();
                 
-                // Show browser notification
+                // Show browser notification (browser handles deduplication via tag)
                 if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
                   const senderName = c.recipient_name || c.recipient_phone || 'Someone';
                   new Notification('New Reply', {
