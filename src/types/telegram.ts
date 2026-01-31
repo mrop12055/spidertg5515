@@ -85,6 +85,7 @@ export interface Conversation {
   lastMessage?: Message;
   lastMessageAt?: Date;
   lastMessageContent?: string;
+  lastMessageDirection?: 'incoming' | 'outgoing';
   unreadCount: number;
   isActive: boolean;
   createdAt: Date;

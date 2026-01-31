@@ -1141,7 +1141,12 @@ const Chat: React.FC = () => {
                                   {isCampaignMessage && (
                                     <span className="text-[9px] px-1 py-0.5 bg-primary/10 text-primary rounded flex-shrink-0">Camp</span>
                                   )}
-                                  <span className="truncate">{messagePreview}</span>
+                                  <span className="truncate">
+                                    {conv.lastMessageDirection === 'outgoing' && (
+                                      <span className="text-muted-foreground/50">You: </span>
+                                    )}
+                                    {messagePreview}
+                                  </span>
                                 </>
                               )}
                             </p>
