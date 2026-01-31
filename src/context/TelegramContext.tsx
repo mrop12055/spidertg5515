@@ -1393,16 +1393,8 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         inserted = newRecipients.length;
       }
       
-      // Update campaign recipient_count
-      const { count } = await supabase
-        .from('campaign_recipients')
-        .select('id', { count: 'exact', head: true })
-        .eq('campaign_id', campaignId);
-      
-      await supabase
-        .from('campaigns')
-        .update({ recipient_count: count || 0 })
-        .eq('id', campaignId);
+      // NOTE: recipient_count, pending_count, etc. are now managed by database trigger
+      // sync_campaign_counts - no manual update needed here
       
       if (duplicateNumbers.length > 0) {
         toast.success(`Uploaded ${inserted} recipients. ${duplicateNumbers.length} already messaged (skipped).`);
