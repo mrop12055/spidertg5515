@@ -1329,29 +1329,58 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[]): Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined> => {
     try {
-      // Get existing recipients to check for duplicates
-      const { data: existingRecipients } = await supabase
+      // STEP 1: Get ALL phone numbers that have EVER been successfully messaged or are pending/sending
+      // This prevents sending to the same person from ANY campaign
+      const { data: allSentRecipients } = await supabase
         .from('campaign_recipients')
         .select('phone_number')
-        .eq('campaign_id', campaignId);
+        .in('status', ['sent', 'pending', 'sending']);
       
-      const existingPhones = new Set(existingRecipients?.map(r => r.phone_number) || []);
+      // Also check conversations where we sent the first message (outreach conversations)
+      const { data: existingConversations } = await supabase
+        .from('conversations')
+        .select('recipient_phone')
+        .eq('first_message_sent', true)
+        .not('recipient_phone', 'is', null);
+      
+      // Build a set of all already-messaged phone numbers
+      const alreadyMessaged = new Set<string>();
+      
+      // Add from campaign_recipients (sent/pending/sending)
+      (allSentRecipients || []).forEach(r => {
+        if (r.phone_number) alreadyMessaged.add(r.phone_number);
+      });
+      
+      // Add from conversations (first_message_sent = true means we already reached out)
+      (existingConversations || []).forEach(c => {
+        if (c.recipient_phone) alreadyMessaged.add(c.recipient_phone);
+      });
+      
+      // Filter out duplicates
       const duplicateNumbers: string[] = [];
       const newRecipients: { campaign_id: string; phone_number: string; name: string | null; seat_id: string | null; status: string }[] = [];
+      const seenInBatch = new Set<string>();
       
       for (const recipient of recipients) {
-        if (existingPhones.has(recipient.phone_number)) {
+        // Skip if already messaged in ANY campaign or conversation
+        if (alreadyMessaged.has(recipient.phone_number)) {
           duplicateNumbers.push(recipient.phone_number);
-        } else {
-          newRecipients.push({
-            campaign_id: campaignId,
-            phone_number: recipient.phone_number,
-            name: recipient.name || null,
-            seat_id: recipient.seat_id || null,
-            status: 'pending'
-          });
-          existingPhones.add(recipient.phone_number); // Prevent duplicates within the batch
+          continue;
         }
+        // Skip duplicates within this batch
+        if (seenInBatch.has(recipient.phone_number)) {
+          duplicateNumbers.push(recipient.phone_number);
+          continue;
+        }
+        
+        newRecipients.push({
+          campaign_id: campaignId,
+          phone_number: recipient.phone_number,
+          name: recipient.name || null,
+          seat_id: recipient.seat_id || null,
+          status: 'pending'
+        });
+        seenInBatch.add(recipient.phone_number);
       }
       
       let inserted = 0;
@@ -1376,7 +1405,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         .eq('id', campaignId);
       
       if (duplicateNumbers.length > 0) {
-        toast.success(`Uploaded ${inserted} recipients. ${duplicateNumbers.length} duplicates skipped.`);
+        toast.success(`Uploaded ${inserted} recipients. ${duplicateNumbers.length} already messaged (skipped).`);
       } else {
         toast.success(`Uploaded ${inserted} recipients`);
       }

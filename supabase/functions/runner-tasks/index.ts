@@ -277,11 +277,46 @@ async function handleGetTasks(supabase: any, body: any) {
       .limit(batch_size);
 
     if (recipients?.length > 0) {
+      // === GLOBAL DEDUPLICATION: Check if any of these phone numbers were already sent globally ===
+      // This prevents sending to the same recipient from multiple accounts if one succeeds first
+      const phoneNumbers = recipients.map((r: any) => r.phone_number);
+      
+      // Check if any of these phones have been successfully sent in ANY campaign
+      const { data: alreadySentPhones } = await supabase
+        .from("campaign_recipients")
+        .select("phone_number")
+        .in("phone_number", phoneNumbers)
+        .eq("status", "sent");
+      
+      const sentPhoneSet = new Set((alreadySentPhones || []).map((r: any) => r.phone_number));
+      
+      // Filter out any recipients whose phone is already sent globally
+      // Mark them as 'sent' to prevent future retries
+      const phonesToSkip: string[] = [];
+      const recipientsToProcess: any[] = [];
+      
+      for (const r of recipients) {
+        if (sentPhoneSet.has(r.phone_number)) {
+          phonesToSkip.push(r.id);
+        } else {
+          recipientsToProcess.push(r);
+        }
+      }
+      
+      // Mark skipped recipients as 'sent' (already handled by another campaign/account)
+      if (phonesToSkip.length > 0) {
+        console.log(`[runner-tasks/get] Skipping ${phonesToSkip.length} recipients already sent globally`);
+        await supabase
+          .from("campaign_recipients")
+          .update({ status: "sent", failed_reason: "Already sent via another campaign" })
+          .in("id", phonesToSkip);
+      }
+      
       // Track how many tasks we've assigned to each account in this batch
       // This enables round-robin distribution across accounts
       const assignedCountByAccountId: Record<string, number> = {};
       
-      for (const r of recipients) {
+      for (const r of recipientsToProcess) {
         // Find the account with the lowest effective usage (sent_today + assigned_in_batch)
         // This distributes tasks evenly across all available accounts
         const dailyLimit = config.campaignMessagesPerAccountPerDay || config.dailyLimit;
