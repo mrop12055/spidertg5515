@@ -148,6 +148,12 @@ const SeatChat: React.FC = () => {
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const lastNotifiedMessageRef = useRef<string | null>(null);
+  const selectedConversationRef = useRef<Conversation | null>(null);
+
+  // Keep ref in sync with state for realtime callback
+  useEffect(() => {
+    selectedConversationRef.current = selectedConversation;
+  }, [selectedConversation]);
 
   // Request notification permission on mount
   useEffect(() => {
@@ -588,8 +594,9 @@ const SeatChat: React.FC = () => {
               });
             }
             
-            // Incremental update for messages if we have a selected conversation
-            if (selectedConversation && m.conversation_id === selectedConversation.id) {
+            // Incremental update for messages if we have a selected conversation (use ref for current value)
+            const currentConv = selectedConversationRef.current;
+            if (currentConv && m.conversation_id === currentConv.id) {
               setMessages(prev => {
                 if (prev.some(msg => msg.id === m.id)) return prev;
                 return [...prev, {
@@ -651,7 +658,7 @@ const SeatChat: React.FC = () => {
       }
       supabase.removeChannel(channel);
     };
-  }, [seat, selectedConversation, fetchMessages, fetchConversations, fetchStats, debouncedRefetch]);
+  }, [seat, fetchConversations, fetchStats, debouncedRefetch]);
 
   // Refresh every 30 seconds (less aggressive than 10s)
   useEffect(() => {
