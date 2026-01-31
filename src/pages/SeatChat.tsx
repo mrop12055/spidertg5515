@@ -595,8 +595,9 @@ const SeatChat: React.FC = () => {
                   });
                 }
                 
-                // Show toast notification
+                // Show toast notification with unique id to prevent duplicates
                 toast.info('New reply received!', {
+                  id: `reply-${c.id}-${c.last_message_at}`,
                   description: c.last_message_content?.substring(0, 50) || 'You have a new message',
                 });
               }
