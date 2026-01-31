@@ -482,29 +482,39 @@ const SeatChat: React.FC = () => {
     if (!selectedConversation) return;
 
     try {
-      const { data, error } = await supabase
-        .from('messages')
-        .select('id, content, direction, status, created_at, media_url, media_type')
-        .eq('conversation_id', selectedConversation.id)
-        .order('created_at', { ascending: true });
-
-      if (error) throw error;
-      setMessages(data || []);
-      
-      // Mark as read
+      // Optimistically mark as read in local state immediately for instant UI feedback
       if (selectedConversation.unread_count > 0) {
-        await supabase
-          .from('conversations')
-          .update({ unread_count: 0 })
-          .eq('id', selectedConversation.id);
-        
-        await supabase
-          .from('messages')
-          .update({ read_at: new Date().toISOString() })
-          .eq('conversation_id', selectedConversation.id)
-          .eq('direction', 'incoming')
-          .is('read_at', null);
+        setConversations(prev => 
+          prev.map(c => c.id === selectedConversation.id ? { ...c, unread_count: 0 } : c)
+        );
       }
+
+      // Fetch messages and mark as read in PARALLEL (don't block UI)
+      const [messagesResult] = await Promise.all([
+        supabase
+          .from('messages')
+          .select('id, content, direction, status, created_at, media_url, media_type')
+          .eq('conversation_id', selectedConversation.id)
+          .order('created_at', { ascending: true }),
+        // Fire-and-forget mark as read (runs in parallel, doesn't block message display)
+        selectedConversation.unread_count > 0 
+          ? Promise.all([
+              supabase
+                .from('conversations')
+                .update({ unread_count: 0 })
+                .eq('id', selectedConversation.id),
+              supabase
+                .from('messages')
+                .update({ read_at: new Date().toISOString() })
+                .eq('conversation_id', selectedConversation.id)
+                .eq('direction', 'incoming')
+                .is('read_at', null)
+            ])
+          : Promise.resolve()
+      ]);
+
+      if (messagesResult.error) throw messagesResult.error;
+      setMessages(messagesResult.data || []);
     } catch (err) {
       console.error('Error fetching messages:', err);
     }
