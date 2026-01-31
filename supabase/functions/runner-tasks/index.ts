@@ -737,10 +737,11 @@ async function handleReportResults(supabase: any, body: any) {
           });
         }
 
-        // Update campaign count and account daily counter - ONLY if not already counted
+        // Update account daily counter - ONLY if not already counted
+        // NOTE: Campaign counts (sent_count, failed_count, pending_count) are now handled 
+        // automatically by the campaign_recipients_sync_counts trigger - do NOT call 
+        // increment_campaign_sent_count or increment_campaign_failed_count here as it causes double-counting
         if (!wasAlreadySent) {
-          await supabase.rpc('increment_campaign_sent_count', { cid: r.campaign_id });
-          
           // Increment account's daily message counter for limit enforcement
           if (r.account_id) {
             await supabase.rpc('increment_messages_sent_today', { acc_id: r.account_id });
@@ -935,11 +936,11 @@ async function handleReportResults(supabase: any, body: any) {
         
       } else {
         // === RECIPIENT ERROR: Mark recipient as failed ===
+        // NOTE: Campaign failed_count is updated automatically by trigger when recipient status changes to 'failed'
         if (r.campaign_recipient_id) {
           await supabase.from("campaign_recipients")
             .update({ status: "failed", failed_reason: r.error })
             .eq("id", r.campaign_recipient_id);
-          await supabase.rpc('increment_campaign_failed_count', { cid: r.campaign_id });
         } else if (r.message_id) {
           await supabase.from("messages")
             .update({ status: "failed", failed_reason: r.error })
