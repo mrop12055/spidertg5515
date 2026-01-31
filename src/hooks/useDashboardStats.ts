@@ -19,8 +19,8 @@ const fetchDashboardStats = async (): Promise<DashboardStats> => {
     { count: activeAccounts },
     { count: activeProxies },
     { count: messagesToday },
-    { count: messagesLifetime },
-    { count: repliesLifetime },
+    lifetimeMessagesResult,
+    lifetimeRepliesResult,
   ] = await Promise.all([
     supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }).not('device_model', 'is', null),
     supabase.from('telegram_accounts').select('id', { count: 'exact', head: true }).eq('status', 'active'),
@@ -28,8 +28,10 @@ const fetchDashboardStats = async (): Promise<DashboardStats> => {
     supabase.from('messages').select('id', { count: 'exact', head: true })
       .eq('direction', 'outgoing')
       .gte('created_at', today.toISOString()),
-    supabase.from('messages').select('id', { count: 'exact', head: true }).eq('direction', 'outgoing'),
-    supabase.from('messages').select('id', { count: 'exact', head: true }).eq('direction', 'incoming'),
+    // Fetch lifetime unique recipients messaged from persistent stats
+    supabase.from('lifetime_stats').select('stat_value').eq('stat_key', 'lifetime_unique_recipients_messaged').single(),
+    // Fetch lifetime unique recipients replied from persistent stats
+    supabase.from('lifetime_stats').select('stat_value').eq('stat_key', 'lifetime_unique_recipients_replied').single(),
   ]);
 
   return {
@@ -37,8 +39,8 @@ const fetchDashboardStats = async (): Promise<DashboardStats> => {
     activeAccounts: activeAccounts || 0,
     activeProxies: activeProxies || 0,
     messagesToday: messagesToday || 0,
-    messagesLifetime: messagesLifetime || 0,
-    repliesLifetime: repliesLifetime || 0,
+    messagesLifetime: lifetimeMessagesResult.data?.stat_value || 0,
+    repliesLifetime: lifetimeRepliesResult.data?.stat_value || 0,
   };
 };
 
