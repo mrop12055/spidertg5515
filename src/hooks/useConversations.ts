@@ -17,6 +17,7 @@ const transformConversation = (c: any): Conversation => ({
   updatedAt: new Date(c.updated_at || c.created_at),
   lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : undefined,
   lastMessageContent: c.last_message_content || undefined,
+  lastMessageDirection: c.last_message_direction as 'incoming' | 'outgoing' | undefined,
   blockedByRecipient: c.blocked_by_recipient || false,
   firstMessageSent: c.first_message_sent ?? false,
   hasReply: c.has_reply ?? false,
@@ -48,7 +49,7 @@ const fetchConversations = async (): Promise<Conversation[]> => {
 
     const { data, error } = await supabase
       .from('conversations')
-      .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
+      .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,last_message_direction,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
       .not('last_message_at', 'is', null)
       .order('last_message_at', { ascending: false })
       .range(from, to);
@@ -119,6 +120,7 @@ export const useConversations = () => {
                   isActive: updated.is_active ?? c.isActive,
                   lastMessageAt: updated.last_message_at ? new Date(updated.last_message_at) : c.lastMessageAt,
                   lastMessageContent: updated.last_message_content ?? c.lastMessageContent,
+                  lastMessageDirection: updated.last_message_direction as 'incoming' | 'outgoing' | undefined ?? c.lastMessageDirection,
                   blockedByRecipient: updated.blocked_by_recipient ?? c.blockedByRecipient,
                   hasReply: updated.has_reply ?? c.hasReply,
                   updatedAt: new Date(updated.updated_at || Date.now()),
