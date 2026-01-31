@@ -653,6 +653,27 @@ export type Database = {
           },
         ]
       }
+      lifetime_stats: {
+        Row: {
+          id: string
+          stat_key: string
+          stat_value: number
+          updated_at: string | null
+        }
+        Insert: {
+          id?: string
+          stat_key: string
+          stat_value?: number
+          updated_at?: string | null
+        }
+        Update: {
+          id?: string
+          stat_key?: string
+          stat_value?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       material_data: {
         Row: {
           created_at: string | null
@@ -1815,6 +1836,10 @@ export type Database = {
       }
       increment_campaign_sent_count: {
         Args: { cid: string }
+        Returns: undefined
+      }
+      increment_lifetime_stat: {
+        Args: { p_increment?: number; p_stat_key: string }
         Returns: undefined
       }
       increment_messages_sent_today: {
