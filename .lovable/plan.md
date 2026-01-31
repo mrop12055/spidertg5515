@@ -1,79 +1,74 @@
 
-# Speed Up Accounts Page Loading
+# Fix Last Message Display to Show Direction
 
 ## Problem
-When entering the Accounts tab, lifetime messages, proxy info, and profile pictures take 2-3 seconds to appear. This is caused by:
+The last message preview in the conversation sidebar shows only the recipient's message content, without indicating whether it was sent by you or received from them. This is inconsistent with SeatChat which correctly shows "You: " prefix for outgoing messages.
 
-1. **Intentional delays** - Unique conversations fetch has a 500ms delay, proxy errors have a 1000ms delay
-2. **No persistent cache** - Stats are stored in component state, causing re-fetches on every page visit
-3. **Sequential pagination** - Conversations are fetched page-by-page instead of in parallel
+## Root Cause
+The Conversations page uses `TelegramContext` which:
+1. Does not fetch the `last_message_direction` column from the database
+2. The `Conversation` type does not include a `lastMessageDirection` property
+3. The UI does not display any direction indicator (unlike SeatChat)
 
 ## Solution
-Move secondary data (unique conversations, proxy errors) into React Query hooks with proper caching, remove artificial delays, and add parallel fetching.
+Add the `lastMessageDirection` field throughout the data flow and update the UI to show "You: " prefix for outgoing messages.
 
 ---
 
-## Changes
+## Implementation Steps
 
-### 1. Create `useUniqueConversations` Hook
-Create a new cached hook similar to `useAccounts` that persists data across navigations.
+### Step 1: Update Conversation Type
+Add `lastMessageDirection` property to the `Conversation` interface.
 
-**New file: `src/hooks/useUniqueConversations.ts`**
-- Fetches conversation stats with parallel pagination (not sequential)
-- Uses React Query with `staleTime: 60000` (1 minute cache)
-- Returns a Map of account_id to conversation counts
-- Eliminates the 500ms delay
+**File:** `src/types/telegram.ts`
+- Add `lastMessageDirection?: 'incoming' | 'outgoing';` to the Conversation interface
 
-### 2. Create `useProxyErrors` Hook  
-Create a cached hook for proxy error data.
+### Step 2: Update TelegramContext Data Fetching
+Fetch and map the `last_message_direction` column from the database.
 
-**New file: `src/hooks/useProxyErrors.ts`**
-- Fetches proxy errors once and caches
-- Uses React Query with `staleTime: 60000` (1 minute cache)
-- Eliminates the 1000ms delay
+**File:** `src/context/TelegramContext.tsx`
+- Add `last_message_direction` to the SELECT query for conversations
+- Map the field to `lastMessageDirection` in the conversation transformer
 
-### 3. Update Accounts Page
-**File: `src/pages/Accounts.tsx`**
-- Replace inline `fetchUniqueConversations` effect with `useUniqueConversations()` hook
-- Replace inline `fetchProxyErrors` effect with `useProxyErrors()` hook
-- Remove local state for these: `uniqueConversations`, `proxyErrors`
-- Remove the ref-based fetching logic
+### Step 3: Update Conversations Page Display
+Add the "You: " prefix for outgoing messages in the conversation preview.
+
+**File:** `src/pages/Conversations.tsx`
+- Check if `conv.lastMessageDirection === 'outgoing'` and display "You: " prefix before the message preview
+
+### Step 4: Update useConversations Hook
+Also update the hook used elsewhere to include direction.
+
+**File:** `src/hooks/useConversations.ts`
+- Add `last_message_direction` to the SELECT query
+- Map the field in the transformer
 
 ---
 
 ## Technical Details
 
-### Before (Current Flow)
+### Database Structure (already exists)
+The `conversations` table has these columns that are updated by a trigger on message inserts:
+- `last_message_content` - text content of the last message
+- `last_message_direction` - 'incoming' or 'outgoing'
+
+### UI Display Pattern (matching SeatChat)
+```tsx
+{conv.lastMessageDirection === 'outgoing' && (
+  <span className="text-muted-foreground/50">You: </span>
+)}
+{messagePreview}
 ```
-Page loads → accounts (cached) → 500ms wait → fetch conversations (sequential) → 1000ms wait → fetch proxy errors
-Total: ~2-3 seconds for full data
-```
 
-### After (Optimized Flow)
-```
-Page loads → accounts (cached) + conversations (cached) + proxy errors (cached) → All instant if within cache window
-First load: parallel fetches with no artificial delays
-```
-
-### Caching Strategy
-| Data | Cache Duration | Realtime Updates |
-|------|----------------|------------------|
-| Accounts | 30 seconds | Yes (already implemented) |
-| Proxies | 30 seconds | Yes (already implemented) |
-| Unique Conversations | 60 seconds | No (low update frequency) |
-| Proxy Errors | 60 seconds | No (low update frequency) |
-
-### Parallel Pagination
-The new `useUniqueConversations` hook will fetch all pages in parallel using `Promise.all()`, reducing fetch time from ~2s to ~500ms for 3000+ records.
-
----
-
-## Files to Create/Modify
-1. **Create** `src/hooks/useUniqueConversations.ts` - New cached hook for conversation stats
-2. **Create** `src/hooks/useProxyErrors.ts` - New cached hook for proxy errors  
-3. **Modify** `src/pages/Accounts.tsx` - Use new hooks, remove inline fetching logic
+## Files to Modify
+1. `src/types/telegram.ts` - Add type property
+2. `src/context/TelegramContext.tsx` - Fetch and map direction field
+3. `src/pages/Conversations.tsx` - Display direction prefix
+4. `src/hooks/useConversations.ts` - Include direction in query
 
 ## Expected Result
-- Stats appear instantly on subsequent visits (within cache window)
-- First load is ~1-2 seconds faster (no artificial delays)
-- Parallel fetching reduces initial load time further
+The conversation sidebar will show:
+- "You: Hello!" - for messages you sent
+- "Hello!" - for messages received from the contact
+
+This matches the behavior already implemented in SeatChat.
