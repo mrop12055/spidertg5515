@@ -277,6 +277,31 @@ async function handleGetTasks(supabase: any, body: any) {
       .limit(batch_size);
 
     if (recipients?.length > 0) {
+      // === CAMPAIGN ACCOUNT FILTERING ===
+      // Fetch linked accounts for each campaign to respect user's account selection
+      const uniqueCampaignIds = [...new Set(recipients.map((r: any) => r.campaigns.id))];
+      
+      const { data: campaignAccountLinks } = await supabase
+        .from("campaign_accounts")
+        .select("campaign_id, account_id")
+        .in("campaign_id", uniqueCampaignIds);
+      
+      // Build a map: campaign_id -> Set of allowed account IDs
+      const campaignAccountMap: Record<string, Set<string>> = {};
+      for (const link of (campaignAccountLinks || [])) {
+        if (!campaignAccountMap[link.campaign_id]) {
+          campaignAccountMap[link.campaign_id] = new Set();
+        }
+        campaignAccountMap[link.campaign_id].add(link.account_id);
+      }
+      
+      // Log the campaign account filtering for debugging
+      for (const cid of uniqueCampaignIds) {
+        const cidStr = cid as string;
+        const linkedCount = campaignAccountMap[cidStr]?.size || 0;
+        console.log(`[runner-tasks/get] Campaign ${cidStr}: ${linkedCount} linked accounts (${linkedCount === 0 ? 'using all' : 'filtering'})`);
+      }
+
       // === GLOBAL DEDUPLICATION: Check if any of these phone numbers were already sent globally ===
       // This prevents sending to the same recipient from multiple accounts if one succeeds first
       const phoneNumbers = recipients.map((r: any) => r.phone_number);
@@ -327,7 +352,15 @@ async function handleGetTasks(supabase: any, body: any) {
         // Get the list of accounts that already failed for this recipient (e.g., due to PeerFlood)
         const failedAccountIds = r.failed_account_ids || [];
         
-        for (const acc of usableAccounts) {
+        // === FILTER BY CAMPAIGN-LINKED ACCOUNTS ===
+        // If this campaign has specific accounts selected, only use those
+        const campaignId = r.campaigns.id;
+        const allowedAccountIds = campaignAccountMap[campaignId];
+        const accountPool = allowedAccountIds && allowedAccountIds.size > 0
+          ? usableAccounts.filter((acc: any) => allowedAccountIds.has(acc.id))
+          : usableAccounts; // Fallback to all accounts if none selected
+        
+        for (const acc of accountPool) {
           // Skip accounts that already failed for this recipient
           if (failedAccountIds.includes(acc.id)) continue;
           
