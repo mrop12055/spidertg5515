@@ -212,6 +212,33 @@ async function handleGetTasks(supabase: any, body: any) {
     console.log(`[runner-tasks/get] Restored ${accountsToRestore.length} accounts from cooldown`);
   }
 
+  // === SELF-HEALING: Recover stale messages stuck in 'sending' for 3+ minutes ===
+  const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  
+  // Recover stale LiveChat messages
+  const { data: staleMessages } = await supabase
+    .from("messages")
+    .update({ status: "pending" })
+    .eq("status", "sending")
+    .lt("created_at", threeMinutesAgo)
+    .select("id");
+  
+  if (staleMessages?.length) {
+    console.log(`[runner-tasks/get] Recovered ${staleMessages.length} stale messages from sending→pending`);
+  }
+
+  // Recover stale campaign recipients
+  const { data: staleRecipients } = await supabase
+    .from("campaign_recipients")
+    .update({ status: "pending", sending_started_at: null })
+    .eq("status", "sending")
+    .lt("sending_started_at", threeMinutesAgo)
+    .select("id");
+  
+  if (staleRecipients?.length) {
+    console.log(`[runner-tasks/get] Recovered ${staleRecipients.length} stale recipients from sending→pending`);
+  }
+
   // Load accounts with proxies
   const isLivechat = runner === "livechat";
   let accountsQuery = supabase.from("telegram_accounts").select("*, proxies!fk_proxy(*)");
