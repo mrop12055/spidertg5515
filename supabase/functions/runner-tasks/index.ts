@@ -936,13 +936,100 @@ async function handleReportResults(supabase: any, body: any) {
         await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
         
       } else {
-        // === RECIPIENT ERROR: Mark recipient as failed ===
-        // NOTE: Campaign failed_count is updated automatically by trigger when recipient status changes to 'failed'
-        if (r.campaign_recipient_id) {
-          // Get campaign_id and phone_number for completion tracking and contact marking
+        // === RECIPIENT ERROR ===
+        // NOTE: Campaign counts are updated automatically by trigger when recipient status changes
+        
+        // Check if this is a "recipient not found" error - needs special retry handling
+        const isRecipientNotFound = errorLower.includes('recipient not found') || 
+                                     errorLower.includes('no user') || 
+                                     errorLower.includes('user not found') ||
+                                     errorLower.includes('phone not registered');
+        
+        if (isRecipientNotFound && r.campaign_recipient_id) {
+          // === "RECIPIENT NOT FOUND" ERROR - RETRY WITH DIFFERENT ACCOUNT ===
+          // Get current recipient state including retry info
           const { data: recipientInfo } = await supabase
             .from("campaign_recipients")
-            .select("campaign_id, phone_number")
+            .select("campaign_id, phone_number, retry_count, failed_account_ids")
+            .eq("id", r.campaign_recipient_id)
+            .single();
+
+          if (recipientInfo?.campaign_id) {
+            affectedCampaignIds.add(recipientInfo.campaign_id);
+          }
+
+          const currentRetryCount = recipientInfo?.retry_count || 0;
+          const currentFailedAccounts: string[] = recipientInfo?.failed_account_ids || [];
+
+          // ALWAYS restrict the sender account for 12 hours (treat like PeerFlood)
+          if (r.account_id) {
+            const cooldownUntil = new Date(Date.now() + 720 * 60 * 1000).toISOString(); // 12 hours
+            console.log(`[runner-tasks/report] "Recipient not found" - restricting account ${r.account_id} for 12 hours`);
+            
+            await supabase.from("telegram_accounts")
+              .update({ 
+                status: "restricted", 
+                cooldown_until: cooldownUntil,
+                restricted_until: cooldownUntil,
+                ban_reason: `Recipient not found: ${r.error}` 
+              })
+              .eq("id", r.account_id);
+            
+            await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
+          }
+
+          if (currentRetryCount === 0) {
+            // FIRST FAILURE: Retry with different account
+            console.log(`[runner-tasks/report] First "recipient not found" for ${recipientInfo?.phone_number}, will retry with different account`);
+            
+            const updatedFailedAccounts = r.account_id && !currentFailedAccounts.includes(r.account_id) 
+              ? [...currentFailedAccounts, r.account_id] 
+              : currentFailedAccounts;
+
+            await supabase.from("campaign_recipients")
+              .update({ 
+                status: "pending",
+                retry_count: 1,
+                failed_account_ids: updatedFailedAccounts,
+                failed_reason: null,
+                sent_by_account_id: null
+              })
+              .eq("id", r.campaign_recipient_id);
+              
+          } else {
+            // SECOND+ FAILURE: Multiple accounts failed, permanent failure
+            console.log(`[runner-tasks/report] Multiple accounts failed for ${recipientInfo?.phone_number}, marking as permanently failed`);
+            
+            const updatedFailedAccounts = r.account_id && !currentFailedAccounts.includes(r.account_id) 
+              ? [...currentFailedAccounts, r.account_id] 
+              : currentFailedAccounts;
+
+            await supabase.from("campaign_recipients")
+              .update({ 
+                status: "failed", 
+                sent_by_account_id: r.account_id, 
+                failed_reason: "Recipient not found (confirmed by multiple accounts)",
+                failed_account_ids: updatedFailedAccounts
+              })
+              .eq("id", r.campaign_recipient_id);
+
+            // Mark contact as used
+            if (recipientInfo?.phone_number) {
+              await supabase.from("contacts_data")
+                .update({ 
+                  is_used: true, 
+                  used_at: now, 
+                  notes: 'Auto-marked: Recipient not found (verified by multiple accounts)' 
+                })
+                .eq("phone_number", recipientInfo.phone_number);
+            }
+          }
+          
+        } else if (r.campaign_recipient_id) {
+          // === OTHER RECIPIENT ERRORS - Fail immediately ===
+          const { data: recipientInfo } = await supabase
+            .from("campaign_recipients")
+            .select("campaign_id")
             .eq("id", r.campaign_recipient_id)
             .single();
           
@@ -954,33 +1041,18 @@ async function handleReportResults(supabase: any, body: any) {
             .update({ status: "failed", sent_by_account_id: r.account_id, failed_reason: r.error })
             .eq("id", r.campaign_recipient_id);
           
-          // === MARK CONTACT AS USED FOR "RECIPIENT NOT FOUND" ===
-          // If the recipient doesn't exist on Telegram, mark the contact as used so it won't be included in future campaigns
-          const isRecipientNotFound = errorLower.includes('recipient not found') || 
-                                       errorLower.includes('no user') || 
-                                       errorLower.includes('user not found') ||
-                                       errorLower.includes('phone not registered');
-          
-          if (isRecipientNotFound && recipientInfo?.phone_number) {
-            console.log(`[runner-tasks/report] Marking contact ${recipientInfo.phone_number} as used (recipient not found on Telegram)`);
-            await supabase.from("contacts_data")
-              .update({ is_used: true, used_at: now, notes: 'Auto-marked: Recipient not found on Telegram' })
-              .eq("phone_number", recipientInfo.phone_number);
+          // Increment account failure for other recipient errors
+          if (r.account_id) {
+            await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
           }
         } else if (r.message_id) {
           await supabase.from("messages")
             .update({ status: "failed", failed_reason: r.error })
             .eq("id", r.message_id);
-        }
-
-        // Don't increment account failure for "recipient not found" - it's not the account's fault
-        const isRecipientNotFoundError = errorLower.includes('recipient not found') || 
-                                          errorLower.includes('no user') || 
-                                          errorLower.includes('user not found') ||
-                                          errorLower.includes('phone not registered');
-        
-        if (r.account_id && !isRecipientNotFoundError) {
-          await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
+          
+          if (r.account_id) {
+            await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
+          }
         }
       }
 
