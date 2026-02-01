@@ -652,10 +652,12 @@ const Campaigns: React.FC = () => {
     };
 
     // Always create ONE campaign, assign seats to recipients via round-robin
+    // NOTE: recipientCount is set to 0 here - the database trigger will increment it
+    // when recipients are inserted, preventing double-counting
     const createdCampaign = await createCampaign({
       name: data.name,
       messageTemplate: mainMessage,
-      recipientCount: parsedRecipients.length,
+      recipientCount: 0,
       accountIds: data.accountIds
     });
     
