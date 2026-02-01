@@ -1,172 +1,151 @@
 
 
-# Fix Campaign Task Assignment and Queue Visibility
+# Fix Message Listening Stopping After Some Time
 
-## Problem Summary
+## Problem Analysis
 
-When you start a campaign:
-1. **All recipients are set to `pending` at once** - This floods the Dashboard Queue with thousands of entries
-2. **The runner picks a batch and marks them `sending`** - Recipients leave the "pending" view
-3. **The campaign gets auto-completed prematurely** - Multiple places (frontend, edge function, maintenance) check if `pending + sending + queued == 0` and mark the campaign as `completed`
-4. **A database trigger then DELETES all remaining `pending` recipients** - The `cleanup_pending_recipients_on_campaign_stop` trigger fires when status changes from `running` to `completed`
+The Python runner's message listening stops working after some time due to **silent connection drops**. Here's why:
 
-This creates a race condition where the campaign finishes after just one batch.
+1. **Auto-reconnect is disabled** (`auto_reconnect=False`) to prevent unproxied connections
+2. **No keepalive mechanism** - connections can idle out without detection
+3. **`is_connected()` is unreliable** - it checks socket state, not actual Telegram connectivity
+4. **60-second refresh is too slow** - by the time it detects a dead connection, messages are lost
 
-## Solution Overview
+When a proxy times out or the network blips, Telethon doesn't know the connection is dead until it tries to send/receive. Since the runner only polls for tasks (not actively pinging Telegram), stale connections go undetected.
 
-Based on your preferences, implement a **staged batching system**:
+## Solution
 
-1. **Recipients start as `queued`** (backlog) instead of `pending`
-2. **Runner-tasks stages only 1 batch** from `queued` to `pending` per request
-3. **Dashboard only shows `sending`** recipients (active batch being processed)
-4. **Never auto-delete pending recipients** - only update status, keep for audit
+Implement a **proactive health check** that periodically pings Telegram to verify connections are alive, and reconnects any that have silently died.
 
-## Technical Changes
+### Technical Changes
 
-### 1. Campaign Creation - Insert recipients as `queued`
+**File:** `src/pages/SetupGuide.tsx` (Python runner code)
 
-**File:** `supabase/functions/admin-api/index.ts`
+#### 1. Add a `ping_account()` function
+This function will call `client.get_me()` with a short timeout to verify the connection is truly alive:
 
-Change the recipient insert logic to use `queued` instead of `pending`:
-```text
-- status: 'pending'
-+ status: 'queued'
+```python
+async def ping_account(aid: str) -> bool:
+    """Ping Telegram to verify connection is alive."""
+    client = clients.get(aid)
+    if not client:
+        return False
+    try:
+        # Quick ping - if this fails, connection is dead
+        await asyncio.wait_for(client.get_me(), timeout=10)
+        return True
+    except:
+        return False
 ```
 
-### 2. Runner-Tasks - Stage batches from `queued` to `pending`
+#### 2. Add a `health_check()` function
+This will run periodically to find and fix dead connections:
 
-**File:** `supabase/functions/runner-tasks/index.ts`
-
-Before fetching `pending` recipients, promote exactly 1 batch from `queued`:
-
-```text
-// Step 1: Promote one batch from queued -> pending
-const { data: queuedBatch } = await supabase
-  .from('campaign_recipients')
-  .select('id, campaigns!inner(status)')
-  .eq('status', 'queued')
-  .eq('campaigns.status', 'running')
-  .order('scheduled_at', { ascending: true, nullsFirst: true })
-  .limit(batch_size);
-
-if (queuedBatch?.length > 0) {
-  await supabase
-    .from('campaign_recipients')
-    .update({ status: 'pending' })
-    .in('id', queuedBatch.map(r => r.id));
-}
-
-// Step 2: Now fetch pending recipients (as before)
+```python
+async def health_check():
+    """Check all connections and reconnect dead ones."""
+    dead = []
+    for aid in list(clients.keys()):
+        if not await ping_account(aid):
+            dead.append(aid)
+            # Remove dead client
+            try:
+                await clients[aid].disconnect()
+            except:
+                pass
+            del clients[aid]
+    
+    if dead:
+        print(f"  [HEALTH] {len(dead)} dead connections detected")
+    
+    return dead
 ```
 
-This ensures only `batch_size` recipients are ever in `pending` at a time.
+#### 3. Run health check every 5 minutes in main loop
+Update the main loop to run the health check periodically (not too often to avoid rate limits):
 
-### 3. Dashboard Queue - Show only `sending` (active batch)
+```python
+last_health_check = time.time()
 
-**File:** `src/components/dashboard/TaskQueueCard.tsx`
-
-Update the recipients query to show `sending` instead of `pending`:
-
-```text
-- .eq('status', 'pending')
-+ .eq('status', 'sending')
+while RUNNING:
+    # ... existing code ...
+    
+    # Health check every 5 minutes (300 seconds)
+    if time.time() - last_health_check > 300:
+        dead_accounts = await health_check()
+        if dead_accounts:
+            # Reconnect dead accounts
+            accs_to_reconnect = [accounts[aid] for aid in dead_accounts if aid in accounts]
+            if accs_to_reconnect:
+                _, newly_connected = await connect_all_from_response([...batch_accounts...])
+                if newly_connected:
+                    await setup_handlers()
+        last_health_check = time.time()
+    
+    # ... rest of loop ...
 ```
 
-This shows only recipients currently being processed by the runner.
+#### 4. Reduce reconnect interval from 60s to 30s
+The current 60-second refresh is too slow. Reduce it to 30 seconds for faster recovery:
 
-### 4. Remove auto-delete trigger
-
-**Database Migration**
-
-Drop the dangerous trigger that deletes pending recipients on campaign completion:
-
-```sql
-DROP TRIGGER IF EXISTS cleanup_recipients_on_campaign_stop 
-  ON public.campaigns;
+```python
+# Change from:
+if time.time() - last_refresh > 60 or len(clients) < len(batch_accounts):
+# To:
+if time.time() - last_refresh > 30 or len(clients) < len(batch_accounts):
 ```
 
-This ensures recipients are never automatically deleted, preserving them for audit.
+#### 5. Add connection state tracking
+Track when each client was last verified to avoid repeated pings:
 
-### 5. Update auto-complete logic to include `queued`
+```python
+client_last_ping: Dict[str, float] = {}
 
-**Files:** 
-- `supabase/functions/runner-tasks/index.ts` (lines 1069-1073)
-- `supabase/functions/utilities/index.ts` (lines 262-266)
-- `src/pages/Campaigns.tsx` (lines 224-228)
-
-Ensure the auto-complete check counts `queued` recipients:
-
-```text
-.in('status', ['pending', 'sending', 'queued'])
-```
-
-This prevents campaigns from completing while there's still queued work.
-
-### 6. Update `system_health` view
-
-**Database Migration**
-
-Update the view to count `sending` recipients (active batch) instead of `pending`:
-
-```sql
-CREATE OR REPLACE VIEW public.system_health AS
-SELECT 
-  ...
-  (SELECT count(*) FROM public.campaign_recipients 
-   WHERE status = 'sending') AS pending_recipients,
-  ...
+# In health_check, only ping clients not verified recently
+for aid in list(clients.keys()):
+    if time.time() - client_last_ping.get(aid, 0) < 60:
+        continue  # Skip if pinged within last minute
+    # ... ping logic ...
+    client_last_ping[aid] = time.time()
 ```
 
 ---
 
 ## Summary of Changes
 
-| File | Change |
-|------|--------|
-| `supabase/functions/admin-api/index.ts` | Insert new recipients as `queued` instead of `pending` |
-| `supabase/functions/runner-tasks/index.ts` | Stage 1 batch from `queued` to `pending` before fetching |
-| `supabase/functions/runner-tasks/index.ts` | Include `queued` in auto-complete check |
-| `supabase/functions/utilities/index.ts` | Include `queued` in auto-complete check |
-| `src/pages/Campaigns.tsx` | Include `queued` in remaining work calculation |
-| `src/components/dashboard/TaskQueueCard.tsx` | Show `sending` recipients instead of `pending` |
-| Database migration | Drop `cleanup_recipients_on_campaign_stop` trigger |
-| Database migration | Update `system_health` view to count `sending` |
+| Location | Change |
+|----------|--------|
+| Line ~60 (STATE section) | Add `client_last_ping: Dict[str, float] = {}` |
+| After line ~917 | Add `ping_account()` function |
+| After `ping_account()` | Add `health_check()` function |
+| Line ~1421 (main loop) | Add `last_health_check = time.time()` |
+| Line ~1432 | Change 60s refresh to 30s: `if time.time() - last_refresh > 30` |
+| After line ~1437 | Add health check block (every 300 seconds) |
 
 ---
 
-## Technical Details
+## Why This Fixes the Problem
 
-### Recipient Status Flow
+1. **Proactive detection**: Instead of waiting for the next send to fail, we actively verify connections are alive
+2. **Faster recovery**: 30-second refresh + 5-minute health check catches dead connections before too many messages are lost
+3. **Automatic reconnection**: Dead connections are automatically re-established and handlers re-attached
+4. **Catch-up on reconnect**: When a client reconnects, `fetch_unread_messages()` already runs to catch missed messages
 
-```text
-┌──────────┐    Runner stages    ┌──────────┐    Runner claims    ┌──────────┐
-│  queued  │ ────────────────►  │  pending │ ────────────────►  │  sending │
-│ (backlog)│    (1 batch)       │ (ready)  │    (assigns acct)  │ (active) │
-└──────────┘                    └──────────┘                    └──────────┘
-                                                                      │
-                                      ┌───────────────────────────────┤
-                                      ▼                               ▼
-                                ┌──────────┐                   ┌──────────┐
-                                │   sent   │                   │  failed  │
-                                │ (done)   │                   │ (error)  │
-                                └──────────┘                   └──────────┘
-```
+---
 
-### Dashboard Queue Behavior
+## Alternative Considerations
 
-- **Shows:** Only recipients with `status = 'sending'` (currently being processed)
-- **Count:** Matches the batch_size setting (e.g., 100)
-- **Updates:** Refreshes as runner reports results and stages new batches
+- **Enable `auto_reconnect=True`?** - No, this would risk unproxied connections if the proxy dies
+- **More frequent pings?** - 5 minutes is a balance; too frequent could trigger rate limits
+- **Use `asyncio.create_task()` for background pings?** - Could work but adds complexity; periodic check is simpler
 
-### Campaign Completion Criteria
+---
 
-A campaign completes ONLY when:
-- `pending_count + sending_count + queued_count == 0`
-- All recipients are either `sent` or `failed`
+## Testing
 
-### Data Retention
-
-- Recipients are NEVER automatically deleted
-- All `sent`, `failed`, and remaining `queued` recipients stay in the database
-- Full audit trail preserved for reporting
+After implementing:
+1. Start the runner and verify connections establish
+2. Wait 5-10 minutes and check logs for `[HEALTH]` messages
+3. Kill a proxy temporarily and verify the runner detects and reconnects
+4. Send a test message during/after reconnection to verify handlers work
 
