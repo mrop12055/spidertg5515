@@ -1,78 +1,114 @@
 
 
-# Fix: Runner Not Processing Send Message Tasks
+# Fix Campaign Task Processing Issues
 
-## Problem Identified
+## Problems Identified
 
-The runner is **not processing livechat send message tasks** because of a **race condition and incorrect self-healing logic**:
+### Issue 1: Slow Recipient Assignment
+When starting a campaign, recipients are staged in batches (e.g., 350 at a time) from `queued` to `pending`. The user wants all recipients assigned immediately when the campaign starts.
 
-1. Admin sends messages from the chat UI → messages are created with `status = 'pending'`
-2. Edge function `/get` endpoint marks them as `sending` when fetched (line 619)
-3. The runner either crashes, is slow, or another request fetched them first
-4. Messages get stuck in `sending` status
-5. The self-healing code (lines 176-194) incorrectly marks stale `sending` messages as **`sent`** instead of **`pending`**
-6. Messages are never actually processed but appear as "sent"
+### Issue 2: Runner Not Processing Campaign Tasks
+Two sub-problems:
+1. **Runner receives but doesn't process tasks**: At 09:32:15, the edge function returned 288 campaign tasks, but they were never processed or reported back
+2. **Self-healing recovery bug**: The recovery query has incorrect filter syntax - using `.or()` after `.eq()` creates wrong SQL logic, so 286 recipients stuck in `sending` status are never recovered
 
-Currently stuck: **4 messages** in `sending` status that will never be processed.
+## Root Cause Analysis
+
+### Slow Assignment Root Cause
+The staged batching system (lines 315-336 in runner-tasks) intentionally promotes only `batch_size` recipients per poll cycle. This prevents dashboard flooding but creates perceived slowness.
+
+### Runner Not Processing Root Cause
+Looking at the Python runner (SetupGuide.tsx line 1332):
+```python
+if tt in ("send", "campaign_send", "livechat_reply", "warmup_chat") or ("send" in tt and "warmup" in tt):
+```
+
+The campaign tasks have `task_type: "send"` which SHOULD match. The likely issue is the runner is receiving tasks but silently failing to connect accounts for those tasks, or there's an exception being swallowed.
+
+### Self-Healing Bug Root Cause
+Line 303-305 in runner-tasks/index.ts:
+```javascript
+.eq('status', 'sending')
+.or(`sending_started_at.lt.${threeMinutesAgoIso},sending_started_at.is.null`)
+```
+
+The `.or()` filter in Supabase creates: `status = 'sending' OR (timestamp condition)` instead of `status = 'sending' AND (timestamp condition)`. The correct syntax requires wrapping the condition or using `.filter()`.
+
+---
 
 ## Solution
 
-Update the self-healing logic for messages to mirror the campaign recipient logic:
-- Reset stale `sending` messages back to `pending` (not `sent`)
-- This allows the runner to pick them up on the next poll
+### Fix 1: Instant Recipient Assignment (Optional)
+Add a new endpoint or modify campaign start to promote ALL `queued` recipients to `pending` at once. This is a trade-off: faster start vs. larger dashboard queue.
 
-### File: `supabase/functions/runner-tasks/index.ts`
+**File:** `supabase/functions/admin-api/index.ts`
 
-**Current behavior (lines 176-194):**
+Add to the `/campaigns/start` endpoint after updating status:
 ```javascript
-// Self-healing: messages can get stuck in `sending` if the runner crashes before reporting.
-// Mark them as `sent` after 3 minutes so dashboards/queues don't get polluted indefinitely.
-const { data: recoveredMsgs } = await supabase
-  .from('messages')
-  .update({ status: 'sent', delivered_at: nowIso })  // ❌ WRONG: marks as sent
-  .eq('status', 'sending')
-  .eq('direction', 'outgoing')
-  .lt('created_at', threeMinutesAgoIso)
-  .select('id');
+// Promote ALL queued recipients to pending immediately
+await supabase
+  .from('campaign_recipients')
+  .update({ status: 'pending' })
+  .eq('campaign_id', campaign_id)
+  .eq('status', 'queued');
 ```
 
-**New behavior:**
+### Fix 2: Correct Self-Healing Query
+**File:** `supabase/functions/runner-tasks/index.ts`
+
+Change lines 303-306 from:
 ```javascript
-// Self-healing: messages can get stuck in `sending` if the runner crashes before reporting.
-// Reset them to `pending` after 3 minutes so the runner can retry.
-const { data: recoveredMsgs } = await supabase
-  .from('messages')
-  .update({ status: 'pending' })  // ✅ CORRECT: reset to pending for retry
-  .eq('status', 'sending')
-  .eq('direction', 'outgoing')
-  .lt('created_at', threeMinutesAgoIso)
-  .select('id');
+.eq('status', 'sending')
+.or(`sending_started_at.lt.${threeMinutesAgoIso},sending_started_at.is.null`)
+```
+
+To use the correct `.lt()` filter:
+```javascript
+.eq('status', 'sending')
+.lt('sending_started_at', threeMinutesAgoIso)
+```
+
+This properly creates: `status = 'sending' AND sending_started_at < threshold`
+
+For the null case, add a separate recovery query for legacy rows with null timestamps.
+
+### Fix 3: Add Runner Logging for Campaign Tasks
+**File:** `src/pages/SetupGuide.tsx`
+
+Add explicit logging when processing campaign tasks to identify why they're not being executed:
+```python
+if task.get("campaign_recipient_id"):
+    print(f"  [CAMPAIGN] Processing recipient {task.get('campaign_recipient_id')[:8]}")
 ```
 
 ---
 
-## Summary
+## Technical Implementation
 
-| Change | Description |
-|--------|-------------|
-| Line ~183 | Change `{ status: 'sent', delivered_at: nowIso }` to `{ status: 'pending' }` |
-| Line ~190 | Update log message to say "sending → pending" |
-
----
-
-## Why This Fixes the Issue
-
-1. **Stale messages get retried**: Instead of being falsely marked as "sent", they return to the queue
-2. **Consistent with campaign logic**: Campaign recipients already use this pattern (lines 294-313)
-3. **No message loss**: Messages will be picked up on the next runner poll cycle
-4. **Self-correcting**: Even if multiple race conditions occur, messages eventually get processed
+| File | Change |
+|------|--------|
+| `supabase/functions/admin-api/index.ts` | Add bulk promotion of queued recipients on campaign start |
+| `supabase/functions/runner-tasks/index.ts` | Fix `.or()` filter bug in self-healing recovery (line ~305) |
+| `src/pages/SetupGuide.tsx` | Add debug logging for campaign task processing |
 
 ---
 
-## Alternative Considered
+## Immediate Database Fix
 
-Could add a `retry_count` column to prevent infinite retry loops, but:
-- Current system rarely has this issue
-- Campaign recipients don't have retry limits either
-- Keeping it simple for now
+Before implementing code changes, run this SQL to unstick the 286 recipients:
+
+```sql
+UPDATE campaign_recipients 
+SET status = 'pending', sending_started_at = NULL, sent_by_account_id = NULL
+WHERE status = 'sending' 
+  AND sending_started_at < NOW() - INTERVAL '3 minutes';
+```
+
+---
+
+## Why This Fixes Both Issues
+
+1. **Instant assignment**: All recipients become `pending` immediately when campaign starts, so the runner can pick them all up in the next poll
+2. **Self-healing works**: The corrected filter properly identifies stale `sending` recipients and resets them to `pending` for retry
+3. **Better visibility**: Added logging helps diagnose why tasks aren't being processed
 
