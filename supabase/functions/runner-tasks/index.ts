@@ -799,7 +799,13 @@ async function handleReportResults(supabase: any, body: any) {
     const taskType = r.task_type || task_type;
 
     if (taskType === "send") {
-      if (r.campaign_recipient_id) {
+      // Check which type of send: campaign vs livechat
+      const isCampaignSend = !!r.campaign_recipient_id;
+      const isLivechatSend = !r.campaign_recipient_id && !!r.message_id;
+      
+      console.log(`[runner-tasks/report] Send success: campaign=${isCampaignSend}, livechat=${isLivechatSend}, message_id=${r.message_id || 'none'}, campaign_recipient_id=${r.campaign_recipient_id || 'none'}`);
+
+      if (isCampaignSend) {
         // Campaign message success - check if already counted to prevent double-counting on retries
         const { data: recipientData } = await supabase
           .from("campaign_recipients")
@@ -876,11 +882,18 @@ async function handleReportResults(supabase: any, body: any) {
           }
         }
 
-      } else if (r.message_id) {
-        // Livechat message success
-        await supabase.from("messages")
+      } else if (isLivechatSend) {
+        // Livechat message success - update status to sent
+        console.log(`[runner-tasks/report] Updating livechat message ${r.message_id} to sent`);
+        const { error: updateError } = await supabase.from("messages")
           .update({ status: "sent", delivered_at: now })
           .eq("id", r.message_id);
+        
+        if (updateError) {
+          console.error(`[runner-tasks/report] Failed to update message ${r.message_id}:`, updateError);
+        }
+      } else {
+        console.warn(`[runner-tasks/report] Send success but no message_id or campaign_recipient_id found:`, JSON.stringify(r).slice(0, 200));
       }
 
       // Record API usage
