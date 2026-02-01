@@ -422,8 +422,12 @@ async function handleGetTasks(supabase: any, body: any) {
           media_url: null,
         });
 
-        // Mark as sending
-        await supabase.from("campaign_recipients").update({ status: "sending" }).eq("id", r.id);
+        // Mark as sending with timestamp for stale task recovery
+        await supabase.from("campaign_recipients").update({ 
+          status: "sending", 
+          sending_started_at: nowIso,
+          sent_by_account_id: bestAccount.id 
+        }).eq("id", r.id);
       }
     }
   }
