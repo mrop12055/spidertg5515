@@ -97,12 +97,12 @@ export const TaskQueueCard: React.FC = () => {
           .eq('status', 'pending')
           .order('created_at', { ascending: false })
           .limit(LIMIT),
-        // Show only 'sending' recipients (active batch being processed by runner)
-        // Queued and pending recipients are backlog/staged and not shown here
+        // Show 'sending' and 'queued' recipients (active/waiting to be processed)
         supabase
           .from('campaign_recipients')
           .select('id, phone_number, name, status, campaign_id, failed_reason')
-          .eq('status', 'sending')
+          .in('status', ['sending', 'queued', 'pending'])
+          .order('sending_started_at', { ascending: false, nullsFirst: false })
           .limit(LIMIT),
         supabase
           .from('messages')
@@ -434,7 +434,7 @@ export const TaskQueueCard: React.FC = () => {
               <TabsList className="grid w-full grid-cols-2 max-w-[250px]">
                 <TabsTrigger value="pending" className="text-xs">
                   <Clock className="w-3 h-3 mr-1" />
-                  Pending ({health?.pending_recipients || pendingRecipients.length})
+                  Queue ({pendingRecipients.length})
                 </TabsTrigger>
                 <TabsTrigger value="completed" className="text-xs">
                   <CheckCircle className="w-3 h-3 mr-1" />
