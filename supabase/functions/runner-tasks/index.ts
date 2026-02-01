@@ -741,7 +741,7 @@ async function handleReportResults(supabase: any, body: any) {
     return jsonResponse({ error: "No results provided" }, 400);
   }
 
-  console.log(`[runner-tasks/report] Processing ${allResults.length} results`);
+  console.log(`[runner-tasks/report] Processing ${allResults.length} results (v2)`);
   
   // Track campaign IDs that were affected for completion check
   const affectedCampaignIds = new Set<string>();
