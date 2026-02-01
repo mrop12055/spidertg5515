@@ -404,6 +404,25 @@ const Chat: React.FC = () => {
     return new Date(conv.updatedAt).getTime();
   };
 
+  // Track the position of the selected conversation to freeze it during active chat
+  const selectedConvPositionRef = useRef<{ id: string; sortTime: number } | null>(null);
+  
+  // When user selects a conversation, freeze its sort position
+  useEffect(() => {
+    if (selectedConversation) {
+      const conv = conversations.find(c => c.id === selectedConversation);
+      if (conv && !selectedConvPositionRef.current) {
+        selectedConvPositionRef.current = {
+          id: selectedConversation,
+          sortTime: getLastMessageTime(conv)
+        };
+      }
+    } else {
+      // User deselected - clear the frozen position
+      selectedConvPositionRef.current = null;
+    }
+  }, [selectedConversation, conversations]);
+
   const filteredConversations = conversations
     .filter(c => {
       const cutoff = getTimeFilterCutoff();
@@ -429,8 +448,16 @@ const Chat: React.FC = () => {
 
       return matchesTime && matchesSearch && isNotSpamBot && showConv && hasSuccess && !isBlocked && matchesReplyFilter;
     })
-    // Sort by actual last message time, not updatedAt
-    .sort((a, b) => getLastMessageTime(b) - getLastMessageTime(a));
+    // Sort by actual last message time, but freeze the selected conversation's position
+    .sort((a, b) => {
+      const frozen = selectedConvPositionRef.current;
+      
+      // If one is the frozen conversation, use its frozen sort time
+      const aTime = (frozen && a.id === frozen.id) ? frozen.sortTime : getLastMessageTime(a);
+      const bTime = (frozen && b.id === frozen.id) ? frozen.sortTime : getLastMessageTime(b);
+      
+      return bTime - aTime;
+    });
 
   // Pre-calculate counts for each time filter and replies (for display in filter buttons)
   const filterCounts = useMemo(() => {
