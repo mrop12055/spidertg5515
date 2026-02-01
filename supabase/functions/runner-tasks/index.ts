@@ -174,20 +174,20 @@ async function handleGetTasks(supabase: any, body: any) {
   const nowIso = new Date().toISOString();
 
   // Self-healing: messages can get stuck in `sending` if the runner crashes before reporting.
-  // Mark them as `sent` after 3 minutes so dashboards/queues don't get polluted indefinitely.
+  // Reset them to `pending` after 3 minutes so the runner can retry on the next poll.
   // (We keep this here so it runs naturally as the runner polls for work, without requiring a separate cron.)
   try {
     const threeMinutesAgoIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
     const { data: recoveredMsgs } = await supabase
       .from('messages')
-      .update({ status: 'sent', delivered_at: nowIso })
+      .update({ status: 'pending' })
       .eq('status', 'sending')
       .eq('direction', 'outgoing')
       .lt('created_at', threeMinutesAgoIso)
       .select('id');
 
     if ((recoveredMsgs?.length || 0) > 0) {
-      console.log(`[runner-tasks/get] Recovered ${recoveredMsgs!.length} stale messages from sending → sent`);
+      console.log(`[runner-tasks/get] Recovered ${recoveredMsgs!.length} stale messages from sending → pending`);
     }
   } catch (e) {
     console.warn('[runner-tasks/get] Stale message recovery failed:', e);
