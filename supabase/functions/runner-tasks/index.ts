@@ -268,10 +268,35 @@ async function handleGetTasks(supabase: any, body: any) {
 
   // ===== CAMPAIGN TASKS =====
   if (runner === "campaign" || runner === "unified") {
+    // Self-healing: if a runner crashes/disconnects mid-batch, recipients can remain stuck in
+    // `sending` forever and the dispatcher will return 0 tasks. We recover those here so the
+    // system doesn't depend on a separate maintenance job being invoked.
+    const threeMinutesAgoIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    try {
+      const { data: recovered } = await supabase
+        .from('campaign_recipients')
+        .update({
+          status: 'pending',
+          sending_started_at: null,
+          sent_by_account_id: null,
+        })
+        .eq('status', 'sending')
+        // Treat null timestamps as stale (legacy rows)
+        .or(`sending_started_at.lt.${threeMinutesAgoIso},sending_started_at.is.null`)
+        .select('id');
+
+      if ((recovered?.length || 0) > 0) {
+        console.log(`[runner-tasks/get] Recovered ${recovered!.length} stale campaign recipients back to pending`);
+      }
+    } catch (e) {
+      console.warn('[runner-tasks/get] Stale campaign recovery failed:', e);
+    }
+
     const { data: recipients } = await supabase
       .from("campaign_recipients")
       .select(`*, campaigns!inner(id, name, message_template, status, seat_id)`)
-      .eq("status", "pending")
+      // `queued` is not processed by the runner; treat it as pending to avoid deadlocks.
+      .in("status", ["pending", "queued"])
       .eq("campaigns.status", "running")
       .order("scheduled_at", { ascending: true, nullsFirst: true })
       .limit(batch_size);
