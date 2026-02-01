@@ -939,10 +939,10 @@ async function handleReportResults(supabase: any, body: any) {
         // === RECIPIENT ERROR: Mark recipient as failed ===
         // NOTE: Campaign failed_count is updated automatically by trigger when recipient status changes to 'failed'
         if (r.campaign_recipient_id) {
-          // Get campaign_id for completion tracking
+          // Get campaign_id and phone_number for completion tracking and contact marking
           const { data: recipientInfo } = await supabase
             .from("campaign_recipients")
-            .select("campaign_id")
+            .select("campaign_id, phone_number")
             .eq("id", r.campaign_recipient_id)
             .single();
           
@@ -953,13 +953,33 @@ async function handleReportResults(supabase: any, body: any) {
           await supabase.from("campaign_recipients")
             .update({ status: "failed", sent_by_account_id: r.account_id, failed_reason: r.error })
             .eq("id", r.campaign_recipient_id);
+          
+          // === MARK CONTACT AS USED FOR "RECIPIENT NOT FOUND" ===
+          // If the recipient doesn't exist on Telegram, mark the contact as used so it won't be included in future campaigns
+          const isRecipientNotFound = errorLower.includes('recipient not found') || 
+                                       errorLower.includes('no user') || 
+                                       errorLower.includes('user not found') ||
+                                       errorLower.includes('phone not registered');
+          
+          if (isRecipientNotFound && recipientInfo?.phone_number) {
+            console.log(`[runner-tasks/report] Marking contact ${recipientInfo.phone_number} as used (recipient not found on Telegram)`);
+            await supabase.from("contacts_data")
+              .update({ is_used: true, used_at: now, notes: 'Auto-marked: Recipient not found on Telegram' })
+              .eq("phone_number", recipientInfo.phone_number);
+          }
         } else if (r.message_id) {
           await supabase.from("messages")
             .update({ status: "failed", failed_reason: r.error })
             .eq("id", r.message_id);
         }
 
-        if (r.account_id) {
+        // Don't increment account failure for "recipient not found" - it's not the account's fault
+        const isRecipientNotFoundError = errorLower.includes('recipient not found') || 
+                                          errorLower.includes('no user') || 
+                                          errorLower.includes('user not found') ||
+                                          errorLower.includes('phone not registered');
+        
+        if (r.account_id && !isRecipientNotFoundError) {
           await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
         }
       }
