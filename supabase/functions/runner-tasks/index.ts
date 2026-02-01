@@ -292,11 +292,37 @@ async function handleGetTasks(supabase: any, body: any) {
       console.warn('[runner-tasks/get] Stale campaign recovery failed:', e);
     }
 
+    // === STAGED BATCHING: Promote exactly 1 batch from queued → pending ===
+    // This ensures only batch_size recipients are ever in 'pending' at a time,
+    // keeping the Dashboard queue small and preventing premature campaign completion.
+    try {
+      const { data: queuedBatch } = await supabase
+        .from('campaign_recipients')
+        .select('id, campaign_id, campaigns!inner(status)')
+        .eq('status', 'queued')
+        .eq('campaigns.status', 'running')
+        .order('scheduled_at', { ascending: true, nullsFirst: true })
+        .limit(batch_size);
+
+      if (queuedBatch && queuedBatch.length > 0) {
+        const { error: promoteError } = await supabase
+          .from('campaign_recipients')
+          .update({ status: 'pending' })
+          .in('id', queuedBatch.map((r: any) => r.id));
+
+        if (!promoteError) {
+          console.log(`[runner-tasks/get] Staged ${queuedBatch.length} recipients from queued → pending`);
+        }
+      }
+    } catch (e) {
+      console.warn('[runner-tasks/get] Batch staging failed:', e);
+    }
+
+    // Now fetch only 'pending' recipients (freshly staged batch)
     const { data: recipients } = await supabase
       .from("campaign_recipients")
       .select(`*, campaigns!inner(id, name, message_template, status, seat_id)`)
-      // `queued` is not processed by the runner; treat it as pending to avoid deadlocks.
-      .in("status", ["pending", "queued"])
+      .eq("status", "pending")
       .eq("campaigns.status", "running")
       .order("scheduled_at", { ascending: true, nullsFirst: true })
       .limit(batch_size);

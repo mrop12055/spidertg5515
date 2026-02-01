@@ -97,10 +97,12 @@ export const TaskQueueCard: React.FC = () => {
           .eq('status', 'pending')
           .order('created_at', { ascending: false })
           .limit(LIMIT),
+        // Show only 'sending' recipients (active batch being processed by runner)
+        // Queued and pending recipients are backlog/staged and not shown here
         supabase
           .from('campaign_recipients')
           .select('id, phone_number, name, status, campaign_id, failed_reason')
-          .eq('status', 'pending')
+          .eq('status', 'sending')
           .limit(LIMIT),
         supabase
           .from('messages')

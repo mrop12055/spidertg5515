@@ -116,13 +116,14 @@ serve(async (req) => {
         );
       }
 
-      // Add recipients
+      // Add recipients - insert as 'queued' (backlog) instead of 'pending'
+      // The runner will stage batches from queued → pending → sending
       if (recipients?.length) {
         const recipientData = recipients.map((r: any) => ({
           campaign_id: campaign.id,
           phone_number: r.phone || r.phone_number,
           name: r.name,
-          status: 'pending',
+          status: 'queued',
         }));
         await supabase.from('campaign_recipients').insert(recipientData);
         await supabase.from('campaigns').update({ recipient_count: recipients.length }).eq('id', campaign.id);
