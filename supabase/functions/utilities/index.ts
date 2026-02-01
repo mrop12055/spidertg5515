@@ -238,6 +238,19 @@ serve(async (req) => {
 
       results.stale_recipients_reset = (staleSending?.length || 0) + (staleQueued?.length || 0);
 
+      // Reset stale "sending" messages (stuck for > 3 minutes) - mark as sent
+      const { data: staleMessages } = await supabase
+        .from('messages')
+        .update({ 
+          status: 'sent', 
+          delivered_at: new Date().toISOString()
+        })
+        .eq('status', 'sending')
+        .lt('created_at', threeMinutesAgo)
+        .select('id');
+
+      results.stale_messages_reset = staleMessages?.length || 0;
+
       // Auto-complete stuck campaigns
       const { data: runningCampaigns } = await supabase
         .from('campaigns')
