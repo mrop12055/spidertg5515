@@ -91,13 +91,13 @@ const defaultSettings: AllSettings = {
     retentionDays: 30,
   },
   warmup_batch_size: {
-    batchSize: 0,
+    batchSize: 100,
   },
   campaign_speed: {
     staggerMin: 0.3,
     staggerMax: 1.5,
     pollingInterval: 3,
-    batchSize: 0,
+    batchSize: 100,
     messagesPerAccountPerDay: 10,
   },
   livechat: {

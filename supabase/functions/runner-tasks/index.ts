@@ -173,26 +173,6 @@ async function handleGetTasks(supabase: any, body: any) {
   const { runner, account_ids } = body;
   const nowIso = new Date().toISOString();
 
-  // Self-healing: messages can get stuck in `sending` if the runner crashes before reporting.
-  // Reset them to `pending` after 3 minutes so the runner can retry on the next poll.
-  // (We keep this here so it runs naturally as the runner polls for work, without requiring a separate cron.)
-  try {
-    const threeMinutesAgoIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-    const { data: recoveredMsgs } = await supabase
-      .from('messages')
-      .update({ status: 'pending' })
-      .eq('status', 'sending')
-      .eq('direction', 'outgoing')
-      .lt('created_at', threeMinutesAgoIso)
-      .select('id');
-
-    if ((recoveredMsgs?.length || 0) > 0) {
-      console.log(`[runner-tasks/get] Recovered ${recoveredMsgs!.length} stale messages from sending → pending`);
-    }
-  } catch (e) {
-    console.warn('[runner-tasks/get] Stale message recovery failed:', e);
-  }
-
   // Get settings first to use admin-configured batch size
   const settingsData = await getCachedSettings(supabase);
   const config = parseSettings(settingsData);
@@ -288,81 +268,6 @@ async function handleGetTasks(supabase: any, body: any) {
 
   // ===== CAMPAIGN TASKS =====
   if (runner === "campaign" || runner === "unified") {
-    // Self-healing: if a runner crashes/disconnects mid-batch, recipients can remain stuck in
-    // `sending` forever and the dispatcher will return 0 tasks. We recover those here so the
-    // system doesn't depend on a separate maintenance job being invoked.
-    const threeMinutesAgoIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-    try {
-      // Recover stale recipients with timestamps older than 3 minutes
-      const { data: recoveredWithTs } = await supabase
-        .from('campaign_recipients')
-        .update({
-          status: 'pending',
-          sending_started_at: null,
-          sent_by_account_id: null,
-        })
-        .eq('status', 'sending')
-        .lt('sending_started_at', threeMinutesAgoIso)
-        .select('id');
-
-      // Also recover legacy rows with null timestamps (stuck indefinitely)
-      const { data: recoveredLegacy } = await supabase
-        .from('campaign_recipients')
-        .update({
-          status: 'pending',
-          sending_started_at: null,
-          sent_by_account_id: null,
-        })
-        .eq('status', 'sending')
-        .is('sending_started_at', null)
-        .select('id');
-
-      const totalRecovered = (recoveredWithTs?.length || 0) + (recoveredLegacy?.length || 0);
-      if (totalRecovered > 0) {
-        console.log(`[runner-tasks/get] Recovered ${totalRecovered} stale campaign recipients back to pending (${recoveredWithTs?.length || 0} expired, ${recoveredLegacy?.length || 0} legacy)`);
-      }
-    } catch (e) {
-      console.warn('[runner-tasks/get] Stale campaign recovery failed:', e);
-    }
-
-    // === INSTANT ASSIGNMENT: Promote ALL queued → pending for running campaigns ===
-    // The user expectation is that when a campaign is running, all recipients are immediately
-    // available for the runner (no slow staging in batches).
-    try {
-      const { data: runningCampaigns, error: runningErr } = await supabase
-        .from('campaigns')
-        .select('id')
-        .eq('status', 'running');
-
-      if (runningErr) throw runningErr;
-
-      const runningIds = (runningCampaigns || []).map((c: any) => c.id);
-      if (runningIds.length > 0) {
-        // Count queued without returning rows (avoids max_rows truncation)
-        const { count: queuedCount, error: countErr } = await supabase
-          .from('campaign_recipients')
-          .select('id', { count: 'exact', head: true })
-          .eq('status', 'queued')
-          .in('campaign_id', runningIds);
-
-        if (countErr) throw countErr;
-
-        if ((queuedCount || 0) > 0) {
-          const { error: promoteErr } = await supabase
-            .from('campaign_recipients')
-            .update({ status: 'pending' })
-            .eq('status', 'queued')
-            .in('campaign_id', runningIds);
-
-          if (promoteErr) throw promoteErr;
-          console.log(`[runner-tasks/get] Promoted ${queuedCount} recipients from queued → pending (instant mode)`);
-        }
-      }
-    } catch (e) {
-      console.warn('[runner-tasks/get] Instant queued→pending promotion failed:', e);
-    }
-
-    // Now fetch only 'pending' recipients (freshly staged batch)
     const { data: recipients } = await supabase
       .from("campaign_recipients")
       .select(`*, campaigns!inner(id, name, message_template, status, seat_id)`)
@@ -517,12 +422,8 @@ async function handleGetTasks(supabase: any, body: any) {
           media_url: null,
         });
 
-        // Mark as sending with timestamp for stale task recovery
-        await supabase.from("campaign_recipients").update({ 
-          status: "sending", 
-          sending_started_at: nowIso,
-          sent_by_account_id: bestAccount.id 
-        }).eq("id", r.id);
+        // Mark as sending
+        await supabase.from("campaign_recipients").update({ status: "sending" }).eq("id", r.id);
       }
     }
   }
@@ -742,7 +643,7 @@ async function handleGetTasks(supabase: any, body: any) {
 
 // ==================== REPORT RESULTS ====================
 async function handleReportResults(supabase: any, body: any) {
-  const { results, task_type, result, runner } = body;
+  const { results, task_type, result } = body;
   const now = new Date().toISOString();
 
   // Support both batch and single result
@@ -752,7 +653,7 @@ async function handleReportResults(supabase: any, body: any) {
     return jsonResponse({ error: "No results provided" }, 400);
   }
 
-  console.log(`[runner-tasks/report] Processing ${allResults.length} results (v2)`);
+  console.log(`[runner-tasks/report] Processing ${allResults.length} results`);
   
   // Track campaign IDs that were affected for completion check
   const affectedCampaignIds = new Set<string>();
@@ -773,50 +674,12 @@ async function handleReportResults(supabase: any, body: any) {
   const successResults = otherResults.filter((r: any) => r.success);
   const failedResults = otherResults.filter((r: any) => !r.success);
 
-  // Persist runner errors so the dashboard "Recent Errors" can display them.
-  // We cap inserts per request to avoid excessive log volume.
-  try {
-    const runnerName = runner || 'unified';
-    const seen = new Set<string>();
-    const rows: any[] = [];
-
-    for (const r of failedResults) {
-      const tt = (r.task_type || task_type || 'unknown') as string;
-      const msg = (r.error || '').toString().trim();
-      if (!msg) continue;
-
-      const key = `${tt}|${msg}|${r.account_id ?? ''}|${r.campaign_recipient_id ?? ''}|${r.message_id ?? ''}|${r.task_id ?? ''}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-
-      rows.push({
-        runner_name: runnerName,
-        log_level: 'error',
-        message: `[${tt}] ${msg} | account=${r.account_id ?? '-'} | recipient=${r.campaign_recipient_id ?? '-'} | message=${r.message_id ?? '-'} | task=${r.task_id ?? '-'}`,
-      });
-
-      if (rows.length >= 25) break;
-    }
-
-    if (rows.length > 0) {
-      await supabase.from('vps_logs').insert(rows);
-    }
-  } catch (e) {
-    console.warn('[runner-tasks/report] Failed to write vps_logs:', e);
-  }
-
   // Process successes
   for (const r of successResults) {
     const taskType = r.task_type || task_type;
 
     if (taskType === "send") {
-      // Check which type of send: campaign vs livechat
-      const isCampaignSend = !!r.campaign_recipient_id;
-      const isLivechatSend = !r.campaign_recipient_id && !!r.message_id;
-      
-      console.log(`[runner-tasks/report] Send success: campaign=${isCampaignSend}, livechat=${isLivechatSend}, message_id=${r.message_id || 'none'}, campaign_recipient_id=${r.campaign_recipient_id || 'none'}`);
-
-      if (isCampaignSend) {
+      if (r.campaign_recipient_id) {
         // Campaign message success - check if already counted to prevent double-counting on retries
         const { data: recipientData } = await supabase
           .from("campaign_recipients")
@@ -893,18 +756,11 @@ async function handleReportResults(supabase: any, body: any) {
           }
         }
 
-      } else if (isLivechatSend) {
-        // Livechat message success - update status to sent
-        console.log(`[runner-tasks/report] Updating livechat message ${r.message_id} to sent`);
-        const { error: updateError } = await supabase.from("messages")
+      } else if (r.message_id) {
+        // Livechat message success
+        await supabase.from("messages")
           .update({ status: "sent", delivered_at: now })
           .eq("id", r.message_id);
-        
-        if (updateError) {
-          console.error(`[runner-tasks/report] Failed to update message ${r.message_id}:`, updateError);
-        }
-      } else {
-        console.warn(`[runner-tasks/report] Send success but no message_id or campaign_recipient_id found:`, JSON.stringify(r).slice(0, 200));
       }
 
       // Record API usage

@@ -116,14 +116,13 @@ serve(async (req) => {
         );
       }
 
-      // Add recipients - insert as 'queued' (backlog) instead of 'pending'
-      // The runner will stage batches from queued → pending → sending
+      // Add recipients
       if (recipients?.length) {
         const recipientData = recipients.map((r: any) => ({
           campaign_id: campaign.id,
           phone_number: r.phone || r.phone_number,
           name: r.name,
-          status: 'queued',
+          status: 'pending',
         }));
         await supabase.from('campaign_recipients').insert(recipientData);
         await supabase.from('campaigns').update({ recipient_count: recipients.length }).eq('id', campaign.id);
@@ -144,23 +143,7 @@ serve(async (req) => {
         .single();
 
       if (error) throw error;
-
-      // Promote ALL queued recipients to pending immediately for instant assignment
-      const { data: promoted, error: promoteError } = await supabase
-        .from('campaign_recipients')
-        .update({ status: 'pending' })
-        .eq('campaign_id', campaign_id)
-        .eq('status', 'queued')
-        .select('id');
-
-      const promotedCount = promoted?.length || 0;
-      console.log(`[admin-api] Campaign ${campaign_id} started: promoted ${promotedCount} recipients from queued → pending`);
-
-      if (promoteError) {
-        console.warn(`[admin-api] Failed to promote recipients:`, promoteError);
-      }
-
-      return jsonResponse({ success: true, campaign: data, promoted_count: promotedCount });
+      return jsonResponse({ success: true, campaign: data });
     }
 
     if (path === '/campaigns/pause' && method === 'POST') {

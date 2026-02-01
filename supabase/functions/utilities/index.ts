@@ -216,37 +216,6 @@ serve(async (req) => {
 
       results.runners_marked_offline = offlineRunners?.length || 0;
 
-      // Reset stale "sending" recipients (stuck for > 3 minutes) back to pending
-      const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-      const { data: staleSending } = await supabase
-        .from('campaign_recipients')
-        .update({ 
-          status: 'pending', 
-          sending_started_at: null,
-          sent_by_account_id: null 
-        })
-        .eq('status', 'sending')
-        .lt('sending_started_at', threeMinutesAgo)
-        .select('id');
-
-      // Note: Do NOT reset 'queued' recipients - they are intentionally in backlog
-      // The runner-tasks function stages them to 'pending' in controlled batches
-
-      results.stale_recipients_reset = staleSending?.length || 0;
-
-      // Reset stale "sending" messages (stuck for > 3 minutes) - mark as sent
-      const { data: staleMessages } = await supabase
-        .from('messages')
-        .update({ 
-          status: 'sent', 
-          delivered_at: new Date().toISOString()
-        })
-        .eq('status', 'sending')
-        .lt('created_at', threeMinutesAgo)
-        .select('id');
-
-      results.stale_messages_reset = staleMessages?.length || 0;
-
       // Auto-complete stuck campaigns
       const { data: runningCampaigns } = await supabase
         .from('campaigns')

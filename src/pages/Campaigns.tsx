@@ -141,7 +141,7 @@ const Campaigns: React.FC = () => {
     staggerMin: 0.3,
     staggerMax: 1.5,
     pollingInterval: 3,
-    batchSize: 0,
+    batchSize: 100,
     messagesPerAccountPerDay: 10,
   });
   
@@ -185,13 +185,12 @@ const Campaigns: React.FC = () => {
 
     const results = await Promise.all(
       runningCampaigns.map(async (campaign) => {
-        // Include 'queued' in pending count for accurate remaining work calculation
-        const [totalRes, sentRes, failedRes, pendingSendingQueuedRes] = await Promise.all([
+        const [totalRes, sentRes, failedRes, pendingSendingRes, queuedRes] = await Promise.all([
           supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id),
           supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).eq('status', 'sent'),
           supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).eq('status', 'failed'),
-          // Count all non-final statuses: queued (backlog) + pending (staged) + sending (active)
-          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).in('status', ['pending', 'sending', 'queued']),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).in('status', ['pending', 'sending']),
+          supabase.from('campaign_recipients').select('id', { count: 'exact', head: true }).eq('campaign_id', campaign.id).eq('status', 'queued'),
         ]);
 
         if (totalRes.error || sentRes.error || failedRes.error) return null;
@@ -199,9 +198,10 @@ const Campaigns: React.FC = () => {
         const total = totalRes.count || 0;
         const sentCount = sentRes.count || 0;
         const failedCount = failedRes.count || 0;
-        const remainingCount = pendingSendingQueuedRes.count || 0;
+        const pendingSendingCount = pendingSendingRes.count || 0;
+        const queuedCount = queuedRes.count || 0;
 
-        return { campaignId: campaign.id, total, sentCount, failedCount, remainingCount, campaign };
+        return { campaignId: campaign.id, total, sentCount, failedCount, pendingSendingCount, queuedCount, campaign };
       })
     );
 
@@ -214,15 +214,16 @@ const Campaigns: React.FC = () => {
         updated.set(result.campaignId, {
           successful: result.sentCount,
           failed: result.failedCount,
-          pending: result.remainingCount,
-          unused: result.remainingCount,
+          pending: result.pendingSendingCount,
+          unused: result.pendingSendingCount,
           total: result.total,
           failedRecipients: existing?.failedRecipients || [],
           accountStats: existing?.accountStats || [],
         });
 
-        // Auto-complete if no queued + pending + sending left
-        if (result.remainingCount === 0 && result.total > 0) {
+        // Auto-complete if no pending/queued left
+        const remainingNotDone = result.pendingSendingCount + result.queuedCount;
+        if (remainingNotDone === 0 && result.total > 0) {
           supabase.from('campaigns').update({ status: 'completed', updated_at: new Date().toISOString() }).eq('id', result.campaignId);
         }
       }
@@ -651,12 +652,10 @@ const Campaigns: React.FC = () => {
     };
 
     // Always create ONE campaign, assign seats to recipients via round-robin
-    // NOTE: recipientCount is set to 0 here - the database trigger will increment it
-    // when recipients are inserted, preventing double-counting
     const createdCampaign = await createCampaign({
       name: data.name,
       messageTemplate: mainMessage,
-      recipientCount: 0,
+      recipientCount: parsedRecipients.length,
       accountIds: data.accountIds
     });
     

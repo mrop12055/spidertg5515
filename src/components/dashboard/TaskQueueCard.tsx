@@ -97,12 +97,10 @@ export const TaskQueueCard: React.FC = () => {
           .eq('status', 'pending')
           .order('created_at', { ascending: false })
           .limit(LIMIT),
-        // Show 'sending' and 'queued' recipients (active/waiting to be processed)
         supabase
           .from('campaign_recipients')
           .select('id, phone_number, name, status, campaign_id, failed_reason')
-          .in('status', ['sending', 'queued', 'pending'])
-          .order('sending_started_at', { ascending: false, nullsFirst: false })
+          .eq('status', 'pending')
           .limit(LIMIT),
         supabase
           .from('messages')
@@ -153,11 +151,11 @@ export const TaskQueueCard: React.FC = () => {
   useEffect(() => {
     fetchData();
 
-    // Instant refresh for realtime updates (500ms debounce to batch rapid changes)
+    // OPTIMIZED: Increased debounce from 2s to 3s
     let refreshTimer: NodeJS.Timeout | null = null;
     const debouncedRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => fetchData(), 500);
+      refreshTimer = setTimeout(() => fetchData(), 3000);
     };
 
     const channel = supabase
@@ -166,15 +164,10 @@ export const TaskQueueCard: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_import_tasks' }, debouncedRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, debouncedRefresh)
       .subscribe();
-
-    // Faster polling (5 seconds) for near-instant updates
-    const intervalId = setInterval(() => fetchData(), 5000);
 
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      clearInterval(intervalId);
       supabase.removeChannel(channel);
     };
   }, []);
@@ -439,7 +432,7 @@ export const TaskQueueCard: React.FC = () => {
               <TabsList className="grid w-full grid-cols-2 max-w-[250px]">
                 <TabsTrigger value="pending" className="text-xs">
                   <Clock className="w-3 h-3 mr-1" />
-                  Queue ({pendingRecipients.length})
+                  Pending ({health?.pending_recipients || pendingRecipients.length})
                 </TabsTrigger>
                 <TabsTrigger value="completed" className="text-xs">
                   <CheckCircle className="w-3 h-3 mr-1" />

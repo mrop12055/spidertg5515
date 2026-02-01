@@ -36,10 +36,10 @@ export const RecentErrorsCard: React.FC = () => {
       ] = await Promise.all([
         supabase
           .from('campaign_recipients')
-          .select('id, phone_number, failed_reason, sending_started_at')
+          .select('id, phone_number, failed_reason, sent_at')
           .eq('status', 'failed')
           .not('failed_reason', 'is', null)
-          .order('sending_started_at', { ascending: false })
+          .order('sent_at', { ascending: false, nullsFirst: false })
           .limit(150),
         supabase
           .from('messages')
@@ -100,7 +100,7 @@ export const RecentErrorsCard: React.FC = () => {
             id: r.id,
             phone: r.phone_number,
             reason: r.failed_reason,
-            timestamp: r.sending_started_at || new Date().toISOString(),
+            timestamp: r.sent_at || new Date().toISOString(),
             source: 'Campaign'
           });
         }

@@ -68,9 +68,6 @@ _locks: Dict[str, asyncio.Lock] = {}
 _locks_mutex = threading.Lock()
 _http: Optional[httpx.AsyncClient] = None
 
-# Track last ping time for each client to avoid excessive pings
-client_last_ping: Dict[str, float] = {}
-
 
 def signal_handler(sig, frame):
     global RUNNING
@@ -920,57 +917,6 @@ async def on_message(event, acc_id: str):
 
 
 # ==============================================================================
-# CONNECTION HEALTH CHECK
-# ==============================================================================
-
-async def ping_account(aid: str) -> bool:
-    """Ping Telegram to verify connection is alive."""
-    client = clients.get(aid)
-    if not client:
-        return False
-    try:
-        # Quick ping - if this fails, connection is dead
-        await asyncio.wait_for(client.get_me(), timeout=10)
-        return True
-    except:
-        return False
-
-
-async def health_check() -> List[str]:
-    """Check all connections and return list of dead account IDs."""
-    global client_last_ping
-    dead = []
-    now = time.time()
-    
-    for aid in list(clients.keys()):
-        # Skip if pinged within last 60 seconds
-        if now - client_last_ping.get(aid, 0) < 60:
-            continue
-        
-        acc = accounts.get(aid, {})
-        phone = acc.get('phone_number', '????')[-4:]
-        
-        if not await ping_account(aid):
-            dead.append(aid)
-            print(f"  [HEALTH] [{phone}] Connection dead, will reconnect")
-            # Remove dead client
-            try:
-                await clients[aid].disconnect()
-            except:
-                pass
-            if aid in clients:
-                del clients[aid]
-        else:
-            # Mark as successfully pinged
-            client_last_ping[aid] = now
-    
-    if dead:
-        print(f"  [HEALTH] {len(dead)} dead connections detected")
-    
-    return dead
-
-
-# ==============================================================================
 # FETCH UNREAD MESSAGES (CATCH-UP ON RECONNECTION)
 # ==============================================================================
 
@@ -1330,9 +1276,6 @@ async def process(task: dict):
     # ========== MESSAGE SENDING ==========
     # Campaign, Conversation, Warmup - they ALL just send messages
     if tt in ("send", "campaign_send", "livechat_reply", "warmup_chat") or ("send" in tt and "warmup" in tt):
-        # Debug logging for campaign tasks
-        if task.get("campaign_recipient_id"):
-            print(f"  [CAMPAIGN] Processing recipient {task.get('campaign_recipient_id')[:8]}...")
         # Extract data - works for ANY task type
         msg = task.get("message", {})
         td = task.get("task_data", {})
@@ -1477,7 +1420,6 @@ async def main():
     
     empty = 0
     last_refresh = time.time()
-    last_health_check = time.time()
     
     while RUNNING:
         try:
@@ -1486,21 +1428,8 @@ async def main():
             tasks = batch.get("tasks", [])
             batch_accounts = batch.get("accounts", [])
             
-            # Health check every 5 minutes (300 seconds) to detect dead connections
-            if time.time() - last_health_check > 300:
-                dead_accounts = await health_check()
-                if dead_accounts:
-                    # Get account info for dead accounts to reconnect
-                    accs_to_reconnect = [accounts[aid] for aid in dead_accounts if aid in accounts]
-                    if accs_to_reconnect:
-                        print(f"  [HEALTH] Reconnecting {len(accs_to_reconnect)} accounts...")
-                        _, newly_connected = await connect_all_from_response(batch_accounts)
-                        if newly_connected:
-                            await setup_handlers()
-                last_health_check = time.time()
-            
-            # Check for new/disconnected accounts every 30s (reduced from 60s for faster recovery)
-            if time.time() - last_refresh > 30 or len(clients) < len(batch_accounts):
+            # Check for new/disconnected accounts every 60s
+            if time.time() - last_refresh > 60 or len(clients) < len(batch_accounts):
                 old_count = len(clients)
                 _, newly_connected = await connect_all_from_response(batch_accounts)
                 if newly_connected:
