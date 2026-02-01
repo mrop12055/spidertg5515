@@ -205,6 +205,33 @@ serve(async (req) => {
         results.cooldowns_restored = expiredCooldowns.length;
       }
 
+      // Recover stale messages stuck in 'sending' status for more than 3 minutes
+      const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+      const { data: staleMessages, error: staleError } = await supabase
+        .from('messages')
+        .update({ status: 'pending' })
+        .eq('status', 'sending')
+        .lt('created_at', threeMinutesAgo)
+        .select('id');
+      
+      results.stale_messages_recovered = staleMessages?.length || 0;
+      if (staleMessages?.length) {
+        console.log(`[utilities/maintenance] Recovered ${staleMessages.length} stale messages from sending to pending`);
+      }
+
+      // Recover stale campaign recipients stuck in 'sending' status for more than 3 minutes
+      const { data: staleRecipients, error: staleRecipientError } = await supabase
+        .from('campaign_recipients')
+        .update({ status: 'pending', sending_started_at: null })
+        .eq('status', 'sending')
+        .lt('sending_started_at', threeMinutesAgo)
+        .select('id');
+      
+      results.stale_recipients_recovered = staleRecipients?.length || 0;
+      if (staleRecipients?.length) {
+        console.log(`[utilities/maintenance] Recovered ${staleRecipients.length} stale recipients from sending to pending`);
+      }
+
       // Mark offline runners
       const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       const { data: offlineRunners } = await supabase
