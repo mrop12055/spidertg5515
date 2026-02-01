@@ -97,20 +97,13 @@ function parseSettings(settingsData: Record<string, any>[]) {
   return config;
 }
 
-// Get API credentials for account (per-account first, then pool)
+// Get API credentials for account (per-account only - no pool fallback)
 async function getApiCredentialsForAccount(supabase: any, account: any) {
   if (account.api_id && account.api_hash) {
+    console.log(`[api] Using per-account API for ${account.phone_number}: ${account.api_id}`);
     return { api_id: account.api_id, api_hash: account.api_hash, api_credential_id: null };
   }
-  const { data: apis } = await supabase
-    .from('telegram_api_credentials')
-    .select('id, api_id, api_hash')
-    .eq('is_active', true)
-    .order('usage_count', { ascending: true })
-    .limit(1);
-  if (apis && apis.length > 0) {
-    return { api_id: apis[0].api_id, api_hash: apis[0].api_hash, api_credential_id: apis[0].id };
-  }
+  console.warn(`[api] Account ${account.phone_number} has no API credentials - skipping`);
   return null;
 }
 
