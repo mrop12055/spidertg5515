@@ -173,6 +173,26 @@ async function handleGetTasks(supabase: any, body: any) {
   const { runner, account_ids } = body;
   const nowIso = new Date().toISOString();
 
+  // Self-healing: messages can get stuck in `sending` if the runner crashes before reporting.
+  // Mark them as `sent` after 3 minutes so dashboards/queues don't get polluted indefinitely.
+  // (We keep this here so it runs naturally as the runner polls for work, without requiring a separate cron.)
+  try {
+    const threeMinutesAgoIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const { data: recoveredMsgs } = await supabase
+      .from('messages')
+      .update({ status: 'sent', delivered_at: nowIso })
+      .eq('status', 'sending')
+      .eq('direction', 'outgoing')
+      .lt('created_at', threeMinutesAgoIso)
+      .select('id');
+
+    if ((recoveredMsgs?.length || 0) > 0) {
+      console.log(`[runner-tasks/get] Recovered ${recoveredMsgs!.length} stale messages from sending → sent`);
+    }
+  } catch (e) {
+    console.warn('[runner-tasks/get] Stale message recovery failed:', e);
+  }
+
   // Get settings first to use admin-configured batch size
   const settingsData = await getCachedSettings(supabase);
   const config = parseSettings(settingsData);
@@ -698,7 +718,7 @@ async function handleGetTasks(supabase: any, body: any) {
 
 // ==================== REPORT RESULTS ====================
 async function handleReportResults(supabase: any, body: any) {
-  const { results, task_type, result } = body;
+  const { results, task_type, result, runner } = body;
   const now = new Date().toISOString();
 
   // Support both batch and single result
@@ -728,6 +748,38 @@ async function handleReportResults(supabase: any, body: any) {
 
   const successResults = otherResults.filter((r: any) => r.success);
   const failedResults = otherResults.filter((r: any) => !r.success);
+
+  // Persist runner errors so the dashboard "Recent Errors" can display them.
+  // We cap inserts per request to avoid excessive log volume.
+  try {
+    const runnerName = runner || 'unified';
+    const seen = new Set<string>();
+    const rows: any[] = [];
+
+    for (const r of failedResults) {
+      const tt = (r.task_type || task_type || 'unknown') as string;
+      const msg = (r.error || '').toString().trim();
+      if (!msg) continue;
+
+      const key = `${tt}|${msg}|${r.account_id ?? ''}|${r.campaign_recipient_id ?? ''}|${r.message_id ?? ''}|${r.task_id ?? ''}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      rows.push({
+        runner_name: runnerName,
+        log_level: 'error',
+        message: `[${tt}] ${msg} | account=${r.account_id ?? '-'} | recipient=${r.campaign_recipient_id ?? '-'} | message=${r.message_id ?? '-'} | task=${r.task_id ?? '-'}`,
+      });
+
+      if (rows.length >= 25) break;
+    }
+
+    if (rows.length > 0) {
+      await supabase.from('vps_logs').insert(rows);
+    }
+  } catch (e) {
+    console.warn('[runner-tasks/report] Failed to write vps_logs:', e);
+  }
 
   // Process successes
   for (const r of successResults) {
