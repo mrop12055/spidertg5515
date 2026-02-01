@@ -1,87 +1,79 @@
 
+# Remove Pool API Fallback - Use Only Per-Account Credentials
 
-# Fix Account Data Not Showing in Campaign Reports
+## Overview
+This change modifies the API credential selection to exclusively use per-account credentials (stored in `telegram_accounts.api_id` and `api_hash` from JSON imports), removing the fallback to the shared pool from `telegram_api_credentials`.
 
-## Problem Summary
+## Current State
+- **All 820 active accounts already have their own credentials** - the pool fallback is not being used
+- The system checks per-account first, then falls back to pool (round-robin from `telegram_api_credentials`)
+- Pool logic exists in two places:
+  1. `supabase/functions/_shared/api-helper.ts` - shared helper
+  2. `supabase/functions/runner-tasks/index.ts` - inlined function
 
-The "Accounts" tab in campaign reports shows "No Account Data" because the `sent_by_account_id` field in the `campaign_recipients` table is never being populated when messages are sent.
+## Changes Required
 
-## Root Cause
+### 1. Modify `runner-tasks/index.ts` - Remove Pool Fallback
+**Lines 101-115** - Simplify `getApiCredentialsForAccount` to only use per-account credentials:
 
-In the `runner-tasks` edge function, when a campaign recipient is processed:
+```text
+BEFORE:
+async function getApiCredentialsForAccount(supabase: any, account: any) {
+  if (account.api_id && account.api_hash) {
+    return { api_id: account.api_id, api_hash: account.api_hash, api_credential_id: null };
+  }
+  // FALLBACK: Query pool
+  const { data: apis } = await supabase.from('telegram_api_credentials')...
+  if (apis && apis.length > 0) return pool_credential;
+  return null;
+}
 
-**Success case (line 691-693):**
-```typescript
-await supabase.from("campaign_recipients")
-  .update({ status: "sent", sent_at: now, api_credential_id: r.api_credential_id })
-  .eq("id", r.campaign_recipient_id);
+AFTER:
+async function getApiCredentialsForAccount(supabase: any, account: any) {
+  if (account.api_id && account.api_hash) {
+    console.log(`[api] Using per-account API for ${account.phone_number}: ${account.api_id}`);
+    return { api_id: account.api_id, api_hash: account.api_hash, api_credential_id: null };
+  }
+  console.warn(`[api] Account ${account.phone_number} has no API credentials - skipping`);
+  return null;
+}
 ```
 
-**Failure case (line 941-943):**
-```typescript
-await supabase.from("campaign_recipients")
-  .update({ status: "failed", failed_reason: r.error })
-  .eq("id", r.campaign_recipient_id);
+### 2. Modify `_shared/api-helper.ts` - Remove Pool Fallback
+**Lines 32-61** - Update main function to skip pool:
+
+```text
+BEFORE:
+- Uses selectNextApiCredential() as fallback
+- Returns pool credential if account has no own credentials
+
+AFTER:
+- Returns null immediately if account has no own credentials
+- Logs warning about missing credentials
 ```
 
-Both cases are **missing** `sent_by_account_id: r.account_id`.
+### 3. Keep Pool Functions for Backwards Compatibility (No Changes)
+The following functions remain but are unused:
+- `selectNextApiCredential()` - not called anymore
+- `recordApiUsage()` - still works (handles null api_credential_id gracefully)
+- `increment_api_usage` RPC - still exists for any pool usage
 
----
+## Behavior After Change
+- Accounts **with** `api_id` + `api_hash`: Work normally using their own credentials
+- Accounts **without** credentials: Will be **skipped** for tasks (cannot send messages)
+- Pool table (`telegram_api_credentials`): No longer queried for credential selection
 
-## Solution
+## Technical Details
 
-### Step 1: Update the Edge Function
+### Files to Modify
+1. `supabase/functions/runner-tasks/index.ts`
+2. `supabase/functions/_shared/api-helper.ts`
 
-Modify `supabase/functions/runner-tasks/index.ts` to include `sent_by_account_id` when updating campaign recipients.
+### Impact
+- **Performance**: Slightly faster (no pool query when account has credentials)
+- **Security**: Ensures each account uses only its designated API credentials
+- **Risk**: Accounts imported without credentials will not work until credentials are added
+  - Current data shows 0 accounts affected (all 820 have credentials)
 
-**Success case (around line 691):**
-```typescript
-await supabase.from("campaign_recipients")
-  .update({ 
-    status: "sent", 
-    sent_at: now, 
-    sent_by_account_id: r.account_id,  // ADD THIS
-    api_credential_id: r.api_credential_id 
-  })
-  .eq("id", r.campaign_recipient_id);
-```
-
-**Failure case (around line 941):**
-```typescript
-await supabase.from("campaign_recipients")
-  .update({ 
-    status: "failed", 
-    sent_by_account_id: r.account_id,  // ADD THIS
-    failed_reason: r.error 
-  })
-  .eq("id", r.campaign_recipient_id);
-```
-
-### Step 2: Backfill Existing Data (Optional)
-
-For campaigns that have already run, we can attempt to backfill the `sent_by_account_id` by matching the `campaign_recipient_id` in the messages table:
-
-```sql
-UPDATE campaign_recipients cr
-SET sent_by_account_id = m.account_id
-FROM messages m
-WHERE m.campaign_recipient_id = cr.id
-  AND cr.sent_by_account_id IS NULL
-  AND m.direction = 'outgoing';
-```
-
----
-
-## Files to Modify
-
-| File | Change |
-|------|--------|
-| `supabase/functions/runner-tasks/index.ts` | Add `sent_by_account_id: r.account_id` to both success and failure update queries |
-
-## Expected Result
-
-After this fix:
-- New campaign messages will properly track which account sent/attempted to send each message
-- The "Accounts" tab in campaign reports will show per-account statistics
-- Existing data can be backfilled using the messages table
-
+### No Database Changes Required
+The `telegram_api_credentials` pool table remains unchanged for historical reference.
