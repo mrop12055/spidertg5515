@@ -153,11 +153,11 @@ export const TaskQueueCard: React.FC = () => {
   useEffect(() => {
     fetchData();
 
-    // Faster debounce (1.5s) for responsive UI updates
+    // Instant refresh for realtime updates (500ms debounce to batch rapid changes)
     let refreshTimer: NodeJS.Timeout | null = null;
     const debouncedRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => fetchData(), 1500);
+      refreshTimer = setTimeout(() => fetchData(), 500);
     };
 
     const channel = supabase
@@ -166,10 +166,11 @@ export const TaskQueueCard: React.FC = () => {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_import_tasks' }, debouncedRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedRefresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, debouncedRefresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'conversations' }, debouncedRefresh)
       .subscribe();
 
-    // Also refresh periodically every 15 seconds to catch any missed updates
-    const intervalId = setInterval(() => fetchData(), 15000);
+    // Faster polling (5 seconds) for near-instant updates
+    const intervalId = setInterval(() => fetchData(), 5000);
 
     return () => {
       if (refreshTimer) clearTimeout(refreshTimer);
