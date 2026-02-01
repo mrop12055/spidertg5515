@@ -141,7 +141,7 @@ const Campaigns: React.FC = () => {
     staggerMin: 0.3,
     staggerMax: 1.5,
     pollingInterval: 3,
-    batchSize: 100,
+    batchSize: 0,
     messagesPerAccountPerDay: 10,
   });
   
