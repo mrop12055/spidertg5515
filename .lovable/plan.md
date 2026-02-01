@@ -1,54 +1,78 @@
 
 
+# Fix: Runner Not Processing Send Message Tasks
 
+## Problem Identified
 
-# ✅ COMPLETED: Fix Message Listening Stopping After Some Time
+The runner is **not processing livechat send message tasks** because of a **race condition and incorrect self-healing logic**:
 
-## Problem Analysis
+1. Admin sends messages from the chat UI → messages are created with `status = 'pending'`
+2. Edge function `/get` endpoint marks them as `sending` when fetched (line 619)
+3. The runner either crashes, is slow, or another request fetched them first
+4. Messages get stuck in `sending` status
+5. The self-healing code (lines 176-194) incorrectly marks stale `sending` messages as **`sent`** instead of **`pending`**
+6. Messages are never actually processed but appear as "sent"
 
-The Python runner's message listening stops working after some time due to **silent connection drops**. Here's why:
+Currently stuck: **4 messages** in `sending` status that will never be processed.
 
-1. **Auto-reconnect is disabled** (`auto_reconnect=False`) to prevent unproxied connections
-2. **No keepalive mechanism** - connections can idle out without detection
-3. **`is_connected()` is unreliable** - it checks socket state, not actual Telegram connectivity
-4. **60-second refresh is too slow** - by the time it detects a dead connection, messages are lost
+## Solution
 
-When a proxy times out or the network blips, Telethon doesn't know the connection is dead until it tries to send/receive. Since the runner only polls for tasks (not actively pinging Telegram), stale connections go undetected.
+Update the self-healing logic for messages to mirror the campaign recipient logic:
+- Reset stale `sending` messages back to `pending` (not `sent`)
+- This allows the runner to pick them up on the next poll
 
-## Solution Implemented
+### File: `supabase/functions/runner-tasks/index.ts`
 
-Implemented a **proactive health check** that periodically pings Telegram to verify connections are alive, and reconnects any that have silently died.
+**Current behavior (lines 176-194):**
+```javascript
+// Self-healing: messages can get stuck in `sending` if the runner crashes before reporting.
+// Mark them as `sent` after 3 minutes so dashboards/queues don't get polluted indefinitely.
+const { data: recoveredMsgs } = await supabase
+  .from('messages')
+  .update({ status: 'sent', delivered_at: nowIso })  // ❌ WRONG: marks as sent
+  .eq('status', 'sending')
+  .eq('direction', 'outgoing')
+  .lt('created_at', threeMinutesAgoIso)
+  .select('id');
+```
 
-### Changes Made
+**New behavior:**
+```javascript
+// Self-healing: messages can get stuck in `sending` if the runner crashes before reporting.
+// Reset them to `pending` after 3 minutes so the runner can retry.
+const { data: recoveredMsgs } = await supabase
+  .from('messages')
+  .update({ status: 'pending' })  // ✅ CORRECT: reset to pending for retry
+  .eq('status', 'sending')
+  .eq('direction', 'outgoing')
+  .lt('created_at', threeMinutesAgoIso)
+  .select('id');
+```
 
-| Location | Change |
-|----------|--------|
-| Line ~70 (STATE section) | Added `client_last_ping: Dict[str, float] = {}` |
-| After line ~917 | Added `ping_account()` function - calls `client.get_me()` with 10s timeout |
-| After `ping_account()` | Added `health_check()` function - checks all clients, removes dead ones |
-| Main loop | Added `last_health_check = time.time()` |
-| Main loop | Changed 60s refresh to 30s: `if time.time() - last_refresh > 30` |
-| Main loop | Added health check block running every 300 seconds (5 minutes) |
+---
 
-### Key Features
+## Summary
 
-1. **`ping_account()`**: Calls `client.get_me()` with a 10-second timeout to verify actual Telegram connectivity
-2. **`health_check()`**: Iterates all clients, pings those not pinged in the last 60 seconds, removes dead ones
-3. **Automatic reconnection**: Dead connections trigger reconnection via `connect_all_from_response()`
-4. **Faster refresh**: Account refresh interval reduced from 60s to 30s
-5. **Ping tracking**: `client_last_ping` dict prevents excessive pings (skips if pinged within 60s)
+| Change | Description |
+|--------|-------------|
+| Line ~183 | Change `{ status: 'sent', delivered_at: nowIso }` to `{ status: 'pending' }` |
+| Line ~190 | Update log message to say "sending → pending" |
 
-## Why This Fixes the Problem
+---
 
-1. **Proactive detection**: Instead of waiting for the next send to fail, we actively verify connections are alive
-2. **Faster recovery**: 30-second refresh + 5-minute health check catches dead connections before too many messages are lost
-3. **Automatic reconnection**: Dead connections are automatically re-established and handlers re-attached
-4. **Catch-up on reconnect**: When a client reconnects, `fetch_unread_messages()` already runs to catch missed messages
+## Why This Fixes the Issue
 
-## Testing
+1. **Stale messages get retried**: Instead of being falsely marked as "sent", they return to the queue
+2. **Consistent with campaign logic**: Campaign recipients already use this pattern (lines 294-313)
+3. **No message loss**: Messages will be picked up on the next runner poll cycle
+4. **Self-correcting**: Even if multiple race conditions occur, messages eventually get processed
 
-After downloading the new runner:
-1. Start the runner and verify connections establish
-2. Wait 5-10 minutes and check logs for `[HEALTH]` messages
-3. Kill a proxy temporarily and verify the runner detects and reconnects
-4. Send a test message during/after reconnection to verify handlers work
+---
+
+## Alternative Considered
+
+Could add a `retry_count` column to prevent infinite retry loops, but:
+- Current system rarely has this issue
+- Campaign recipients don't have retry limits either
+- Keeping it simple for now
+
