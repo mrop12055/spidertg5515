@@ -1,79 +1,173 @@
 
-# Remove Pool API Fallback - Use Only Per-Account Credentials
+# Handle "Recipient Not Found" Error with Retry and Account Restriction
 
 ## Overview
-This change modifies the API credential selection to exclusively use per-account credentials (stored in `telegram_accounts.api_id` and `api_hash` from JSON imports), removing the fallback to the shared pool from `telegram_api_credentials`.
+When a sender account encounters a "Recipient not found" error, the system will:
+1. Mark the sender account as **restricted for 12 hours** (treat it like PeerFlood)
+2. Retry sending with a **different account**
+3. If the second account also fails with the same error, **permanently mark the recipient as failed** and mark the contact as used
 
-## Current State
-- **All 820 active accounts already have their own credentials** - the pool fallback is not being used
-- The system checks per-account first, then falls back to pool (round-robin from `telegram_api_credentials`)
-- Pool logic exists in two places:
-  1. `supabase/functions/_shared/api-helper.ts` - shared helper
-  2. `supabase/functions/runner-tasks/index.ts` - inlined function
+## Current Behavior
+- "Recipient not found" errors immediately mark the recipient as `failed`
+- The contact is marked as `is_used = true` in `contacts_data`
+- No penalty to the sender account (this was added in the last change)
 
-## Changes Required
+## New Behavior
+- **First failure**: 
+  - Mark sender account as `restricted` for 12 hours
+  - Add account to `failed_account_ids` array
+  - Reset recipient to `pending` status for retry
+  - Increment `retry_count` to 1
+- **Second failure (different account)**:
+  - Mark sender account as `restricted` for 12 hours
+  - Mark recipient as permanently `failed`
+  - Mark contact as `is_used` in `contacts_data`
 
-### 1. Modify `runner-tasks/index.ts` - Remove Pool Fallback
-**Lines 101-115** - Simplify `getApiCredentialsForAccount` to only use per-account credentials:
+## Flow Diagram
 
-```text
-BEFORE:
-async function getApiCredentialsForAccount(supabase: any, account: any) {
-  if (account.api_id && account.api_hash) {
-    return { api_id: account.api_id, api_hash: account.api_hash, api_credential_id: null };
-  }
-  // FALLBACK: Query pool
-  const { data: apis } = await supabase.from('telegram_api_credentials')...
-  if (apis && apis.length > 0) return pool_credential;
-  return null;
-}
-
-AFTER:
-async function getApiCredentialsForAccount(supabase: any, account: any) {
-  if (account.api_id && account.api_hash) {
-    console.log(`[api] Using per-account API for ${account.phone_number}: ${account.api_id}`);
-    return { api_id: account.api_id, api_hash: account.api_hash, api_credential_id: null };
-  }
-  console.warn(`[api] Account ${account.phone_number} has no API credentials - skipping`);
-  return null;
-}
+```
+Account A tries to send → "Recipient not found"
+   ↓
+Mark Account A as restricted (12 hours)
+Add Account A to failed_account_ids
+Set recipient status = "pending", retry_count = 1
+   ↓
+Task dispatcher picks up recipient again
+Skips Account A (in failed_account_ids)
+   ↓
+Account B tries to send → "Recipient not found"  
+   ↓
+Mark Account B as restricted (12 hours)
+Mark recipient as "failed" (permanent)
+Mark contact as used in contacts_data
 ```
 
-### 2. Modify `_shared/api-helper.ts` - Remove Pool Fallback
-**Lines 32-61** - Update main function to skip pool:
-
-```text
-BEFORE:
-- Uses selectNextApiCredential() as fallback
-- Returns pool credential if account has no own credentials
-
-AFTER:
-- Returns null immediately if account has no own credentials
-- Logs warning about missing credentials
-```
-
-### 3. Keep Pool Functions for Backwards Compatibility (No Changes)
-The following functions remain but are unused:
-- `selectNextApiCredential()` - not called anymore
-- `recordApiUsage()` - still works (handles null api_credential_id gracefully)
-- `increment_api_usage` RPC - still exists for any pool usage
-
-## Behavior After Change
-- Accounts **with** `api_id` + `api_hash`: Work normally using their own credentials
-- Accounts **without** credentials: Will be **skipped** for tasks (cannot send messages)
-- Pool table (`telegram_api_credentials`): No longer queried for credential selection
+---
 
 ## Technical Details
 
-### Files to Modify
-1. `supabase/functions/runner-tasks/index.ts`
-2. `supabase/functions/_shared/api-helper.ts`
+### File to Modify
+`supabase/functions/runner-tasks/index.ts`
 
-### Impact
-- **Performance**: Slightly faster (no pool query when account has credentials)
-- **Security**: Ensures each account uses only its designated API credentials
-- **Risk**: Accounts imported without credentials will not work until credentials are added
-  - Current data shows 0 accounts affected (all 820 have credentials)
+### Changes to Error Handling (lines 957-984)
 
-### No Database Changes Required
-The `telegram_api_credentials` pool table remains unchanged for historical reference.
+The current code immediately fails the recipient for "Recipient not found". We need to change this to:
+
+1. **Treat "Recipient not found" like an account error** - restrict the sender for 12 hours
+2. **Check retry_count** to determine if this is first attempt or retry
+3. **First attempt**: Reset recipient to pending, increment retry_count, add account to failed_account_ids
+4. **Retry attempt**: Permanently fail the recipient, mark contact as used
+
+### Code Changes
+
+```typescript
+// Inside the error handling section, REPLACE the current "recipient not found" handling:
+
+// Check if this is a "recipient not found" error
+const isRecipientNotFound = errorLower.includes('recipient not found') || 
+                             errorLower.includes('no user') || 
+                             errorLower.includes('user not found') ||
+                             errorLower.includes('phone not registered');
+
+if (isRecipientNotFound && r.campaign_recipient_id) {
+  // Get current recipient state including retry info
+  const { data: recipientInfo } = await supabase
+    .from("campaign_recipients")
+    .select("campaign_id, phone_number, retry_count, failed_account_ids")
+    .eq("id", r.campaign_recipient_id)
+    .single();
+
+  if (recipientInfo?.campaign_id) {
+    affectedCampaignIds.add(recipientInfo.campaign_id);
+  }
+
+  const currentRetryCount = recipientInfo?.retry_count || 0;
+  const currentFailedAccounts = recipientInfo?.failed_account_ids || [];
+
+  // ALWAYS restrict the sender account for 12 hours
+  if (r.account_id) {
+    const cooldownUntil = new Date(Date.now() + 720 * 60 * 1000).toISOString(); // 12 hours
+    console.log(`[runner-tasks/report] "Recipient not found" - restricting account ${r.account_id} for 12 hours`);
+    
+    await supabase.from("telegram_accounts")
+      .update({ 
+        status: "restricted", 
+        cooldown_until: cooldownUntil,
+        restricted_until: cooldownUntil,
+        ban_reason: `Recipient not found: ${r.error}` 
+      })
+      .eq("id", r.account_id);
+    
+    await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
+  }
+
+  if (currentRetryCount === 0) {
+    // FIRST FAILURE: Retry with different account
+    console.log(`[runner-tasks/report] First "recipient not found" for ${recipientInfo?.phone_number}, will retry with different account`);
+    
+    const updatedFailedAccounts = r.account_id && !currentFailedAccounts.includes(r.account_id) 
+      ? [...currentFailedAccounts, r.account_id] 
+      : currentFailedAccounts;
+
+    await supabase.from("campaign_recipients")
+      .update({ 
+        status: "pending",
+        retry_count: 1,
+        failed_account_ids: updatedFailedAccounts,
+        failed_reason: null,
+        sent_by_account_id: null
+      })
+      .eq("id", r.campaign_recipient_id);
+      
+  } else {
+    // SECOND+ FAILURE: Multiple accounts failed, permanent failure
+    console.log(`[runner-tasks/report] Multiple accounts failed for ${recipientInfo?.phone_number}, marking as permanently failed`);
+    
+    const updatedFailedAccounts = r.account_id && !currentFailedAccounts.includes(r.account_id) 
+      ? [...currentFailedAccounts, r.account_id] 
+      : currentFailedAccounts;
+
+    await supabase.from("campaign_recipients")
+      .update({ 
+        status: "failed", 
+        sent_by_account_id: r.account_id, 
+        failed_reason: "Recipient not found (confirmed by multiple accounts)",
+        failed_account_ids: updatedFailedAccounts
+      })
+      .eq("id", r.campaign_recipient_id);
+
+    // Mark contact as used
+    if (recipientInfo?.phone_number) {
+      await supabase.from("contacts_data")
+        .update({ 
+          is_used: true, 
+          used_at: now, 
+          notes: 'Auto-marked: Recipient not found (verified by multiple accounts)' 
+        })
+        .eq("phone_number", recipientInfo.phone_number);
+    }
+  }
+
+} else {
+  // Handle other recipient errors (non "recipient not found")
+  // ... existing code for other errors ...
+}
+```
+
+### Key Differences from Current Implementation
+
+| Aspect | Current | New |
+|--------|---------|-----|
+| Sender Account | No penalty | Restricted 12 hours |
+| First Failure | Recipient marked failed | Recipient reset to pending for retry |
+| Retry Logic | No retry | Automatic retry with different account |
+| Permanent Failure | After 1 attempt | After 2 different accounts fail |
+| Account Failure Count | Not incremented | Incremented (account penalized) |
+
+### Edge Cases Handled
+
+1. **Single account campaign**: If only one account is available, after first failure the recipient stays pending. When the account comes back from restriction (12h later), it will retry. If it fails again, recipient is marked as permanently failed.
+
+2. **All accounts fail quickly**: Each failing account gets restricted, ensuring the system doesn't spam the same error. Recipients stay pending until accounts recover or new accounts are added.
+
+3. **Same account retries**: The `failed_account_ids` array prevents the same account from being assigned twice for the same recipient.
