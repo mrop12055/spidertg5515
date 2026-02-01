@@ -1,105 +1,172 @@
 
 
-# Fix Campaign Tasks Not Being Assigned After Initial Batch
+# Fix Campaign Task Assignment and Queue Visibility
 
 ## Problem Summary
 
-Your campaign shows 299 recipients stuck in "sending" status that will never be processed. When the runner initially picked up tasks, it marked them as "sending" but then lost connection before completing them. Since the system only picks up "pending" recipients, these 299 are now permanently stuck.
+When you start a campaign:
+1. **All recipients are set to `pending` at once** - This floods the Dashboard Queue with thousands of entries
+2. **The runner picks a batch and marks them `sending`** - Recipients leave the "pending" view
+3. **The campaign gets auto-completed prematurely** - Multiple places (frontend, edge function, maintenance) check if `pending + sending + queued == 0` and mark the campaign as `completed`
+4. **A database trigger then DELETES all remaining `pending` recipients** - The `cleanup_pending_recipients_on_campaign_stop` trigger fires when status changes from `running` to `completed`
 
-## Root Cause
-
-The task assignment flow has a vulnerability:
-
-```text
-1. Runner calls /get endpoint
-2. Edge function marks recipients as "sending" (line 426)
-3. Runner crashes/disconnects before reporting results
-4. Recipients stay "sending" forever - never picked up again
-```
-
-**Current Query (line 274):**
-```
-.eq("status", "pending")  // Only picks "pending", ignores stuck "sending"
-```
+This creates a race condition where the campaign finishes after just one batch.
 
 ## Solution Overview
 
-### 1. Add Stale Task Recovery (Automated)
+Based on your preferences, implement a **staged batching system**:
 
-Add logic to the `utilities` edge function's `/maintenance` endpoint to automatically reset recipients that have been stuck in "sending" for more than 3 minutes back to "pending":
+1. **Recipients start as `queued`** (backlog) instead of `pending`
+2. **Runner-tasks stages only 1 batch** from `queued` to `pending` per request
+3. **Dashboard only shows `sending`** recipients (active batch being processed)
+4. **Never auto-delete pending recipients** - only update status, keep for audit
 
-- Check for recipients with `status = 'sending'`
-- That were assigned more than 3 minutes ago (need timestamp tracking)
-- Reset them to `pending` for retry
+## Technical Changes
 
-### 2. Add Timestamp Tracking
+### 1. Campaign Creation - Insert recipients as `queued`
 
-Add a `sending_started_at` column to `campaign_recipients` table to track when a recipient was assigned:
+**File:** `supabase/functions/admin-api/index.ts`
+
+Change the recipient insert logic to use `queued` instead of `pending`:
+```text
+- status: 'pending'
++ status: 'queued'
+```
+
+### 2. Runner-Tasks - Stage batches from `queued` to `pending`
+
+**File:** `supabase/functions/runner-tasks/index.ts`
+
+Before fetching `pending` recipients, promote exactly 1 batch from `queued`:
+
+```text
+// Step 1: Promote one batch from queued -> pending
+const { data: queuedBatch } = await supabase
+  .from('campaign_recipients')
+  .select('id, campaigns!inner(status)')
+  .eq('status', 'queued')
+  .eq('campaigns.status', 'running')
+  .order('scheduled_at', { ascending: true, nullsFirst: true })
+  .limit(batch_size);
+
+if (queuedBatch?.length > 0) {
+  await supabase
+    .from('campaign_recipients')
+    .update({ status: 'pending' })
+    .in('id', queuedBatch.map(r => r.id));
+}
+
+// Step 2: Now fetch pending recipients (as before)
+```
+
+This ensures only `batch_size` recipients are ever in `pending` at a time.
+
+### 3. Dashboard Queue - Show only `sending` (active batch)
+
+**File:** `src/components/dashboard/TaskQueueCard.tsx`
+
+Update the recipients query to show `sending` instead of `pending`:
+
+```text
+- .eq('status', 'pending')
++ .eq('status', 'sending')
+```
+
+This shows only recipients currently being processed by the runner.
+
+### 4. Remove auto-delete trigger
+
+**Database Migration**
+
+Drop the dangerous trigger that deletes pending recipients on campaign completion:
 
 ```sql
-ALTER TABLE campaign_recipients 
-ADD COLUMN sending_started_at TIMESTAMPTZ;
+DROP TRIGGER IF EXISTS cleanup_recipients_on_campaign_stop 
+  ON public.campaigns;
 ```
 
-### 3. Update Task Assignment
+This ensures recipients are never automatically deleted, preserving them for audit.
 
-When marking recipients as "sending", also set the timestamp:
+### 5. Update auto-complete logic to include `queued`
 
-```typescript
-await supabase.from("campaign_recipients")
-  .update({ status: "sending", sending_started_at: nowIso })
-  .eq("id", r.id);
+**Files:** 
+- `supabase/functions/runner-tasks/index.ts` (lines 1069-1073)
+- `supabase/functions/utilities/index.ts` (lines 262-266)
+- `src/pages/Campaigns.tsx` (lines 224-228)
+
+Ensure the auto-complete check counts `queued` recipients:
+
+```text
+.in('status', ['pending', 'sending', 'queued'])
 ```
 
-### 4. Recovery Logic in utilities/maintenance
+This prevents campaigns from completing while there's still queued work.
 
-Add to the maintenance endpoint:
+### 6. Update `system_health` view
 
-```typescript
-// Reset stale "sending" recipients (stuck for > 3 minutes)
-const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-const { data: staleRecipients } = await supabase
-  .from('campaign_recipients')
-  .update({ 
-    status: 'pending', 
-    sending_started_at: null,
-    sent_by_account_id: null 
-  })
-  .eq('status', 'sending')
-  .lt('sending_started_at', threeMinutesAgo)
-  .select();
+**Database Migration**
 
-results.stale_recipients_reset = staleRecipients?.length || 0;
+Update the view to count `sending` recipients (active batch) instead of `pending`:
+
+```sql
+CREATE OR REPLACE VIEW public.system_health AS
+SELECT 
+  ...
+  (SELECT count(*) FROM public.campaign_recipients 
+   WHERE status = 'sending') AS pending_recipients,
+  ...
 ```
-
-## Immediate Fix
-
-For your currently stuck campaign, I will immediately reset the 299 stuck recipients back to "pending" so they can be processed.
 
 ---
 
-## Files to Modify
+## Summary of Changes
 
 | File | Change |
 |------|--------|
-| Database migration | Add `sending_started_at` column to `campaign_recipients` |
-| `supabase/functions/runner-tasks/index.ts` | Set `sending_started_at` when marking as "sending" |
-| `supabase/functions/utilities/index.ts` | Add stale recipient recovery in `/maintenance` endpoint |
+| `supabase/functions/admin-api/index.ts` | Insert new recipients as `queued` instead of `pending` |
+| `supabase/functions/runner-tasks/index.ts` | Stage 1 batch from `queued` to `pending` before fetching |
+| `supabase/functions/runner-tasks/index.ts` | Include `queued` in auto-complete check |
+| `supabase/functions/utilities/index.ts` | Include `queued` in auto-complete check |
+| `src/pages/Campaigns.tsx` | Include `queued` in remaining work calculation |
+| `src/components/dashboard/TaskQueueCard.tsx` | Show `sending` recipients instead of `pending` |
+| Database migration | Drop `cleanup_recipients_on_campaign_stop` trigger |
+| Database migration | Update `system_health` view to count `sending` |
+
+---
 
 ## Technical Details
 
-### Database Changes
-- New column `sending_started_at` (TIMESTAMPTZ, nullable) to track when a recipient entered "sending" status
+### Recipient Status Flow
 
-### Edge Function Changes (runner-tasks)
-- Line 426: Add `sending_started_at: nowIso` to the update statement
+```text
+┌──────────┐    Runner stages    ┌──────────┐    Runner claims    ┌──────────┐
+│  queued  │ ────────────────►  │  pending │ ────────────────►  │  sending │
+│ (backlog)│    (1 batch)       │ (ready)  │    (assigns acct)  │ (active) │
+└──────────┘                    └──────────┘                    └──────────┘
+                                                                      │
+                                      ┌───────────────────────────────┤
+                                      ▼                               ▼
+                                ┌──────────┐                   ┌──────────┐
+                                │   sent   │                   │  failed  │
+                                │ (done)   │                   │ (error)  │
+                                └──────────┘                   └──────────┘
+```
 
-### Edge Function Changes (utilities)
-- Add stale recovery logic after runner offline detection (around line 217)
-- Reset recipients where `status = 'sending'` AND `sending_started_at < 3 minutes ago`
+### Dashboard Queue Behavior
 
-### Recovery Behavior
-- 3-minute timeout balances between recovery speed and avoiding interrupting legitimate processing
-- Resets `sent_by_account_id` and `sending_started_at` for clean retry
-- Does NOT increment `retry_count` since the task was never actually attempted
+- **Shows:** Only recipients with `status = 'sending'` (currently being processed)
+- **Count:** Matches the batch_size setting (e.g., 100)
+- **Updates:** Refreshes as runner reports results and stages new batches
+
+### Campaign Completion Criteria
+
+A campaign completes ONLY when:
+- `pending_count + sending_count + queued_count == 0`
+- All recipients are either `sent` or `failed`
+
+### Data Retention
+
+- Recipients are NEVER automatically deleted
+- All `sent`, `failed`, and remaining `queued` recipients stay in the database
+- Full audit trail preserved for reporting
 
