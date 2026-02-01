@@ -207,6 +207,7 @@ export type Database = {
           retry_count: number | null
           scheduled_at: string | null
           seat_id: string | null
+          sending_started_at: string | null
           sent_at: string | null
           sent_by_account_id: string | null
           status: string | null
@@ -223,6 +224,7 @@ export type Database = {
           retry_count?: number | null
           scheduled_at?: string | null
           seat_id?: string | null
+          sending_started_at?: string | null
           sent_at?: string | null
           sent_by_account_id?: string | null
           status?: string | null
@@ -239,6 +241,7 @@ export type Database = {
           retry_count?: number | null
           scheduled_at?: string | null
           seat_id?: string | null
+          sending_started_at?: string | null
           sent_at?: string | null
           sent_by_account_id?: string | null
           status?: string | null

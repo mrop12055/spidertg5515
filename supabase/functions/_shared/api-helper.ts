@@ -1,15 +1,14 @@
 /**
  * API Credential Helper
  * 
- * BUILD: 2026-01-29-per-account-priority-v1
+ * BUILD: 2026-02-01-per-account-only-v1
  * 
- * ARCHITECTURE: PER-ACCOUNT FIRST, POOL FALLBACK
+ * ARCHITECTURE: PER-ACCOUNT ONLY (NO POOL FALLBACK)
  * 
- * PRIMARY: Per-account credentials from JSON metadata (api_id, api_hash stored in telegram_accounts)
- * FALLBACK: Legacy pool-based round-robin (for accounts without JSON credentials)
+ * Per-account credentials from JSON metadata (api_id, api_hash stored in telegram_accounts)
+ * Accounts without credentials will be skipped for tasks.
  * 
- * The system now prioritizes credentials embedded in JSON files during account import.
- * Pool functions are kept for backwards compatibility with legacy accounts.
+ * Pool functions are kept for backwards compatibility but are no longer called.
  */
 
 // =============================================
@@ -35,7 +34,7 @@ export async function getApiCredentialsForAccount(
 ): Promise<{ api_id: string; api_hash: string; api_credential_id: string | null } | null> {
   const accountId = account.phone_number || account.id || 'unknown';
   
-  // Check account's own credentials first (priority: per-account from JSON)
+  // Per-account credentials only (no pool fallback)
   if (account.api_id && account.api_hash) {
     console.log(`[api-helper] ✅ PER-ACCOUNT API for ${accountId}: app_id=${account.api_id}`);
     return {
@@ -45,54 +44,35 @@ export async function getApiCredentialsForAccount(
     };
   }
   
-  // FALLBACK: Legacy pool (round-robin) for accounts without JSON credentials
-  const poolCred = await selectNextApiCredential(supabase);
-  if (poolCred) {
-    console.log(`[api-helper] 🔄 POOL FALLBACK for ${accountId}: app_id=${poolCred.api_id} (account has no JSON credentials)`);
-    return {
-      api_id: poolCred.api_id,
-      api_hash: poolCred.api_hash,
-      api_credential_id: poolCred.id,
-    };
-  }
-  
-  console.warn(`[api-helper] ❌ NO API for ${accountId}: account has no credentials and pool is empty`);
+  // No fallback - account must have its own credentials
+  console.warn(`[api-helper] ❌ Account ${accountId} has no API credentials - skipping`);
   return null;
 }
 
 /**
  * Get effective API credentials for an account (synchronous version).
- * Use when you already have pool credential pre-fetched.
+ * Per-account only - poolCredential parameter is ignored (kept for backwards compatibility).
  * 
  * @param account - Account with optional api_id and api_hash
- * @param poolCredential - Optional pre-fetched pool credential as fallback
+ * @param poolCredential - IGNORED (kept for backwards compatibility)
  * @returns Effective credentials with api_credential_id for tracking (null if from account)
  */
 export function getEffectiveApiCredentials(
   account: { api_id?: string | null; api_hash?: string | null },
   poolCredential: { id: string; api_id: string; api_hash: string } | null
 ): { api_id: string; api_hash: string; api_credential_id: string | null } | null {
-  // Priority 1: Account's own credentials (from JSON import)
+  // Per-account credentials only (pool fallback removed)
   if (account.api_id && account.api_hash) {
     console.log(`[api-helper] ✅ Using per-account credentials: ${account.api_id}`);
     return {
       api_id: account.api_id,
       api_hash: account.api_hash,
-      api_credential_id: null, // No pool tracking for per-account credentials
+      api_credential_id: null,
     };
   }
   
-  // Priority 2: Pool credential (round-robin fallback)
-  if (poolCredential) {
-    console.log(`[api-helper] 🔄 Using pool fallback: ${poolCredential.api_id}`);
-    return {
-      api_id: poolCredential.api_id,
-      api_hash: poolCredential.api_hash,
-      api_credential_id: poolCredential.id,
-    };
-  }
-  
-  console.warn('[api-helper] ❌ No API credentials available (account has none, pool is empty)');
+  // No fallback - account must have its own credentials
+  console.warn('[api-helper] ❌ Account has no API credentials - skipping');
   return null;
 }
 
