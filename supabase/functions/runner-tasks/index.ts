@@ -325,30 +325,41 @@ async function handleGetTasks(supabase: any, body: any) {
       console.warn('[runner-tasks/get] Stale campaign recovery failed:', e);
     }
 
-    // === STAGED BATCHING: Promote exactly 1 batch from queued → pending ===
-    // This ensures only batch_size recipients are ever in 'pending' at a time,
-    // keeping the Dashboard queue small and preventing premature campaign completion.
+    // === INSTANT ASSIGNMENT: Promote ALL queued → pending for running campaigns ===
+    // The user expectation is that when a campaign is running, all recipients are immediately
+    // available for the runner (no slow staging in batches).
     try {
-      const { data: queuedBatch } = await supabase
-        .from('campaign_recipients')
-        .select('id, campaign_id, campaigns!inner(status)')
-        .eq('status', 'queued')
-        .eq('campaigns.status', 'running')
-        .order('scheduled_at', { ascending: true, nullsFirst: true })
-        .limit(batch_size);
+      const { data: runningCampaigns, error: runningErr } = await supabase
+        .from('campaigns')
+        .select('id')
+        .eq('status', 'running');
 
-      if (queuedBatch && queuedBatch.length > 0) {
-        const { error: promoteError } = await supabase
+      if (runningErr) throw runningErr;
+
+      const runningIds = (runningCampaigns || []).map((c: any) => c.id);
+      if (runningIds.length > 0) {
+        // Count queued without returning rows (avoids max_rows truncation)
+        const { count: queuedCount, error: countErr } = await supabase
           .from('campaign_recipients')
-          .update({ status: 'pending' })
-          .in('id', queuedBatch.map((r: any) => r.id));
+          .select('id', { count: 'exact', head: true })
+          .eq('status', 'queued')
+          .in('campaign_id', runningIds);
 
-        if (!promoteError) {
-          console.log(`[runner-tasks/get] Staged ${queuedBatch.length} recipients from queued → pending`);
+        if (countErr) throw countErr;
+
+        if ((queuedCount || 0) > 0) {
+          const { error: promoteErr } = await supabase
+            .from('campaign_recipients')
+            .update({ status: 'pending' })
+            .eq('status', 'queued')
+            .in('campaign_id', runningIds);
+
+          if (promoteErr) throw promoteErr;
+          console.log(`[runner-tasks/get] Promoted ${queuedCount} recipients from queued → pending (instant mode)`);
         }
       }
     } catch (e) {
-      console.warn('[runner-tasks/get] Batch staging failed:', e);
+      console.warn('[runner-tasks/get] Instant queued→pending promotion failed:', e);
     }
 
     // Now fetch only 'pending' recipients (freshly staged batch)
