@@ -218,7 +218,7 @@ serve(async (req) => {
 
       // Reset stale "sending" recipients (stuck for > 3 minutes)
       const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-      const { data: staleRecipients } = await supabase
+      const { data: staleSending } = await supabase
         .from('campaign_recipients')
         .update({ 
           status: 'pending', 
@@ -229,7 +229,14 @@ serve(async (req) => {
         .lt('sending_started_at', threeMinutesAgo)
         .select('id');
 
-      results.stale_recipients_reset = staleRecipients?.length || 0;
+      // Also reset any "queued" recipients back to pending (queued status is not processed)
+      const { data: staleQueued } = await supabase
+        .from('campaign_recipients')
+        .update({ status: 'pending' })
+        .eq('status', 'queued')
+        .select('id');
+
+      results.stale_recipients_reset = (staleSending?.length || 0) + (staleQueued?.length || 0);
 
       // Auto-complete stuck campaigns
       const { data: runningCampaigns } = await supabase
