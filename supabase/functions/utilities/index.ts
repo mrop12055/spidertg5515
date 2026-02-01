@@ -216,6 +216,21 @@ serve(async (req) => {
 
       results.runners_marked_offline = offlineRunners?.length || 0;
 
+      // Reset stale "sending" recipients (stuck for > 3 minutes)
+      const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+      const { data: staleRecipients } = await supabase
+        .from('campaign_recipients')
+        .update({ 
+          status: 'pending', 
+          sending_started_at: null,
+          sent_by_account_id: null 
+        })
+        .eq('status', 'sending')
+        .lt('sending_started_at', threeMinutesAgo)
+        .select('id');
+
+      results.stale_recipients_reset = staleRecipients?.length || 0;
+
       // Auto-complete stuck campaigns
       const { data: runningCampaigns } = await supabase
         .from('campaigns')
