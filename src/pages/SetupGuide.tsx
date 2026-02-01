@@ -1330,6 +1330,9 @@ async def process(task: dict):
     # ========== MESSAGE SENDING ==========
     # Campaign, Conversation, Warmup - they ALL just send messages
     if tt in ("send", "campaign_send", "livechat_reply", "warmup_chat") or ("send" in tt and "warmup" in tt):
+        # Debug logging for campaign tasks
+        if task.get("campaign_recipient_id"):
+            print(f"  [CAMPAIGN] Processing recipient {task.get('campaign_recipient_id')[:8]}...")
         # Extract data - works for ANY task type
         msg = task.get("message", {})
         td = task.get("task_data", {})

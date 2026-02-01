@@ -293,7 +293,8 @@ async function handleGetTasks(supabase: any, body: any) {
     // system doesn't depend on a separate maintenance job being invoked.
     const threeMinutesAgoIso = new Date(Date.now() - 3 * 60 * 1000).toISOString();
     try {
-      const { data: recovered } = await supabase
+      // Recover stale recipients with timestamps older than 3 minutes
+      const { data: recoveredWithTs } = await supabase
         .from('campaign_recipients')
         .update({
           status: 'pending',
@@ -301,12 +302,24 @@ async function handleGetTasks(supabase: any, body: any) {
           sent_by_account_id: null,
         })
         .eq('status', 'sending')
-        // Treat null timestamps as stale (legacy rows)
-        .or(`sending_started_at.lt.${threeMinutesAgoIso},sending_started_at.is.null`)
+        .lt('sending_started_at', threeMinutesAgoIso)
         .select('id');
 
-      if ((recovered?.length || 0) > 0) {
-        console.log(`[runner-tasks/get] Recovered ${recovered!.length} stale campaign recipients back to pending`);
+      // Also recover legacy rows with null timestamps (stuck indefinitely)
+      const { data: recoveredLegacy } = await supabase
+        .from('campaign_recipients')
+        .update({
+          status: 'pending',
+          sending_started_at: null,
+          sent_by_account_id: null,
+        })
+        .eq('status', 'sending')
+        .is('sending_started_at', null)
+        .select('id');
+
+      const totalRecovered = (recoveredWithTs?.length || 0) + (recoveredLegacy?.length || 0);
+      if (totalRecovered > 0) {
+        console.log(`[runner-tasks/get] Recovered ${totalRecovered} stale campaign recipients back to pending (${recoveredWithTs?.length || 0} expired, ${recoveredLegacy?.length || 0} legacy)`);
       }
     } catch (e) {
       console.warn('[runner-tasks/get] Stale campaign recovery failed:', e);
