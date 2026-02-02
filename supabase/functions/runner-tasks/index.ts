@@ -286,6 +286,31 @@ async function handleGetTasks(supabase: any, body: any) {
 
   const tasks: any[] = [];
 
+  // ===== PROACTIVE CAMPAIGN COMPLETION CHECK =====
+  // Check running campaigns to auto-complete those with no pending work
+  // This catches campaigns that finished but weren't marked complete (e.g., runner restart)
+  const { data: runningCampaigns } = await supabase
+    .from('campaigns')
+    .select('id')
+    .eq('status', 'running');
+  
+  if (runningCampaigns?.length) {
+    for (const campaign of runningCampaigns) {
+      const { count: pendingCount } = await supabase
+        .from('campaign_recipients')
+        .select('*', { count: 'exact', head: true })
+        .eq('campaign_id', campaign.id)
+        .in('status', ['pending', 'sending', 'queued']);
+      
+      if (pendingCount === 0) {
+        await supabase.from('campaigns')
+          .update({ status: 'completed', updated_at: nowIso })
+          .eq('id', campaign.id);
+        console.log(`[runner-tasks/get] Campaign ${campaign.id} auto-completed (0 pending recipients)`);
+      }
+    }
+  }
+
   // ===== CAMPAIGN TASKS =====
   if (runner === "campaign" || runner === "unified") {
     const { data: recipients } = await supabase
