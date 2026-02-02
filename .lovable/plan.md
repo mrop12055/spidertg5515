@@ -1,173 +1,184 @@
 
-# Handle "Recipient Not Found" Error with Retry and Account Restriction
+# Performance Overload Investigation and Fix Plan
 
-## Overview
-When a sender account encounters a "Recipient not found" error, the system will:
-1. Mark the sender account as **restricted for 12 hours** (treat it like PeerFlood)
-2. Retry sending with a **different account**
-3. If the second account also fails with the same error, **permanently mark the recipient as failed** and mark the contact as used
+## Problem Summary
+The admin dashboard is crashing under heavy load, showing all stats as 0 and database functions timing out. The SQL query I just ran returned a "Connection terminated due to connection timeout" error, confirming the database connection pool is exhausted.
 
-## Current Behavior
-- "Recipient not found" errors immediately mark the recipient as `failed`
-- The contact is marked as `is_used = true` in `contacts_data`
-- No penalty to the sender account (this was added in the last change)
+## Root Causes Identified
 
-## New Behavior
-- **First failure**: 
-  - Mark sender account as `restricted` for 12 hours
-  - Add account to `failed_account_ids` array
-  - Reset recipient to `pending` status for retry
-  - Increment `retry_count` to 1
-- **Second failure (different account)**:
-  - Mark sender account as `restricted` for 12 hours
-  - Mark recipient as permanently `failed`
-  - Mark contact as `is_used` in `contacts_data`
+### 1. Excessive Parallel Database Requests on App Load
+When the app loads, multiple components fire simultaneous database queries:
 
-## Flow Diagram
+| Component/Hook | Queries | Frequency |
+|---------------|---------|-----------|
+| `TelegramContext` | 3 queries (campaigns, conversations, messages) + conversations pagination (up to 10 pages) | On mount + realtime |
+| `useDashboardStats` | 6 parallel queries | Every 30s + on mount |
+| `useAccounts` | Sequential paginated queries | On mount + realtime |
+| `useProxies` | Up to 99 parallel queries | On mount + realtime |
+| `useUniqueConversations` | Up to 50 parallel queries | On mount |
+| `TaskQueueCard` | 8 parallel queries | Every 3s debounce + realtime |
+| `RecentErrorsCard` | 8 parallel queries | Every 5s debounce + realtime |
+| `useRunnerStatus` | 1 query | Every 15s + realtime |
 
+**Total on page load: 50-150+ simultaneous queries**
+
+### 2. Duplicate Data Fetching
+- `TelegramContext` fetches conversations (up to 10K) globally
+- `useConversations` hook also fetches the same data
+- Both pages `Conversations.tsx` and `SeatChat.tsx` have their own fetch logic
+- Campaigns are fetched in both `TelegramContext` and `useCampaigns` hook
+
+### 3. Aggressive Realtime Subscriptions
+Multiple components subscribe to the same tables with overlapping listeners:
+
+```text
+messages table: TelegramContext, TaskQueueCard, RecentErrorsCard, Conversations page
+conversations table: TelegramContext, useConversations, TaskQueueCard, SeatChat page
+campaigns table: TelegramContext, useCampaigns hook
+telegram_accounts table: TelegramContext, useAccounts hook
 ```
-Account A tries to send → "Recipient not found"
-   ↓
-Mark Account A as restricted (12 hours)
-Add Account A to failed_account_ids
-Set recipient status = "pending", retry_count = 1
-   ↓
-Task dispatcher picks up recipient again
-Skips Account A (in failed_account_ids)
-   ↓
-Account B tries to send → "Recipient not found"  
-   ↓
-Mark Account B as restricted (12 hours)
-Mark recipient as "failed" (permanent)
-Mark contact as used in contacts_data
+
+Each subscription triggers re-fetches and can cascade into many more queries.
+
+### 4. Unbounded Parallel Pagination
+`useProxies` launches up to 99 parallel queries immediately:
+```typescript
+for (let page = 1; page < MAX_PAGES; page++) { // MAX_PAGES = 100
+  pagePromises.push(...);
+}
+await Promise.all(pagePromises); // 99 parallel requests!
 ```
+
+### 5. Edge Function Overhead
+The `runner-tasks` edge function runs expensive operations on every `/get` request:
+- Queries all running campaigns
+- For each campaign, runs a separate count query
+- Recovers stale messages (update + select)
+- Recovers stale recipients (update + select)
+- Loads all accounts with proxy joins
 
 ---
 
-## Technical Details
+## Solution: Multi-Layer Performance Optimization
 
-### File to Modify
-`supabase/functions/runner-tasks/index.ts`
+### Phase 1: Reduce Initial Load Queries (Critical)
 
-### Changes to Error Handling (lines 957-984)
-
-The current code immediately fails the recipient for "Recipient not found". We need to change this to:
-
-1. **Treat "Recipient not found" like an account error** - restrict the sender for 12 hours
-2. **Check retry_count** to determine if this is first attempt or retry
-3. **First attempt**: Reset recipient to pending, increment retry_count, add account to failed_account_ids
-4. **Retry attempt**: Permanently fail the recipient, mark contact as used
-
-### Code Changes
-
+**1.1 Add Query Concurrency Limiter**
+Create a shared utility to limit concurrent Supabase queries:
 ```typescript
-// Inside the error handling section, REPLACE the current "recipient not found" handling:
+// src/lib/query-limiter.ts
+const MAX_CONCURRENT = 5;
+```
 
-// Check if this is a "recipient not found" error
-const isRecipientNotFound = errorLower.includes('recipient not found') || 
-                             errorLower.includes('no user') || 
-                             errorLower.includes('user not found') ||
-                             errorLower.includes('phone not registered');
+**1.2 Fix useProxies Unbounded Parallelism**
+Change from parallel to sequential with early exit:
+- Remove Promise.all for 99 queries
+- Stop when page returns less than PAGE_SIZE
 
-if (isRecipientNotFound && r.campaign_recipient_id) {
-  // Get current recipient state including retry info
-  const { data: recipientInfo } = await supabase
-    .from("campaign_recipients")
-    .select("campaign_id, phone_number, retry_count, failed_account_ids")
-    .eq("id", r.campaign_recipient_id)
-    .single();
+**1.3 Fix useUniqueConversations**
+- Add concurrency limit (max 5 parallel pages)
+- Consider moving this to a database view or function
 
-  if (recipientInfo?.campaign_id) {
-    affectedCampaignIds.add(recipientInfo.campaign_id);
+**1.4 Consolidate TelegramContext**
+- Remove duplicate conversation fetching (already handled by useConversations)
+- Remove duplicate campaign fetching (already handled by useCampaigns)
+- Only keep what's truly needed globally (messages for notifications)
+
+### Phase 2: Deduplicate Realtime Subscriptions
+
+**2.1 Create Centralized Subscription Manager**
+- Single subscription per table at the app level
+- Components subscribe to events via context/callbacks
+- Prevents N+1 subscriptions to same table
+
+**2.2 Remove Duplicate Subscriptions**
+- TaskQueueCard: Remove polling fallback since realtime is primary
+- RecentErrorsCard: Increase debounce from 5s to 10s
+- Consolidate account/campaign realtime to single source
+
+### Phase 3: Add Circuit Breaker Pattern
+
+**3.1 Detect Overload Condition**
+```typescript
+// Track failed requests
+let consecutiveFailures = 0;
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+
+if (error.message.includes('timeout')) {
+  consecutiveFailures++;
+  if (consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+    // Pause all non-critical requests for 30s
   }
-
-  const currentRetryCount = recipientInfo?.retry_count || 0;
-  const currentFailedAccounts = recipientInfo?.failed_account_ids || [];
-
-  // ALWAYS restrict the sender account for 12 hours
-  if (r.account_id) {
-    const cooldownUntil = new Date(Date.now() + 720 * 60 * 1000).toISOString(); // 12 hours
-    console.log(`[runner-tasks/report] "Recipient not found" - restricting account ${r.account_id} for 12 hours`);
-    
-    await supabase.from("telegram_accounts")
-      .update({ 
-        status: "restricted", 
-        cooldown_until: cooldownUntil,
-        restricted_until: cooldownUntil,
-        ban_reason: `Recipient not found: ${r.error}` 
-      })
-      .eq("id", r.account_id);
-    
-    await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
-  }
-
-  if (currentRetryCount === 0) {
-    // FIRST FAILURE: Retry with different account
-    console.log(`[runner-tasks/report] First "recipient not found" for ${recipientInfo?.phone_number}, will retry with different account`);
-    
-    const updatedFailedAccounts = r.account_id && !currentFailedAccounts.includes(r.account_id) 
-      ? [...currentFailedAccounts, r.account_id] 
-      : currentFailedAccounts;
-
-    await supabase.from("campaign_recipients")
-      .update({ 
-        status: "pending",
-        retry_count: 1,
-        failed_account_ids: updatedFailedAccounts,
-        failed_reason: null,
-        sent_by_account_id: null
-      })
-      .eq("id", r.campaign_recipient_id);
-      
-  } else {
-    // SECOND+ FAILURE: Multiple accounts failed, permanent failure
-    console.log(`[runner-tasks/report] Multiple accounts failed for ${recipientInfo?.phone_number}, marking as permanently failed`);
-    
-    const updatedFailedAccounts = r.account_id && !currentFailedAccounts.includes(r.account_id) 
-      ? [...currentFailedAccounts, r.account_id] 
-      : currentFailedAccounts;
-
-    await supabase.from("campaign_recipients")
-      .update({ 
-        status: "failed", 
-        sent_by_account_id: r.account_id, 
-        failed_reason: "Recipient not found (confirmed by multiple accounts)",
-        failed_account_ids: updatedFailedAccounts
-      })
-      .eq("id", r.campaign_recipient_id);
-
-    // Mark contact as used
-    if (recipientInfo?.phone_number) {
-      await supabase.from("contacts_data")
-        .update({ 
-          is_used: true, 
-          used_at: now, 
-          notes: 'Auto-marked: Recipient not found (verified by multiple accounts)' 
-        })
-        .eq("phone_number", recipientInfo.phone_number);
-    }
-  }
-
-} else {
-  // Handle other recipient errors (non "recipient not found")
-  // ... existing code for other errors ...
 }
 ```
 
-### Key Differences from Current Implementation
+**3.2 Graceful Degradation**
+- Show cached data when database is unreachable
+- Display "Connection issues - showing cached data" banner
+- Disable non-critical features (errors card, task queue) until recovery
 
-| Aspect | Current | New |
-|--------|---------|-----|
-| Sender Account | No penalty | Restricted 12 hours |
-| First Failure | Recipient marked failed | Recipient reset to pending for retry |
-| Retry Logic | No retry | Automatic retry with different account |
-| Permanent Failure | After 1 attempt | After 2 different accounts fail |
-| Account Failure Count | Not incremented | Incremented (account penalized) |
+### Phase 4: Edge Function Optimization
 
-### Edge Cases Handled
+**4.1 Batch Campaign Completion Check**
+Instead of N queries for N campaigns:
+```sql
+-- Single query to find completable campaigns
+SELECT c.id FROM campaigns c
+WHERE c.status = 'running'
+AND NOT EXISTS (
+  SELECT 1 FROM campaign_recipients cr
+  WHERE cr.campaign_id = c.id
+  AND cr.status IN ('pending', 'sending', 'queued')
+);
+```
 
-1. **Single account campaign**: If only one account is available, after first failure the recipient stays pending. When the account comes back from restriction (12h later), it will retry. If it fails again, recipient is marked as permanently failed.
+**4.2 Add Request Coalescing**
+- Cache account list for 10 seconds
+- Cache settings for 30 seconds (already done)
+- Skip expensive operations if last run was <10s ago
 
-2. **All accounts fail quickly**: Each failing account gets restricted, ensuring the system doesn't spam the same error. Recipients stay pending until accounts recover or new accounts are added.
+### Phase 5: Dashboard-Specific Optimizations
 
-3. **Same account retries**: The `failed_account_ids` array prevents the same account from being assigned twice for the same recipient.
+**5.1 Lazy Load Non-Critical Cards**
+- TaskQueueCard: Load only when visible (Intersection Observer)
+- RecentErrorsCard: Same lazy loading
+- Reduce initial queries from 50+ to ~10
+
+**5.2 Add Loading States with Stale Data**
+- Show previous cached data immediately
+- Update in background
+- Prevents "0" flash during load
+
+---
+
+## Technical Implementation Details
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/lib/query-limiter.ts` | NEW - Concurrency limiter utility |
+| `src/hooks/useProxies.ts` | Sequential pagination with limit |
+| `src/hooks/useUniqueConversations.ts` | Add concurrency limit |
+| `src/context/TelegramContext.tsx` | Remove duplicate fetches, slim down |
+| `src/components/dashboard/TaskQueueCard.tsx` | Lazy load + reduce query frequency |
+| `src/components/dashboard/RecentErrorsCard.tsx` | Lazy load + reduce query frequency |
+| `src/pages/Dashboard.tsx` | Add error boundary + graceful degradation |
+| `supabase/functions/runner-tasks/index.ts` | Batch operations, add caching |
+
+### Priority Order
+1. **Immediate**: Fix useProxies parallelism (biggest offender)
+2. **Immediate**: Add circuit breaker to prevent cascade failures
+3. **High**: Consolidate TelegramContext
+4. **High**: Optimize runner-tasks edge function
+5. **Medium**: Lazy load dashboard cards
+6. **Medium**: Centralize realtime subscriptions
+
+---
+
+## Expected Outcomes
+
+- Initial page load: 50-150 queries reduced to 10-15 queries
+- Database connection usage: 80% reduction
+- Recovery time from overload: 30 seconds (circuit breaker)
+- User experience: Cached data shown during issues instead of "0"
