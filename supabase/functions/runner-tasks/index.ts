@@ -39,6 +39,30 @@ interface CachedSettings {
 let settingsCache: CachedSettings | null = null;
 const SETTINGS_CACHE_TTL_MS = 30 * 1000;
 
+// ==================== LOAD SHEDDING / THROTTLING ====================
+// runner-tasks is polled very frequently by the Python runner(s). Under heavy load,
+// doing expensive "maintenance" DB work on *every* poll can exhaust connections.
+// We therefore:
+// 1) Throttle maintenance blocks (cooldown restore + stale recovery + completion checks)
+// 2) Cache the heavy accounts+proxies query for a short TTL
+
+const MAINTENANCE_TTL_MS = 30 * 1000;
+let lastMaintenanceAt = 0;
+
+interface CachedAccounts {
+  key: string;
+  data: any[];
+  timestamp: number;
+}
+
+const ACCOUNTS_CACHE_TTL_MS = 10 * 1000;
+let accountsCache: CachedAccounts | null = null;
+
+function makeAccountsCacheKey(runner: string | undefined, accountIds?: string[]) {
+  const ids = (accountIds || []).slice().sort().join(',');
+  return `${runner || 'unknown'}::${ids}`;
+}
+
 async function getCachedSettings(supabase: any): Promise<Record<string, any>[]> {
   const now = Date.now();
   if (settingsCache && (now - settingsCache.timestamp) < SETTINGS_CACHE_TTL_MS) {
@@ -165,6 +189,7 @@ serve(async (req) => {
 async function handleGetTasks(supabase: any, body: any) {
   const { runner, account_ids } = body;
   const nowIso = new Date().toISOString();
+  const nowMs = Date.now();
 
   // Get settings first to use admin-configured batch size
   const settingsData = await getCachedSettings(supabase);
@@ -191,52 +216,61 @@ async function handleGetTasks(supabase: any, body: any) {
   }
 
 
-  // Auto-restore expired cooldowns (check both restricted_until and cooldown_until)
-  const { data: expiredCooldowns } = await supabase
-    .from("telegram_accounts")
-    .select("id, status, restricted_until, cooldown_until")
-    .in("status", ["cooldown", "restricted"]);
-  
-  // Filter accounts where either cooldown has expired
-  const accountsToRestore = (expiredCooldowns || []).filter((a: any) => {
-    const restrictedExpired = a.restricted_until && new Date(a.restricted_until) < new Date(nowIso);
-    const cooldownExpired = a.cooldown_until && new Date(a.cooldown_until) < new Date(nowIso);
-    // Restore if either timer expired (or both null for legacy accounts stuck in cooldown)
-    return restrictedExpired || cooldownExpired || (!a.restricted_until && !a.cooldown_until);
-  });
-  
-  if (accountsToRestore.length > 0) {
-    await supabase.from("telegram_accounts")
-      .update({ status: "active", restricted_until: null, cooldown_until: null, ban_reason: null })
-      .in("id", accountsToRestore.map((a: any) => a.id));
-    console.log(`[runner-tasks/get] Restored ${accountsToRestore.length} accounts from cooldown`);
-  }
+  // ==================== MAINTENANCE (THROTTLED) ====================
+  // Only run heavy maintenance at most once per MAINTENANCE_TTL_MS.
+  // This is critical because runners poll /get frequently.
+  const shouldRunMaintenance = nowMs - lastMaintenanceAt > MAINTENANCE_TTL_MS;
+  if (shouldRunMaintenance) {
+    lastMaintenanceAt = nowMs;
 
-  // === SELF-HEALING: Recover stale messages stuck in 'sending' for 3+ minutes ===
-  const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-  
-  // Recover stale LiveChat messages
-  const { data: staleMessages } = await supabase
-    .from("messages")
-    .update({ status: "pending" })
-    .eq("status", "sending")
-    .lt("created_at", threeMinutesAgo)
-    .select("id");
-  
-  if (staleMessages?.length) {
-    console.log(`[runner-tasks/get] Recovered ${staleMessages.length} stale messages from sending→pending`);
-  }
+    // Auto-restore expired cooldowns (check both restricted_until and cooldown_until)
+    const { data: expiredCooldowns } = await supabase
+      .from("telegram_accounts")
+      .select("id, status, restricted_until, cooldown_until")
+      .in("status", ["cooldown", "restricted"]);
 
-  // Recover stale campaign recipients
-  const { data: staleRecipients } = await supabase
-    .from("campaign_recipients")
-    .update({ status: "pending", sending_started_at: null })
-    .eq("status", "sending")
-    .lt("sending_started_at", threeMinutesAgo)
-    .select("id");
-  
-  if (staleRecipients?.length) {
-    console.log(`[runner-tasks/get] Recovered ${staleRecipients.length} stale recipients from sending→pending`);
+    // Filter accounts where either cooldown has expired
+    const accountsToRestore = (expiredCooldowns || []).filter((a: any) => {
+      const restrictedExpired = a.restricted_until && new Date(a.restricted_until) < new Date(nowIso);
+      const cooldownExpired = a.cooldown_until && new Date(a.cooldown_until) < new Date(nowIso);
+      // Restore if either timer expired (or both null for legacy accounts stuck in cooldown)
+      return restrictedExpired || cooldownExpired || (!a.restricted_until && !a.cooldown_until);
+    });
+
+    if (accountsToRestore.length > 0) {
+      await supabase
+        .from("telegram_accounts")
+        .update({ status: "active", restricted_until: null, cooldown_until: null, ban_reason: null })
+        .in("id", accountsToRestore.map((a: any) => a.id));
+      console.log(`[runner-tasks/get] Restored ${accountsToRestore.length} accounts from cooldown`);
+    }
+
+    // === SELF-HEALING: Recover stale messages stuck in 'sending' for 3+ minutes ===
+    const threeMinutesAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+
+    // Recover stale LiveChat messages
+    const { data: staleMessages } = await supabase
+      .from("messages")
+      .update({ status: "pending" })
+      .eq("status", "sending")
+      .lt("created_at", threeMinutesAgo)
+      .select("id");
+
+    if (staleMessages?.length) {
+      console.log(`[runner-tasks/get] Recovered ${staleMessages.length} stale messages from sending→pending`);
+    }
+
+    // Recover stale campaign recipients
+    const { data: staleRecipients } = await supabase
+      .from("campaign_recipients")
+      .update({ status: "pending", sending_started_at: null })
+      .eq("status", "sending")
+      .lt("sending_started_at", threeMinutesAgo)
+      .select("id");
+
+    if (staleRecipients?.length) {
+      console.log(`[runner-tasks/get] Recovered ${staleRecipients.length} stale recipients from sending→pending`);
+    }
   }
 
   // Load accounts with proxies
@@ -255,7 +289,21 @@ async function handleGetTasks(supabase: any, body: any) {
     accountsQuery = accountsQuery.in("id", account_ids);
   }
 
-  const { data: accounts, error: accountsError } = await accountsQuery;
+  const cacheKey = makeAccountsCacheKey(runner, account_ids);
+  let accounts: any[] | null = null;
+  let accountsError: any = null;
+
+  // Short TTL cache for accounts+proxies lookup
+  if (accountsCache && accountsCache.key === cacheKey && (nowMs - accountsCache.timestamp) < ACCOUNTS_CACHE_TTL_MS) {
+    accounts = accountsCache.data;
+  } else {
+    const res = await accountsQuery;
+    accounts = res.data;
+    accountsError = res.error;
+    if (!accountsError && accounts) {
+      accountsCache = { key: cacheKey, data: accounts, timestamp: nowMs };
+    }
+  }
 
   if (accountsError || !accounts?.length) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No active accounts" });
@@ -286,43 +334,33 @@ async function handleGetTasks(supabase: any, body: any) {
 
   const tasks: any[] = [];
 
-  // ===== PROACTIVE CAMPAIGN COMPLETION CHECK (OPTIMIZED) =====
-  // Use single batch query instead of N queries for N campaigns
-  // This finds campaigns with 0 pending recipients in one shot
-  const { data: completableCampaigns } = await supabase.rpc('get_completable_campaigns').catch(() => ({ data: null }));
-  
-  // Fallback if RPC doesn't exist: use the original approach but only for running campaigns
-  if (!completableCampaigns) {
+  // ===== PROACTIVE CAMPAIGN COMPLETION CHECK (THROTTLED) =====
+  // IMPORTANT: This must NOT run on every poll under load.
+  // We only run it when maintenance runs (max once per MAINTENANCE_TTL_MS).
+  if (shouldRunMaintenance) {
     const { data: runningCampaigns } = await supabase
       .from('campaigns')
       .select('id')
       .eq('status', 'running')
-      .limit(10); // Limit to avoid too many queries
-    
+      .limit(5);
+
     if (runningCampaigns?.length) {
-      // Check completion for up to 10 campaigns to avoid query explosion
       for (const campaign of runningCampaigns) {
         const { count: pendingCount } = await supabase
           .from('campaign_recipients')
           .select('*', { count: 'exact', head: true })
           .eq('campaign_id', campaign.id)
           .in('status', ['pending', 'sending', 'queued']);
-        
+
         if (pendingCount === 0) {
-          await supabase.from('campaigns')
+          await supabase
+            .from('campaigns')
             .update({ status: 'completed', updated_at: nowIso })
             .eq('id', campaign.id);
           console.log(`[runner-tasks/get] Campaign ${campaign.id} auto-completed (0 pending recipients)`);
         }
       }
     }
-  } else if (completableCampaigns.length > 0) {
-    // Mark all completable campaigns at once
-    const campaignIds = completableCampaigns.map((c: any) => c.id);
-    await supabase.from('campaigns')
-      .update({ status: 'completed', updated_at: nowIso })
-      .in('id', campaignIds);
-    console.log(`[runner-tasks/get] Auto-completed ${campaignIds.length} campaigns via batch query`);
   }
 
   // ===== CAMPAIGN TASKS =====
