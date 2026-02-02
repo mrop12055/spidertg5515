@@ -286,29 +286,43 @@ async function handleGetTasks(supabase: any, body: any) {
 
   const tasks: any[] = [];
 
-  // ===== PROACTIVE CAMPAIGN COMPLETION CHECK =====
-  // Check running campaigns to auto-complete those with no pending work
-  // This catches campaigns that finished but weren't marked complete (e.g., runner restart)
-  const { data: runningCampaigns } = await supabase
-    .from('campaigns')
-    .select('id')
-    .eq('status', 'running');
+  // ===== PROACTIVE CAMPAIGN COMPLETION CHECK (OPTIMIZED) =====
+  // Use single batch query instead of N queries for N campaigns
+  // This finds campaigns with 0 pending recipients in one shot
+  const { data: completableCampaigns } = await supabase.rpc('get_completable_campaigns').catch(() => ({ data: null }));
   
-  if (runningCampaigns?.length) {
-    for (const campaign of runningCampaigns) {
-      const { count: pendingCount } = await supabase
-        .from('campaign_recipients')
-        .select('*', { count: 'exact', head: true })
-        .eq('campaign_id', campaign.id)
-        .in('status', ['pending', 'sending', 'queued']);
-      
-      if (pendingCount === 0) {
-        await supabase.from('campaigns')
-          .update({ status: 'completed', updated_at: nowIso })
-          .eq('id', campaign.id);
-        console.log(`[runner-tasks/get] Campaign ${campaign.id} auto-completed (0 pending recipients)`);
+  // Fallback if RPC doesn't exist: use the original approach but only for running campaigns
+  if (!completableCampaigns) {
+    const { data: runningCampaigns } = await supabase
+      .from('campaigns')
+      .select('id')
+      .eq('status', 'running')
+      .limit(10); // Limit to avoid too many queries
+    
+    if (runningCampaigns?.length) {
+      // Check completion for up to 10 campaigns to avoid query explosion
+      for (const campaign of runningCampaigns) {
+        const { count: pendingCount } = await supabase
+          .from('campaign_recipients')
+          .select('*', { count: 'exact', head: true })
+          .eq('campaign_id', campaign.id)
+          .in('status', ['pending', 'sending', 'queued']);
+        
+        if (pendingCount === 0) {
+          await supabase.from('campaigns')
+            .update({ status: 'completed', updated_at: nowIso })
+            .eq('id', campaign.id);
+          console.log(`[runner-tasks/get] Campaign ${campaign.id} auto-completed (0 pending recipients)`);
+        }
       }
     }
+  } else if (completableCampaigns.length > 0) {
+    // Mark all completable campaigns at once
+    const campaignIds = completableCampaigns.map((c: any) => c.id);
+    await supabase.from('campaigns')
+      .update({ status: 'completed', updated_at: nowIso })
+      .in('id', campaignIds);
+    console.log(`[runner-tasks/get] Auto-completed ${campaignIds.length} campaigns via batch query`);
   }
 
   // ===== CAMPAIGN TASKS =====

@@ -18,49 +18,38 @@ const transformProxy = (p: any): Proxy => ({
   country: p.detected_country || p.country || undefined,
 });
 
-// Parallel paged fetcher for large datasets
+// Sequential paged fetcher with early exit (prevents 99 parallel queries)
 const fetchProxiesPaged = async (): Promise<Proxy[]> => {
   const PAGE_SIZE = 1000;
-  const MAX_PAGES = 100; // Max 100K proxies
+  const MAX_PAGES = 50; // Max 50K proxies
   
   const selectColumns = 'id, host, port, username, password, proxy_type, status, assigned_account_id, last_checked, response_time, detected_country, country';
+  const all: any[] = [];
 
-  // Fetch first page
-  const { data: firstPage, error: firstError } = await supabase
-    .from('proxies')
-    .select(selectColumns)
-    .order('created_at', { ascending: false })
-    .range(0, PAGE_SIZE - 1);
-
-  if (firstError) throw firstError;
-  if (!firstPage || firstPage.length === 0) return [];
-  if (firstPage.length < PAGE_SIZE) return firstPage.map(transformProxy);
-
-  // Need more pages - fetch remaining in parallel
-  const pagePromises: Promise<{ data: any[] | null; error: any }>[] = [];
-  for (let page = 1; page < MAX_PAGES; page++) {
+  // Fetch pages SEQUENTIALLY with early exit
+  for (let page = 0; page < MAX_PAGES; page++) {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
-    const promise = (async () => {
-      return await supabase
-        .from('proxies')
-        .select(selectColumns)
-        .order('created_at', { ascending: false })
-        .range(from, to);
-    })();
-    pagePromises.push(promise);
-  }
+    
+    const { data, error } = await supabase
+      .from('proxies')
+      .select(selectColumns)
+      .order('created_at', { ascending: false })
+      .range(from, to);
 
-  const results = await Promise.all(pagePromises);
-  const all = [...firstPage];
-
-  for (const result of results) {
-    if (result.data && result.data.length > 0) {
-      all.push(...result.data);
+    if (error) {
+      console.error('[useProxies] Error fetching page', page, error);
+      break;
     }
-    if (!result.data || result.data.length < PAGE_SIZE) break;
+    
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    
+    // Early exit if this page wasn't full (no more data)
+    if (data.length < PAGE_SIZE) break;
   }
 
+  console.log(`[useProxies] Fetched ${all.length} proxies`);
   return all.map(transformProxy);
 };
 
