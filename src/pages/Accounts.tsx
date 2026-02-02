@@ -1886,7 +1886,7 @@ const Accounts: React.FC = () => {
     }
   };
 
-  // Bulk status change
+  // Bulk status change - batched to avoid URL length limits
   const handleBulkStatusChange = async (newStatus: AccountStatus) => {
     if (selectedIds.size === 0) {
       toast.error('No accounts selected');
@@ -1895,22 +1895,30 @@ const Accounts: React.FC = () => {
 
     try {
       const ids = Array.from(selectedIds);
+      const BATCH_SIZE = 50; // Avoid URL length limits with large selections
       
-      const { error } = await supabase
-        .from('telegram_accounts')
-        .update({ 
-          status: newStatus,
-          // Clear restriction fields when setting to active
-          ...(newStatus === 'active' ? { 
-            restricted_until: null, 
-            ban_reason: null,
-            auto_disabled: false,
-            disabled_reason: null
-          } : {})
-        })
-        .in('id', ids);
+      const updatePayload = { 
+        status: newStatus,
+        // Clear restriction fields when setting to active
+        ...(newStatus === 'active' ? { 
+          restricted_until: null, 
+          ban_reason: null,
+          auto_disabled: false,
+          disabled_reason: null
+        } : {})
+      };
 
-      if (error) throw error;
+      // Process in batches to avoid URL length issues
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        
+        const { error } = await supabase
+          .from('telegram_accounts')
+          .update(updatePayload)
+          .in('id', batch);
+
+        if (error) throw error;
+      }
 
       toast.success(`${ids.length} account(s) set to ${newStatus}`);
       setSelectedIds(new Set());
