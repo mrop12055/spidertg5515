@@ -514,9 +514,19 @@ const SeatChat: React.FC = () => {
     }
   }, [seat, conversations]);
 
+  // Track the conversation ID for which we last fetched messages
+  const lastFetchedConvIdRef = useRef<string | null>(null);
+
   // Fetch messages for selected conversation
   const fetchMessages = useCallback(async () => {
     if (!selectedConversation) return;
+
+    // CRITICAL: Clear old messages IMMEDIATELY if switching to a different conversation
+    // This prevents showing stale messages from the previous chat
+    if (lastFetchedConvIdRef.current !== selectedConversation.id) {
+      setMessages([]);
+      lastFetchedConvIdRef.current = selectedConversation.id;
+    }
 
     try {
       // Optimistically mark as read in local state immediately for instant UI feedback
@@ -551,7 +561,11 @@ const SeatChat: React.FC = () => {
       ]);
 
       if (messagesResult.error) throw messagesResult.error;
-      setMessages(messagesResult.data || []);
+      
+      // Only update if we're still on the same conversation (prevents race conditions)
+      if (selectedConversation.id === lastFetchedConvIdRef.current) {
+        setMessages(messagesResult.data || []);
+      }
     } catch (err) {
       console.error('Error fetching messages:', err);
     }
