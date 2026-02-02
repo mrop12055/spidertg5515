@@ -146,24 +146,111 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
   const [accountTaskHistory, setAccountTaskHistory] = useState<AccountTaskLog[]>([]);
 
   // Fetch data from Supabase
-  // OPTIMIZED v2: Removed duplicate fetching
-  // - Campaigns are handled by useCampaigns hook
-  // - Conversations are handled by useConversations hook  
-  // - Only fetch messages for notification sound purposes
+  // OPTIMIZED: Accounts and Proxies are now handled by dedicated cached hooks (useAccounts, useProxies)
+  // This only fetches campaigns, conversations, and messages
   const refreshData = useCallback(async () => {
     try {
       setIsLoading(true);
       
-      // REMOVED: Campaign fetching - now handled by useCampaigns hook
-      // REMOVED: Conversation pagination - now handled by useConversations hook
+      // Only fetch what's NOT handled by cached hooks
+      // Fetch campaigns
+      const campaignsResult = await supabase
+        .from('campaigns')
+        .select('*, campaign_accounts(account_id)')
+        .order('created_at', { ascending: false });
+
+      // Fetch conversations with pagination to bypass 1000 limit (up to 10k)
+      const PAGE_SIZE = 1000;
+      const MAX_CONVERSATIONS = 10000;
       
-      // Only fetch messages for notification sound (last 24 hours, limited)
+      // Get total count first
+      const { count: totalConvCount } = await supabase
+        .from('conversations')
+        .select('*', { count: 'exact', head: true })
+        .not('last_message_at', 'is', null);
+      
+      const effectiveConvCount = Math.min(totalConvCount || 0, MAX_CONVERSATIONS);
+      const totalConvPages = Math.ceil(effectiveConvCount / PAGE_SIZE);
+      const allConversations: any[] = [];
+      
+      for (let page = 0; page < totalConvPages; page++) {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        
+        const { data, error } = await supabase
+          .from('conversations')
+          .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,last_message_direction,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
+          .not('last_message_at', 'is', null)
+          .order('last_message_at', { ascending: false })
+          .range(from, to);
+        
+        if (error) {
+          console.error('Error fetching conversations page', page, error);
+          break;
+        }
+        if (!data || data.length === 0) break;
+        allConversations.push(...data);
+      }
+      
+      console.log('[TelegramContext] Fetched', allConversations.length, 'of', totalConvCount, 'conversations');
+      
+      const conversationsResult = { data: allConversations, error: null };
+
+      // Fetch messages - LIMIT to last 3 days for performance
       const messagesResult = await supabase
         .from('messages')
-        .select('id, conversation_id, account_id, content, direction, status, created_at, telegram_message_id, failed_reason, media_url, media_type, campaign_recipient_id, conversations(recipient_phone)')
-        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .select('*, conversations(recipient_phone)')
+        .gte('created_at', new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())
         .order('created_at', { ascending: false })
-        .limit(1000);
+        .limit(5000);
+
+      // Process campaigns
+      if (campaignsResult.data) {
+        setCampaigns(campaignsResult.data.map(c => ({
+          id: c.id,
+          name: c.name,
+          messageTemplate: c.message_template,
+          status: c.status as Campaign['status'],
+          scheduledAt: c.scheduled_at ? new Date(c.scheduled_at) : undefined,
+          recipientCount: c.recipient_count || 0,
+          sentCount: c.sent_count || 0,
+          failedCount: c.failed_count || 0,
+          pendingCount: (c as any).pending_count || 0,
+          replyCount: c.reply_count || 0,
+          accountIds: c.campaign_accounts?.map((ca: any) => ca.account_id) || [],
+          createdAt: new Date(c.created_at),
+          updatedAt: new Date(c.updated_at),
+          seatId: c.seat_id || undefined,
+        })));
+      }
+
+      // Process conversations
+      if (conversationsResult.error) {
+        console.error('Error fetching conversations:', conversationsResult.error);
+      }
+      if (conversationsResult.data) {
+        setConversations(
+          conversationsResult.data.map((c: any) => ({
+            id: c.id,
+            accountId: c.account_id,
+            recipientPhone: c.recipient_phone || '',
+            recipientName: c.recipient_name || undefined,
+            recipientUsername: c.recipient_username || undefined,
+            recipientAvatar: c.recipient_avatar || undefined,
+            unreadCount: c.unread_count || 0,
+            isActive: c.is_active || false,
+            createdAt: new Date(c.created_at),
+            updatedAt: new Date(c.updated_at || c.created_at),
+            lastMessageAt: c.last_message_at ? new Date(c.last_message_at) : undefined,
+            lastMessageContent: c.last_message_content || undefined,
+            lastMessageDirection: c.last_message_direction as 'incoming' | 'outgoing' | undefined,
+            blockedByRecipient: (c as any).blocked_by_recipient || false,
+            firstMessageSent: (c as any).first_message_sent ?? false,
+            hasReply: (c as any).has_reply ?? false,
+            seatId: c.seat_id || undefined,
+          }))
+        );
+      }
 
       // Process messages
       if (messagesResult.data) {

@@ -202,16 +202,13 @@ export const RecentErrorsCard: React.FC = () => {
   };
 
   useEffect(() => {
-    // Don't fetch immediately - defer initial load by 3 seconds to reduce initial burst
-    const initialLoadTimer = setTimeout(() => {
-      fetchData();
-    }, 3000);
+    fetchData();
 
-    // OPTIMIZED: Increased debounce from 5s to 10s
+    // OPTIMIZED: Increased debounce from 2s to 5s
     let refreshTimer: NodeJS.Timeout | null = null;
     const debouncedRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => fetchData(), 10000);
+      refreshTimer = setTimeout(() => fetchData(), 5000);
     };
 
     const channel = supabase
@@ -225,7 +222,6 @@ export const RecentErrorsCard: React.FC = () => {
       .subscribe();
 
     return () => {
-      clearTimeout(initialLoadTimer);
       if (refreshTimer) clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };

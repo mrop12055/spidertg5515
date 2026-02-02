@@ -149,16 +149,13 @@ export const TaskQueueCard: React.FC = () => {
   };
 
   useEffect(() => {
-    // Don't fetch immediately - defer initial load by 2 seconds to reduce initial burst
-    const initialLoadTimer = setTimeout(() => {
-      fetchData();
-    }, 2000);
+    fetchData();
 
-    // OPTIMIZED: Increased debounce from 3s to 5s and added longer polling interval
+    // OPTIMIZED: Increased debounce from 2s to 3s
     let refreshTimer: NodeJS.Timeout | null = null;
     const debouncedRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => fetchData(), 5000);
+      refreshTimer = setTimeout(() => fetchData(), 3000);
     };
 
     const channel = supabase
@@ -170,7 +167,6 @@ export const TaskQueueCard: React.FC = () => {
       .subscribe();
 
     return () => {
-      clearTimeout(initialLoadTimer);
       if (refreshTimer) clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
