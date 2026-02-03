@@ -159,9 +159,9 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         .select('*, campaign_accounts(account_id)')
         .order('created_at', { ascending: false });
 
-      // Fetch conversations with pagination to bypass 1000 limit (up to 10k)
+      // Fetch conversations with PARALLEL pagination to bypass 1000 limit (up to 50k)
       const PAGE_SIZE = 1000;
-      const MAX_CONVERSATIONS = 10000;
+      const MAX_CONVERSATIONS = 50000;
       
       // Get total count first
       const { count: totalConvCount } = await supabase
@@ -173,26 +173,32 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       const totalConvPages = Math.ceil(effectiveConvCount / PAGE_SIZE);
       const allConversations: any[] = [];
       
-      for (let page = 0; page < totalConvPages; page++) {
+      // Build all page requests for PARALLEL fetching
+      const pagePromises = Array.from({ length: totalConvPages }, (_, page) => {
         const from = page * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
         
-        const { data, error } = await supabase
+        return supabase
           .from('conversations')
           .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,last_message_direction,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
           .not('last_message_at', 'is', null)
           .order('last_message_at', { ascending: false })
           .range(from, to);
-        
-        if (error) {
-          console.error('Error fetching conversations page', page, error);
+      });
+      
+      // Execute all page requests in parallel
+      const results = await Promise.all(pagePromises);
+      
+      // Combine all results
+      for (const result of results) {
+        if (result.error) {
+          console.error('Error fetching conversations page', result.error);
           break;
         }
-        if (!data || data.length === 0) break;
-        allConversations.push(...data);
+        if (result.data) allConversations.push(...result.data);
       }
       
-      console.log('[TelegramContext] Fetched', allConversations.length, 'of', totalConvCount, 'conversations');
+      console.log('[TelegramContext] Fetched', allConversations.length, 'of', totalConvCount, 'conversations (parallel)');
       
       const conversationsResult = { data: allConversations, error: null };
 

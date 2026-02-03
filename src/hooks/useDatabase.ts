@@ -98,14 +98,47 @@ export const useDatabase = () => {
       const accountsSelect =
         'id,phone_number,username,first_name,last_name,status,proxy_id,created_at,last_active,messages_sent_today,daily_limit,maturity_score,maturity_days,restricted_until,ban_reason,avatar_url,telegram_id' as const;
 
-      const [accountsRes, proxiesRes, conversationsRes, messagesRes, campaignsRes] = await Promise.all([
+      // Fetch conversations with parallel pagination (up to 50k)
+      const PAGE_SIZE = 1000;
+      const MAX_CONVERSATIONS = 50000;
+      
+      // Get total count first
+      const { count: totalConvCount } = await supabase
+        .from('conversations')
+        .select('*', { count: 'exact', head: true });
+      
+      const effectiveConvCount = Math.min(totalConvCount || 0, MAX_CONVERSATIONS);
+      const totalConvPages = Math.ceil(effectiveConvCount / PAGE_SIZE);
+      
+      // Build all page requests for PARALLEL fetching
+      const conversationPromises = Array.from({ length: totalConvPages }, (_, page) => {
+        const from = page * PAGE_SIZE;
+        const to = from + PAGE_SIZE - 1;
+        
+        return supabase
+          .from('conversations')
+          .select('*')
+          .order('updated_at', { ascending: false })
+          .range(from, to);
+      });
+      
+      const [accountsRes, proxiesRes, messagesRes, campaignsRes, ...conversationResults] = await Promise.all([
         supabase.from('telegram_accounts').select(accountsSelect).order('created_at', { ascending: false }),
         supabase.from('proxies').select('*').order('created_at', { ascending: false }),
-        supabase.from('conversations').select('*').order('updated_at', { ascending: false }),
         // Keep UI responsive: load the most recent messages only (older messages can be paginated later)
         supabase.from('messages').select('*').order('created_at', { ascending: false }).limit(10000),
         supabase.from('campaigns').select('*').order('created_at', { ascending: false }),
+        ...conversationPromises,
       ]);
+      
+      // Combine all conversation results
+      const allConversations: any[] = [];
+      for (const result of conversationResults) {
+        if (result.data) allConversations.push(...result.data);
+      }
+      const conversationsRes = { data: allConversations, error: null };
+      
+      console.log('[useDatabase] Fetched', allConversations.length, 'of', totalConvCount, 'conversations (parallel)');
 
       if (accountsRes.data) setAccounts(accountsRes.data as DbTelegramAccount[]);
       if (proxiesRes.data) setProxies(proxiesRes.data as DbProxy[]);
