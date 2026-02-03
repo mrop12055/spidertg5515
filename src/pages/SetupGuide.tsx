@@ -209,13 +209,13 @@ async def update_proxy_status(proxy_id: str, status: str, error_msg: str = None)
         pass
 
 
-async def get_tasks() -> dict:
-    """Fetch tasks AND accounts from unified endpoint. Backend controls batch size."""
+async def get_tasks(include_accounts: bool = True) -> dict:
+    """Fetch tasks from backend. Accounts payload can be disabled to avoid huge responses."""
     try:
         r = await get_http().post(
             f"{BACKEND_URL}/runner-tasks/get",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"runner": "unified"}, timeout=60
+            json={"runner": "unified", "include_accounts": include_accounts}, timeout=60
         )
         return r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
     except:
@@ -1415,7 +1415,7 @@ async def main():
     # Initial fetch to get accounts and connect them
     global last_offline_at
     print("  Fetching accounts from backend...")
-    initial = await get_tasks()
+    initial = await get_tasks(include_accounts=True)
     initial_accounts = initial.get("accounts", [])
     
     # Store the last offline timestamp from backend for smart catch-up
@@ -1444,13 +1444,14 @@ async def main():
     while RUNNING:
         try:
             # Get tasks (backend controls batch size from admin settings)
-            batch = await get_tasks()
+            # For large fleets, avoid returning the full accounts payload on every poll.
+            need_accounts = (time.time() - last_refresh > 60)
+            batch = await get_tasks(include_accounts=need_accounts)
             tasks = batch.get("tasks", [])
             batch_accounts = batch.get("accounts", [])
             
-            # Check for new/disconnected accounts every 60s
-            if time.time() - last_refresh > 60 or len(clients) < len(batch_accounts):
-                old_count = len(clients)
+            # Check for new/disconnected accounts only when we requested accounts
+            if need_accounts and batch_accounts:
                 _, newly_connected = await connect_all_from_response(batch_accounts)
                 if newly_connected:
                     await setup_handlers()
