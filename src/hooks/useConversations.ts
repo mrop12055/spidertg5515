@@ -27,7 +27,7 @@ const transformConversation = (c: any): Conversation => ({
 const fetchConversations = async (): Promise<Conversation[]> => {
   // Use count query + PARALLEL pagination to fetch up to 10k conversations (bypasses 1000 limit)
   const PAGE_SIZE = 1000;
-  const MAX_CONVERSATIONS = 10000;
+  const MAX_CONVERSATIONS = 50000;
   
   // First get the total count
   const { count: totalCount, error: countError } = await supabase
