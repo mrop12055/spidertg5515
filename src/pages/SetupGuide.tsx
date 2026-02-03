@@ -1232,16 +1232,27 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
 
 
 async def setup_handlers():
-    """Set up incoming message handlers."""
+    """Set up incoming message handlers with defensive error handling."""
+    success = 0
+    failed = 0
     for aid, client in clients.items():
         if getattr(client, "_h", False):
             continue
         
-        @client.on(events.NewMessage(incoming=True))
-        async def handler(event, a=aid):
-            await on_message(event, a)
-        
-        setattr(client, "_h", True)
+        try:
+            @client.on(events.NewMessage(incoming=True))
+            async def handler(event, a=aid):
+                await on_message(event, a)
+            
+            setattr(client, "_h", True)
+            success += 1
+        except Exception as e:
+            phone = accounts.get(aid, {}).get("phone_number", "????")[-4:]
+            print(f"  [HANDLER-ERR] [{phone}] {str(e)[:40]}")
+            failed += 1
+    
+    print(f"  [HANDLERS] Set up {success} handlers, {failed} failed")
+    sys.stdout.flush()
 
 
 # ==============================================================================
@@ -1412,11 +1423,16 @@ async def main():
         print("  No last_offline_at found, using 24h default for catch-up")
     
     _, _ = await connect_all_from_response(initial_accounts)
+    print("  [DEBUG] Catch-up complete, setting up handlers...")
+    sys.stdout.flush()
     await setup_handlers()
+    print("  [DEBUG] Handlers ready, entering main loop...")
+    sys.stdout.flush()
     
     print("\\n" + "="*50)
     print("  PROCESSING TASKS + LISTENING FOR MESSAGES")
     print("="*50 + "\\n")
+    sys.stdout.flush()
     
     empty = 0
     last_refresh = time.time()
