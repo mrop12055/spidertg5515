@@ -11,18 +11,26 @@ interface ProxyError {
 const fetchProxyErrors = async (): Promise<Map<string, ProxyError>> => {
   const errorMap = new Map<string, ProxyError>();
 
-  // Get proxies with error status
-  const { data: errorProxies, error: proxyError } = await supabase
-    .from('proxies')
-    .select('id')
-    .eq('status', 'error')
-    .limit(1000);
+  // Fetch BOTH queries in PARALLEL
+  const [proxiesResult, errorsResult] = await Promise.all([
+    supabase
+      .from('proxies')
+      .select('id')
+      .eq('status', 'error')
+      .limit(1000),
+    supabase
+      .from('proxy_errors')
+      .select('proxy_id, error_type, error_message, created_at')
+      .order('created_at', { ascending: false })
+      .limit(500)
+  ]);
 
-  if (proxyError) {
-    console.error('Error fetching error proxies:', proxyError);
+  if (proxiesResult.error) {
+    console.error('Error fetching error proxies:', proxiesResult.error);
     return errorMap;
   }
 
+  const errorProxies = proxiesResult.data;
   if (!errorProxies || errorProxies.length === 0) {
     return errorMap;
   }
@@ -38,17 +46,12 @@ const fetchProxyErrors = async (): Promise<Map<string, ProxyError>> => {
     });
   });
 
-  // Get latest error messages for these proxies
-  const { data: errors, error: errorsError } = await supabase
-    .from('proxy_errors')
-    .select('proxy_id, error_type, error_message, created_at')
-    .order('created_at', { ascending: false })
-    .limit(500);
-
-  if (errorsError) {
-    console.error('Error fetching proxy errors:', errorsError);
+  if (errorsResult.error) {
+    console.error('Error fetching proxy errors:', errorsResult.error);
     return errorMap;
   }
+
+  const errors = errorsResult.data;
 
   // Add actual error messages where available
   (errors || []).forEach(err => {

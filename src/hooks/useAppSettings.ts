@@ -182,31 +182,48 @@ export function useAppSettings() {
     }
   }, []);
 
-  // Save all settings at once
+  // Save all settings at once - PARALLEL execution
   const saveAllSettings = useCallback(async (newSettings: AllSettings): Promise<boolean> => {
     setIsSaving(true);
     try {
-      for (const [key, value] of Object.entries(newSettings)) {
-        const { data: existing } = await supabase
-          .from('app_settings')
-          .select('id')
-          .eq('key', key)
-          .maybeSingle();
-
+      const entries = Object.entries(newSettings);
+      
+      // First, fetch all existing settings in parallel
+      const existingChecks = await Promise.all(
+        entries.map(([key]) =>
+          supabase
+            .from('app_settings')
+            .select('id')
+            .eq('key', key)
+            .maybeSingle()
+            .then(res => ({ key, exists: !!res.data }))
+        )
+      );
+      
+      const existingMap = new Map(existingChecks.map(e => [e.key, e.exists]));
+      
+      // Then, perform all upserts in parallel
+      const savePromises = entries.map(([key, value]) => {
         const jsonValue = JSON.parse(JSON.stringify(value)) as Json;
-
-        if (existing) {
-          const { error } = await supabase
+        
+        if (existingMap.get(key)) {
+          return supabase
             .from('app_settings')
             .update({ value: jsonValue })
             .eq('key', key);
-          if (error) throw error;
         } else {
-          const { error } = await supabase
+          return supabase
             .from('app_settings')
             .insert({ key, value: jsonValue });
-          if (error) throw error;
         }
+      });
+      
+      const results = await Promise.all(savePromises);
+      
+      // Check for any errors
+      const errors = results.filter(r => r.error);
+      if (errors.length > 0) {
+        throw errors[0].error;
       }
 
       setSettings(newSettings);

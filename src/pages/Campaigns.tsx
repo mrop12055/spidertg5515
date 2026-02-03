@@ -282,26 +282,38 @@ const Campaigns: React.FC = () => {
     const currentAccounts = accountsRef.current;
     
     try {
-      // NOTE: PostgREST caps rows per request (~1000). We must page for accurate reports.
+      // NOTE: PostgREST caps rows per request (~1000). We use PARALLEL pagination for speed.
       const PAGE_SIZE = 1000;
-      const MAX_PAGES = 200; // safety cap
-      const allRecipients: any[] = [];
-
-      for (let page = 0; page < MAX_PAGES; page++) {
+      
+      // First, get total count to calculate pages needed
+      const { count: totalCount, error: countError } = await supabase
+        .from('campaign_recipients')
+        .select('id', { count: 'exact', head: true })
+        .eq('campaign_id', campaignId);
+      
+      if (countError) throw countError;
+      
+      const totalRecords = totalCount || 0;
+      const totalPages = Math.ceil(totalRecords / PAGE_SIZE);
+      
+      // Fetch ALL pages in PARALLEL
+      const pagePromises = Array.from({ length: totalPages }, (_, page) => {
         const from = page * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
-
-        const { data, error } = await supabase
+        return supabase
           .from('campaign_recipients')
           .select('id, status, phone_number, name, sent_by_account_id, failed_reason')
           .eq('campaign_id', campaignId)
           .range(from, to);
-
-        if (error) throw error;
-        if (!data || data.length === 0) break;
-
-        allRecipients.push(...data);
-        if (data.length < PAGE_SIZE) break; // last page
+      });
+      
+      const pageResults = await Promise.all(pagePromises);
+      
+      // Combine results and check for errors
+      const allRecipients: any[] = [];
+      for (const result of pageResults) {
+        if (result.error) throw result.error;
+        if (result.data) allRecipients.push(...result.data);
       }
 
       const recipients = allRecipients;
