@@ -1192,8 +1192,18 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     if not accs:
         return 0, set()
     
-    # Snapshot which accounts are already connected
-    already_connected = {aid for aid, c in clients.items() if c and c.is_connected()}
+    # Snapshot which accounts are already connected (defensive: some stale clients can block)
+    already_connected = set()
+    for aid, c in list(clients.items()):
+        if not c:
+            continue
+        try:
+            ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=0.5)
+            if ok:
+                already_connected.add(aid)
+        except Exception:
+            # treat as disconnected
+            pass
     
     # Find accounts that need connecting (missing or disconnected)
     to_connect = [acc for acc in accs if acc.get("id") not in already_connected]
@@ -1222,12 +1232,27 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
                 newly_connected.add(aid)
     
     # Fetch unread messages in PARALLEL for all newly connected accounts (catch-up)
-    # Uses last_offline_at for smart time-based fetching
+    # Uses last_offline_at for smart time-based fetching.
+    # IMPORTANT: Put a hard timeout per account so one stuck Telethon call can't block startup.
     if newly_connected:
+        async def _catchup_one(aid: str):
+            try:
+                phone = (accounts.get(aid, {}).get("phone_number") or "????")[-4:]
+                print(f"  [CATCHUP] [{phone}] Starting...")
+                sys.stdout.flush()
+                await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=120)
+                print(f"  [CATCHUP] [{phone}] Done")
+                sys.stdout.flush()
+            except asyncio.TimeoutError:
+                print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] TIMEOUT (skipped)")
+                sys.stdout.flush()
+            except Exception as e:
+                print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] Failed: {str(e)[:60]}")
+                sys.stdout.flush()
+
         await asyncio.gather(
-            *[fetch_unread_messages(clients[aid], aid, last_offline_at) 
-              for aid in newly_connected if aid in clients],
-            return_exceptions=True
+            *[_catchup_one(aid) for aid in newly_connected if aid in clients],
+            return_exceptions=True,
         )
     
     return len(already_connected) + ok, newly_connected
