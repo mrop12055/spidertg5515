@@ -1,41 +1,106 @@
 
+# Fix: Python Runner Stops After Catch-up Phase
 
-# Fix Seat Chat Performance: Default to Replied-Only Mode
+## Problem Identified
 
-## Problem
+Based on the code analysis, the Python runner completes the catch-up phase successfully but then stops before entering the main processing loop. The expected output "PROCESSING TASKS + LISTENING FOR MESSAGES" never appears.
 
-On lower-end PCs (8GB RAM or less), the Seat Chat page is laggy with 1-2 second delays when switching between conversations. This happens because the page loads and renders all campaign-initiated conversations, even those where the recipient hasn't replied yet.
+## Root Cause Analysis
 
-## Solution
+After thorough investigation of the runner code in `SetupGuide.tsx`, I identified several potential issues:
 
-Change the default filter to only show conversations where the recipient has replied. This dramatically reduces the number of conversations that need to be rendered, making the page much faster on all devices.
+### 1. Silent Exception in `setup_handlers()` (Most Likely)
+The `setup_handlers()` function at line 1234 iterates through all 803 connected clients to register event handlers. If any client connection becomes stale or throws an error during handler registration, the exception could be unhandled and cause the runner to exit silently.
 
-## What Will Change
-
-### 1. SeatChat.tsx - Change Default Filter
-Currently:
-```javascript
-const [showRepliedOnly, setShowRepliedOnly] = useState(false);
+```text
+Flow:
+connect_all_from_response() -> [catch-up completes]
+                            ↓
+                    setup_handlers()  ← Potential crash here
+                            ↓
+                    print("PROCESSING TASKS...")  ← Never reached
 ```
 
-Change to:
-```javascript
-const [showRepliedOnly, setShowRepliedOnly] = useState(true);
+### 2. Missing Exception Handling in `setup_handlers()`
+The function has no try/except wrapper:
+```python
+async def setup_handlers():
+    for aid, client in clients.items():
+        if getattr(client, "_h", False):
+            continue
+        # No error handling here - if client.on() fails, whole function crashes
+        @client.on(events.NewMessage(incoming=True))
+        async def handler(event, a=aid):
+            await on_message(event, a)
+        setattr(client, "_h", True)
 ```
 
-### 2. Update Toggle Button Label
-The button text will be adjusted so it makes sense with the new default:
-- When ON (default): "Replies Only" 
-- When OFF: "Show All Chats"
+### 3. Possible Event Loop Termination
+With 803 clients having event handlers, the asyncio event loop might be hitting resource limits on the local machine.
 
-This is a single-line change that will:
-- Reduce rendered conversations by potentially 70-90% (depending on reply rates)
-- Make chat switching instant on low-end devices
-- Keep the option to view all conversations by clicking the toggle
+## Proposed Fix
 
-## Technical Notes
+Update the Python runner code to add defensive error handling and debug logging:
 
-The `has_reply` field is already indexed in the database (from earlier migrations) and is maintained by a trigger on the messages table, so filtering by this field is fast.
+### Changes to `setup_handlers()` function (around line 1234):
 
-Users who want to see all campaign conversations (including those without replies) can still toggle the filter off.
+Add try/except around handler registration:
+```python
+async def setup_handlers():
+    """Set up incoming message handlers."""
+    success = 0
+    failed = 0
+    for aid, client in clients.items():
+        if getattr(client, "_h", False):
+            continue
+        
+        try:
+            @client.on(events.NewMessage(incoming=True))
+            async def handler(event, a=aid):
+                await on_message(event, a)
+            
+            setattr(client, "_h", True)
+            success += 1
+        except Exception as e:
+            phone = accounts.get(aid, {}).get("phone_number", "????")[-4:]
+            print(f"  [HANDLER-ERR] [{phone}] {str(e)[:40]}")
+            failed += 1
+    
+    print(f"  [HANDLERS] Set up {success} handlers, {failed} failed")
+```
 
+### Add Debug Logging Between Catch-up and Main Loop (around line 1414):
+
+```python
+_, _ = await connect_all_from_response(initial_accounts)
+print("  [DEBUG] Catch-up complete, setting up handlers...")  # NEW
+await setup_handlers()
+print("  [DEBUG] Handlers ready, entering main loop...")      # NEW
+
+print("\\n" + "="*50)
+print("  PROCESSING TASKS + LISTENING FOR MESSAGES")
+print("="*50 + "\\n")
+```
+
+### Add Flush to Ensure Output is Visible:
+
+After critical print statements, add `sys.stdout.flush()` to ensure output appears immediately on Windows.
+
+---
+
+## Technical Details
+
+**File to Update:** `src/pages/SetupGuide.tsx`
+
+**Section:** The `unifiedRunnerPy` template string containing the Python runner code
+
+**Changes:**
+1. Lines ~1234-1244: Wrap `setup_handlers()` in try/except with logging
+2. Lines ~1414-1419: Add debug print statements between catch-up and main loop entry
+3. Add stdout flushing after key print statements
+
+This fix will:
+- Reveal exactly where the runner stops (via debug logging)
+- Prevent silent crashes during handler setup
+- Continue running even if some handlers fail to register
+- Make debug output visible immediately on Windows
