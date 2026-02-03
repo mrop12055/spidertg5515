@@ -404,7 +404,7 @@ const SeatChat: React.FC = () => {
       fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
       
       const PAGE_SIZE = 1000;
-      const MAX_CONVERSATIONS = 10000;
+      const MAX_CONVERSATIONS = 50000;
       
       // First get total count
       const { count: totalCount } = await supabase
