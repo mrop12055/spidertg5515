@@ -1232,16 +1232,30 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
 
 
 async def setup_handlers():
-    """Set up incoming message handlers."""
-    for aid, client in clients.items():
+    """Set up incoming message handlers with defensive error handling."""
+    count = 0
+    for aid, client in list(clients.items()):
         if getattr(client, "_h", False):
             continue
         
-        @client.on(events.NewMessage(incoming=True))
-        async def handler(event, a=aid):
-            await on_message(event, a)
-        
-        setattr(client, "_h", True)
+        try:
+            # Check if client is still connected before registering handler
+            if not client.is_connected():
+                print(f"  [HANDLER] Skipping disconnected client {aid[:8]}...")
+                continue
+            
+            @client.on(events.NewMessage(incoming=True))
+            async def handler(event, a=aid):
+                await on_message(event, a)
+            
+            setattr(client, "_h", True)
+            count += 1
+        except Exception as e:
+            print(f"  [HANDLER] Failed to register for {aid[:8]}: {str(e)[:30]}")
+            continue
+    
+    if count > 0:
+        print(f"  [HANDLERS] Registered {count} new message handlers")
 
 
 # ==============================================================================
@@ -1412,11 +1426,17 @@ async def main():
         print("  No last_offline_at found, using 24h default for catch-up")
     
     _, _ = await connect_all_from_response(initial_accounts)
+    print("  [DEBUG] CATCHUP complete, setting up handlers...")
+    sys.stdout.flush()
+    
     await setup_handlers()
+    print("  [DEBUG] Handlers registered, entering main loop...")
+    sys.stdout.flush()
     
     print("\\n" + "="*50)
     print("  PROCESSING TASKS + LISTENING FOR MESSAGES")
     print("="*50 + "\\n")
+    sys.stdout.flush()
     
     empty = 0
     last_refresh = time.time()
