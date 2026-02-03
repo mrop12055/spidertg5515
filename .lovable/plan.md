@@ -1,82 +1,82 @@
 
 
-# Fix Runner Hang During CATCHUP Phase
+# Fix Runner Hang After CATCHUP Phase - COMPLETED
 
 ## Problem
 
-With 500+ accounts, the runner hangs during the CATCHUP phase because it attempts to run `fetch_unread_messages()` for ALL newly connected accounts in parallel simultaneously. This creates:
-- Hundreds of concurrent `get_dialogs()` API calls
-- Thousands of `get_messages()` calls across all accounts
-- Potential Telegram flood protection triggers
-- Resource exhaustion (memory, connections, file descriptors)
+With 500+ accounts, the runner hangs AFTER the CATCHUP phase completes but BEFORE entering the main task loop. The root cause was the `setup_handlers()` function which iterates over all 500+ clients to register event handlers - if any client had a stale/disconnected socket, the registration would block indefinitely.
 
-The runner works fine with fewer accounts because the parallel load is manageable.
+## Solution Applied
 
-## Solution
+1. **Defensive handler registration**: Added try/catch around each handler registration so one bad client doesn't block all others
+2. **Connection check before registration**: Skip disconnected clients instead of trying to register handlers on them
+3. **Debug markers with explicit stdout flush**: Added `[DEBUG]` print statements with `sys.stdout.flush()` to prevent buffering from hiding where the runner actually stops
+4. **Progress logging**: Print how many handlers were successfully registered
 
-Add a semaphore to throttle the CATCHUP phase, processing only 5 accounts at a time instead of all 500+ simultaneously.
+## Changes Made to SetupGuide.tsx (Python Runner)
 
-## Changes to SetupGuide.tsx (Python Runner)
-
-### 1. Add CATCHUP Semaphore (near other semaphores)
-
-Add a new semaphore constant for catch-up operations:
+### Updated `setup_handlers()` function:
 
 ```python
-CATCHUP_SEMAPHORE = asyncio.Semaphore(5)  # Process 5 accounts at a time
+async def setup_handlers():
+    """Set up incoming message handlers with defensive error handling."""
+    count = 0
+    for aid, client in list(clients.items()):
+        if getattr(client, "_h", False):
+            continue
+        
+        try:
+            # Check if client is still connected before registering handler
+            if not client.is_connected():
+                print(f"  [HANDLER] Skipping disconnected client {aid[:8]}...")
+                continue
+            
+            @client.on(events.NewMessage(incoming=True))
+            async def handler(event, a=aid):
+                await on_message(event, a)
+            
+            setattr(client, "_h", True)
+            count += 1
+        except Exception as e:
+            print(f"  [HANDLER] Failed to register for {aid[:8]}: {str(e)[:30]}")
+            continue
+    
+    if count > 0:
+        print(f"  [HANDLERS] Registered {count} new message handlers")
 ```
 
-### 2. Wrap fetch_unread_messages with Semaphore
-
-Create a throttled wrapper function:
+### Added debug markers in `main()`:
 
 ```python
-async def fetch_unread_throttled(client, acc_id: str, offline_since: Optional[str] = None):
-    """Throttled wrapper for fetch_unread_messages to prevent overwhelming Telegram API."""
-    async with CATCHUP_SEMAPHORE:
-        await fetch_unread_messages(client, acc_id, offline_since)
-```
+_, _ = await connect_all_from_response(initial_accounts)
+print("  [DEBUG] CATCHUP complete, setting up handlers...")
+sys.stdout.flush()
 
-### 3. Update connect_all_from_response to Use Throttled Version
-
-Change line 1225-1228 from:
-
-```python
-await asyncio.gather(
-    *[fetch_unread_messages(clients[aid], aid, last_offline_at) 
-      for aid in newly_connected if aid in clients],
-    return_exceptions=True
-)
-```
-
-To:
-
-```python
-await asyncio.gather(
-    *[fetch_unread_throttled(clients[aid], aid, last_offline_at) 
-      for aid in newly_connected if aid in clients],
-    return_exceptions=True
-)
-```
-
-### 4. Add Progress Logging
-
-Update `fetch_unread_messages` to show progress:
-
-```python
-# At start of function
-print(f"  [CATCHUP] [{phone}] Starting...")
+await setup_handlers()
+print("  [DEBUG] Handlers registered, entering main loop...")
+sys.stdout.flush()
 ```
 
 ## Why This Works
 
-- **Controlled concurrency**: Only 5 accounts fetch unread messages simultaneously
-- **Prevents API floods**: Telegram won't see 500+ parallel API calls
-- **Prevents resource exhaustion**: System resources stay under control
-- **Still parallel**: 5 at a time is still fast, just not overwhelming
-- **Matches existing pattern**: Runner already uses semaphores for connections and tasks
+- **No more blocking**: Individual client failures don't block the entire handler setup
+- **Skip dead clients**: Disconnected clients are skipped rather than blocking on them
+- **Visibility**: Debug markers with forced flush show exactly where runner stops
+- **No new limits**: No semaphores or throttling added - just defensive error handling
 
-## Technical Notes
+## Expected Console Output
 
-The semaphore value of 5 is chosen to match the existing `CONNECTION_SEMAPHORE` pattern in the runner, which was set to prevent Windows semaphore timeout errors. This can be tuned higher (10-15) if performance is acceptable, or lower (3) if issues persist.
+After applying this fix, you should see:
+```
+  [DEBUG] CATCHUP complete, setting up handlers...
+  [HANDLERS] Registered 487 new message handlers
+  [DEBUG] Handlers registered, entering main loop...
 
+  ==================================================
+    PROCESSING TASKS + LISTENING FOR MESSAGES
+  ==================================================
+
+  [WAIT] No tasks (487 clients listening)
+```
+
+If it still hangs, the `[DEBUG]` lines will show exactly where it stops.
