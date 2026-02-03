@@ -164,6 +164,10 @@ serve(async (req) => {
 // ==================== GET TASKS ====================
 async function handleGetTasks(supabase: any, body: any) {
   const { runner, account_ids } = body;
+  // IMPORTANT: for large fleets (500+ accounts), returning the full accounts payload every poll
+  // can be huge and make the Python runner appear "stuck" after CATCHUP (JSON parse / IO).
+  // Default is backwards compatible (include accounts). Runner can opt-out by sending include_accounts=false.
+  const includeAccounts: boolean = body?.include_accounts !== false;
   const nowIso = new Date().toISOString();
 
   // Get settings first to use admin-configured batch size
@@ -621,30 +625,34 @@ async function handleGetTasks(supabase: any, body: any) {
     }
   }
 
-  // Build accounts list for listening - use connectableAccounts to include cooldown/restricted
-  // This allows accounts on cooldown to still receive incoming messages from existing conversations
-  const listeningAccounts = await Promise.all(connectableAccounts.map(async (acc: any) => {
-    const creds = await getApiCredentialsForAccount(supabase, acc);
-    if (!creds) return null;
-    return {
-      id: acc.id,
-      phone_number: acc.phone_number,
-      session_data: acc.session_data,
-      device_model: acc.device_model,
-      system_version: acc.system_version,
-      build_id: acc.build_id,
-      app_version: acc.app_version,
-      lang_code: acc.lang_code,
-      system_lang_code: acc.system_lang_code,
-      api_id: creds.api_id,
-      api_hash: creds.api_hash,
-      api_credential_id: creds.api_credential_id,
-      proxy: acc.proxies,
-      status: acc.status, // Include status so runner knows account state
-    };
-  })).then(results => results.filter(Boolean));
+  // Build accounts list for listening only when requested
+  // (tasks always include the per-task account payload needed to send)
+  let listeningAccounts: any[] = [];
+  if (includeAccounts) {
+    // use connectableAccounts to include cooldown/restricted (they can still LISTEN)
+    listeningAccounts = await Promise.all(connectableAccounts.map(async (acc: any) => {
+      const creds = await getApiCredentialsForAccount(supabase, acc);
+      if (!creds) return null;
+      return {
+        id: acc.id,
+        phone_number: acc.phone_number,
+        session_data: acc.session_data,
+        device_model: acc.device_model,
+        system_version: acc.system_version,
+        build_id: acc.build_id,
+        app_version: acc.app_version,
+        lang_code: acc.lang_code,
+        system_lang_code: acc.system_lang_code,
+        api_id: creds.api_id,
+        api_hash: creds.api_hash,
+        api_credential_id: creds.api_credential_id,
+        proxy: acc.proxies,
+        status: acc.status,
+      };
+    })).then(results => results.filter(Boolean));
+  }
 
-  console.log(`[runner-tasks/get] Returning ${tasks.length} tasks, ${listeningAccounts.length} accounts`);
+  console.log(`[runner-tasks/get] Returning ${tasks.length} tasks, ${includeAccounts ? listeningAccounts.length : 0} accounts (includeAccounts=${includeAccounts})`);
 
   return jsonResponse({
     tasks,
