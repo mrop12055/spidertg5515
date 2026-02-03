@@ -1,31 +1,41 @@
 
 
-# Reset 82 Stuck LiveChat Messages
+# Fix Seat Chat Performance: Default to Replied-Only Mode
 
-## Current Situation
+## Problem
 
-82 messages are stuck in `sending` status and need to be reset to `pending` so the runner can process them on next poll.
+On lower-end PCs (8GB RAM or less), the Seat Chat page is laggy with 1-2 second delays when switching between conversations. This happens because the page loads and renders all campaign-initiated conversations, even those where the recipient hasn't replied yet.
 
 ## Solution
 
-Execute a simple UPDATE query to reset all stuck messages:
+Change the default filter to only show conversations where the recipient has replied. This dramatically reduces the number of conversations that need to be rendered, making the page much faster on all devices.
 
-```sql
-UPDATE messages 
-SET status = 'pending'
-WHERE status = 'sending' 
-  AND direction = 'outgoing'
-  AND created_at < NOW() - INTERVAL '3 minutes';
+## What Will Change
+
+### 1. SeatChat.tsx - Change Default Filter
+Currently:
+```javascript
+const [showRepliedOnly, setShowRepliedOnly] = useState(false);
 ```
 
-## Technical Details
+Change to:
+```javascript
+const [showRepliedOnly, setShowRepliedOnly] = useState(true);
+```
 
-**What this does:**
-- Finds all outgoing messages stuck in `sending` for more than 3 minutes
-- Resets their status to `pending`
-- Runner will pick them up on next task poll
+### 2. Update Toggle Button Label
+The button text will be adjusted so it makes sense with the new default:
+- When ON (default): "Replies Only" 
+- When OFF: "Show All Chats"
 
-**File changes:** None needed - this is a data fix only
+This is a single-line change that will:
+- Reduce rendered conversations by potentially 70-90% (depending on reply rates)
+- Make chat switching instant on low-end devices
+- Keep the option to view all conversations by clicking the toggle
 
-**Execution:** Will use the database migration tool to run this as a one-time data fix
+## Technical Notes
+
+The `has_reply` field is already indexed in the database (from earlier migrations) and is maintained by a trigger on the messages table, so filtering by this field is fast.
+
+Users who want to see all campaign conversations (including those without replies) can still toggle the filter off.
 

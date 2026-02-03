@@ -1205,13 +1205,11 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     print("  CONNECTING ACCOUNTS")
     print("="*50)
     print(f"  Found {len(to_connect)} account(s) to connect (already connected: {len(already_connected)})...\\n")
-    sys.stdout.flush()
     
     # Connect only the accounts that need it
     results = await asyncio.gather(*[connect(a) for a in to_connect], return_exceptions=True)
     ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
     print(f"\\n  Connected: {ok}/{len(to_connect)} (total active: {len(already_connected) + ok})")
-    sys.stdout.flush()
     
     # Track which accounts were newly connected
     newly_connected = set()
@@ -1224,51 +1222,26 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     # Fetch unread messages in PARALLEL for all newly connected accounts (catch-up)
     # Uses last_offline_at for smart time-based fetching
     if newly_connected:
-        print(f"\\n  [CATCHUP] Fetching unread messages for {len(newly_connected)} account(s) since {last_offline_at or 'unknown'}")
-        sys.stdout.flush()
-
-        async def _catchup_one(aid: str):
-            try:
-                if aid not in clients:
-                    return
-                # Prevent a single stuck client from blocking startup forever
-                await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=120)
-            except asyncio.TimeoutError:
-                phone = accounts.get(aid, {}).get("phone_number", "????")[-4:]
-                print(f"  [CATCHUP-TIMEOUT] [{phone}] unread fetch >120s")
-            except Exception as e:
-                phone = accounts.get(aid, {}).get("phone_number", "????")[-4:]
-                print(f"  [CATCHUP-ERR] [{phone}] {str(e)[:60]}")
-
-        await asyncio.gather(*[_catchup_one(aid) for aid in newly_connected], return_exceptions=True)
-        print("  [CATCHUP] Done")
-        sys.stdout.flush()
+        await asyncio.gather(
+            *[fetch_unread_messages(clients[aid], aid, last_offline_at) 
+              for aid in newly_connected if aid in clients],
+            return_exceptions=True
+        )
     
     return len(already_connected) + ok, newly_connected
 
 
 async def setup_handlers():
-    """Set up incoming message handlers with defensive error handling."""
-    success = 0
-    failed = 0
+    """Set up incoming message handlers."""
     for aid, client in clients.items():
         if getattr(client, "_h", False):
             continue
         
-        try:
-            @client.on(events.NewMessage(incoming=True))
-            async def handler(event, a=aid):
-                await on_message(event, a)
-            
-            setattr(client, "_h", True)
-            success += 1
-        except Exception as e:
-            phone = accounts.get(aid, {}).get("phone_number", "????")[-4:]
-            print(f"  [HANDLER-ERR] [{phone}] {str(e)[:40]}")
-            failed += 1
-    
-    print(f"  [HANDLERS] Set up {success} handlers, {failed} failed")
-    sys.stdout.flush()
+        @client.on(events.NewMessage(incoming=True))
+        async def handler(event, a=aid):
+            await on_message(event, a)
+        
+        setattr(client, "_h", True)
 
 
 # ==============================================================================
@@ -1439,16 +1412,11 @@ async def main():
         print("  No last_offline_at found, using 24h default for catch-up")
     
     _, _ = await connect_all_from_response(initial_accounts)
-    print("  [DEBUG] Catch-up complete, setting up handlers...")
-    sys.stdout.flush()
     await setup_handlers()
-    print("  [DEBUG] Handlers ready, entering main loop...")
-    sys.stdout.flush()
     
     print("\\n" + "="*50)
     print("  PROCESSING TASKS + LISTENING FOR MESSAGES")
     print("="*50 + "\\n")
-    sys.stdout.flush()
     
     empty = 0
     last_refresh = time.time()
