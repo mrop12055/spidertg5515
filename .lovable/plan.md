@@ -1,41 +1,82 @@
 
 
-# Fix Seat Chat Performance: Default to Replied-Only Mode
+# Fix Runner Hang During CATCHUP Phase
 
 ## Problem
 
-On lower-end PCs (8GB RAM or less), the Seat Chat page is laggy with 1-2 second delays when switching between conversations. This happens because the page loads and renders all campaign-initiated conversations, even those where the recipient hasn't replied yet.
+With 500+ accounts, the runner hangs during the CATCHUP phase because it attempts to run `fetch_unread_messages()` for ALL newly connected accounts in parallel simultaneously. This creates:
+- Hundreds of concurrent `get_dialogs()` API calls
+- Thousands of `get_messages()` calls across all accounts
+- Potential Telegram flood protection triggers
+- Resource exhaustion (memory, connections, file descriptors)
+
+The runner works fine with fewer accounts because the parallel load is manageable.
 
 ## Solution
 
-Change the default filter to only show conversations where the recipient has replied. This dramatically reduces the number of conversations that need to be rendered, making the page much faster on all devices.
+Add a semaphore to throttle the CATCHUP phase, processing only 5 accounts at a time instead of all 500+ simultaneously.
 
-## What Will Change
+## Changes to SetupGuide.tsx (Python Runner)
 
-### 1. SeatChat.tsx - Change Default Filter
-Currently:
-```javascript
-const [showRepliedOnly, setShowRepliedOnly] = useState(false);
+### 1. Add CATCHUP Semaphore (near other semaphores)
+
+Add a new semaphore constant for catch-up operations:
+
+```python
+CATCHUP_SEMAPHORE = asyncio.Semaphore(5)  # Process 5 accounts at a time
 ```
 
-Change to:
-```javascript
-const [showRepliedOnly, setShowRepliedOnly] = useState(true);
+### 2. Wrap fetch_unread_messages with Semaphore
+
+Create a throttled wrapper function:
+
+```python
+async def fetch_unread_throttled(client, acc_id: str, offline_since: Optional[str] = None):
+    """Throttled wrapper for fetch_unread_messages to prevent overwhelming Telegram API."""
+    async with CATCHUP_SEMAPHORE:
+        await fetch_unread_messages(client, acc_id, offline_since)
 ```
 
-### 2. Update Toggle Button Label
-The button text will be adjusted so it makes sense with the new default:
-- When ON (default): "Replies Only" 
-- When OFF: "Show All Chats"
+### 3. Update connect_all_from_response to Use Throttled Version
 
-This is a single-line change that will:
-- Reduce rendered conversations by potentially 70-90% (depending on reply rates)
-- Make chat switching instant on low-end devices
-- Keep the option to view all conversations by clicking the toggle
+Change line 1225-1228 from:
+
+```python
+await asyncio.gather(
+    *[fetch_unread_messages(clients[aid], aid, last_offline_at) 
+      for aid in newly_connected if aid in clients],
+    return_exceptions=True
+)
+```
+
+To:
+
+```python
+await asyncio.gather(
+    *[fetch_unread_throttled(clients[aid], aid, last_offline_at) 
+      for aid in newly_connected if aid in clients],
+    return_exceptions=True
+)
+```
+
+### 4. Add Progress Logging
+
+Update `fetch_unread_messages` to show progress:
+
+```python
+# At start of function
+print(f"  [CATCHUP] [{phone}] Starting...")
+```
+
+## Why This Works
+
+- **Controlled concurrency**: Only 5 accounts fetch unread messages simultaneously
+- **Prevents API floods**: Telegram won't see 500+ parallel API calls
+- **Prevents resource exhaustion**: System resources stay under control
+- **Still parallel**: 5 at a time is still fast, just not overwhelming
+- **Matches existing pattern**: Runner already uses semaphores for connections and tasks
 
 ## Technical Notes
 
-The `has_reply` field is already indexed in the database (from earlier migrations) and is maintained by a trigger on the messages table, so filtering by this field is fast.
-
-Users who want to see all campaign conversations (including those without replies) can still toggle the filter off.
+The semaphore value of 5 is chosen to match the existing `CONNECTION_SEMAPHORE` pattern in the runner, which was set to prevent Windows semaphore timeout errors. This can be tuned higher (10-15) if performance is acceptable, or lower (3) if issues persist.
 
