@@ -25,7 +25,7 @@ const transformConversation = (c: any): Conversation => ({
 });
 
 const fetchConversations = async (): Promise<Conversation[]> => {
-  // Use count query + pagination to fetch up to 10k conversations (bypasses 1000 limit)
+  // Use count query + PARALLEL pagination to fetch up to 10k conversations (bypasses 1000 limit)
   const PAGE_SIZE = 1000;
   const MAX_CONVERSATIONS = 10000;
   
@@ -41,29 +41,39 @@ const fetchConversations = async (): Promise<Conversation[]> => {
   // Limit to 10k conversations max
   const effectiveCount = Math.min(totalCount, MAX_CONVERSATIONS);
   const totalPages = Math.ceil(effectiveCount / PAGE_SIZE);
-  const all: any[] = [];
-
-  for (let page = 0; page < totalPages; page++) {
+  
+  console.log('[Conversations] Fetching', effectiveCount, 'conversations in', totalPages, 'parallel pages');
+  
+  // Create all page fetch promises in parallel
+  const pagePromises = Array.from({ length: totalPages }, (_, page) => {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
-
-    const { data, error } = await supabase
+    
+    return supabase
       .from('conversations')
       .select('id,account_id,recipient_phone,recipient_telegram_id,recipient_name,recipient_username,recipient_avatar,unread_count,is_active,last_message_at,last_message_content,last_message_direction,created_at,updated_at,blocked_by_recipient,first_message_sent,has_reply,seat_id')
       .not('last_message_at', 'is', null)
       .order('last_message_at', { ascending: false })
       .range(from, to);
-
+  });
+  
+  // Execute all pages in parallel
+  const results = await Promise.all(pagePromises);
+  
+  // Combine results and handle errors
+  const all: any[] = [];
+  for (let i = 0; i < results.length; i++) {
+    const { data, error } = results[i];
     if (error) {
-      console.error('[Conversations] Error fetching page', page, error);
+      console.error('[Conversations] Error fetching page', i, error);
       throw error;
     }
-    if (!data || data.length === 0) break;
-    
-    all.push(...data);
+    if (data) {
+      all.push(...data);
+    }
   }
 
-  console.log('[Conversations] Fetched', all.length, 'of', totalCount, 'conversations');
+  console.log('[Conversations] Fetched', all.length, 'of', totalCount, 'conversations (parallel)');
   return all.map(transformConversation);
 };
 
