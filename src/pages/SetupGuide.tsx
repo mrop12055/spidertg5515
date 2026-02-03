@@ -1234,14 +1234,29 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
 async def setup_handlers():
     """Set up incoming message handlers with defensive error handling."""
     count = 0
-    for aid, client in list(clients.items()):
+    items = list(clients.items())
+    total = len(items)
+    started = time.time()
+    for idx, (aid, client) in enumerate(items, start=1):
         if getattr(client, "_h", False):
             continue
         
         try:
-            # Check if client is still connected before registering handler
-            if not client.is_connected():
-                print(f"  [HANDLER] Skipping disconnected client {aid[:8]}...")
+            # Progress marker (helps identify the exact account where it hangs)
+            if idx == 1 or idx % 25 == 0 or idx == total:
+                print(f"  [HANDLER] Registering {idx}/{total} ({count} ok so far)...")
+                sys.stdout.flush()
+
+            # Check if client is still connected before registering handler.
+            # IMPORTANT: do this defensively; some stale connections can block.
+            connected = False
+            try:
+                connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=0.5)
+            except Exception:
+                connected = False
+            
+            if not connected:
+                print(f"  [HANDLER] Skipping unresponsive/disconnected client {aid[:8]}...")
                 continue
             
             @client.on(events.NewMessage(incoming=True))
@@ -1255,7 +1270,9 @@ async def setup_handlers():
             continue
     
     if count > 0:
-        print(f"  [HANDLERS] Registered {count} new message handlers")
+        took = time.time() - started
+        print(f"  [HANDLERS] Registered {count} new message handlers in {took:.1f}s")
+        sys.stdout.flush()
 
 
 # ==============================================================================
