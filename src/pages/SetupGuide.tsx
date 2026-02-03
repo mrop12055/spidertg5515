@@ -1205,11 +1205,13 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     print("  CONNECTING ACCOUNTS")
     print("="*50)
     print(f"  Found {len(to_connect)} account(s) to connect (already connected: {len(already_connected)})...\\n")
+    sys.stdout.flush()
     
     # Connect only the accounts that need it
     results = await asyncio.gather(*[connect(a) for a in to_connect], return_exceptions=True)
     ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
     print(f"\\n  Connected: {ok}/{len(to_connect)} (total active: {len(already_connected) + ok})")
+    sys.stdout.flush()
     
     # Track which accounts were newly connected
     newly_connected = set()
@@ -1222,11 +1224,25 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     # Fetch unread messages in PARALLEL for all newly connected accounts (catch-up)
     # Uses last_offline_at for smart time-based fetching
     if newly_connected:
-        await asyncio.gather(
-            *[fetch_unread_messages(clients[aid], aid, last_offline_at) 
-              for aid in newly_connected if aid in clients],
-            return_exceptions=True
-        )
+        print(f"\\n  [CATCHUP] Fetching unread messages for {len(newly_connected)} account(s) since {last_offline_at or 'unknown'}")
+        sys.stdout.flush()
+
+        async def _catchup_one(aid: str):
+            try:
+                if aid not in clients:
+                    return
+                # Prevent a single stuck client from blocking startup forever
+                await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=120)
+            except asyncio.TimeoutError:
+                phone = accounts.get(aid, {}).get("phone_number", "????")[-4:]
+                print(f"  [CATCHUP-TIMEOUT] [{phone}] unread fetch >120s")
+            except Exception as e:
+                phone = accounts.get(aid, {}).get("phone_number", "????")[-4:]
+                print(f"  [CATCHUP-ERR] [{phone}] {str(e)[:60]}")
+
+        await asyncio.gather(*[_catchup_one(aid) for aid in newly_connected], return_exceptions=True)
+        print("  [CATCHUP] Done")
+        sys.stdout.flush()
     
     return len(already_connected) + ok, newly_connected
 
