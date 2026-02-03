@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-03-handler-progress-v2";
+  const runnerBuild = "2026-02-03-catchup-timeout-v3";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -1235,12 +1235,15 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     # Uses last_offline_at for smart time-based fetching.
     # IMPORTANT: Put a hard timeout per account so one stuck Telethon call can't block startup.
     if newly_connected:
+        print(f"\n  [CATCHUP] Running catch-up for {len(newly_connected)} newly connected account(s)...")
+        sys.stdout.flush()
         async def _catchup_one(aid: str):
             try:
                 phone = (accounts.get(aid, {}).get("phone_number") or "????")[-4:]
                 print(f"  [CATCHUP] [{phone}] Starting...")
                 sys.stdout.flush()
-                await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=120)
+                # Keep this short so startup never appears "stuck".
+                await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=20)
                 print(f"  [CATCHUP] [{phone}] Done")
                 sys.stdout.flush()
             except asyncio.TimeoutError:
@@ -1254,6 +1257,9 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
             *[_catchup_one(aid) for aid in newly_connected if aid in clients],
             return_exceptions=True,
         )
+
+        print("  [CATCHUP] All catch-up tasks finished (continuing startup)")
+        sys.stdout.flush()
     
     return len(already_connected) + ok, newly_connected
 
