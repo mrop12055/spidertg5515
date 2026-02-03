@@ -1235,7 +1235,9 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     # Uses last_offline_at for smart time-based fetching.
     # IMPORTANT: Put a hard timeout per account so one stuck Telethon call can't block startup.
     if newly_connected:
-        print(f"\n  [CATCHUP] Running catch-up for {len(newly_connected)} newly connected account(s)...")
+        # NOTE: must use literal \\n here because this file is embedded in a JS template string.
+        # If we use "\n", JS will turn it into a real newline inside the Python string, causing a SyntaxError.
+        print(f"\\n  [CATCHUP] Running catch-up for {len(newly_connected)} newly connected account(s)...")
         sys.stdout.flush()
         async def _catchup_one(aid: str):
             try:
