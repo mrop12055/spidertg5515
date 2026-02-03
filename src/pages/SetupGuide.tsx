@@ -14,11 +14,13 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
+  const runnerBuild = "2026-02-03-handler-progress-v2";
+
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
 TelegramCRM - ULTRA-SIMPLIFIED RUNNER
 =====================================
-BUILD: 2026-01-29-ultra-v1
+BUILD: ${runnerBuild}
 
 TRUTH: Campaign, Conversations, Warmup are ALL the same thing.
        They all just SEND MESSAGES from an account to a recipient.
@@ -49,7 +51,7 @@ from collections import defaultdict
 BACKEND_URL = "${supabaseUrl}/functions/v1"
 SUPABASE_URL = "${supabaseUrl}"
 SUPABASE_KEY = "${supabaseKey}"
-BUILD_VERSION = "2026-01-29-ultra-v1"
+BUILD_VERSION = "${runnerBuild}"
 
 # ========== STATE ==========
 SESSION_FOLDER = tempfile.mkdtemp(prefix="tg_")
@@ -1593,11 +1595,12 @@ pysocks>=1.7.1
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "telegram_crm_ultra.zip";
+    // Cache-bust downloads so the user never accidentally runs an old script
+    a.download = `telegram_crm_${runnerBuild}.zip`;
     a.click();
     URL.revokeObjectURL(url);
     
-    toast.success("Ultra-simplified runner downloaded!");
+    toast.success(`Runner downloaded: ${runnerBuild}`);
   };
 
   return (
