@@ -709,25 +709,61 @@ const SeatChat: React.FC = () => {
             const c = newC;
             
             // Incremental update for conversations with time-based sorting
-            setConversations(prev => 
-              prev.map(conv => 
-                conv.id === c.id ? {
-                  ...conv,
-                  unread_count: c.unread_count ?? conv.unread_count,
-                  last_message_at: c.last_message_at ?? conv.last_message_at,
-                  last_message_content: c.last_message_content ?? conv.last_message_content,
-                  last_message_direction: c.last_message_direction ?? conv.last_message_direction,
-                  has_reply: c.has_reply ?? conv.has_reply,
-                  is_pinned: c.is_pinned ?? conv.is_pinned,
-                  is_hidden: c.is_hidden ?? conv.is_hidden,
-                } : conv
-              ).sort((a, b) => {
+            // IMPORTANT: If conversation just got first reply (has_reply changed to true),
+            // it won't be in the list yet, so we need to ADD it, not just update
+            setConversations(prev => {
+              const exists = prev.some(conv => conv.id === c.id);
+              
+              let updated: Conversation[];
+              if (exists) {
+                // Update existing conversation
+                updated = prev.map(conv => 
+                  conv.id === c.id ? {
+                    ...conv,
+                    unread_count: c.unread_count ?? conv.unread_count,
+                    last_message_at: c.last_message_at ?? conv.last_message_at,
+                    last_message_content: c.last_message_content ?? conv.last_message_content,
+                    last_message_direction: c.last_message_direction ?? conv.last_message_direction,
+                    has_reply: c.has_reply ?? conv.has_reply,
+                    is_pinned: c.is_pinned ?? conv.is_pinned,
+                    is_hidden: c.is_hidden ?? conv.is_hidden,
+                  } : conv
+                );
+              } else if (c.has_reply) {
+                // NEW: Conversation just got first reply - add it to the list
+                console.log('[SeatChat] New reply conversation added via realtime:', c.id);
+                updated = [...prev, {
+                  id: c.id,
+                  account_id: c.account_id,
+                  recipient_phone: c.recipient_phone,
+                  recipient_name: c.recipient_name,
+                  recipient_username: c.recipient_username,
+                  recipient_avatar: c.recipient_avatar,
+                  recipient_telegram_id: c.recipient_telegram_id,
+                  unread_count: c.unread_count ?? 0,
+                  last_message_at: c.last_message_at,
+                  is_active: c.is_active ?? false,
+                  seat_id: c.seat_id,
+                  first_message_sent: c.first_message_sent ?? false,
+                  last_message_content: c.last_message_content,
+                  last_message_direction: c.last_message_direction,
+                  has_reply: c.has_reply ?? true,
+                  is_pinned: c.is_pinned ?? false,
+                  is_hidden: c.is_hidden ?? false,
+                }];
+              } else {
+                // Conversation doesn't exist and has no reply - ignore
+                return prev;
+              }
+              
+              // Sort by last message time
+              return updated.sort((a, b) => {
                 const frozen = selectedConvPositionRef.current;
                 const timeA = frozen && a.id === frozen.id ? frozen.sortTime : getConversationTime(a);
                 const timeB = frozen && b.id === frozen.id ? frozen.sortTime : getConversationTime(b);
                 return timeB - timeA;
-              })
-            );
+              });
+            });
           } else if (payload.eventType === 'INSERT') {
             // New conversation added to this seat - full refetch to get complete data
             debouncedRefetch(fetchConversations, 500);
