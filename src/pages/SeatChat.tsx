@@ -409,7 +409,8 @@ const SeatChat: React.FC = () => {
     validateSeat();
   }, [token]);
 
-  // Fetch conversations for this seat - campaign conversations OR conversations with replies
+  // Fetch conversations for this seat - SERVER-SIDE filtered for has_reply=true
+  // Uses composite index (seat_id, has_reply, last_message_at) for fast queries
   // Limited to last 5 days, with PARALLEL pagination for fast loading
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
@@ -420,13 +421,14 @@ const SeatChat: React.FC = () => {
       fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
       
       const PAGE_SIZE = 1000;
-      const MAX_CONVERSATIONS = 50000;
+      const MAX_CONVERSATIONS = 10000;
       
-      // First get total count
+      // First get total count - SERVER-SIDE filter for has_reply=true
       const { count: totalCount } = await supabase
         .from('conversations')
         .select('*', { count: 'exact', head: true })
         .eq('seat_id', seat.id)
+        .eq('has_reply', true) // Server-side filter - uses index
         .gte('last_message_at', fiveDaysAgo.toISOString());
       
       if (!totalCount || totalCount === 0) {
@@ -437,7 +439,10 @@ const SeatChat: React.FC = () => {
       const effectiveCount = Math.min(totalCount, MAX_CONVERSATIONS);
       const pagesToFetch = Math.ceil(effectiveCount / PAGE_SIZE);
       
+      console.log('[SeatChat] Fetching', effectiveCount, 'conversations with has_reply=true (server-side filtered)');
+      
       // Build all page requests in PARALLEL for speed
+      // Query uses composite index: (seat_id, has_reply, last_message_at DESC)
       const pagePromises = Array.from({ length: pagesToFetch }, (_, page) => {
         const from = page * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
@@ -446,6 +451,7 @@ const SeatChat: React.FC = () => {
           .from('conversations')
           .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
           .eq('seat_id', seat.id)
+          .eq('has_reply', true) // Server-side filter - uses index
           .gte('last_message_at', fiveDaysAgo.toISOString())
           .order('last_message_at', { ascending: false, nullsFirst: false })
           .range(from, to);
@@ -454,20 +460,17 @@ const SeatChat: React.FC = () => {
       // Execute all page requests in parallel
       const results = await Promise.all(pagePromises);
       
-      // Combine all results
+      // Combine all results (already filtered server-side)
       const allData: any[] = [];
       for (const result of results) {
         if (result.error) throw result.error;
         if (result.data) allData.push(...result.data);
       }
       
-      // Filter: show if first_message_sent OR has_reply
-      const filtered = allData.filter(conv => conv.first_message_sent || conv.has_reply);
-      
-      console.log('[SeatChat] Fetched', allData.length, 'conversations in parallel,', filtered.length, 'after filter');
+      console.log('[SeatChat] Fetched', allData.length, 'conversations with replies (server-side filtered)');
       
       // Use the conversation's stored values directly (updated by trigger)
-      setConversations(filtered.map(conv => ({
+      setConversations(allData.map(conv => ({
         ...conv,
         has_reply: conv.has_reply ?? false,
         last_message_direction: conv.last_message_direction as 'incoming' | 'outgoing' | undefined,
