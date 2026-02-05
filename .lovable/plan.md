@@ -1,56 +1,61 @@
-# Performance Optimization Plan - COMPLETED
 
-## ✅ Accounts Page (Completed)
-- [x] List virtualization with react-window (50+ items threshold)
-- [x] Parallel pagination for useAccounts hook
-- [x] O(1) proxy lookups via memoized Map
-- [x] Memoized filtered results with useMemo
-- [x] Debounced search input (300ms delay)
 
-## ✅ SeatChat Page (Completed)
-- [x] List virtualization with react-window (50+ items threshold)
-- [x] Debounced search input (300ms delay)
-- [x] Memoized tab counts (allCount, pinnedCount, hiddenCount, repliesCount, unreadRepliesCount)
-- [x] Updated filteredConversations to use debounced search query
+# Move 63 Accounts to Frozen Status
 
----
+## Overview
+Update 63 accounts currently showing in the "Used" tab (restricted status) to "Frozen" status based on the phone numbers visible in your screenshots.
 
-## Summary of Performance Improvements
+## Phone Numbers to Update (63 accounts)
 
-### Accounts Page
-| Metric | Before | After |
-|--------|--------|-------|
-| Initial render time | 800-1500ms | 150-300ms |
-| DOM nodes | 5000+ | ~200 |
-| Scroll performance | Laggy/janky | Smooth 60fps |
-| Account fetch time | 2-4s (sequential) | 500ms-1s (parallel) |
-| Filter recalculation | Every render | Only when dependencies change |
+From the screenshots, here are all the phone numbers:
 
-### SeatChat Page
-| Metric | Before | After |
-|--------|--------|-------|
-| Initial render time | 1500-3000ms | 200-400ms |
-| DOM nodes (conversation list) | 500,000+ | ~1,500 |
-| Scroll performance | Laggy/janky | Smooth 60fps |
-| Search typing lag | Noticeable | None |
-| Filter recalculation | Every keystroke | Every 300ms max |
+```text
+916000394758, 916003646978, 916205488332, 916261021185, 916281567825,
+916291817099, 916302355151, 916307539728, 917006042837, 917009491257,
+917074140276, 917099325877, 917279910544, 917354125838, 917398903871,
+917399864032, 917415285422, 917500225976, 917602023980, 917734892355,
+917975935911, 918012160799, 918070376981, 918144290086, 918167866950,
+918239861928, 918270411450, 918344566355, 918429790957, 918607155815,
+918627825462, 918653932328, 918707582387, 918981021159, 919099124034,
+919008980307, 919027014606, 919049084552, 919080894623, 919087685090,
+919110801410, 919126648221, 919212609625, 919277278270, 919286245263,
+919312493192, 919390321437, 919380606142, 919447056189, 919457634998,
+919501048037, 919508468937, 919586869375, 919588941305, 919637584425,
+919637472929, 919657341447, 919774035815, 919855643819
+```
 
----
+## Implementation
 
-## Technical Implementation Notes
+### Database Update
+Run a single SQL UPDATE statement to change the status of all 63 accounts from their current status to `frozen`:
 
-### Virtualization
-- Uses react-window `List` component
-- Threshold: 50+ items triggers virtualization
-- Only renders visible items in the DOM (~10-15 at a time)
-- Full functionality preserved (click, hover, dropdowns)
+```sql
+UPDATE telegram_accounts 
+SET 
+  status = 'frozen',
+  updated_at = now()
+WHERE phone_number IN (
+  '916000394758', '916003646978', '916205488332', '916261021185', '916281567825',
+  '916291817099', '916302355151', '916307539728', '917006042837', '917009491257',
+  '917074140276', '917099325877', '917279910544', '917354125838', '917398903871',
+  '917399864032', '917415285422', '917500225976', '917602023980', '917734892355',
+  '917975935911', '918012160799', '918070376981', '918144290086', '918167866950',
+  '918239861928', '918270411450', '918344566355', '918429790957', '918607155815',
+  '918627825462', '918653932328', '918707582387', '918981021159', '919099124034',
+  '919008980307', '919027014606', '919049084552', '919080894623', '919087685090',
+  '919110801410', '919126648221', '919212609625', '919277278270', '919286245263',
+  '919312493192', '919390321437', '919380606142', '919447056189', '919457634998',
+  '919501048037', '919508468937', '919586869375', '919588941305', '919637584425',
+  '919637472929', '919657341447', '919774035815', '919855643819'
+);
+```
 
-### Debouncing
-- 300ms delay for search input
-- Immediate visual feedback in input field
-- Delayed filtering prevents UI lag during typing
+## What This Changes
+- **Before**: 63 accounts in "Used" tab with restricted status
+- **After**: 63 accounts moved to "Frozen" tab with frozen status
 
-### Memoization
-- Tab counts wrapped in useMemo
-- filteredConversations uses useMemo with proper dependencies
-- Prevents redundant calculations on unrelated state changes
+## Impact
+- These accounts will no longer be processed by the runner (frozen accounts are excluded)
+- They will appear in the "Frozen" filter instead of "Used"
+- This also reduces runner workload since it won't attempt to connect to these accounts
+
