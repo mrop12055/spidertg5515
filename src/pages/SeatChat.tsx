@@ -21,8 +21,6 @@ import { format, isToday, isYesterday, subDays, differenceInMinutes } from 'date
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
 import { playNotificationSound } from '@/hooks/useNotifications';
-import { AccountStatusWarning } from '@/components/chat/AccountStatusWarning';
-import { AccountStatus } from '@/types/telegram';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -69,8 +67,6 @@ interface SenderAccount {
   last_name: string | null;
   username: string | null;
   avatar_url: string | null;
-  status?: AccountStatus;
-  restricted_until?: string | null;
 }
 
 interface Conversation {
@@ -522,7 +518,7 @@ const SeatChat: React.FC = () => {
 
       const { data: accountsData, error } = await supabase
         .from('telegram_accounts')
-        .select('id, phone_number, first_name, last_name, username, avatar_url, status, restricted_until')
+        .select('id, phone_number, first_name, last_name, username, avatar_url')
         .in('id', accountIds);
 
       if (!error && accountsData) {
@@ -2002,23 +1998,7 @@ const SeatChat: React.FC = () => {
                     )}
 
                     {/* Message Input */}
-                    <div className="bg-card/80 backdrop-blur-sm border-t border-border/30 px-4 md:px-6 py-3 flex-shrink-0 space-y-2">
-                      {/* Account Status Warning */}
-                      {(() => {
-                        const senderAccount = senderAccounts.get(selectedConversation.account_id);
-                        if (senderAccount?.status && (senderAccount.status === 'restricted' || senderAccount.status === 'cooldown')) {
-                          return (
-                            <div className="max-w-4xl mx-auto">
-                              <AccountStatusWarning 
-                                status={senderAccount.status as AccountStatus}
-                                restrictedUntil={senderAccount.restricted_until ? new Date(senderAccount.restricted_until) : null}
-                              />
-                            </div>
-                          );
-                        }
-                        return null;
-                      })()}
-                      
+                    <div className="bg-card/80 backdrop-blur-sm border-t border-border/30 px-4 md:px-6 py-4 flex-shrink-0">
                       <div className="max-w-4xl mx-auto flex items-end gap-3">
                         {/* Left Actions */}
                         <div className="flex items-center gap-1 pb-1">
