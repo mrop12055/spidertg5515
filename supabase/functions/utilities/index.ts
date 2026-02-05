@@ -137,10 +137,11 @@ serve(async (req) => {
 
     // ==================== CLEANUP ====================
     if (path === '/cleanup' && req.method === 'POST') {
-      const { days_old = 30 } = body;
+      const { days_old = 30, conversation_days = 5 } = body;
       const cutoffDate = new Date(Date.now() - days_old * 24 * 60 * 60 * 1000).toISOString();
+      const conversationCutoff = new Date(Date.now() - conversation_days * 24 * 60 * 60 * 1000).toISOString();
 
-      console.log(`[utilities] Cleanup: removing data older than ${days_old} days`);
+      console.log(`[utilities] Cleanup: removing data older than ${days_old} days, conversations without replies older than ${conversation_days} days`);
 
       // Cleanup old warmup messages
       const { count: warmupDeleted } = await supabase
@@ -167,6 +168,43 @@ serve(async (req) => {
         .delete({ count: 'exact' })
         .lt('created_at', cutoffDate);
 
+      // Cleanup old conversations without replies
+      // First, get IDs of conversations to delete
+      const { data: oldConversations } = await supabase
+        .from('conversations')
+        .select('id')
+        .lt('created_at', conversationCutoff)
+        .eq('has_reply', false);
+
+      let messagesDeleted = 0;
+      let conversationsDeleted = 0;
+
+      if (oldConversations && oldConversations.length > 0) {
+        const conversationIds = oldConversations.map((c: any) => c.id);
+        console.log(`[utilities] Found ${conversationIds.length} old conversations without replies to delete`);
+
+        // Delete in batches of 500
+        for (let i = 0; i < conversationIds.length; i += 500) {
+          const batchIds = conversationIds.slice(i, i + 500);
+
+          // Delete messages first (foreign key constraint)
+          const { count: msgCount } = await supabase
+            .from('messages')
+            .delete({ count: 'exact' })
+            .in('conversation_id', batchIds);
+          messagesDeleted += msgCount || 0;
+
+          // Then delete conversations
+          const { count: convCount } = await supabase
+            .from('conversations')
+            .delete({ count: 'exact' })
+            .in('id', batchIds);
+          conversationsDeleted += convCount || 0;
+        }
+
+        console.log(`[utilities] Deleted ${messagesDeleted} messages and ${conversationsDeleted} conversations`);
+      }
+
       return jsonResponse({
         success: true,
         deleted: {
@@ -174,6 +212,8 @@ serve(async (req) => {
           warmup_errors: errorsDeleted || 0,
           proxy_errors: proxyErrorsDeleted || 0,
           vps_logs: logsDeleted || 0,
+          messages: messagesDeleted,
+          conversations: conversationsDeleted,
         },
       });
     }
