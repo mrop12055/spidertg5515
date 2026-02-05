@@ -1391,11 +1391,24 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       
       let inserted = 0;
       if (newRecipients.length > 0) {
-        const { error } = await supabase
-          .from('campaign_recipients')
-          .insert(newRecipients);
+        // Chunk recipients into batches of 1000 to avoid Supabase limit
+        const CHUNK_SIZE = 1000;
+        const chunks: typeof newRecipients[] = [];
+        for (let i = 0; i < newRecipients.length; i += CHUNK_SIZE) {
+          chunks.push(newRecipients.slice(i, i + CHUNK_SIZE));
+        }
         
-        if (error) throw error;
+        // Insert all chunks in parallel for better performance
+        const results = await Promise.all(
+          chunks.map(chunk => 
+            supabase.from('campaign_recipients').insert(chunk)
+          )
+        );
+        
+        // Check for any errors
+        const failedChunk = results.find(r => r.error);
+        if (failedChunk?.error) throw failedChunk.error;
+        
         inserted = newRecipients.length;
       }
       
