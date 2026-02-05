@@ -41,45 +41,34 @@ const transformAccount = (acc: any): TelegramAccount => ({
   disabledReason: acc.disabled_reason || undefined,
 });
 
-// Parallel paginated fetcher for large datasets
+// Parallel paged fetcher for large datasets
 const fetchAccountsPaged = async (): Promise<TelegramAccount[]> => {
   const PAGE_SIZE = 1000;
-  const MAX_RECORDS = 50000;
+  const MAX_PAGES = 100; // Max 100K accounts
   
   const selectColumns = 'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, telegram_id, last_spambot_check, tags, success_count, failure_count, success_rate, auto_disabled, disabled_reason';
 
-  // Step 1: Get total count first
-  const { count, error: countError } = await supabase
-    .from('telegram_accounts')
-    .select('id', { count: 'exact', head: true });
+  // NOTE: Avoid firing MAX_PAGES requests in parallel.
+  // The previous implementation launched up to 99 extra queries even when
+  // the table had only a few thousand rows, which makes the Accounts page
+  // feel extremely slow.
+  const all: any[] = [];
 
-  if (countError) throw countError;
-  
-  const totalRecords = Math.min(count || 0, MAX_RECORDS);
-  if (totalRecords === 0) return [];
-
-  // Step 2: Calculate pages needed
-  const totalPages = Math.ceil(totalRecords / PAGE_SIZE);
-
-  // Step 3: Fetch all pages in parallel
-  const pagePromises = Array.from({ length: totalPages }, (_, page) => {
+  for (let page = 0; page < MAX_PAGES; page++) {
     const from = page * PAGE_SIZE;
     const to = from + PAGE_SIZE - 1;
-    
-    return supabase
+
+    const { data, error } = await supabase
       .from('telegram_accounts')
       .select(selectColumns)
       .order('created_at', { ascending: false })
       .range(from, to);
-  });
 
-  const results = await Promise.all(pagePromises);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
 
-  // Step 4: Merge results in order
-  const all: any[] = [];
-  for (const result of results) {
-    if (result.error) throw result.error;
-    if (result.data) all.push(...result.data);
+    all.push(...data);
+    if (data.length < PAGE_SIZE) break;
   }
 
   return all.map(transformAccount);

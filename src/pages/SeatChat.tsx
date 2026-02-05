@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -34,21 +34,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { List } from 'react-window';
-
-// Debounce hook for search optimization
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const handler = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(handler);
-  }, [value, delay]);
-  return debouncedValue;
-}
-
-// Performance constants
-const VIRTUALIZATION_THRESHOLD = 50;
-const CONVERSATION_ITEM_HEIGHT = 88;
 
 type TimeFilter = 'today' | '3d' | '5d';
 type SeatView = 'chats' | 'reports';
@@ -141,7 +126,6 @@ const SeatChat: React.FC = () => {
   const [messageInput, setMessageInput] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
@@ -302,7 +286,7 @@ const SeatChat: React.FC = () => {
   }, [conversations, timeFilterCutoff]);
 
   // Filter conversations based on current tab and filters
-  const filteredConversations = useMemo(() => {
+  const filteredConversations = React.useMemo(() => {
     let filtered = timeFilteredConversations;
     
     // Filter by tab
@@ -321,10 +305,10 @@ const SeatChat: React.FC = () => {
       filtered = filtered.filter(conv => conv.has_reply);
     }
     
-    // When searching, ignore time filter to search ALL conversations (use debounced value for performance)
-    if (debouncedSearchQuery) {
+    // When searching, ignore time filter to search ALL conversations
+    if (searchQuery) {
       // Re-filter from all conversations for search (campaign OR with replies)
-      const searchLower = debouncedSearchQuery.toLowerCase();
+      const searchLower = searchQuery.toLowerCase();
       filtered = conversations.filter(conv => (
         (conv.first_message_sent || conv.has_reply) && // Campaign or reply conversations
         (conv.recipient_name?.toLowerCase().includes(searchLower) ||
@@ -351,16 +335,16 @@ const SeatChat: React.FC = () => {
       const timeB = frozen && b.id === frozen.id ? frozen.sortTime : getConversationTime(b);
       return timeB - timeA;
     });
-  }, [timeFilteredConversations, conversations, chatTab, showRepliedOnly, debouncedSearchQuery, deduplicateConversations, getConversationTime]);
+  }, [timeFilteredConversations, conversations, chatTab, showRepliedOnly, searchQuery, deduplicateConversations, getConversationTime]);
 
-  // Count for each tab (using time-filtered base - campaign or reply conversations) - memoized
-  const { allCount, pinnedCount, hiddenCount, repliesCount, unreadRepliesCount } = useMemo(() => ({
-    allCount: timeFilteredConversations.filter(c => !c.is_hidden).length,
-    pinnedCount: timeFilteredConversations.filter(c => c.is_pinned).length,
-    hiddenCount: conversations.filter(c => c.is_hidden && (c.first_message_sent || c.has_reply)).length,
-    repliesCount: timeFilteredConversations.filter(c => c.has_reply && !c.is_hidden).length,
-    unreadRepliesCount: timeFilteredConversations.filter(c => c.has_reply && c.unread_count > 0 && !c.is_hidden).length,
-  }), [timeFilteredConversations, conversations]);
+  // Count for each tab (using time-filtered base - campaign or reply conversations)
+  const allCount = timeFilteredConversations.filter(c => !c.is_hidden).length;
+  const pinnedCount = timeFilteredConversations.filter(c => c.is_pinned).length;
+  const hiddenCount = conversations.filter(c => c.is_hidden && (c.first_message_sent || c.has_reply)).length;
+  
+  // Count replies and unread replies
+  const repliesCount = timeFilteredConversations.filter(c => c.has_reply && !c.is_hidden).length;
+  const unreadRepliesCount = timeFilteredConversations.filter(c => c.has_reply && c.unread_count > 0 && !c.is_hidden).length;
 
   // Filter messages by search
   const filteredMessages = messageSearchQuery
@@ -409,8 +393,7 @@ const SeatChat: React.FC = () => {
     validateSeat();
   }, [token]);
 
-  // Fetch conversations for this seat - SERVER-SIDE filtered for has_reply=true
-  // Uses composite index (seat_id, has_reply, last_message_at) for fast queries
+  // Fetch conversations for this seat - campaign conversations OR conversations with replies
   // Limited to last 5 days, with PARALLEL pagination for fast loading
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
@@ -421,14 +404,13 @@ const SeatChat: React.FC = () => {
       fiveDaysAgo.setDate(fiveDaysAgo.getDate() - 5);
       
       const PAGE_SIZE = 1000;
-      const MAX_CONVERSATIONS = 10000;
+      const MAX_CONVERSATIONS = 50000;
       
-      // First get total count - SERVER-SIDE filter for has_reply=true
+      // First get total count
       const { count: totalCount } = await supabase
         .from('conversations')
         .select('*', { count: 'exact', head: true })
         .eq('seat_id', seat.id)
-        .eq('has_reply', true) // Server-side filter - uses index
         .gte('last_message_at', fiveDaysAgo.toISOString());
       
       if (!totalCount || totalCount === 0) {
@@ -439,10 +421,7 @@ const SeatChat: React.FC = () => {
       const effectiveCount = Math.min(totalCount, MAX_CONVERSATIONS);
       const pagesToFetch = Math.ceil(effectiveCount / PAGE_SIZE);
       
-      console.log('[SeatChat] Fetching', effectiveCount, 'conversations with has_reply=true (server-side filtered)');
-      
       // Build all page requests in PARALLEL for speed
-      // Query uses composite index: (seat_id, has_reply, last_message_at DESC)
       const pagePromises = Array.from({ length: pagesToFetch }, (_, page) => {
         const from = page * PAGE_SIZE;
         const to = from + PAGE_SIZE - 1;
@@ -451,7 +430,6 @@ const SeatChat: React.FC = () => {
           .from('conversations')
           .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
           .eq('seat_id', seat.id)
-          .eq('has_reply', true) // Server-side filter - uses index
           .gte('last_message_at', fiveDaysAgo.toISOString())
           .order('last_message_at', { ascending: false, nullsFirst: false })
           .range(from, to);
@@ -460,17 +438,20 @@ const SeatChat: React.FC = () => {
       // Execute all page requests in parallel
       const results = await Promise.all(pagePromises);
       
-      // Combine all results (already filtered server-side)
+      // Combine all results
       const allData: any[] = [];
       for (const result of results) {
         if (result.error) throw result.error;
         if (result.data) allData.push(...result.data);
       }
       
-      console.log('[SeatChat] Fetched', allData.length, 'conversations with replies (server-side filtered)');
+      // Filter: show if first_message_sent OR has_reply
+      const filtered = allData.filter(conv => conv.first_message_sent || conv.has_reply);
+      
+      console.log('[SeatChat] Fetched', allData.length, 'conversations in parallel,', filtered.length, 'after filter');
       
       // Use the conversation's stored values directly (updated by trigger)
-      setConversations(allData.map(conv => ({
+      setConversations(filtered.map(conv => ({
         ...conv,
         has_reply: conv.has_reply ?? false,
         last_message_direction: conv.last_message_direction as 'incoming' | 'outgoing' | undefined,
@@ -709,61 +690,25 @@ const SeatChat: React.FC = () => {
             const c = newC;
             
             // Incremental update for conversations with time-based sorting
-            // IMPORTANT: If conversation just got first reply (has_reply changed to true),
-            // it won't be in the list yet, so we need to ADD it, not just update
-            setConversations(prev => {
-              const exists = prev.some(conv => conv.id === c.id);
-              
-              let updated: Conversation[];
-              if (exists) {
-                // Update existing conversation
-                updated = prev.map(conv => 
-                  conv.id === c.id ? {
-                    ...conv,
-                    unread_count: c.unread_count ?? conv.unread_count,
-                    last_message_at: c.last_message_at ?? conv.last_message_at,
-                    last_message_content: c.last_message_content ?? conv.last_message_content,
-                    last_message_direction: c.last_message_direction ?? conv.last_message_direction,
-                    has_reply: c.has_reply ?? conv.has_reply,
-                    is_pinned: c.is_pinned ?? conv.is_pinned,
-                    is_hidden: c.is_hidden ?? conv.is_hidden,
-                  } : conv
-                );
-              } else if (c.has_reply) {
-                // NEW: Conversation just got first reply - add it to the list
-                console.log('[SeatChat] New reply conversation added via realtime:', c.id);
-                updated = [...prev, {
-                  id: c.id,
-                  account_id: c.account_id,
-                  recipient_phone: c.recipient_phone,
-                  recipient_name: c.recipient_name,
-                  recipient_username: c.recipient_username,
-                  recipient_avatar: c.recipient_avatar,
-                  recipient_telegram_id: c.recipient_telegram_id,
-                  unread_count: c.unread_count ?? 0,
-                  last_message_at: c.last_message_at,
-                  is_active: c.is_active ?? false,
-                  seat_id: c.seat_id,
-                  first_message_sent: c.first_message_sent ?? false,
-                  last_message_content: c.last_message_content,
-                  last_message_direction: c.last_message_direction,
-                  has_reply: c.has_reply ?? true,
-                  is_pinned: c.is_pinned ?? false,
-                  is_hidden: c.is_hidden ?? false,
-                }];
-              } else {
-                // Conversation doesn't exist and has no reply - ignore
-                return prev;
-              }
-              
-              // Sort by last message time
-              return updated.sort((a, b) => {
+            setConversations(prev => 
+              prev.map(conv => 
+                conv.id === c.id ? {
+                  ...conv,
+                  unread_count: c.unread_count ?? conv.unread_count,
+                  last_message_at: c.last_message_at ?? conv.last_message_at,
+                  last_message_content: c.last_message_content ?? conv.last_message_content,
+                  last_message_direction: c.last_message_direction ?? conv.last_message_direction,
+                  has_reply: c.has_reply ?? conv.has_reply,
+                  is_pinned: c.is_pinned ?? conv.is_pinned,
+                  is_hidden: c.is_hidden ?? conv.is_hidden,
+                } : conv
+              ).sort((a, b) => {
                 const frozen = selectedConvPositionRef.current;
                 const timeA = frozen && a.id === frozen.id ? frozen.sortTime : getConversationTime(a);
                 const timeB = frozen && b.id === frozen.id ? frozen.sortTime : getConversationTime(b);
                 return timeB - timeA;
-              });
-            });
+              })
+            );
           } else if (payload.eventType === 'INSERT') {
             // New conversation added to this seat - full refetch to get complete data
             debouncedRefetch(fetchConversations, 500);
@@ -1431,7 +1376,7 @@ const SeatChat: React.FC = () => {
               </div>
 
               {/* Conversation List */}
-              <div className="flex-1 overflow-hidden px-1.5">
+              <div className="flex-1 overflow-y-auto px-1.5">
                 {filteredConversations.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full py-12">
                     <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-muted/80 to-muted/40 flex items-center justify-center mb-3 border border-border/50">
@@ -1455,179 +1400,8 @@ const SeatChat: React.FC = () => {
                        'New conversations will appear here'}
                     </p>
                   </div>
-                ) : filteredConversations.length > VIRTUALIZATION_THRESHOLD ? (
-                  /* Virtualized list for large datasets */
-                  <List
-                    className="py-1.5"
-                    style={{ height: '100%', width: '100%' }}
-                    rowCount={filteredConversations.length}
-                    rowHeight={CONVERSATION_ITEM_HEIGHT}
-                    rowProps={{
-                      conversations: filteredConversations,
-                      selectedConversationId: selectedConversation?.id,
-                      onSelect: setSelectedConversation,
-                      getAvatarColor,
-                      getAvatarInitial,
-                      getDisplayName,
-                      formatConversationTime,
-                      togglePinConversation,
-                      toggleHideConversation,
-                    }}
-                    rowComponent={({ index, style, conversations, selectedConversationId, onSelect, getAvatarColor, getAvatarInitial, getDisplayName, formatConversationTime, togglePinConversation, toggleHideConversation }) => {
-                      const conv = conversations[index];
-                      if (!conv) return null;
-                      return (
-                        <div style={style} className="px-0.5">
-                          <div
-                            className={cn(
-                              "flex items-center gap-3.5 px-3 py-4 cursor-pointer transition-all duration-200 group rounded-xl h-full",
-                              selectedConversationId === conv.id
-                                ? "bg-primary/10 border border-primary/30 shadow-sm shadow-primary/10"
-                                : "hover:bg-muted/60 border border-transparent"
-                            )}
-                            onClick={() => onSelect(conv)}
-                          >
-                            {/* Avatar */}
-                            <div className="relative flex-shrink-0">
-                              <Avatar className="w-14 h-14 ring-2 ring-background/80 shadow-md">
-                                <AvatarImage src={conv.recipient_avatar || ''} />
-                                <AvatarFallback className={cn(
-                                  "bg-gradient-to-br text-white text-base font-bold",
-                                  getAvatarColor(conv.recipient_phone)
-                                )}>
-                                  {getAvatarInitial(conv)}
-                                </AvatarFallback>
-                              </Avatar>
-                              {conv.is_pinned && (
-                                <span className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-amber-500 border-2 border-card flex items-center justify-center">
-                                  <Pin className="w-2.5 h-2.5 text-white" />
-                                </span>
-                              )}
-                              {conv.unread_count > 0 && (
-                                <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-primary border-2 border-card" />
-                              )}
-                            </div>
-                            
-                            <div className="flex-1 min-w-0 overflow-hidden">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-2 min-w-0 flex-1">
-                                  <p className="font-semibold text-base text-foreground truncate max-w-[180px]">
-                                    {getDisplayName(conv)}
-                                  </p>
-                                  {conv.first_message_sent && (
-                                    <span className="flex-shrink-0 px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide bg-violet-500/15 text-violet-600 dark:text-violet-400 border border-violet-500/20">
-                                      Campaign
-                                    </span>
-                                  )}
-                                </div>
-                                <span className={cn(
-                                  "text-sm flex-shrink-0 font-medium tabular-nums",
-                                  conv.unread_count > 0 ? "text-primary font-semibold" : "text-muted-foreground/70"
-                                )}>
-                                  {formatConversationTime(conv.last_message_at)}
-                                </span>
-                              </div>
-                              {conv.recipient_name && conv.recipient_phone && (
-                                <p className="text-xs text-muted-foreground/60 truncate mt-0.5">
-                                  {conv.recipient_phone}
-                                </p>
-                              )}
-                              <div className="flex items-center justify-between gap-2 mt-1">
-                                <p className={cn(
-                                  "text-sm truncate flex-1",
-                                  conv.unread_count > 0 ? "text-foreground font-medium" : "text-muted-foreground/70"
-                                )}>
-                                  {conv.last_message_content ? (
-                                    <>
-                                      {conv.last_message_direction === 'outgoing' && (
-                                        <span className="text-muted-foreground/50">You: </span>
-                                      )}
-                                      {conv.last_message_content.slice(0, 40)}{conv.last_message_content.length > 40 ? '...' : ''}
-                                    </>
-                                  ) : conv.last_message_at ? (
-                                    <>
-                                      {conv.last_message_direction === 'outgoing' && (
-                                        <span className="text-muted-foreground/50">You: </span>
-                                      )}
-                                      <span className="flex items-center gap-1">
-                                        <Image className="w-3 h-3" />
-                                        Photo
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <span className="italic text-muted-foreground/50">No messages</span>
-                                  )}
-                                </p>
-                                {conv.unread_count > 0 && (
-                                  <span className="bg-gradient-to-r from-primary to-primary/80 text-primary-foreground text-[9px] font-bold min-w-[18px] h-[18px] rounded-full flex items-center justify-center px-1.5 flex-shrink-0 shadow-sm">
-                                    {conv.unread_count}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Actions Menu */}
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-md"
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  <MoreVertical className="w-3 h-3" />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end" className="bg-popover border-border text-popover-foreground w-36">
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    togglePinConversation(conv.id, !!conv.is_pinned);
-                                  }}
-                                  className="text-muted-foreground hover:bg-muted focus:bg-muted text-xs"
-                                >
-                                  {conv.is_pinned ? (
-                                    <>
-                                      <PinOff className="w-3 h-3 mr-2" />
-                                      Unpin
-                                    </>
-                                  ) : (
-                                    <>
-                                      <Pin className="w-3 h-3 mr-2" />
-                                      Pin
-                                    </>
-                                  )}
-                                </DropdownMenuItem>
-                                <DropdownMenuSeparator />
-                                <DropdownMenuItem 
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    toggleHideConversation(conv.id, !!conv.is_hidden);
-                                  }}
-                                  className="text-muted-foreground hover:bg-muted focus:bg-muted text-xs"
-                                >
-                                  {conv.is_hidden ? (
-                                    <>
-                                      <EyeIcon className="w-3 h-3 mr-2" />
-                                      Unhide
-                                    </>
-                                  ) : (
-                                    <>
-                                      <EyeOff className="w-3 h-3 mr-2" />
-                                      Hide
-                                    </>
-                                  )}
-                                </DropdownMenuItem>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
                 ) : (
-                  /* Regular list for small datasets */
-                  <div className="space-y-0.5 py-1.5 overflow-y-auto h-full" key="conversation-list">
+                  <div className="space-y-0.5 py-1.5" key="conversation-list">
                     {filteredConversations.map((conv) => (
                       <div
                         key={conv.id}

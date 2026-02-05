@@ -1391,17 +1391,12 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
       
       let inserted = 0;
       if (newRecipients.length > 0) {
-        // Batch insert in chunks of 1000 (Supabase limit)
-        const BATCH_SIZE = 1000;
-        for (let i = 0; i < newRecipients.length; i += BATCH_SIZE) {
-          const batch = newRecipients.slice(i, i + BATCH_SIZE);
-          const { error } = await supabase
-            .from('campaign_recipients')
-            .insert(batch);
-          
-          if (error) throw error;
-          inserted += batch.length;
-        }
+        const { error } = await supabase
+          .from('campaign_recipients')
+          .insert(newRecipients);
+        
+        if (error) throw error;
+        inserted = newRecipients.length;
       }
       
       // NOTE: recipient_count, pending_count, etc. are now managed by database trigger

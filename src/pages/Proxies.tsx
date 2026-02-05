@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { List } from 'react-window';
+import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { useTelegram } from '@/context/TelegramContext';
@@ -24,20 +23,6 @@ import { Proxy } from '@/types/telegram';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
-
-// Constants for virtualization
-const VIRTUALIZATION_THRESHOLD = 50;
-const PROXY_ITEM_HEIGHT = 80;
-
-// Custom debounce hook
-function useDebounce<T>(value: T, delay: number): T {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  useEffect(() => {
-    const handler = setTimeout(() => setDebouncedValue(value), delay);
-    return () => clearTimeout(handler);
-  }, [value, delay]);
-  return debouncedValue;
-}
 const proxyTypeOptions = [
   { value: 'http', label: 'HTTP' },
   { value: 'https', label: 'HTTPS' },
@@ -106,16 +91,11 @@ const Proxies: React.FC = () => {
   const { accounts } = useAccounts();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [countryFilter, setCountryFilter] = useState<string>('all');
   const [usageFilter, setUsageFilter] = useState<string>('all'); // 'all' | 'assigned' | 'unassigned' | 'with_errors'
   const [slowFilter, setSlowFilter] = useState<boolean>(false); // Filter for slow proxies (>300ms)
   const [showCredentials, setShowCredentials] = useState<Set<string>>(new Set());
-  
-  // Container ref for virtualized list height
-  const listContainerRef = useRef<HTMLDivElement>(null);
-  const [listHeight, setListHeight] = useState(600);
   
   // Bulk selection
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -230,26 +210,8 @@ const Proxies: React.FC = () => {
     return () => clearInterval(interval);
   }, [autoHealthCheck, healthCheckInterval, refetchProxies]);
 
-  // Calculate list height on mount and resize
-  useEffect(() => {
-    const calculateHeight = () => {
-      if (listContainerRef.current) {
-        const rect = listContainerRef.current.getBoundingClientRect();
-        const availableHeight = window.innerHeight - rect.top - 100;
-        setListHeight(Math.max(400, availableHeight));
-      }
-    };
-    
-    calculateHeight();
-    window.addEventListener('resize', calculateHeight);
-    return () => window.removeEventListener('resize', calculateHeight);
-  }, []);
-
-  // Get unique countries for filter - memoized
-  const uniqueCountries = useMemo(() => 
-    [...new Set(proxies.map(p => p.country).filter(Boolean))] as string[],
-    [proxies]
-  );
+  // Get unique countries for filter
+  const uniqueCountries = [...new Set(proxies.map(p => p.country).filter(Boolean))] as string[];
 
   // Parse and preview bulk proxies - supports URL and colon formats
   const parseBulkProxies = () => {
@@ -514,56 +476,41 @@ const Proxies: React.FC = () => {
     setShowCredentials(newSet);
   };
 
-  // Create a lookup map for account proxy assignments - memoized
-  const accountProxyMap = useMemo(() => {
-    const map = new Map<string, typeof accounts>();
-    proxies.forEach(p => {
-      const assigned = accounts.filter(a => a.proxyId === p.id);
-      map.set(p.id, assigned);
-    });
-    return map;
-  }, [proxies, accounts]);
-
-  const getAccountsUsingProxy = useCallback((proxyId: string) => {
-    return accountProxyMap.get(proxyId) || [];
-  }, [accountProxyMap]);
+  const getAccountsUsingProxy = (proxyId: string) => {
+    return accounts.filter(a => a.proxyId === proxyId);
+  };
 
   // Get the assigned account for a proxy (strict 1:1)
-  const getAssignedAccount = useCallback((proxyId: string) => {
-    const assignedAccounts = accountProxyMap.get(proxyId) || [];
+  const getAssignedAccount = (proxyId: string) => {
+    const assignedAccounts = accounts.filter(a => a.proxyId === proxyId);
     return assignedAccounts.length > 0 ? assignedAccounts[0] : null;
-  }, [accountProxyMap]);
+  };
 
-  // Count unassigned proxies - memoized
-  const unassignedProxiesCount = useMemo(() => 
-    proxies.filter(p => !(accountProxyMap.get(p.id)?.length ?? 0)).length,
-    [proxies, accountProxyMap]
-  );
+  // Count unassigned proxies
+  const unassignedProxiesCount = proxies.filter(p => {
+    return !accounts.some(a => a.proxyId === p.id);
+  }).length;
 
-  // Memoized filtered proxies with debounced search
-  const filteredProxies = useMemo(() => {
-    const lowerSearch = debouncedSearchQuery.toLowerCase();
+  const filteredProxies = proxies.filter(p => {
+    const matchesSearch = 
+      p.host.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.country?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      p.username?.toLowerCase().includes(searchQuery.toLowerCase());
+    const proxyCountry = p.country;
+    const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
+    const matchesCountry = countryFilter === 'all' || proxyCountry === countryFilter;
+    const matchesSlow = !slowFilter || (p.responseTime && p.responseTime > 300);
     
-    return proxies.filter(p => {
-      const matchesSearch = !lowerSearch ||
-        p.host.toLowerCase().includes(lowerSearch) ||
-        p.country?.toLowerCase().includes(lowerSearch) ||
-        p.username?.toLowerCase().includes(lowerSearch);
-      const matchesStatus = statusFilter === 'all' || p.status === statusFilter;
-      const matchesCountry = countryFilter === 'all' || p.country === countryFilter;
-      const matchesSlow = !slowFilter || (p.responseTime && p.responseTime > 300);
-      
-      // Usage filter
-      const isAssigned = (accountProxyMap.get(p.id)?.length ?? 0) > 0;
-      const hasErrors = proxyErrors.has(p.id);
-      const matchesUsage = usageFilter === 'all' || 
-        (usageFilter === 'assigned' && isAssigned) ||
-        (usageFilter === 'unassigned' && !isAssigned) ||
-        (usageFilter === 'with_errors' && hasErrors);
-      
-      return matchesSearch && matchesStatus && matchesCountry && matchesSlow && matchesUsage;
-    });
-  }, [proxies, debouncedSearchQuery, statusFilter, countryFilter, slowFilter, usageFilter, accountProxyMap, proxyErrors]);
+    // Usage filter
+    const isAssigned = accounts.some(a => a.proxyId === p.id);
+    const hasErrors = proxyErrors.has(p.id);
+    const matchesUsage = usageFilter === 'all' || 
+      (usageFilter === 'assigned' && isAssigned) ||
+      (usageFilter === 'unassigned' && !isAssigned) ||
+      (usageFilter === 'with_errors' && hasErrors);
+    
+    return matchesSearch && matchesStatus && matchesCountry && matchesSlow && matchesUsage;
+  });
 
   const toggleSelect = (id: string) => {
     const newSelected = new Set(selectedIds);
@@ -938,7 +885,7 @@ const Proxies: React.FC = () => {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2" ref={listContainerRef}>
+        <div className="space-y-2">
           {/* Select All Header */}
           <div className="flex items-center gap-4 px-4 py-2 bg-secondary/50 rounded-lg">
             <Checkbox
@@ -951,297 +898,162 @@ const Proxies: React.FC = () => {
             </span>
           </div>
 
-          {/* Proxy Cards - Virtualized for large lists */}
-          {filteredProxies.length > VIRTUALIZATION_THRESHOLD ? (
-            <List
-              style={{ height: listHeight, width: '100%' }}
-              rowCount={filteredProxies.length}
-              rowHeight={PROXY_ITEM_HEIGHT}
-              className="scrollbar-thin"
-              rowProps={{
-                proxies: filteredProxies,
-                testResults,
-                selectedIds,
-                showCredentials,
-                proxyErrors,
-                getAccountsUsingProxy,
-                getStatusBadge,
-                toggleSelect,
-                toggleCredentialsVisibility,
-                handleDelete,
-              }}
-              rowComponent={({ index, style, proxies, testResults, selectedIds, showCredentials, proxyErrors, getAccountsUsingProxy, getStatusBadge, toggleSelect, toggleCredentialsVisibility, handleDelete }) => {
-                const proxy = proxies[index];
-                if (!proxy) return null;
-                const testResult = testResults.get(proxy.id);
-                const accountsUsing = getAccountsUsingProxy(proxy.id);
-                const proxyCountry = proxy.country;
-                const isCredentialsVisible = showCredentials.has(proxy.id);
-                const todayErrors = proxyErrors.get(proxy.id) || 0;
-                
-                return (
-                  <div style={style} className="pr-2 pb-2">
-                    <Card 
-                      className={cn(
-                        "h-[72px] hover:border-primary/20 transition-colors",
-                        selectedIds.has(proxy.id) && "border-primary/50 bg-primary/5"
+          {/* Proxy Cards */}
+          {filteredProxies.map((proxy) => {
+            const testResult = testResults.get(proxy.id);
+            const accountsUsing = getAccountsUsingProxy(proxy.id);
+            const proxyCountry = proxy.country;
+            const isCredentialsVisible = showCredentials.has(proxy.id);
+            const todayErrors = proxyErrors.get(proxy.id) || 0;
+            
+            return (
+              <Card 
+                key={proxy.id} 
+                className={cn(
+                  "hover:border-primary/20 transition-colors",
+                  selectedIds.has(proxy.id) && "border-primary/50 bg-primary/5"
+                )}
+              >
+                <CardContent className="p-4">
+                  <div className="flex items-center gap-4">
+                    {/* Checkbox */}
+                    <Checkbox
+                      checked={selectedIds.has(proxy.id)}
+                      onCheckedChange={() => toggleSelect(proxy.id)}
+                      aria-label={`Select ${proxy.host}`}
+                    />
+
+                    {/* Country Flag / Status Icon */}
+                    <div className={cn(
+                      "w-10 h-10 rounded-lg flex items-center justify-center text-xl",
+                      proxy.status === 'active' && "bg-green-500/10",
+                      proxy.status === 'error' && "bg-destructive/10",
+                      proxy.status === 'inactive' && "bg-muted"
+                    )}>
+                      {testResult?.status === 'testing' ? (
+                        <Loader2 className="w-5 h-5 text-primary animate-spin" />
+                      ) : proxyCountry ? (
+                        getCountryFlag(proxyCountry)
+                      ) : proxy.status === 'active' ? (
+                        <Wifi className="w-5 h-5 text-green-500" />
+                      ) : proxy.status === 'error' ? (
+                        <WifiOff className="w-5 h-5 text-destructive" />
+                      ) : (
+                        <Globe className="w-5 h-5 text-muted-foreground" />
                       )}
-                    >
-                      <CardContent className="p-3 h-full">
-                        <div className="flex items-center gap-3 h-full">
-                          <Checkbox
-                            checked={selectedIds.has(proxy.id)}
-                            onCheckedChange={() => toggleSelect(proxy.id)}
-                            aria-label={`Select ${proxy.host}`}
-                          />
-
-                          <div className={cn(
-                            "w-9 h-9 rounded-lg flex items-center justify-center text-lg shrink-0",
-                            proxy.status === 'active' && "bg-green-500/10",
-                            proxy.status === 'error' && "bg-destructive/10",
-                            proxy.status === 'inactive' && "bg-muted"
-                          )}>
-                            {testResult?.status === 'testing' ? (
-                              <Loader2 className="w-4 h-4 text-primary animate-spin" />
-                            ) : proxyCountry ? (
-                              getCountryFlag(proxyCountry)
-                            ) : proxy.status === 'active' ? (
-                              <Wifi className="w-4 h-4 text-green-500" />
-                            ) : proxy.status === 'error' ? (
-                              <WifiOff className="w-4 h-4 text-destructive" />
-                            ) : (
-                              <Globe className="w-4 h-4 text-muted-foreground" />
-                            )}
-                          </div>
-                          
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-medium font-mono text-sm">{proxy.host}:{proxy.port}</span>
-                              {getStatusBadge(proxy.status)}
-                              <span className="px-1.5 py-0.5 rounded-full text-xs font-medium bg-secondary border border-border uppercase">
-                                {proxy.type}
-                              </span>
-                              {(proxy.responseTime || testResult?.responseTime) && (
-                                <span className="px-1.5 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-600 border border-blue-500/30 flex items-center gap-0.5">
-                                  <Zap className="w-3 h-3" />
-                                  {testResult?.responseTime || proxy.responseTime}ms
-                                </span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                              {proxyCountry && (
-                                <span className="flex items-center gap-1">
-                                  <MapPin className="w-3 h-3" />
-                                  {countryNames[proxyCountry] || proxyCountry}
-                                </span>
-                              )}
-                              {proxy.username && (
-                                <span className="flex items-center gap-1">
-                                  <User className="w-3 h-3" />
-                                  {isCredentialsVisible ? proxy.username : '••••'}
-                                  <button 
-                                    onClick={() => toggleCredentialsVisibility(proxy.id)}
-                                    className="hover:text-foreground"
-                                  >
-                                    {isCredentialsVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                                  </button>
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          <div className={cn(
-                            "text-center px-2 py-1 rounded-lg shrink-0",
-                            todayErrors === 0 ? "bg-green-500/10" : "bg-destructive/10"
-                          )}>
-                            <div className={cn("font-medium text-sm", todayErrors === 0 ? "text-green-600" : "text-destructive")}>
-                              {todayErrors === 0 ? '✓' : todayErrors}
-                            </div>
-                          </div>
-
-                          <div className={cn(
-                            "text-center px-2 py-1 rounded-lg min-w-[80px] shrink-0",
-                            accountsUsing.length === 0 ? "bg-yellow-500/10 border border-yellow-500/30" : 
-                            accountsUsing.length === 1 ? "bg-green-500/10 border border-green-500/30" : "bg-destructive/10 border border-destructive/30"
-                          )}>
-                            <div className={cn(
-                              "font-bold",
-                              accountsUsing.length === 0 ? "text-yellow-600" : 
-                              accountsUsing.length === 1 ? "text-green-600" : "text-destructive"
-                            )}>
-                              {accountsUsing.length}
-                            </div>
-                            <div className="text-xs text-muted-foreground">
-                              {accountsUsing.length === 0 ? 'Free' : accountsUsing.length === 1 ? 'Assigned' : 'Shared!'}
-                            </div>
-                          </div>
-
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDelete(proxy.id)}
-                            className="text-muted-foreground hover:text-destructive shrink-0"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  </div>
-                );
-              }}
-            />
-          ) : (
-            /* Non-virtualized rendering for small lists */
-            filteredProxies.map((proxy) => {
-              const testResult = testResults.get(proxy.id);
-              const accountsUsing = getAccountsUsingProxy(proxy.id);
-              const proxyCountry = proxy.country;
-              const isCredentialsVisible = showCredentials.has(proxy.id);
-              const todayErrors = proxyErrors.get(proxy.id) || 0;
-              
-              return (
-                <Card 
-                  key={proxy.id} 
-                  className={cn(
-                    "hover:border-primary/20 transition-colors",
-                    selectedIds.has(proxy.id) && "border-primary/50 bg-primary/5"
-                  )}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center gap-4">
-                      <Checkbox
-                        checked={selectedIds.has(proxy.id)}
-                        onCheckedChange={() => toggleSelect(proxy.id)}
-                        aria-label={`Select ${proxy.host}`}
-                      />
-
-                      <div className={cn(
-                        "w-10 h-10 rounded-lg flex items-center justify-center text-xl",
-                        proxy.status === 'active' && "bg-green-500/10",
-                        proxy.status === 'error' && "bg-destructive/10",
-                        proxy.status === 'inactive' && "bg-muted"
-                      )}>
-                        {testResult?.status === 'testing' ? (
-                          <Loader2 className="w-5 h-5 text-primary animate-spin" />
-                        ) : proxyCountry ? (
-                          getCountryFlag(proxyCountry)
-                        ) : proxy.status === 'active' ? (
-                          <Wifi className="w-5 h-5 text-green-500" />
-                        ) : proxy.status === 'error' ? (
-                          <WifiOff className="w-5 h-5 text-destructive" />
-                        ) : (
-                          <Globe className="w-5 h-5 text-muted-foreground" />
-                        )}
-                      </div>
-                      
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium font-mono">{proxy.host}:{proxy.port}</span>
-                          {getStatusBadge(proxy.status)}
-                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-secondary border border-border uppercase">
-                            {proxy.type}
-                          </span>
-                          {(proxy.responseTime || testResult?.responseTime) && (
-                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-600 border border-blue-500/30 flex items-center gap-1">
-                              <Zap className="w-3 h-3" />
-                              {testResult?.responseTime || proxy.responseTime}ms
-                            </span>
-                          )}
-                          {testResult?.status === 'failed' && (
-                            <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-destructive/20 text-destructive border border-destructive/30">
-                              Test Failed
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap">
-                          {proxyCountry && (
-                            <span className="flex items-center gap-1">
-                              <MapPin className="w-3 h-3" />
-                              {countryNames[proxyCountry] || proxyCountry}
-                            </span>
-                          )}
-                          {proxy.username && (
-                            <span className="flex items-center gap-1">
-                              <User className="w-3 h-3" />
-                              {isCredentialsVisible ? (
-                                <span className="font-mono text-xs">
-                                  {proxy.username}:{proxy.password?.substring(0, 10)}...
-                                </span>
-                              ) : (
-                                <span>••••••••</span>
-                              )}
-                              <button 
-                                onClick={() => toggleCredentialsVisibility(proxy.id)}
-                                className="hover:text-foreground transition-colors"
-                              >
-                                {isCredentialsVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                              </button>
-                            </span>
-                          )}
-                          {proxy.lastChecked && (
-                            <span className="flex items-center gap-1">
-                              <Clock className="w-3 h-3" />
-                              {formatTimeAgo(proxy.lastChecked)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className={cn(
-                        "text-center px-3 py-1 rounded-lg",
-                        todayErrors === 0 ? "bg-green-500/10" : "bg-destructive/10"
-                      )}>
-                        <div className={cn(
-                          "font-medium",
-                          todayErrors === 0 ? "text-green-600" : "text-destructive"
-                        )}>
-                          {todayErrors === 0 ? '✓' : todayErrors}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {todayErrors === 0 ? 'Healthy' : 'Errors'}
-                        </div>
-                      </div>
-
-                      <div className={cn(
-                        "text-center px-3 py-1 rounded-lg min-w-[110px]",
-                        accountsUsing.length === 0 ? "bg-yellow-500/10 border border-yellow-500/30" : 
-                        accountsUsing.length === 1 ? "bg-green-500/10 border border-green-500/30" : "bg-destructive/10 border border-destructive/30"
-                      )}>
-                        {accountsUsing.length === 0 ? (
-                          <>
-                            <div className="text-yellow-600 font-bold text-lg">0</div>
-                            <div className="text-xs text-yellow-600/80">Unassigned</div>
-                          </>
-                        ) : accountsUsing.length === 1 ? (
-                          <>
-                            <div className="font-bold text-lg text-green-600">1</div>
-                            <div className="text-xs text-green-600/80 truncate max-w-[100px]" title={accountsUsing[0].phoneNumber || 'Account'}>
-                              {accountsUsing[0].phoneNumber?.slice(-8) || 'Account'}
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="text-destructive font-bold text-lg animate-pulse">{accountsUsing.length}</div>
-                            <div className="text-xs text-destructive font-medium">⚠️ SHARED!</div>
-                          </>
-                        )}
-                      </div>
-
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleDelete(proxy.id)}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
                     </div>
-                  </CardContent>
-                </Card>
-              );
-            })
-          )}
+                    
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium font-mono">{proxy.host}:{proxy.port}</span>
+                        {getStatusBadge(proxy.status)}
+                        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-secondary border border-border uppercase">
+                          {proxy.type}
+                        </span>
+                        {(proxy.responseTime || testResult?.responseTime) && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500/20 text-blue-600 border border-blue-500/30 flex items-center gap-1">
+                            <Zap className="w-3 h-3" />
+                            {testResult?.responseTime || proxy.responseTime}ms
+                          </span>
+                        )}
+                        {testResult?.status === 'failed' && (
+                          <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-destructive/20 text-destructive border border-destructive/30">
+                            Test Failed
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground mt-1 flex-wrap">
+                        {proxyCountry && (
+                          <span className="flex items-center gap-1">
+                            <MapPin className="w-3 h-3" />
+                            {countryNames[proxyCountry] || proxyCountry}
+                          </span>
+                        )}
+                        {proxy.username && (
+                          <span className="flex items-center gap-1">
+                            <User className="w-3 h-3" />
+                            {isCredentialsVisible ? (
+                              <span className="font-mono text-xs">
+                                {proxy.username}:{proxy.password?.substring(0, 10)}...
+                              </span>
+                            ) : (
+                              <span>••••••••</span>
+                            )}
+                            <button 
+                              onClick={() => toggleCredentialsVisibility(proxy.id)}
+                              className="hover:text-foreground transition-colors"
+                            >
+                              {isCredentialsVisible ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+                            </button>
+                          </span>
+                        )}
+                        {proxy.lastChecked && (
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-3 h-3" />
+                            {formatTimeAgo(proxy.lastChecked)}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Today's Errors */}
+                    <div className={cn(
+                      "text-center px-3 py-1 rounded-lg",
+                      todayErrors === 0 ? "bg-green-500/10" : "bg-destructive/10"
+                    )}>
+                      <div className={cn(
+                        "font-medium",
+                        todayErrors === 0 ? "text-green-600" : "text-destructive"
+                      )}>
+                        {todayErrors === 0 ? '✓' : todayErrors}
+                      </div>
+                      <div className="text-xs text-muted-foreground">
+                        {todayErrors === 0 ? 'Healthy' : 'Errors'}
+                      </div>
+                    </div>
+
+                    {/* Assigned Account Count (Strict 1:1) */}
+                    <div className={cn(
+                      "text-center px-3 py-1 rounded-lg min-w-[110px]",
+                      accountsUsing.length === 0 ? "bg-yellow-500/10 border border-yellow-500/30" : 
+                      accountsUsing.length === 1 ? "bg-green-500/10 border border-green-500/30" : "bg-destructive/10 border border-destructive/30"
+                    )}>
+                      {accountsUsing.length === 0 ? (
+                        <>
+                          <div className="text-yellow-600 font-bold text-lg">0</div>
+                          <div className="text-xs text-yellow-600/80">Unassigned</div>
+                        </>
+                      ) : accountsUsing.length === 1 ? (
+                        <>
+                          <div className="font-bold text-lg text-green-600">1</div>
+                          <div className="text-xs text-green-600/80 truncate max-w-[100px]" title={accountsUsing[0].phoneNumber || 'Account'}>
+                            {accountsUsing[0].phoneNumber?.slice(-8) || 'Account'}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-destructive font-bold text-lg animate-pulse">{accountsUsing.length}</div>
+                          <div className="text-xs text-destructive font-medium">⚠️ SHARED!</div>
+                        </>
+                      )}
+                    </div>
+
+
+                    {/* Delete */}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDelete(proxy.id)}
+                      className="text-muted-foreground hover:text-destructive"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
         </div>
       )}
     </DashboardLayout>

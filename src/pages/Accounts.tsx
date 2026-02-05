@@ -43,23 +43,6 @@ import { Separator } from '@/components/ui/separator';
 import { CountdownTimer } from '@/components/ui/countdown-timer';
 import { Skeleton } from '@/components/ui/skeleton';
 import { AccountFilters } from '@/components/accounts/AccountFilters';
-import { List } from 'react-window';
-import type { CSSProperties } from 'react';
-
-// Debounce hook for search input
-const useDebounce = <T,>(value: T, delay: number): T => {
-  const [debouncedValue, setDebouncedValue] = useState(value);
-  
-  useEffect(() => {
-    const handler = setTimeout(() => {
-      setDebouncedValue(value);
-    }, delay);
-    
-    return () => clearTimeout(handler);
-  }, [value, delay]);
-  
-  return debouncedValue;
-};
 
 // Status options for stat cards (merged categories)
 const statCardOptions: { value: string; label: string; color: string; icon: React.ReactNode }[] = [
@@ -152,7 +135,6 @@ const Accounts: React.FC = () => {
   } = useTelegram();
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const debouncedSearchQuery = useDebounce(searchQuery, 300); // Debounced for filtering
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isUploading, setIsUploading] = useState(false);
   const [sessionFiles, setSessionFiles] = useState<SessionFile[]>([]);
@@ -2050,88 +2032,69 @@ const Accounts: React.FC = () => {
     return accounts.filter(a => group.accountIds.includes(a.id));
   };
 
-  // PERFORMANCE: Memoized proxy lookup map for O(1) access instead of O(n) .find() calls
-  const proxyMap = useMemo(() => {
-    const map = new Map<string, typeof proxies[0]>();
-    proxies.forEach(p => map.set(p.id, p));
-    return map;
-  }, [proxies]);
+  const filteredAccounts = getAccountsByGroup().filter(acc => {
+    const matchesSearch = 
+      acc.phoneNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (acc.firstName?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (acc.username?.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (acc.tags || []).some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
+    
+    const matchesStatus = statusFilter === 'all' || acc.status === statusFilter;
+    
+    const matchesTag = 
+      tagFilter === 'all' ? true :
+      tagFilter === 'no_tags' ? (!acc.tags || acc.tags.length === 0) : 
+      (acc.tags || []).includes(tagFilter);
+    
+    const matchesProxy = 
+      proxyFilter === 'all' || 
+      (proxyFilter === 'with_proxy' && acc.proxyId) ||
+      (proxyFilter === 'without_proxy' && !acc.proxyId);
+    
+    // Profile is "synced" if it has telegram_id and first_name (basic profile data)
+    const isProfileSynced = acc.telegramId && acc.firstName;
+    const matchesProfile = 
+      profileFilter === 'all' || 
+      (profileFilter === 'synced' && isProfileSynced) ||
+      (profileFilter === 'not_synced' && !isProfileSynced);
+    
+    // Proxy error filter
+    const hasProxyError = acc.proxyId && proxyErrors.has(acc.proxyId);
+    const matchesProxyError = 
+      proxyErrorFilter === 'all' ||
+      (proxyErrorFilter === 'with_error' && hasProxyError) ||
+      (proxyErrorFilter === 'no_error' && !hasProxyError);
+    
+    // Avatar filter - check if account has profile picture
+    const matchesAvatar = 
+      avatarFilter === 'all' || 
+      (avatarFilter === 'with_avatar' && acc.avatar) ||
+      (avatarFilter === 'without_avatar' && !acc.avatar);
+    
+    // Messages sent today filter
+    const matchesMessagesToday = 
+      messagesTodayFilter === 'all' ||
+      (messagesTodayFilter === 'zero_messages' && (acc.messagesSentToday === 0 || acc.messagesSentToday === null)) ||
+      (messagesTodayFilter === 'has_messages' && (acc.messagesSentToday || 0) > 0);
+    
+    return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile && matchesProxyError && matchesAvatar && matchesMessagesToday;
+  });
 
+  // Split accounts by status
   // Helper to check if account is spambot limited (should be in restricted)
-  const isSpambotLimited = useCallback((a: TelegramAccount) => 
-    a.spambotStatus === 'limited' || a.spambotStatus === 'restricted', []);
+  const isSpambotLimited = (a: TelegramAccount) => 
+    a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
   
   // Helper to check if account has a future restrictedUntil date (temporarily restricted)
-  const isTemporarilyRestricted = useCallback((a: TelegramAccount) => {
+  const isTemporarilyRestricted = (a: TelegramAccount) => {
     if (!a.restrictedUntil) return false;
     const restrictedTime = a.restrictedUntil instanceof Date 
       ? a.restrictedUntil.getTime() 
       : new Date(a.restrictedUntil).getTime();
     return restrictedTime > Date.now();
-  }, []);
+  };
 
-  // PERFORMANCE: Memoized filtered accounts - only recalculates when dependencies change
-  const filteredAccounts = useMemo(() => {
-    const groupedAccounts = selectedGroup === 'all' 
-      ? accounts 
-      : accounts.filter(a => {
-          const group = groups.find(g => g.id === selectedGroup);
-          return group?.accountIds.includes(a.id);
-        });
-    
-    const searchLower = debouncedSearchQuery.toLowerCase();
-    
-    return groupedAccounts.filter(acc => {
-      const matchesSearch = !debouncedSearchQuery || 
-        acc.phoneNumber.toLowerCase().includes(searchLower) ||
-        (acc.firstName?.toLowerCase().includes(searchLower)) ||
-        (acc.username?.toLowerCase().includes(searchLower)) ||
-        (acc.tags || []).some(tag => tag.toLowerCase().includes(searchLower));
-      
-      const matchesStatus = statusFilter === 'all' || acc.status === statusFilter;
-      
-      const matchesTag = 
-        tagFilter === 'all' ? true :
-        tagFilter === 'no_tags' ? (!acc.tags || acc.tags.length === 0) : 
-        (acc.tags || []).includes(tagFilter);
-      
-      const matchesProxy = 
-        proxyFilter === 'all' || 
-        (proxyFilter === 'with_proxy' && acc.proxyId) ||
-        (proxyFilter === 'without_proxy' && !acc.proxyId);
-      
-      // Profile is "synced" if it has telegram_id and first_name (basic profile data)
-      const isProfileSynced = acc.telegramId && acc.firstName;
-      const matchesProfile = 
-        profileFilter === 'all' || 
-        (profileFilter === 'synced' && isProfileSynced) ||
-        (profileFilter === 'not_synced' && !isProfileSynced);
-      
-      // Proxy error filter
-      const hasProxyError = acc.proxyId && proxyErrors.has(acc.proxyId);
-      const matchesProxyError = 
-        proxyErrorFilter === 'all' ||
-        (proxyErrorFilter === 'with_error' && hasProxyError) ||
-        (proxyErrorFilter === 'no_error' && !hasProxyError);
-      
-      // Avatar filter - check if account has profile picture
-      const matchesAvatar = 
-        avatarFilter === 'all' || 
-        (avatarFilter === 'with_avatar' && acc.avatar) ||
-        (avatarFilter === 'without_avatar' && !acc.avatar);
-      
-      // Messages sent today filter
-      const matchesMessagesToday = 
-        messagesTodayFilter === 'all' ||
-        (messagesTodayFilter === 'zero_messages' && (acc.messagesSentToday === 0 || acc.messagesSentToday === null)) ||
-        (messagesTodayFilter === 'has_messages' && (acc.messagesSentToday || 0) > 0);
-      
-      return matchesSearch && matchesStatus && matchesTag && matchesProxy && matchesProfile && matchesProxyError && matchesAvatar && matchesMessagesToday;
-    });
-  }, [accounts, groups, selectedGroup, debouncedSearchQuery, statusFilter, tagFilter, proxyFilter, profileFilter, proxyErrorFilter, avatarFilter, messagesTodayFilter, proxyErrors]);
-
-  // PERFORMANCE: Memoized accounts by status - only recalculates when filteredAccounts changes
-  const accountsByStatus = useMemo(() => ({
+  const accountsByStatus = {
     // Active: accounts with status 'active' that are not temporarily restricted
     active: filteredAccounts.filter(a => 
       a.status === 'active' && !isTemporarilyRestricted(a)
@@ -2149,7 +2112,7 @@ const Accounts: React.FC = () => {
       (a.status === 'banned' || a.status === 'disconnected') &&
       a.deviceModel // Has device fingerprint - indicates JSON was matched during import
     ),
-  }), [filteredAccounts, isTemporarilyRestricted]);
+  };
 
   const removeSessionFile = (index: number) => {
     setSessionFiles(prev => prev.filter((_, i) => i !== index));
@@ -2180,24 +2143,23 @@ const Accounts: React.FC = () => {
     }
   };
 
-  // PERFORMANCE: O(1) proxy lookups using memoized map
-  const getProxyLabel = useCallback((proxyId?: string) => {
+  const getProxyLabel = (proxyId?: string) => {
     if (!proxyId) return null;
-    const proxy = proxyMap.get(proxyId);
+    const proxy = proxies.find(p => p.id === proxyId);
     return proxy ? `${proxy.host}:${proxy.port}` : null;
-  }, [proxyMap]);
+  };
   
-  const getProxyStatus = useCallback((proxyId?: string) => {
+  const getProxyStatus = (proxyId?: string) => {
     if (!proxyId) return null;
-    const proxy = proxyMap.get(proxyId);
+    const proxy = proxies.find(p => p.id === proxyId);
     return proxy?.status || null;
-  }, [proxyMap]);
+  };
 
-  const getProxyCountry = useCallback((proxyId?: string) => {
+  const getProxyCountry = (proxyId?: string) => {
     if (!proxyId) return null;
-    const proxy = proxyMap.get(proxyId);
+    const proxy = proxies.find(p => p.id === proxyId);
     return proxy?.country || null;
-  }, [proxyMap]);
+  };
 
   // Convert country code to flag emoji
   const countryToFlag = (countryCode: string | null) => {
@@ -2211,17 +2173,28 @@ const Accounts: React.FC = () => {
     return '🌐';
   };
 
-  // PERFORMANCE: Memoized stats calculation
-  const stats = useMemo(() => ({
+  // Calculate stats - frozen/banned are always inactive, spambot limited = restricted
+  const isAccountSpambotLimited = (a: TelegramAccount) => 
+    a.spambotStatus === 'limited' || a.spambotStatus === 'restricted';
+  
+  const isAccountTemporarilyRestricted = (a: TelegramAccount) => {
+    if (!a.restrictedUntil) return false;
+    const restrictedTime = a.restrictedUntil instanceof Date 
+      ? a.restrictedUntil.getTime() 
+      : new Date(a.restrictedUntil).getTime();
+    return restrictedTime > Date.now();
+  };
+  
+  const stats = {
     total: accounts.length,
     active: accounts.filter(a => 
       a.status === 'active' && 
-      !isTemporarilyRestricted(a)
+      !isAccountTemporarilyRestricted(a)
     ).length,
     used: accounts.filter(a => 
       a.status === 'restricted' || 
       a.status === 'cooldown' ||
-      (a.status === 'active' && isTemporarilyRestricted(a))
+      (a.status === 'active' && isAccountTemporarilyRestricted(a))
     ).length,
     frozen: accounts.filter(a => 
       a.status === 'frozen'
@@ -2230,7 +2203,7 @@ const Accounts: React.FC = () => {
       (a.status === 'banned' || a.status === 'disconnected') &&
       a.deviceModel // Only count accounts with device fingerprint (from JSON metadata)
     ).length,
-  }), [accounts, isTemporarilyRestricted]);
+  };
 
   const renderAccountCard = (account: TelegramAccount) => {
     const verifyResult = verifyResults.get(account.id);
@@ -3124,84 +3097,59 @@ const Accounts: React.FC = () => {
             </TabsTrigger>
           </TabsList>
 
-          {(['active', 'used', 'frozen', 'inactive'] as const).map(status => {
-            const accountsForStatus = accountsByStatus[status];
-            const ITEM_HEIGHT = 72; // Height of each account card row
-            const LIST_HEIGHT = Math.min(600, accountsForStatus.length * ITEM_HEIGHT); // Max height 600px
-            
-            return (
-              <TabsContent key={status} value={status} className="mt-4">
-                {isLoading ? (
-                  // Skeleton loading for account list
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3 px-3 py-2 bg-muted/30 rounded-lg">
+          {(['active', 'used', 'frozen', 'inactive'] as const).map(status => (
+            <TabsContent key={status} value={status} className="mt-4">
+              {isLoading ? (
+                // Skeleton loading for account list
+                <div className="space-y-2">
+                  <div className="flex items-center gap-3 px-3 py-2 bg-muted/30 rounded-lg">
+                    <Skeleton className="h-4 w-4" />
+                    <Skeleton className="h-4 w-32" />
+                  </div>
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="flex items-center gap-3 p-3 rounded-lg border bg-card/50">
                       <Skeleton className="h-4 w-4" />
-                      <Skeleton className="h-4 w-32" />
-                    </div>
-                    {Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="flex items-center gap-3 p-3 rounded-lg border bg-card/50">
-                        <Skeleton className="h-4 w-4" />
-                        <Skeleton className="h-10 w-10 rounded-full" />
-                        <div className="flex-1 space-y-2">
-                          <Skeleton className="h-4 w-32" />
-                          <Skeleton className="h-3 w-24" />
-                        </div>
-                        <Skeleton className="h-5 w-16 rounded-full" />
-                        <Skeleton className="h-8 w-8" />
+                      <Skeleton className="h-10 w-10 rounded-full" />
+                      <div className="flex-1 space-y-2">
+                        <Skeleton className="h-4 w-32" />
+                        <Skeleton className="h-3 w-24" />
                       </div>
-                    ))}
-                  </div>
-                ) : accountsForStatus.length === 0 ? (
-                  <Card>
-                    <CardContent className="py-12 text-center">
-                      <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
-                        {status === 'inactive' ? <WifiOff className="w-6 h-6" /> : 
-                         status === 'frozen' ? <Lock className="w-6 h-6" /> :
-                         status === 'used' ? <AlertTriangle className="w-6 h-6" /> :
-                         <Wifi className="w-6 h-6" />}
-                      </div>
-                      <p className="text-muted-foreground">No {status} accounts</p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="space-y-2">
-                    {/* Select All */}
-                    <div className="flex items-center gap-3 px-3 py-2 bg-muted/30 rounded-lg">
-                      <Checkbox
-                        checked={accountsForStatus.every(a => selectedIds.has(a.id))}
-                        onCheckedChange={toggleSelectAll}
-                      />
-                      <span className="text-sm text-muted-foreground">
-                        Select all {accountsForStatus.length} accounts
-                      </span>
+                      <Skeleton className="h-5 w-16 rounded-full" />
+                      <Skeleton className="h-8 w-8" />
                     </div>
-                    
-                    {/* PERFORMANCE: Virtualized Account List - only renders visible items */}
-                    {accountsForStatus.length > 50 ? (
-                      <List<{ accounts: TelegramAccount[]; renderCard: typeof renderAccountCard }>
-                        rowCount={accountsForStatus.length}
-                        rowHeight={ITEM_HEIGHT}
-                        style={{ height: LIST_HEIGHT, width: '100%' }}
-                        overscanCount={5}
-                        rowProps={{ 
-                          accounts: accountsForStatus, 
-                          renderCard: renderAccountCard 
-                        }}
-                        rowComponent={({ index, style, accounts, renderCard }) => (
-                          <div style={style}>
-                            {renderCard(accounts[index])}
-                          </div>
-                        )}
-                      />
-                    ) : (
-                      // For small lists, use regular rendering for simplicity
-                      accountsForStatus.map(renderAccountCard)
-                    )}
+                  ))}
+                </div>
+              ) : accountsByStatus[status].length === 0 ? (
+                <Card>
+                  <CardContent className="py-12 text-center">
+                    <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center mx-auto mb-3">
+                      {status === 'inactive' ? <WifiOff className="w-6 h-6" /> : 
+                       status === 'frozen' ? <Lock className="w-6 h-6" /> :
+                       status === 'used' ? <AlertTriangle className="w-6 h-6" /> :
+                       <Wifi className="w-6 h-6" />}
+                    </div>
+                    <p className="text-muted-foreground">No {status} accounts</p>
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="space-y-2">
+                  {/* Select All */}
+                  <div className="flex items-center gap-3 px-3 py-2 bg-muted/30 rounded-lg">
+                    <Checkbox
+                      checked={accountsByStatus[status].every(a => selectedIds.has(a.id))}
+                      onCheckedChange={toggleSelectAll}
+                    />
+                    <span className="text-sm text-muted-foreground">
+                      Select all {accountsByStatus[status].length} accounts
+                    </span>
                   </div>
-                )}
-              </TabsContent>
-            );
-          })}
+                  
+                  {/* Account List */}
+                  {accountsByStatus[status].map(renderAccountCard)}
+                </div>
+              )}
+            </TabsContent>
+          ))}
         </Tabs>
 
         {/* Dialogs */}

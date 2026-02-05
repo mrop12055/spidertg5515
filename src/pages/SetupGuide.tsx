@@ -1275,6 +1275,10 @@ async def setup_handlers():
             continue
         
         try:
+            # Progress marker (helps identify the exact account where it hangs)
+            if idx == 1 or idx % 25 == 0 or idx == total:
+                print(f"  [HANDLER] Registering {idx}/{total} ({count} ok so far)...")
+                sys.stdout.flush()
 
             # Check if client is still connected before registering handler.
             # IMPORTANT: do this defensively; some stale connections can block.

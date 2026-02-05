@@ -1,61 +1,15 @@
+# ✅ COMPLETED: Increase All Query Limits from 10k to 50k
 
+All query limits have been updated to 50,000 records with parallel fetching for optimal performance.
 
-# Move 63 Accounts to Frozen Status
+## Completed Changes
 
-## Overview
-Update 63 accounts currently showing in the "Used" tab (restricted status) to "Frozen" status based on the phone numbers visible in your screenshots.
-
-## Phone Numbers to Update (63 accounts)
-
-From the screenshots, here are all the phone numbers:
-
-```text
-916000394758, 916003646978, 916205488332, 916261021185, 916281567825,
-916291817099, 916302355151, 916307539728, 917006042837, 917009491257,
-917074140276, 917099325877, 917279910544, 917354125838, 917398903871,
-917399864032, 917415285422, 917500225976, 917602023980, 917734892355,
-917975935911, 918012160799, 918070376981, 918144290086, 918167866950,
-918239861928, 918270411450, 918344566355, 918429790957, 918607155815,
-918627825462, 918653932328, 918707582387, 918981021159, 919099124034,
-919008980307, 919027014606, 919049084552, 919080894623, 919087685090,
-919110801410, 919126648221, 919212609625, 919277278270, 919286245263,
-919312493192, 919390321437, 919380606142, 919447056189, 919457634998,
-919501048037, 919508468937, 919586869375, 919588941305, 919637584425,
-919637472929, 919657341447, 919774035815, 919855643819
-```
-
-## Implementation
-
-### Database Update
-Run a single SQL UPDATE statement to change the status of all 63 accounts from their current status to `frozen`:
-
-```sql
-UPDATE telegram_accounts 
-SET 
-  status = 'frozen',
-  updated_at = now()
-WHERE phone_number IN (
-  '916000394758', '916003646978', '916205488332', '916261021185', '916281567825',
-  '916291817099', '916302355151', '916307539728', '917006042837', '917009491257',
-  '917074140276', '917099325877', '917279910544', '917354125838', '917398903871',
-  '917399864032', '917415285422', '917500225976', '917602023980', '917734892355',
-  '917975935911', '918012160799', '918070376981', '918144290086', '918167866950',
-  '918239861928', '918270411450', '918344566355', '918429790957', '918607155815',
-  '918627825462', '918653932328', '918707582387', '918981021159', '919099124034',
-  '919008980307', '919027014606', '919049084552', '919080894623', '919087685090',
-  '919110801410', '919126648221', '919212609625', '919277278270', '919286245263',
-  '919312493192', '919390321437', '919380606142', '919447056189', '919457634998',
-  '919501048037', '919508468937', '919586869375', '919588941305', '919637584425',
-  '919637472929', '919657341447', '919774035815', '919855643819'
-);
-```
-
-## What This Changes
-- **Before**: 63 accounts in "Used" tab with restricted status
-- **After**: 63 accounts moved to "Frozen" tab with frozen status
-
-## Impact
-- These accounts will no longer be processed by the runner (frozen accounts are excluded)
-- They will appear in the "Frozen" filter instead of "Used"
-- This also reduces runner workload since it won't attempt to connect to these accounts
-
+| File | Change |
+|------|--------|
+| `TelegramContext.tsx` | Updated to 50k + parallel fetching |
+| `SeatChat.tsx` | Updated to 50k |
+| `useDatabase.ts` | Added 50k paginated parallel fetching |
+| `useConversations.ts` | Already at 50k ✓ |
+| `useUniqueConversations.ts` | Already at 50k ✓ |
+| `useAccounts.ts` | Already at 100k ✓ |
+| `useProxies.ts` | Already at 100k ✓ |
