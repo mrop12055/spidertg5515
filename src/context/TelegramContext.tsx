@@ -1337,17 +1337,52 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     try {
       // STEP 1: Get ALL phone numbers that have EVER been successfully messaged or are pending/sending
       // This prevents sending to the same person from ANY campaign
-      const { data: allSentRecipients } = await supabase
-        .from('campaign_recipients')
-        .select('phone_number')
-        .in('status', ['sent', 'pending', 'sending']);
+      // Use paginated fetching to bypass 1000 row limit
+      const PAGE_SIZE = 1000;
+      const MAX_PAGES = 100; // Up to 100k records
       
-      // Also check conversations where we sent the first message (outreach conversations)
-      const { data: existingConversations } = await supabase
-        .from('conversations')
-        .select('recipient_phone')
-        .eq('first_message_sent', true)
-        .not('recipient_phone', 'is', null);
+      // Fetch all sent recipients with pagination
+      const fetchAllSentRecipients = async () => {
+        const allData: { phone_number: string }[] = [];
+        for (let page = 0; page < MAX_PAGES; page++) {
+          const { data, error } = await supabase
+            .from('campaign_recipients')
+            .select('phone_number')
+            .in('status', ['sent', 'pending', 'sending', 'queued'])
+            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+          
+          if (error) throw error;
+          if (!data || data.length === 0) break;
+          allData.push(...data);
+          if (data.length < PAGE_SIZE) break;
+        }
+        return allData;
+      };
+      
+      // Fetch all conversations with pagination
+      const fetchAllConversations = async () => {
+        const allData: { recipient_phone: string | null }[] = [];
+        for (let page = 0; page < MAX_PAGES; page++) {
+          const { data, error } = await supabase
+            .from('conversations')
+            .select('recipient_phone')
+            .eq('first_message_sent', true)
+            .not('recipient_phone', 'is', null)
+            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+          
+          if (error) throw error;
+          if (!data || data.length === 0) break;
+          allData.push(...data);
+          if (data.length < PAGE_SIZE) break;
+        }
+        return allData;
+      };
+      
+      // Fetch both in parallel
+      const [allSentRecipients, existingConversations] = await Promise.all([
+        fetchAllSentRecipients(),
+        fetchAllConversations()
+      ]);
       
       // Build a set of all already-messaged phone numbers
       const alreadyMessaged = new Set<string>();
