@@ -41,6 +41,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
+import { AccountStatusWarning } from '@/components/chat/AccountStatusWarning';
 import { format, isToday, isYesterday, isSameDay, subDays } from 'date-fns';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -1463,7 +1464,23 @@ const Chat: React.FC = () => {
               </ScrollArea>
 
               {/* Message Input */}
-              <div className="p-3 bg-card border-t border-border">
+              <div className="p-3 bg-card border-t border-border space-y-2">
+                {/* Account Status Warning */}
+                {(() => {
+                  const account = accounts.find(a => a.id === selectedConv?.accountId);
+                  if (account && (account.status === 'restricted' || account.status === 'cooldown')) {
+                    return (
+                      <div className="max-w-3xl mx-auto">
+                        <AccountStatusWarning 
+                          status={account.status}
+                          restrictedUntil={account.restrictedUntil}
+                        />
+                      </div>
+                    );
+                  }
+                  return null;
+                })()}
+                
                 {/* Image Preview */}
                 {imagePreview && (
                   <div className="max-w-3xl mx-auto mb-3">
