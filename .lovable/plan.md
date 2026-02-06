@@ -1,121 +1,51 @@
 
-# Fix: Python Runner Not Fetching All Accounts (1000+ Row Limit)
+# Plan: Add Auto-Cleanup for Old Conversations Without Replies
 
 ## Problem Identified
-
-You have **1,008 accounts** in the database, but the `runner-tasks` edge function only fetches up to **1,000 accounts** due to Supabase's default row limit. This causes 8 accounts to be silently dropped, breaking the Python runner's ability to fetch all accounts.
-
-The issue is in `supabase/functions/runner-tasks/index.ts` at line 248:
-```typescript
-let accountsQuery = supabase.from("telegram_accounts").select("*, proxies!fk_proxy(*)");
-```
-This query has no pagination, so it hits the 1,000-row ceiling.
-
----
+- **2,935 conversations** older than 5 days exist without any reply (has_reply = false)
+- There is NO cleanup mechanism for conversations currently
+- The cleanup edge function only handles warmup data, proxy errors, and logs
 
 ## Solution
 
-Implement **sequential paginated fetching** in the edge function to retrieve all accounts in batches of 1,000.
+### 1. Add Conversation Cleanup to Utilities Edge Function
+**File:** `supabase/functions/utilities/index.ts`
 
----
+Add cleanup logic to delete old conversations without replies:
+- Delete conversations where `created_at < 5 days ago` AND `has_reply = false`
+- Also delete associated messages for those conversations
 
-## Implementation Plan
+### 2. Keep Conversations With Replies Forever
+- Conversations with `has_reply = true` will be preserved
+- Only conversations where outreach was sent but no response was received will be cleaned
 
-### Step 1: Add Paginated Account Fetching Helper
+## Technical Details
 
-Create a helper function that fetches accounts in pages:
-
-```typescript
-async function fetchAllAccounts(supabase: any, statusFilter: string[], accountIds?: string[]): Promise<any[]> {
-  const PAGE_SIZE = 1000;
-  const MAX_PAGES = 10; // Support up to 10,000 accounts
-  const allAccounts: any[] = [];
-
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const from = page * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
-
-    let query = supabase
-      .from("telegram_accounts")
-      .select("*, proxies!fk_proxy(*)")
-      .in("status", statusFilter)
-      .range(from, to);
-
-    if (accountIds?.length > 0) {
-      query = query.in("id", accountIds);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-    if (!data || data.length === 0) break;
-
-    allAccounts.push(...data);
-    if (data.length < PAGE_SIZE) break; // Last page
-  }
-
-  return allAccounts;
-}
+```text
+Cleanup Criteria:
+┌─────────────────────────────────────────────────────┐
+│  DELETE conversations WHERE:                        │
+│  - created_at < NOW() - 5 days                      │
+│  - has_reply = false                                │
+│  - first_message_sent = true (optional filter)      │
+└─────────────────────────────────────────────────────┘
 ```
 
-### Step 2: Update the `handleGetTasks` Function
+### Files to Modify
 
-Replace the current single query with the paginated helper:
+1. **supabase/functions/utilities/index.ts**
+   - Add conversation + message cleanup in the `/cleanup` route
+   - Delete messages first (foreign key), then conversations
+   - Add `conversation_cleanup_days` parameter (default: 5)
 
-**Before (lines 247-262):**
-```typescript
-let accountsQuery = supabase.from("telegram_accounts").select("*, proxies!fk_proxy(*)");
+### Implementation Steps
 
-if (isLivechat) {
-  accountsQuery = accountsQuery.in("status", ["active", "restricted", "cooldown", "frozen"]);
-} else {
-  accountsQuery = accountsQuery.in("status", ["active", "cooldown", "restricted"]);
-}
+1. Modify cleanup function to accept `conversation_days` parameter (default 5)
+2. Delete messages belonging to old no-reply conversations first
+3. Delete the old no-reply conversations
+4. Return count of deleted conversations in response
 
-if (account_ids?.length > 0) {
-  accountsQuery = accountsQuery.in("id", account_ids);
-}
-
-const { data: accounts, error: accountsError } = await accountsQuery;
-```
-
-**After:**
-```typescript
-const statusFilter = isLivechat
-  ? ["active", "restricted", "cooldown", "frozen"]
-  : ["active", "cooldown", "restricted"];
-
-let accounts: any[];
-try {
-  accounts = await fetchAllAccounts(supabase, statusFilter, account_ids);
-} catch (accountsError) {
-  console.error("[runner-tasks/get] Error fetching accounts:", accountsError);
-  return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "Error fetching accounts" });
-}
-
-console.log(`[runner-tasks/get] Fetched ${accounts.length} accounts (paginated)`);
-```
-
----
-
-## Technical Notes
-
-- **Sequential vs Parallel**: Using sequential fetching (not `Promise.all`) because edge functions have strict timeout limits, and for 1,000-2,000 accounts only 2 requests are needed
-- **Scalability**: Supports up to 10,000 accounts (10 pages × 1,000 rows)
-- **Backward Compatible**: No changes to the Python runner or API contract
-- **Frontend Already Fixed**: The `useAccounts.ts` hook already uses pagination
-
----
-
-## Files to Modify
-
-| File | Change |
-|------|--------|
-| `supabase/functions/runner-tasks/index.ts` | Add paginated fetching helper and update `handleGetTasks` |
-
----
-
-## After Implementation
-
-1. Deploy the updated edge function
-2. Start the Python runner
-3. Verify all 1,008 accounts are fetched correctly
+### Expected Impact
+- Removes ~2,935 old conversations immediately when cleanup runs
+- Keeps all conversations with replies intact
+- Reduces database size and improves query performance
