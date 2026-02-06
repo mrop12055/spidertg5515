@@ -47,7 +47,7 @@ serve(async (req) => {
 
     // ==================== ACCOUNTS ====================
     if (path === '/accounts' && method === 'GET') {
-      const { data, error } = await supabase.from('telegram_accounts').select('*, proxies(*)');
+      const { data, error } = await supabase.from('telegram_accounts').select('*, proxies(*)').limit(5000);
       if (error) throw error;
       return jsonResponse(data);
     }
@@ -74,7 +74,7 @@ serve(async (req) => {
 
     // ==================== PROXIES ====================
     if (path === '/proxies' && method === 'GET') {
-      const { data, error } = await supabase.from('proxies').select('*');
+      const { data, error } = await supabase.from('proxies').select('*').limit(5000);
       if (error) throw error;
       return jsonResponse(data);
     }
