@@ -1,51 +1,59 @@
 
-# Plan: Add Auto-Cleanup for Old Conversations Without Replies
 
-## Problem Identified
-- **2,935 conversations** older than 5 days exist without any reply (has_reply = false)
-- There is NO cleanup mechanism for conversations currently
-- The cleanup edge function only handles warmup data, proxy errors, and logs
+# Plan: Increase Account Query Limit to 5,000 in Edge Functions
+
+## Problem
+The `runner-tasks` edge function queries accounts **without an explicit limit**, causing Supabase to apply its default 1,000-row limit. With 1,000+ accounts in your system, the Python runner only receives a partial list.
 
 ## Solution
+Add `.limit(5000)` to all account queries in the edge functions to ensure all accounts are fetched.
 
-### 1. Add Conversation Cleanup to Utilities Edge Function
-**File:** `supabase/functions/utilities/index.ts`
+## Files to Modify
 
-Add cleanup logic to delete old conversations without replies:
-- Delete conversations where `created_at < 5 days ago` AND `has_reply = false`
-- Also delete associated messages for those conversations
+### 1. `supabase/functions/runner-tasks/index.ts`
 
-### 2. Keep Conversations With Replies Forever
-- Conversations with `has_reply = true` will be preserved
-- Only conversations where outreach was sent but no response was received will be cleaned
-
-## Technical Details
+**Location:** Line 262 (account query)
 
 ```text
-Cleanup Criteria:
-┌─────────────────────────────────────────────────────┐
-│  DELETE conversations WHERE:                        │
-│  - created_at < NOW() - 5 days                      │
-│  - has_reply = false                                │
-│  - first_message_sent = true (optional filter)      │
-└─────────────────────────────────────────────────────┘
+Current:
+  const { data: accounts, error: accountsError } = await accountsQuery;
+
+Change to:
+  const { data: accounts, error: accountsError } = await accountsQuery.limit(5000);
 ```
 
-### Files to Modify
+### 2. `supabase/functions/admin-api/index.ts`
 
-1. **supabase/functions/utilities/index.ts**
-   - Add conversation + message cleanup in the `/cleanup` route
-   - Delete messages first (foreign key), then conversations
-   - Add `conversation_cleanup_days` parameter (default: 5)
+**Location:** Line 50-51 (GET /accounts endpoint)
 
-### Implementation Steps
+```text
+Current:
+  const { data, error } = await supabase.from('telegram_accounts').select('*, proxies(*)');
 
-1. Modify cleanup function to accept `conversation_days` parameter (default 5)
-2. Delete messages belonging to old no-reply conversations first
-3. Delete the old no-reply conversations
-4. Return count of deleted conversations in response
+Change to:
+  const { data, error } = await supabase.from('telegram_accounts').select('*, proxies(*)').limit(5000);
+```
 
-### Expected Impact
-- Removes ~2,935 old conversations immediately when cleanup runs
-- Keeps all conversations with replies intact
-- Reduces database size and improves query performance
+**Location:** Line 77 (GET /proxies endpoint) - for consistency
+
+```text
+Current:
+  const { data, error } = await supabase.from('proxies').select('*');
+
+Change to:
+  const { data, error } = await supabase.from('proxies').select('*').limit(5000);
+```
+
+## Summary of Changes
+
+| File | Endpoint/Query | Current Limit | New Limit |
+|------|----------------|---------------|-----------|
+| runner-tasks/index.ts | Account fetch | 1,000 (default) | 5,000 |
+| admin-api/index.ts | GET /accounts | 1,000 (default) | 5,000 |
+| admin-api/index.ts | GET /proxies | 1,000 (default) | 5,000 |
+
+## After Implementation
+1. Edge functions will be auto-deployed
+2. Python runner will receive all 1,000+ accounts
+3. No changes needed to the Python runner code
+
