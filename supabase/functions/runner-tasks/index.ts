@@ -97,6 +97,37 @@ function parseSettings(settingsData: Record<string, any>[]) {
   return config;
 }
 
+// Paginated account fetching to bypass 1000 row limit
+async function fetchAllAccounts(supabase: any, statusFilter: string[], accountIds?: string[]): Promise<any[]> {
+  const PAGE_SIZE = 1000;
+  const MAX_PAGES = 10; // Support up to 10,000 accounts
+  const allAccounts: any[] = [];
+
+  for (let page = 0; page < MAX_PAGES; page++) {
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    let query = supabase
+      .from("telegram_accounts")
+      .select("*, proxies!fk_proxy(*)")
+      .in("status", statusFilter)
+      .range(from, to);
+
+    if (accountIds && accountIds.length > 0) {
+      query = query.in("id", accountIds);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    allAccounts.push(...data);
+    if (data.length < PAGE_SIZE) break; // Last page
+  }
+
+  return allAccounts;
+}
+
 // Get API credentials for account (per-account only - no pool fallback)
 async function getApiCredentialsForAccount(supabase: any, account: any) {
   if (account.api_id && account.api_hash) {
@@ -243,25 +274,23 @@ async function handleGetTasks(supabase: any, body: any) {
     console.log(`[runner-tasks/get] Recovered ${staleRecipients.length} stale recipients from sending→pending`);
   }
 
-  // Load accounts with proxies
+  // Load accounts with proxies using paginated fetching (bypasses 1000 row limit)
   const isLivechat = runner === "livechat";
-  let accountsQuery = supabase.from("telegram_accounts").select("*, proxies!fk_proxy(*)");
-  
-  if (isLivechat) {
-    accountsQuery = accountsQuery.in("status", ["active", "restricted", "cooldown", "frozen"]);
-  } else {
-    // Include restricted/cooldown accounts so they can LISTEN for incoming messages
-    // Campaign task assignment will still filter them out (only 'active' can send to new recipients)
-    accountsQuery = accountsQuery.in("status", ["active", "cooldown", "restricted"]);
-  }
-  
-  if (account_ids?.length > 0) {
-    accountsQuery = accountsQuery.in("id", account_ids);
+  const statusFilter = isLivechat
+    ? ["active", "restricted", "cooldown", "frozen"]
+    : ["active", "cooldown", "restricted"];
+
+  let accounts: any[];
+  try {
+    accounts = await fetchAllAccounts(supabase, statusFilter, account_ids);
+  } catch (accountsError) {
+    console.error("[runner-tasks/get] Error fetching accounts:", accountsError);
+    return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "Error fetching accounts" });
   }
 
-  const { data: accounts, error: accountsError } = await accountsQuery;
+  console.log(`[runner-tasks/get] Fetched ${accounts.length} accounts (paginated)`);
 
-  if (accountsError || !accounts?.length) {
+  if (!accounts?.length) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No active accounts" });
   }
 
