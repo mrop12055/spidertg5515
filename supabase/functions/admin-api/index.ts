@@ -135,6 +135,7 @@ serve(async (req) => {
       const { campaign_id } = body;
       if (!campaign_id) return jsonResponse({ error: "campaign_id required" }, 400);
 
+      // Step 1: Update campaign status to running
       const { data, error } = await supabase
         .from('campaigns')
         .update({ status: 'running', updated_at: new Date().toISOString() })
@@ -143,7 +144,23 @@ serve(async (req) => {
         .single();
 
       if (error) throw error;
-      return jsonResponse({ success: true, campaign: data });
+
+      // Step 2: Promote all 'queued' recipients to 'pending' so runner can pick them up
+      const { data: promotedRecipients, error: promoteError } = await supabase
+        .from('campaign_recipients')
+        .update({ status: 'pending' })
+        .eq('campaign_id', campaign_id)
+        .eq('status', 'queued')
+        .select('id');
+
+      if (promoteError) {
+        console.error(`[admin-api] Error promoting recipients:`, promoteError);
+      }
+
+      const promotedCount = promotedRecipients?.length || 0;
+      console.log(`[admin-api] Started campaign ${campaign_id}, promoted ${promotedCount} queued→pending`);
+
+      return jsonResponse({ success: true, campaign: data, promoted_count: promotedCount });
     }
 
     if (path === '/campaigns/pause' && method === 'POST') {
