@@ -1187,27 +1187,23 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     """
     Connect accounts from /runner-tasks/get response.
     Returns (count_connected, set_of_newly_connected_account_ids).
-    Uses semaphores to avoid overwhelming network with 500+ parallel connections.
+    Only prints header and runs catch-up for accounts that actually needed connecting.
     """
     if not accs:
         return 0, set()
     
-    # Snapshot which accounts are already connected — PARALLEL with semaphore
+    # Snapshot which accounts are already connected (defensive: some stale clients can block)
     already_connected = set()
-    _check_sem = asyncio.Semaphore(50)
-    
-    async def _check_one(aid, c):
-        async with _check_sem:
-            try:
-                ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=0.5)
-                if ok:
-                    already_connected.add(aid)
-            except Exception:
-                pass
-    
-    items_to_check = [(aid, c) for aid, c in list(clients.items()) if c]
-    if items_to_check:
-        await asyncio.gather(*[_check_one(aid, c) for aid, c in items_to_check], return_exceptions=True)
+    for aid, c in list(clients.items()):
+        if not c:
+            continue
+        try:
+            ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=0.5)
+            if ok:
+                already_connected.add(aid)
+        except Exception:
+            # treat as disconnected
+            pass
     
     # Find accounts that need connecting (missing or disconnected)
     to_connect = [acc for acc in accs if acc.get("id") not in already_connected]
@@ -1221,29 +1217,11 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     print("  CONNECTING ACCOUNTS")
     print("="*50)
     print(f"  Found {len(to_connect)} account(s) to connect (already connected: {len(already_connected)})...\\n")
-    sys.stdout.flush()
     
-    # Connect with semaphore (max 10 parallel connections to avoid network overload)
-    _conn_sem = asyncio.Semaphore(10)
-    _conn_ok = 0
-    _conn_done = 0
-    
-    async def _connect_one(acc):
-        nonlocal _conn_ok, _conn_done
-        async with _conn_sem:
-            result = await connect(acc)
-            _conn_done += 1
-            if isinstance(result, tuple) and result[0]:
-                _conn_ok += 1
-            if _conn_done % 50 == 0 or _conn_done == len(to_connect):
-                print(f"  [CONNECT] Progress: {_conn_done}/{len(to_connect)} ({_conn_ok} ok)")
-                sys.stdout.flush()
-            return result
-    
-    results = await asyncio.gather(*[_connect_one(a) for a in to_connect], return_exceptions=True)
+    # Connect only the accounts that need it
+    results = await asyncio.gather(*[connect(a) for a in to_connect], return_exceptions=True)
     ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
     print(f"\\n  Connected: {ok}/{len(to_connect)} (total active: {len(already_connected) + ok})")
-    sys.stdout.flush()
     
     # Track which accounts were newly connected
     newly_connected = set()
@@ -1253,88 +1231,81 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
             if aid:
                 newly_connected.add(aid)
     
-    # Fetch unread messages for newly connected accounts (catch-up)
+    # Fetch unread messages in PARALLEL for all newly connected accounts (catch-up)
     # Uses last_offline_at for smart time-based fetching.
-    # IMPORTANT: Semaphore limits concurrency to avoid overwhelming the event loop with 500+ accounts.
+    # IMPORTANT: Put a hard timeout per account so one stuck Telethon call can't block startup.
     if newly_connected:
-        print(f"\\n  [CATCHUP] Running catch-up for {len(newly_connected)} newly connected account(s) (max 25 parallel)...")
+        print(f"\\n  [CATCHUP] Running catch-up for {len(newly_connected)} newly connected account(s)...")
         sys.stdout.flush()
-        _catchup_sem = asyncio.Semaphore(25)
-        _catchup_done = 0
-
         async def _catchup_one(aid: str):
-            nonlocal _catchup_done
-            async with _catchup_sem:
-                try:
-                    phone = (accounts.get(aid, {}).get("phone_number") or "????")[-4:]
-                    await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=20)
-                    _catchup_done += 1
-                    if _catchup_done % 50 == 0 or _catchup_done == len(newly_connected):
-                        print(f"  [CATCHUP] Progress: {_catchup_done}/{len(newly_connected)} done")
-                        sys.stdout.flush()
-                except asyncio.TimeoutError:
-                    _catchup_done += 1
-                    print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] TIMEOUT (skipped)")
-                    sys.stdout.flush()
-                except Exception as e:
-                    _catchup_done += 1
-                    print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] Failed: {str(e)[:60]}")
-                    sys.stdout.flush()
+            try:
+                phone = (accounts.get(aid, {}).get("phone_number") or "????")[-4:]
+                print(f"  [CATCHUP] [{phone}] Starting...")
+                sys.stdout.flush()
+                # Keep this short so startup never appears "stuck".
+                await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=20)
+                print(f"  [CATCHUP] [{phone}] Done")
+                sys.stdout.flush()
+            except asyncio.TimeoutError:
+                print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] TIMEOUT (skipped)")
+                sys.stdout.flush()
+            except Exception as e:
+                print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] Failed: {str(e)[:60]}")
+                sys.stdout.flush()
 
         await asyncio.gather(
             *[_catchup_one(aid) for aid in newly_connected if aid in clients],
             return_exceptions=True,
         )
 
-        print(f"  [CATCHUP] All {_catchup_done} catch-up tasks finished (continuing startup)")
+        print("  [CATCHUP] All catch-up tasks finished (continuing startup)")
         sys.stdout.flush()
     
     return len(already_connected) + ok, newly_connected
 
 
 async def setup_handlers():
-    """Set up incoming message handlers with parallel registration (semaphore-limited)."""
-    items = [(aid, client) for aid, client in clients.items() if not getattr(client, "_h", False)]
+    """Set up incoming message handlers with defensive error handling."""
+    count = 0
+    items = list(clients.items())
     total = len(items)
-    if total == 0:
-        return
-    
     started = time.time()
-    _handler_sem = asyncio.Semaphore(50)
-    _ok = 0
-    _skip = 0
+    for idx, (aid, client) in enumerate(items, start=1):
+        if getattr(client, "_h", False):
+            continue
+        
+        try:
+            # Progress marker (helps identify the exact account where it hangs)
+            if idx == 1 or idx % 25 == 0 or idx == total:
+                print(f"  [HANDLER] Registering {idx}/{total} ({count} ok so far)...")
+                sys.stdout.flush()
 
-    async def _register_one(aid, client, idx):
-        nonlocal _ok, _skip
-        async with _handler_sem:
+            # Check if client is still connected before registering handler.
+            # IMPORTANT: do this defensively; some stale connections can block.
+            connected = False
             try:
+                connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=0.5)
+            except Exception:
                 connected = False
-                try:
-                    connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=0.5)
-                except Exception:
-                    connected = False
-                
-                if not connected:
-                    _skip += 1
-                    return
-                
-                @client.on(events.NewMessage(incoming=True))
-                async def handler(event, a=aid):
-                    await on_message(event, a)
-                
-                setattr(client, "_h", True)
-                _ok += 1
-            except Exception as e:
-                _skip += 1
-
-    await asyncio.gather(
-        *[_register_one(aid, client, idx) for idx, (aid, client) in enumerate(items)],
-        return_exceptions=True,
-    )
+            
+            if not connected:
+                print(f"  [HANDLER] Skipping unresponsive/disconnected client {aid[:8]}...")
+                continue
+            
+            @client.on(events.NewMessage(incoming=True))
+            async def handler(event, a=aid):
+                await on_message(event, a)
+            
+            setattr(client, "_h", True)
+            count += 1
+        except Exception as e:
+            print(f"  [HANDLER] Failed to register for {aid[:8]}: {str(e)[:30]}")
+            continue
     
-    took = time.time() - started
-    print(f"  [HANDLERS] Registered {_ok} handlers, skipped {_skip}, in {took:.1f}s")
-    sys.stdout.flush()
+    if count > 0:
+        took = time.time() - started
+        print(f"  [HANDLERS] Registered {count} new message handlers in {took:.1f}s")
+        sys.stdout.flush()
 
 
 # ==============================================================================

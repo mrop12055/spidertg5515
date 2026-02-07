@@ -259,7 +259,7 @@ async function handleGetTasks(supabase: any, body: any) {
     accountsQuery = accountsQuery.in("id", account_ids);
   }
 
-  const { data: accounts, error: accountsError } = await accountsQuery.limit(5000);
+  const { data: accounts, error: accountsError } = await accountsQuery;
 
   if (accountsError || !accounts?.length) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No active accounts" });

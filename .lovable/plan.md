@@ -1,86 +1,51 @@
 
-
-# Fix: Campaign Resume Not Working After Pause
+# Plan: Add Auto-Cleanup for Old Conversations Without Replies
 
 ## Problem Identified
-When resuming a paused campaign, the recipients remain in `queued` status instead of being promoted to `pending`. The Python runner only processes recipients with `status = 'pending'`, so the campaign appears stuck.
-
-**Current State of "AP MIX data" Campaign:**
-- Campaign Status: `running` (correct)
-- Recipients: 3,566 in `queued` status (should be `pending`)
-- The runner is looking for `pending` recipients but finding none
-
-## Root Cause
-The pause endpoint correctly moves recipients from `pending/sending` → `queued`, but the start/resume logic only updates the campaign status without promoting recipients back from `queued` → `pending`.
+- **2,935 conversations** older than 5 days exist without any reply (has_reply = false)
+- There is NO cleanup mechanism for conversations currently
+- The cleanup edge function only handles warmup data, proxy errors, and logs
 
 ## Solution
-Modify the `/campaigns/start` endpoint in `admin-api` to bulk-promote all `queued` recipients to `pending` when starting/resuming a campaign.
 
----
+### 1. Add Conversation Cleanup to Utilities Edge Function
+**File:** `supabase/functions/utilities/index.ts`
+
+Add cleanup logic to delete old conversations without replies:
+- Delete conversations where `created_at < 5 days ago` AND `has_reply = false`
+- Also delete associated messages for those conversations
+
+### 2. Keep Conversations With Replies Forever
+- Conversations with `has_reply = true` will be preserved
+- Only conversations where outreach was sent but no response was received will be cleaned
 
 ## Technical Details
 
-### File: `supabase/functions/admin-api/index.ts`
-
-**Current Start Logic (lines 134-147):**
-```typescript
-if (path === '/campaigns/start' && method === 'POST') {
-  const { campaign_id } = body;
-  if (!campaign_id) return jsonResponse({ error: "campaign_id required" }, 400);
-
-  const { data, error } = await supabase
-    .from('campaigns')
-    .update({ status: 'running', updated_at: new Date().toISOString() })
-    .eq('id', campaign_id)
-    .select()
-    .single();
-
-  if (error) throw error;
-  return jsonResponse({ success: true, campaign: data });
-}
+```text
+Cleanup Criteria:
+┌─────────────────────────────────────────────────────┐
+│  DELETE conversations WHERE:                        │
+│  - created_at < NOW() - 5 days                      │
+│  - has_reply = false                                │
+│  - first_message_sent = true (optional filter)      │
+└─────────────────────────────────────────────────────┘
 ```
 
-**Updated Start Logic:**
-```typescript
-if (path === '/campaigns/start' && method === 'POST') {
-  const { campaign_id } = body;
-  if (!campaign_id) return jsonResponse({ error: "campaign_id required" }, 400);
+### Files to Modify
 
-  // Step 1: Update campaign status to running
-  const { data, error } = await supabase
-    .from('campaigns')
-    .update({ status: 'running', updated_at: new Date().toISOString() })
-    .eq('id', campaign_id)
-    .select()
-    .single();
+1. **supabase/functions/utilities/index.ts**
+   - Add conversation + message cleanup in the `/cleanup` route
+   - Delete messages first (foreign key), then conversations
+   - Add `conversation_cleanup_days` parameter (default: 5)
 
-  if (error) throw error;
+### Implementation Steps
 
-  // Step 2: Promote all 'queued' recipients to 'pending' so runner can pick them up
-  const { data: promotedRecipients, error: promoteError } = await supabase
-    .from('campaign_recipients')
-    .update({ status: 'pending' })
-    .eq('campaign_id', campaign_id)
-    .eq('status', 'queued')
-    .select('id');
+1. Modify cleanup function to accept `conversation_days` parameter (default 5)
+2. Delete messages belonging to old no-reply conversations first
+3. Delete the old no-reply conversations
+4. Return count of deleted conversations in response
 
-  const promotedCount = promotedRecipients?.length || 0;
-  console.log(`[admin-api] Started campaign ${campaign_id}, promoted ${promotedCount} queued→pending`);
-
-  return jsonResponse({ success: true, campaign: data, promoted_count: promotedCount });
-}
-```
-
----
-
-## Summary of Changes
-
-| File | Change |
-|------|--------|
-| `supabase/functions/admin-api/index.ts` | Add recipient promotion (`queued` → `pending`) when starting a campaign |
-
-## After Implementation
-1. Edge function will be auto-deployed
-2. Clicking "Start" on a paused campaign will promote all queued recipients to pending
-3. The runner will immediately start picking up the 3,566 recipients
-
+### Expected Impact
+- Removes ~2,935 old conversations immediately when cleanup runs
+- Keeps all conversations with replies intact
+- Reduces database size and improves query performance
