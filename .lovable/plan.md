@@ -1,27 +1,51 @@
 
+# Plan: Add Auto-Cleanup for Old Conversations Without Replies
 
-## Update RUN.bat to Generate Log Files
+## Problem Identified
+- **2,935 conversations** older than 5 days exist without any reply (has_reply = false)
+- There is NO cleanup mechanism for conversations currently
+- The cleanup edge function only handles warmup data, proxy errors, and logs
 
-### What Changes
-Update the `run.bat` template in the Setup Guide so the Python runner automatically saves all output (stdout + stderr) to a timestamped log file while still showing output in the terminal.
+## Solution
 
-### Technical Details
+### 1. Add Conversation Cleanup to Utilities Edge Function
+**File:** `supabase/functions/utilities/index.ts`
 
-**File:** `src/pages/SetupGuide.tsx` (lines 1576-1609)
+Add cleanup logic to delete old conversations without replies:
+- Delete conversations where `created_at < 5 days ago` AND `has_reply = false`
+- Also delete associated messages for those conversations
 
-Replace the current `runBat` constant with a version that:
-1. Creates a `logs` folder automatically
-2. Generates a timestamped log filename (e.g., `runner_2026-02-07_14-30-00.log`)
-3. Uses PowerShell's `Tee-Object` to pipe output to both the console AND the log file
-4. Falls back to simple redirect (`>`) if PowerShell is unavailable
-5. Shows the log file location on startup so users know where to find it
+### 2. Keep Conversations With Replies Forever
+- Conversations with `has_reply = true` will be preserved
+- Only conversations where outreach was sent but no response was received will be cleaned
 
-**Updated run.bat behavior:**
-- On each run, a new log file is created in `logs/` folder
-- All output (including errors) is captured
-- User can still see live output in the terminal
-- After a crash, the log file persists for debugging
+## Technical Details
 
-### Version Bump
-The `runnerBuild` version string should also be updated to reflect this change, ensuring users download the latest version with logging enabled.
+```text
+Cleanup Criteria:
+┌─────────────────────────────────────────────────────┐
+│  DELETE conversations WHERE:                        │
+│  - created_at < NOW() - 5 days                      │
+│  - has_reply = false                                │
+│  - first_message_sent = true (optional filter)      │
+└─────────────────────────────────────────────────────┘
+```
 
+### Files to Modify
+
+1. **supabase/functions/utilities/index.ts**
+   - Add conversation + message cleanup in the `/cleanup` route
+   - Delete messages first (foreign key), then conversations
+   - Add `conversation_cleanup_days` parameter (default: 5)
+
+### Implementation Steps
+
+1. Modify cleanup function to accept `conversation_days` parameter (default 5)
+2. Delete messages belonging to old no-reply conversations first
+3. Delete the old no-reply conversations
+4. Return count of deleted conversations in response
+
+### Expected Impact
+- Removes ~2,935 old conversations immediately when cleanup runs
+- Keeps all conversations with replies intact
+- Reduces database size and improves query performance

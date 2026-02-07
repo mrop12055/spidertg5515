@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-07-logging-v1";
+  const runnerBuild = "2026-02-03-catchup-timeout-v4";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -1592,14 +1592,6 @@ echo.
 
 cd /d "%~dp0"
 
-:: Create logs folder if it doesn't exist
-if not exist "logs" mkdir logs
-
-:: Generate timestamped log filename
-for /f "tokens=1-3 delims=/ " %%a in ('date /t') do set DATESTAMP=%%c-%%a-%%b
-for /f "tokens=1-3 delims=:. " %%a in ('time /t') do set TIMESTAMP=%%a-%%b-%%c
-set LOGFILE=logs\\runner_%DATESTAMP%_%TIMESTAMP%.log
-
 echo  Installing requirements...
 py -m pip install telethon httpx pysocks --quiet 2>nul
 if errorlevel 1 (
@@ -1607,17 +1599,12 @@ if errorlevel 1 (
 )
 echo  Done!
 echo.
-echo  Log file: %LOGFILE%
-echo.
 
-:: Run with PowerShell Tee-Object to capture logs AND show live output
-powershell -Command "py unified_runner.py 2>&1 | Tee-Object -FilePath '%LOGFILE%'"
+py unified_runner.py
 if errorlevel 1 (
-    powershell -Command "python unified_runner.py 2>&1 | Tee-Object -FilePath '%LOGFILE%'"
+    python unified_runner.py
 )
 
-echo.
-echo  Runner stopped. Logs saved to: %LOGFILE%
 pause
 `;
 
