@@ -1,49 +1,86 @@
 
 
-# Fix: Runner Slowdown Due to Excessive Backend Logging
+# Fix: Campaign Resume Not Working After Pause
 
 ## Problem Identified
+When resuming a paused campaign, the recipients remain in `queued` status instead of being promoted to `pending`. The Python runner only processes recipients with `status = 'pending'`, so the campaign appears stuck.
 
-The backend function that feeds tasks to the runner (`runner-tasks/get`) prints a log line for **every single account** on every poll cycle (line 103 in `runner-tasks/index.ts`):
+**Current State of "AP MIX data" Campaign:**
+- Campaign Status: `running` (correct)
+- Recipients: 3,566 in `queued` status (should be `pending`)
+- The runner is looking for `pending` recipients but finding none
 
-```
-[api] Using per-account API for +919707494945: 2040
-```
+## Root Cause
+The pause endpoint correctly moves recipients from `pending/sending` → `queued`, but the start/resume logic only updates the campaign status without promoting recipients back from `queued` → `pending`.
 
-With **950 active accounts**, this produces **950 log lines per request**, which:
-- Bloats the edge function execution (currently 4.1 seconds per call)
-- Can cause the edge function to approach or hit timeout limits
-- Fills up the logging pipeline, hiding real errors
+## Solution
+Modify the `/campaigns/start` endpoint in `admin-api` to bulk-promote all `queued` recipients to `pending` when starting/resuming a campaign.
 
-Additionally, there are **22 messages stuck in `sending`** and **18 messages stuck in `pending`** that aren't being processed, likely because the runner is spending too much time waiting for the slow `/get` response.
-
-## What Will Change
-
-### 1. Remove per-account API log spam (runner-tasks/index.ts, line 103)
-Replace the per-account log with a single summary line:
-```
-[api] Resolved API credentials for 950 accounts
-```
-
-### 2. Add a summary log for account counts
-After loading accounts, log a single line with counts instead of per-account details:
-```
-[runner-tasks/get] 950 active, 12 sendable (under daily limit), 950 connectable
-```
-
-### 3. Reset stuck messages
-Run a one-time data fix to reset the 22 messages stuck in `sending` back to `pending` so the runner can retry them.
+---
 
 ## Technical Details
 
-**File changed:** `supabase/functions/runner-tasks/index.ts`
-- Line 103: Replace individual `console.log` with a counter, print summary after the loop
-- This reduces logging from ~950 lines to ~3 lines per poll cycle
-- No change to the actual logic or data returned to the runner
+### File: `supabase/functions/admin-api/index.ts`
 
-**Data fix:** Reset 22 stuck `sending` messages to `pending`
+**Current Start Logic (lines 134-147):**
+```typescript
+if (path === '/campaigns/start' && method === 'POST') {
+  const { campaign_id } = body;
+  if (!campaign_id) return jsonResponse({ error: "campaign_id required" }, 400);
 
-## Expected Result
-- Edge function execution drops from ~4s to under 1s
-- Runner gets faster responses and stays in its main loop
-- Stuck messages get retried automatically
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({ status: 'running', updated_at: new Date().toISOString() })
+    .eq('id', campaign_id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return jsonResponse({ success: true, campaign: data });
+}
+```
+
+**Updated Start Logic:**
+```typescript
+if (path === '/campaigns/start' && method === 'POST') {
+  const { campaign_id } = body;
+  if (!campaign_id) return jsonResponse({ error: "campaign_id required" }, 400);
+
+  // Step 1: Update campaign status to running
+  const { data, error } = await supabase
+    .from('campaigns')
+    .update({ status: 'running', updated_at: new Date().toISOString() })
+    .eq('id', campaign_id)
+    .select()
+    .single();
+
+  if (error) throw error;
+
+  // Step 2: Promote all 'queued' recipients to 'pending' so runner can pick them up
+  const { data: promotedRecipients, error: promoteError } = await supabase
+    .from('campaign_recipients')
+    .update({ status: 'pending' })
+    .eq('campaign_id', campaign_id)
+    .eq('status', 'queued')
+    .select('id');
+
+  const promotedCount = promotedRecipients?.length || 0;
+  console.log(`[admin-api] Started campaign ${campaign_id}, promoted ${promotedCount} queued→pending`);
+
+  return jsonResponse({ success: true, campaign: data, promoted_count: promotedCount });
+}
+```
+
+---
+
+## Summary of Changes
+
+| File | Change |
+|------|--------|
+| `supabase/functions/admin-api/index.ts` | Add recipient promotion (`queued` → `pending`) when starting a campaign |
+
+## After Implementation
+1. Edge function will be auto-deployed
+2. Clicking "Start" on a paused campaign will promote all queued recipients to pending
+3. The runner will immediately start picking up the 3,566 recipients
+
