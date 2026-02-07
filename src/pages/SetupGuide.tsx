@@ -1187,23 +1187,27 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     """
     Connect accounts from /runner-tasks/get response.
     Returns (count_connected, set_of_newly_connected_account_ids).
-    Only prints header and runs catch-up for accounts that actually needed connecting.
+    Uses semaphores to avoid overwhelming network with 500+ parallel connections.
     """
     if not accs:
         return 0, set()
     
-    # Snapshot which accounts are already connected (defensive: some stale clients can block)
+    # Snapshot which accounts are already connected — PARALLEL with semaphore
     already_connected = set()
-    for aid, c in list(clients.items()):
-        if not c:
-            continue
-        try:
-            ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=0.5)
-            if ok:
-                already_connected.add(aid)
-        except Exception:
-            # treat as disconnected
-            pass
+    _check_sem = asyncio.Semaphore(50)
+    
+    async def _check_one(aid, c):
+        async with _check_sem:
+            try:
+                ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=0.5)
+                if ok:
+                    already_connected.add(aid)
+            except Exception:
+                pass
+    
+    items_to_check = [(aid, c) for aid, c in list(clients.items()) if c]
+    if items_to_check:
+        await asyncio.gather(*[_check_one(aid, c) for aid, c in items_to_check], return_exceptions=True)
     
     # Find accounts that need connecting (missing or disconnected)
     to_connect = [acc for acc in accs if acc.get("id") not in already_connected]
@@ -1217,11 +1221,29 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     print("  CONNECTING ACCOUNTS")
     print("="*50)
     print(f"  Found {len(to_connect)} account(s) to connect (already connected: {len(already_connected)})...\\n")
+    sys.stdout.flush()
     
-    # Connect only the accounts that need it
-    results = await asyncio.gather(*[connect(a) for a in to_connect], return_exceptions=True)
+    # Connect with semaphore (max 10 parallel connections to avoid network overload)
+    _conn_sem = asyncio.Semaphore(10)
+    _conn_ok = 0
+    _conn_done = 0
+    
+    async def _connect_one(acc):
+        nonlocal _conn_ok, _conn_done
+        async with _conn_sem:
+            result = await connect(acc)
+            _conn_done += 1
+            if isinstance(result, tuple) and result[0]:
+                _conn_ok += 1
+            if _conn_done % 50 == 0 or _conn_done == len(to_connect):
+                print(f"  [CONNECT] Progress: {_conn_done}/{len(to_connect)} ({_conn_ok} ok)")
+                sys.stdout.flush()
+            return result
+    
+    results = await asyncio.gather(*[_connect_one(a) for a in to_connect], return_exceptions=True)
     ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
     print(f"\\n  Connected: {ok}/{len(to_connect)} (total active: {len(already_connected) + ok})")
+    sys.stdout.flush()
     
     # Track which accounts were newly connected
     newly_connected = set()
