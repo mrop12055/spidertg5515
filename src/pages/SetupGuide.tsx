@@ -1265,49 +1265,43 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
 
 
 async def setup_handlers():
-    """Set up incoming message handlers with PARALLEL batched registration."""
+    """Set up incoming message handlers with defensive error handling."""
     count = 0
     items = list(clients.items())
     total = len(items)
     started = time.time()
-
-    async def _register_one(aid, client):
-        nonlocal count
+    for idx, (aid, client) in enumerate(items, start=1):
         if getattr(client, "_h", False):
-            return True  # Already registered
+            continue
+        
         try:
+            # Progress marker (helps identify the exact account where it hangs)
+            if idx == 1 or idx % 25 == 0 or idx == total:
+                print(f"  [HANDLER] Registering {idx}/{total} ({count} ok so far)...")
+                sys.stdout.flush()
+
+            # Check if client is still connected before registering handler.
+            # IMPORTANT: do this defensively; some stale connections can block.
             connected = False
             try:
-                connected = await asyncio.wait_for(
-                    asyncio.to_thread(client.is_connected), timeout=0.3
-                )
+                connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=0.5)
             except Exception:
                 connected = False
-
+            
             if not connected:
-                return False
-
+                print(f"  [HANDLER] Skipping unresponsive/disconnected client {aid[:8]}...")
+                continue
+            
             @client.on(events.NewMessage(incoming=True))
             async def handler(event, a=aid):
                 await on_message(event, a)
-
+            
             setattr(client, "_h", True)
             count += 1
-            return True
-        except Exception:
-            return False
-
-    # Process in parallel batches of 50
-    BATCH = 50
-    for i in range(0, total, BATCH):
-        batch = items[i:i+BATCH]
-        print(f"  [HANDLER] Registering {i+1}-{min(i+BATCH, total)}/{total}...")
-        sys.stdout.flush()
-        await asyncio.gather(
-            *[_register_one(aid, client) for aid, client in batch],
-            return_exceptions=True,
-        )
-
+        except Exception as e:
+            print(f"  [HANDLER] Failed to register for {aid[:8]}: {str(e)[:30]}")
+            continue
+    
     if count > 0:
         took = time.time() - started
         print(f"  [HANDLERS] Registered {count} new message handlers in {took:.1f}s")
