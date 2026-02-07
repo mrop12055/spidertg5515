@@ -694,18 +694,13 @@ async function handleReportResults(supabase: any, body: any) {
     (r.task_type || task_type) !== "incoming" && (r.task_type || task_type) !== "incoming_message"
   );
 
-  // Process incoming messages in parallel batches to prevent timeout during catchup
-  // Each processIncomingMessage does 3-6 DB queries, so limit concurrency to avoid overwhelming DB
-  const INCOMING_BATCH_SIZE = 10;
-  for (let i = 0; i < incomingMessages.length; i += INCOMING_BATCH_SIZE) {
-    const batch = incomingMessages.slice(i, i + INCOMING_BATCH_SIZE);
-    await Promise.all(batch.map((r: any) => processIncomingMessage(supabase, r, now)));
+  // Process incoming messages
+  for (const r of incomingMessages) {
+    await processIncomingMessage(supabase, r, now);
   }
 
   const successResults = otherResults.filter((r: any) => r.success);
   const failedResults = otherResults.filter((r: any) => !r.success);
-
-  console.log(`[runner-tasks/report] Processed: ${successResults.length} success, ${failedResults.length} failed, ${incomingMessages.length} incoming`);
 
   // Process successes
   for (const r of successResults) {
