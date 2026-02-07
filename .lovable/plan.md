@@ -1,82 +1,51 @@
 
+# Plan: Add Auto-Cleanup for Old Conversations Without Replies
 
-# Fix: Python Runner Freezing After Catchup
+## Problem Identified
+- **2,935 conversations** older than 5 days exist without any reply (has_reply = false)
+- There is NO cleanup mechanism for conversations currently
+- The cleanup edge function only handles warmup data, proxy errors, and logs
 
-## Problem
-The Python runner connects all 950 accounts, completes the catch-up phase, but then freezes and never enters the main task loop.
+## Solution
 
-## Root Cause
-When the runner polls `/runner-tasks/get`, the backend returns ALL 950 accounts with full session data and proxy details in every response (default `include_accounts=true`). This produces a 10-30MB JSON payload that causes:
-- Network transfer delays
-- JSON parsing blocking the asyncio event loop
-- Silent aiohttp timeouts
+### 1. Add Conversation Cleanup to Utilities Edge Function
+**File:** `supabase/functions/utilities/index.ts`
 
-The backend already has an optimization flag (`include_accounts: false`) but the Python runner is not using it.
+Add cleanup logic to delete old conversations without replies:
+- Delete conversations where `created_at < 5 days ago` AND `has_reply = false`
+- Also delete associated messages for those conversations
 
-## Backend Verification (All Passing)
-- `runner-tasks/get` -- 200 OK, returning tasks correctly
-- `runner-tasks/report` -- working, processing incoming messages
-- `runner-tasks/heartbeat` -- working, last seen 2 minutes ago
-- Database -- 950 active accounts, 20 pending messages, 6,665 queued recipients
-- No running campaigns (all paused) -- this is expected, not a bug
-
-## Fix (Python Side)
-
-Since the Python runner code lives outside this project (it's a separate Python file on your VPS), here is exactly what to change:
-
-### Step 1: Add `include_accounts: false` to polling requests
-
-In your Python runner's main loop where it calls `/runner-tasks/get`, change the request body from:
-
-```python
-# BEFORE (sends huge payload every poll)
-body = {"runner": "unified", "batch_size": 100}
-```
-
-to:
-
-```python
-# AFTER (skip accounts in response - runner already has them connected)
-body = {"runner": "unified", "batch_size": 100, "include_accounts": False}
-```
-
-### Step 2: Add a timeout to the HTTP request
-
-Make sure the polling request has an explicit timeout so it never hangs silently:
-
-```python
-# Add timeout to prevent silent hangs
-async with session.post(url, json=body, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-    data = await resp.json()
-```
-
-### Step 3: Add debug prints around the main loop entry
-
-To confirm the fix works, add prints:
-
-```python
-print("[MAINLOOP] Entering main task loop...", flush=True)
-while True:
-    print(f"[POLL] Fetching tasks...", flush=True)
-    # ... your polling code ...
-    print(f"[POLL] Got {len(tasks)} tasks, delay={delay}", flush=True)
-```
-
-## Why This Wasn't an Issue Before
-
-With fewer accounts (say 200-400), the full accounts payload was manageable. At 950 accounts, the response size crossed a threshold where it blocks the event loop or exceeds default timeouts. This is a scaling issue, not a code bug.
+### 2. Keep Conversations With Replies Forever
+- Conversations with `has_reply = true` will be preserved
+- Only conversations where outreach was sent but no response was received will be cleaned
 
 ## Technical Details
 
-### Response size comparison:
-- `include_accounts: true` (default) -- ~28,000 lines of JSON (~15-25MB)
-- `include_accounts: false` -- ~900 lines of JSON (~50KB)
-
-### The backend optimization already exists
-Line 170 of `runner-tasks/index.ts`:
+```text
+Cleanup Criteria:
+┌─────────────────────────────────────────────────────┐
+│  DELETE conversations WHERE:                        │
+│  - created_at < NOW() - 5 days                      │
+│  - has_reply = false                                │
+│  - first_message_sent = true (optional filter)      │
+└─────────────────────────────────────────────────────┘
 ```
-const includeAccounts: boolean = body?.include_accounts !== false;
-```
 
-This was specifically added for large fleets. The Python runner just needs to opt into it.
+### Files to Modify
 
+1. **supabase/functions/utilities/index.ts**
+   - Add conversation + message cleanup in the `/cleanup` route
+   - Delete messages first (foreign key), then conversations
+   - Add `conversation_cleanup_days` parameter (default: 5)
+
+### Implementation Steps
+
+1. Modify cleanup function to accept `conversation_days` parameter (default 5)
+2. Delete messages belonging to old no-reply conversations first
+3. Delete the old no-reply conversations
+4. Return count of deleted conversations in response
+
+### Expected Impact
+- Removes ~2,935 old conversations immediately when cleanup runs
+- Keeps all conversations with replies intact
+- Reduces database size and improves query performance
