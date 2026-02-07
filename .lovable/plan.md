@@ -1,75 +1,88 @@
 
 
-# Fix: Campaign Resume Not Working After Pause
+# Fix: Runner Stops After CATCHUP - Handler Registration Bottleneck
 
 ## Problem Identified
-When resuming a paused campaign, the recipients remain in `queued` status instead of being promoted to `pending`. The Python runner only processes recipients with `status = 'pending'`, so the campaign appears stuck.
 
-**Current State of "AP MIX data" Campaign:**
-- Campaign Status: `running` (correct)
-- Recipients: 3,566 in `queued` status (should be `pending`)
-- The runner is looking for `pending` recipients but finding none
+The Python runner completes CATCHUP successfully but then **appears to freeze** before entering the main loop. The bottleneck is in `setup_handlers()`, which runs **sequentially** through all ~1,000 connected clients.
 
-## Root Cause
-The pause endpoint correctly moves recipients from `pending/sending` → `queued`, but the start/resume logic only updates the campaign status without promoting recipients back from `queued` → `pending`.
+For each client, it calls:
+```python
+connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=0.5)
+```
+
+With 1,000 clients and a 0.5s timeout per client, this step can take **up to 500 seconds** (8+ minutes) in the worst case. If many clients are unresponsive or slow, the runner sits silently at this stage with no output (it only prints every 25th client).
+
+Additionally, `asyncio.to_thread(client.is_connected)` wraps a synchronous call in a thread. With 1,000+ clients doing this sequentially, thread pool exhaustion and GIL contention can cause further delays.
 
 ## Solution
-Modify the `/campaigns/start` endpoint in `admin-api` to bulk-promote all `queued` recipients to `pending` when starting/resuming a campaign.
 
----
+Update the Python runner code in `SetupGuide.tsx` to:
+
+1. **Parallelize handler registration** using `asyncio.gather` with batches instead of sequential iteration
+2. **Add more frequent progress logging** so the runner doesn't appear stuck
+3. **Reduce the is_connected timeout** from 0.5s to 0.3s (we just need a quick liveness check)
 
 ## Technical Details
 
-### File: `supabase/functions/admin-api/index.ts`
+### File: `src/pages/SetupGuide.tsx`
 
-**Current Start Logic (lines 134-147):**
-```typescript
-if (path === '/campaigns/start' && method === 'POST') {
-  const { campaign_id } = body;
-  if (!campaign_id) return jsonResponse({ error: "campaign_id required" }, 400);
+**Change 1: Parallelize `setup_handlers()` function**
 
-  const { data, error } = await supabase
-    .from('campaigns')
-    .update({ status: 'running', updated_at: new Date().toISOString() })
-    .eq('id', campaign_id)
-    .select()
-    .single();
+Replace the sequential loop in `setup_handlers()` with parallel batched processing:
 
-  if (error) throw error;
-  return jsonResponse({ success: true, campaign: data });
-}
+```python
+async def setup_handlers():
+    """Set up incoming message handlers with defensive error handling."""
+    count = 0
+    items = list(clients.items())
+    total = len(items)
+    started = time.time()
+    
+    async def _register_one(aid, client):
+        nonlocal count
+        if getattr(client, "_h", False):
+            return True  # Already registered
+        try:
+            connected = False
+            try:
+                connected = await asyncio.wait_for(
+                    asyncio.to_thread(client.is_connected), timeout=0.3
+                )
+            except Exception:
+                connected = False
+            
+            if not connected:
+                return False
+            
+            @client.on(events.NewMessage(incoming=True))
+            async def handler(event, a=aid):
+                await on_message(event, a)
+            
+            setattr(client, "_h", True)
+            count += 1
+            return True
+        except Exception:
+            return False
+    
+    # Process in parallel batches of 50
+    BATCH = 50
+    for i in range(0, total, BATCH):
+        batch = items[i:i+BATCH]
+        print(f"  [HANDLER] Registering {i+1}-{min(i+BATCH, total)}/{total}...")
+        sys.stdout.flush()
+        await asyncio.gather(
+            *[_register_one(aid, client) for aid, client in batch],
+            return_exceptions=True,
+        )
+    
+    if count > 0:
+        took = time.time() - started
+        print(f"  [HANDLERS] Registered {count} new message handlers in {took:.1f}s")
+        sys.stdout.flush()
 ```
 
-**Updated Start Logic:**
-```typescript
-if (path === '/campaigns/start' && method === 'POST') {
-  const { campaign_id } = body;
-  if (!campaign_id) return jsonResponse({ error: "campaign_id required" }, 400);
-
-  // Step 1: Update campaign status to running
-  const { data, error } = await supabase
-    .from('campaigns')
-    .update({ status: 'running', updated_at: new Date().toISOString() })
-    .eq('id', campaign_id)
-    .select()
-    .single();
-
-  if (error) throw error;
-
-  // Step 2: Promote all 'queued' recipients to 'pending' so runner can pick them up
-  const { data: promotedRecipients, error: promoteError } = await supabase
-    .from('campaign_recipients')
-    .update({ status: 'pending' })
-    .eq('campaign_id', campaign_id)
-    .eq('status', 'queued')
-    .select('id');
-
-  const promotedCount = promotedRecipients?.length || 0;
-  console.log(`[admin-api] Started campaign ${campaign_id}, promoted ${promotedCount} queued→pending`);
-
-  return jsonResponse({ success: true, campaign: data, promoted_count: promotedCount });
-}
-```
+This reduces handler registration from up to 500s (sequential) to approximately 10-15s (parallel batches of 50).
 
 ---
 
@@ -77,10 +90,10 @@ if (path === '/campaigns/start' && method === 'POST') {
 
 | File | Change |
 |------|--------|
-| `supabase/functions/admin-api/index.ts` | Add recipient promotion (`queued` → `pending`) when starting a campaign |
+| `src/pages/SetupGuide.tsx` | Parallelize `setup_handlers()` using batched `asyncio.gather` instead of sequential loop, add frequent progress logging |
 
-## After Implementation
-1. Edge function will be auto-deployed
-2. Clicking "Start" on a paused campaign will promote all queued recipients to pending
-3. The runner will immediately start picking up the 3,566 recipients
+## Expected Result
+- Handler registration for 1,000 clients will complete in ~10-15 seconds instead of potentially 500+ seconds
+- Clear progress logging every 50 clients so the runner never appears "stuck"
+- Runner will enter the main loop much faster after CATCHUP completes
 
