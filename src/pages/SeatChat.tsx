@@ -273,13 +273,10 @@ const SeatChat: React.FC = () => {
     return Array.from(phoneMap.values());
   }, []);
 
-  // Time-filtered base conversations - Show campaign conversations OR conversations with replies
+  // Time-filtered base conversations - all fetched conversations already have has_reply=true
   const timeFilteredConversations = React.useMemo(() => {
     const cutoffTime = timeFilterCutoff.getTime();
     return conversations.filter(conv => {
-      // Include conversations where we sent the first message OR where recipient replied
-      if (!conv.first_message_sent && !conv.has_reply) return false;
-      
       const lastMsgTime = conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
       return lastMsgTime >= cutoffTime;
     });
@@ -293,8 +290,8 @@ const SeatChat: React.FC = () => {
     if (chatTab === 'pinned') {
       filtered = filtered.filter(conv => conv.is_pinned);
     } else if (chatTab === 'hidden') {
-      // Hidden tab should show all hidden (campaign conversations OR with replies)
-      filtered = conversations.filter(conv => conv.is_hidden && (conv.first_message_sent || conv.has_reply));
+      // Hidden tab shows all hidden conversations (all fetched have has_reply=true)
+      filtered = conversations.filter(conv => conv.is_hidden);
     } else {
       // "all" tab shows non-hidden conversations
       filtered = filtered.filter(conv => !conv.is_hidden);
@@ -307,14 +304,13 @@ const SeatChat: React.FC = () => {
     
     // When searching, ignore time filter to search ALL conversations
     if (searchQuery) {
-      // Re-filter from all conversations for search (campaign OR with replies)
+      // Re-filter from all conversations for search (all have has_reply=true)
       const searchLower = searchQuery.toLowerCase();
       filtered = conversations.filter(conv => (
-        (conv.first_message_sent || conv.has_reply) && // Campaign or reply conversations
-        (conv.recipient_name?.toLowerCase().includes(searchLower) ||
+        conv.recipient_name?.toLowerCase().includes(searchLower) ||
         conv.recipient_phone?.toLowerCase().includes(searchLower) ||
         conv.recipient_username?.toLowerCase().includes(searchLower) ||
-        conv.last_message_content?.toLowerCase().includes(searchLower))
+        conv.last_message_content?.toLowerCase().includes(searchLower)
       ));
       
       // Apply tab filter after search
@@ -340,7 +336,7 @@ const SeatChat: React.FC = () => {
   // Count for each tab (using time-filtered base - campaign or reply conversations)
   const allCount = timeFilteredConversations.filter(c => !c.is_hidden).length;
   const pinnedCount = timeFilteredConversations.filter(c => c.is_pinned).length;
-  const hiddenCount = conversations.filter(c => c.is_hidden && (c.first_message_sent || c.has_reply)).length;
+  const hiddenCount = conversations.filter(c => c.is_hidden).length;
   
   // Count replies and unread replies
   const repliesCount = timeFilteredConversations.filter(c => c.has_reply && !c.is_hidden).length;
@@ -393,7 +389,7 @@ const SeatChat: React.FC = () => {
     validateSeat();
   }, [token]);
 
-  // Fetch conversations for this seat - campaign conversations OR conversations with replies
+  // Fetch conversations for this seat - ONLY conversations with replies (server-side filter)
   // Limited to last 5 days, with PARALLEL pagination for fast loading
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
@@ -406,11 +402,12 @@ const SeatChat: React.FC = () => {
       const PAGE_SIZE = 1000;
       const MAX_CONVERSATIONS = 50000;
       
-      // First get total count
+      // First get total count - SERVER-SIDE filter: only has_reply = true
       const { count: totalCount } = await supabase
         .from('conversations')
         .select('*', { count: 'exact', head: true })
         .eq('seat_id', seat.id)
+        .eq('has_reply', true)
         .gte('last_message_at', fiveDaysAgo.toISOString());
       
       if (!totalCount || totalCount === 0) {
@@ -430,6 +427,7 @@ const SeatChat: React.FC = () => {
           .from('conversations')
           .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
           .eq('seat_id', seat.id)
+          .eq('has_reply', true)
           .gte('last_message_at', fiveDaysAgo.toISOString())
           .order('last_message_at', { ascending: false, nullsFirst: false })
           .range(from, to);
@@ -438,22 +436,18 @@ const SeatChat: React.FC = () => {
       // Execute all page requests in parallel
       const results = await Promise.all(pagePromises);
       
-      // Combine all results
+      // Combine all results - no client-side filter needed
       const allData: any[] = [];
       for (const result of results) {
         if (result.error) throw result.error;
         if (result.data) allData.push(...result.data);
       }
       
-      // Filter: show if first_message_sent OR has_reply
-      const filtered = allData.filter(conv => conv.first_message_sent || conv.has_reply);
+      console.log('[SeatChat] Fetched', allData.length, 'replied conversations (server-filtered)');
       
-      console.log('[SeatChat] Fetched', allData.length, 'conversations in parallel,', filtered.length, 'after filter');
-      
-      // Use the conversation's stored values directly (updated by trigger)
-      setConversations(filtered.map(conv => ({
+      setConversations(allData.map(conv => ({
         ...conv,
-        has_reply: conv.has_reply ?? false,
+        has_reply: true,
         last_message_direction: conv.last_message_direction as 'incoming' | 'outgoing' | undefined,
       })));
     } catch (err) {
@@ -785,15 +779,7 @@ const SeatChat: React.FC = () => {
     };
   }, [seat, selectedConversation?.id]);
 
-  // Refresh every 30 seconds (less aggressive than 10s)
-  useEffect(() => {
-    if (!seat) return;
-    const interval = setInterval(() => {
-      fetchConversations();
-      fetchStats();
-    }, 30000);
-    return () => clearInterval(interval);
-  }, [seat, fetchConversations, fetchStats]);
+  // REMOVED: 30-second polling interval - realtime subscriptions handle all updates
 
   const handleSendMessage = async () => {
     if ((!messageInput.trim() && !selectedImage) || !selectedConversation || isSending) return;
