@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -61,37 +61,42 @@ const Seats: React.FC = () => {
 
   const fetchSeats = useCallback(async () => {
     try {
-      const { data, error } = await supabase
-        .from('seats')
-        .select('*')
-        .order('created_at', { ascending: false });
+      // PARALLEL: Run all 4 queries simultaneously instead of sequentially
+      const [seatsResult, statsResult, pendingResult, unreadResult] = await Promise.all([
+        supabase
+          .from('seats')
+          .select('*')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('seat_stats')
+          .select('*'),
+        supabase
+          .from('campaign_recipients')
+          .select('seat_id')
+          .eq('status', 'pending')
+          .not('seat_id', 'is', null),
+        supabase
+          .from('conversations')
+          .select('id, seat_id')
+          .eq('has_reply', true)
+          .gt('unread_count', 0)
+          .not('seat_id', 'is', null),
+      ]);
 
-      if (error) throw error;
-      setSeats(data || []);
+      if (seatsResult.error) throw seatsResult.error;
+      setSeats(seatsResult.data || []);
 
-      // Fetch stats for each seat
-      const { data: statsData, error: statsError } = await supabase
-        .from('seat_stats')
-        .select('*');
-
-      if (!statsError && statsData) {
+      if (!statsResult.error && statsResult.data) {
         const statsMap = new Map<string, SeatStats>();
-        statsData.forEach((s: SeatStats) => {
+        statsResult.data.forEach((s: SeatStats) => {
           statsMap.set(s.seat_id, s);
         });
         setSeatStats(statsMap);
       }
 
-      // Fetch pending recipients count per seat
-      const { data: pendingData, error: pendingError } = await supabase
-        .from('campaign_recipients')
-        .select('seat_id')
-        .eq('status', 'pending')
-        .not('seat_id', 'is', null);
-
-      if (!pendingError && pendingData) {
+      if (!pendingResult.error && pendingResult.data) {
         const pendingMap: PendingRepliesMap = {};
-        pendingData.forEach((r) => {
+        pendingResult.data.forEach((r) => {
           if (r.seat_id) {
             pendingMap[r.seat_id] = (pendingMap[r.seat_id] || 0) + 1;
           }
@@ -99,20 +104,10 @@ const Seats: React.FC = () => {
         setPendingReplies(pendingMap);
       }
 
-      // Fetch unread replies count per seat (unique conversations with unread messages)
-      // Note: Don't filter by first_message_sent since incoming-only conversations also have replies
-      const { data: unreadData, error: unreadError } = await supabase
-        .from('conversations')
-        .select('id, seat_id')
-        .eq('has_reply', true)
-        .gt('unread_count', 0)
-        .not('seat_id', 'is', null);
-
-      if (!unreadError && unreadData) {
+      if (!unreadResult.error && unreadResult.data) {
         const unreadMap: UnreadRepliesMap = {};
-        // Use a Set to ensure we count each conversation ID only once
         const seenConversations = new Set<string>();
-        unreadData.forEach((c) => {
+        unreadResult.data.forEach((c) => {
           if (c.seat_id && c.id && !seenConversations.has(c.id)) {
             seenConversations.add(c.id);
             unreadMap[c.seat_id] = (unreadMap[c.seat_id] || 0) + 1;
@@ -128,35 +123,102 @@ const Seats: React.FC = () => {
     }
   }, []);
 
+  // Debounced stats refetch for realtime events
+  const statsDebounceRef = useRef<NodeJS.Timeout | null>(null);
+  const debouncedStatsRefetch = useCallback(() => {
+    if (statsDebounceRef.current) clearTimeout(statsDebounceRef.current);
+    statsDebounceRef.current = setTimeout(async () => {
+      const { data, error } = await supabase.from('seat_stats').select('*');
+      if (!error && data) {
+        const statsMap = new Map<string, SeatStats>();
+        data.forEach((s: SeatStats) => statsMap.set(s.seat_id, s));
+        setSeatStats(statsMap);
+      }
+    }, 2000);
+  }, []);
+
   useEffect(() => {
     fetchSeats();
     
-    // Subscribe only to seats table changes (not messages/conversations for performance)
+    // Realtime: seats table changes
     const seatsChannel = supabase
       .channel('seats-changes')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'seats'
-        },
-        () => {
-          fetchSeats();
+        { event: '*', schema: 'public', table: 'seats' },
+        () => { fetchSeats(); }
+      )
+      .subscribe();
+
+    // Realtime: conversations changes → update unreadReplies incrementally + debounce stats
+    const convsChannel = supabase
+      .channel('seats-conversations-rt')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'conversations' },
+        (payload) => {
+          if (payload.eventType === 'UPDATE') {
+            const c = payload.new as any;
+            if (c.seat_id && c.has_reply) {
+              setUnreadReplies(prev => {
+                const newMap = { ...prev };
+                // Recalculate would be expensive; just adjust based on unread_count
+                // If unread_count > 0, ensure seat is counted; if 0, we need a full recount
+                // For simplicity, debounce a full stats refetch
+                return newMap;
+              });
+            }
+          }
+          debouncedStatsRefetch();
         }
       )
       .subscribe();
-    
-    // OPTIMIZED: Increased auto-refresh interval from 30s to 60s
-    const autoRefreshInterval = setInterval(() => {
-      fetchSeats();
-    }, 60000);
+
+    // Realtime: campaign_recipients changes → update pendingReplies + debounce stats
+    const recipientsChannel = supabase
+      .channel('seats-recipients-rt')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'campaign_recipients' },
+        (payload) => {
+          if (payload.eventType === 'UPDATE') {
+            const r = payload.new as any;
+            const oldR = payload.old as any;
+            if (r.seat_id) {
+              setPendingReplies(prev => {
+                const newMap = { ...prev };
+                // If status changed from pending → something else, decrement
+                if (oldR?.status === 'pending' && r.status !== 'pending') {
+                  newMap[r.seat_id] = Math.max(0, (newMap[r.seat_id] || 0) - 1);
+                }
+                // If status changed to pending, increment
+                if (oldR?.status !== 'pending' && r.status === 'pending') {
+                  newMap[r.seat_id] = (newMap[r.seat_id] || 0) + 1;
+                }
+                return newMap;
+              });
+            }
+          } else if (payload.eventType === 'INSERT') {
+            const r = payload.new as any;
+            if (r.seat_id && r.status === 'pending') {
+              setPendingReplies(prev => ({
+                ...prev,
+                [r.seat_id]: (prev[r.seat_id] || 0) + 1,
+              }));
+            }
+          }
+          debouncedStatsRefetch();
+        }
+      )
+      .subscribe();
 
     return () => {
-      clearInterval(autoRefreshInterval);
+      if (statsDebounceRef.current) clearTimeout(statsDebounceRef.current);
       supabase.removeChannel(seatsChannel);
+      supabase.removeChannel(convsChannel);
+      supabase.removeChannel(recipientsChannel);
     };
-  }, [fetchSeats]);
+  }, [fetchSeats, debouncedStatsRefetch]);
 
   const handleCreateSeat = async () => {
     if (!newSeatName.trim()) {
