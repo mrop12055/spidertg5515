@@ -405,14 +405,25 @@ const Campaigns: React.FC = () => {
     if (campaignsLength > 0) fetchAllCampaignReports();
   }, [campaignsLength, fetchAllCampaignReports]);
 
-  // Fast polling for RUNNING campaigns only - every 3 seconds (optimized from 1s)
+  // Realtime subscription for running campaign stats instead of polling
   useEffect(() => {
     if (!hasRunningCampaigns) return;
 
-    // OPTIMIZED: Reduced polling from 1s to 3s for running campaigns
-    const interval = window.setInterval(fetchRunningCampaignStats, 3000);
+    let debounceTimer: NodeJS.Timeout | null = null;
+    const debouncedFetch = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => fetchRunningCampaignStats(), 3000);
+    };
 
-    return () => window.clearInterval(interval);
+    const channel = supabase
+      .channel('campaign-recipients-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, debouncedFetch)
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
   }, [hasRunningCampaigns, fetchRunningCampaignStats]);
 
   // Listen for campaign status changes only (not recipient changes - too noisy)

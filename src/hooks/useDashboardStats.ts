@@ -1,5 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { supabase } from '@/integrations/supabase/client';
+import { useEffect } from 'react';
 
 interface DashboardStats {
   totalAccounts: number;
@@ -28,9 +29,7 @@ const fetchDashboardStats = async (): Promise<DashboardStats> => {
     supabase.from('messages').select('id', { count: 'exact', head: true })
       .eq('direction', 'outgoing')
       .gte('created_at', today.toISOString()),
-    // Fetch lifetime unique recipients messaged from persistent stats
     supabase.from('lifetime_stats').select('stat_value').eq('stat_key', 'lifetime_unique_recipients_messaged').single(),
-    // Fetch lifetime unique recipients replied from persistent stats
     supabase.from('lifetime_stats').select('stat_value').eq('stat_key', 'lifetime_unique_recipients_replied').single(),
   ]);
 
@@ -45,14 +44,39 @@ const fetchDashboardStats = async (): Promise<DashboardStats> => {
 };
 
 export const useDashboardStats = () => {
+  const queryClient = useQueryClient();
+
   const query = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: fetchDashboardStats,
-    staleTime: 30000, // Stats stay fresh for 30 seconds
-    gcTime: 300000, // Cache for 5 minutes
-    refetchInterval: 30000, // Auto-refresh every 30 seconds
+    staleTime: 30000,
+    gcTime: 300000,
     refetchOnWindowFocus: false,
   });
+
+  // Realtime subscriptions instead of polling
+  useEffect(() => {
+    let debounceTimer: NodeJS.Timeout | null = null;
+    const debouncedRefetch = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['dashboard-stats'] });
+      }, 5000);
+    };
+
+    const channel = supabase
+      .channel('dashboard-stats-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'telegram_accounts' }, debouncedRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'proxies' }, debouncedRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lifetime_stats' }, debouncedRefetch)
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   return {
     stats: query.data ?? {
