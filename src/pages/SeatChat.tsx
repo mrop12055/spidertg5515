@@ -688,26 +688,37 @@ const SeatChat: React.FC = () => {
             const c = newC;
             
             // Incremental update for conversations with time-based sorting
-            setConversations(prev => 
-              prev.map(conv => 
-                conv.id === c.id ? {
-                  ...conv,
-                  unread_count: c.unread_count ?? conv.unread_count,
-                  last_message_at: c.last_message_at ?? conv.last_message_at,
-                  last_message_content: c.last_message_content ?? conv.last_message_content,
-                  last_message_direction: c.last_message_direction ?? conv.last_message_direction,
-                  has_reply: c.has_reply ?? conv.has_reply,
-                  is_pinned: c.is_pinned ?? conv.is_pinned,
-                  is_hidden: c.is_hidden ?? conv.is_hidden,
-                } : conv
-              ).sort((a, b) => {
+            setConversations(prev => {
+              const exists = prev.some(conv => conv.id === c.id);
+              let updated: typeof prev;
+              if (exists) {
+                updated = prev.map(conv => 
+                  conv.id === c.id ? {
+                    ...conv,
+                    unread_count: c.unread_count ?? conv.unread_count,
+                    last_message_at: c.last_message_at ?? conv.last_message_at,
+                    last_message_content: c.last_message_content ?? conv.last_message_content,
+                    last_message_direction: c.last_message_direction ?? conv.last_message_direction,
+                    has_reply: c.has_reply ?? conv.has_reply,
+                    is_pinned: c.is_pinned ?? conv.is_pinned,
+                    is_hidden: c.is_hidden ?? conv.is_hidden,
+                  } : conv
+                );
+              } else if (c.has_reply) {
+                // Conversation just got its first reply — add it to the list
+                console.log('[SeatChat] Adding new replied conversation:', c.id);
+                updated = [c, ...prev];
+              } else {
+                return prev;
+              }
+              return updated.sort((a, b) => {
                 const frozenA = frozenPositionsRef.current.get(a.id);
                 const frozenB = frozenPositionsRef.current.get(b.id);
                 const timeA = frozenA !== undefined ? frozenA : getConversationTime(a);
                 const timeB = frozenB !== undefined ? frozenB : getConversationTime(b);
                 return timeB - timeA;
-              })
-            );
+              });
+            });
           } else if (payload.eventType === 'INSERT') {
             // New conversation added to this seat - full refetch to get complete data
             debouncedRefetch(fetchConversations, 500);
