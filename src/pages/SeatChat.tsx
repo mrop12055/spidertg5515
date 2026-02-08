@@ -330,7 +330,7 @@ const SeatChat: React.FC = () => {
       const timeB = frozen && b.id === frozen.id ? frozen.sortTime : getConversationTime(b);
       return timeB - timeA;
     });
-  }, [timeFilteredConversations, conversations, chatTab, showRepliedOnly, searchQuery, deduplicateConversations, getConversationTime, selectedConversation?.id]);
+  }, [timeFilteredConversations, conversations, chatTab, showRepliedOnly, searchQuery, deduplicateConversations, getConversationTime]);
 
   // Count for each tab (using time-filtered base - campaign or reply conversations)
   const allCount = timeFilteredConversations.filter(c => !c.is_hidden).length;
