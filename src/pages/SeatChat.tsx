@@ -174,8 +174,7 @@ const SeatChat: React.FC = () => {
   // When user leaves chat, allow normal sorting again.
   useEffect(() => {
     if (!selectedConversation) {
-      selectedConvPositionRef.current = null;
-      return;
+      return; // Keep previous freeze in place until a new conversation is selected
     }
 
     // Only capture once per selection (don't update on realtime changes)
