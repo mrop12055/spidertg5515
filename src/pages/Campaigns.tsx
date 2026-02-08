@@ -687,7 +687,8 @@ const Campaigns: React.FC = () => {
         // Validate that recipients were actually inserted
         if (!result || result.inserted === 0) {
           await supabase.from('campaigns').delete().eq('id', createdCampaign.id);
-          toast.error('Failed to upload recipients - campaign cancelled');
+          const dupCount = result?.duplicates || parsedRecipients.length;
+          toast.error(`All ${dupCount} recipients are already contacted or pending in other campaigns. Campaign was not created.`);
           return;
         }
         
@@ -704,7 +705,8 @@ const Campaigns: React.FC = () => {
         // Validate that recipients were actually inserted
         if (!result || result.inserted === 0) {
           await supabase.from('campaigns').delete().eq('id', createdCampaign.id);
-          toast.error('Failed to upload recipients - campaign cancelled');
+          const dupCount = result?.duplicates || parsedRecipients.length;
+          toast.error(`All ${dupCount} recipients are already contacted or pending in other campaigns. Campaign was not created.`);
           return;
         }
         
@@ -775,7 +777,10 @@ const Campaigns: React.FC = () => {
 
     const result = await uploadRecipients(selectedCampaignId, recipients);
     
-    // Toast is already shown by context, just close the dialog
+    if (result && result.inserted === 0 && result.duplicates > 0) {
+      toast.error(`All ${result.duplicates} recipients are already contacted or pending in other campaigns. No new recipients added.`);
+    }
+    
     setRecipientText('');
     setIsUploadOpen(false);
     refreshData();

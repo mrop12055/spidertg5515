@@ -1348,7 +1348,7 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
           const { data, error } = await supabase
             .from('campaign_recipients')
             .select('phone_number')
-            .in('status', ['sent', 'pending', 'sending', 'queued'])
+            .in('status', ['sent', 'pending', 'sending', 'queued', 'delivered'])
             .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
           
           if (error) throw error;
