@@ -188,10 +188,26 @@ const Reports: React.FC = () => {
 
   useEffect(() => {
     fetchReportData();
-    
-    // Auto-refresh every 60 seconds (reduced from 30s)
-    const interval = setInterval(fetchReportData, 60000);
-    return () => clearInterval(interval);
+
+    // Realtime subscriptions instead of polling
+    let debounceTimer: NodeJS.Timeout | null = null;
+    const debouncedRefetch = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => fetchReportData(), 5000);
+    };
+
+    const channel = supabase
+      .channel('reports-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'telegram_accounts' }, debouncedRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaigns' }, debouncedRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, debouncedRefetch)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedRefetch)
+      .subscribe();
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Calculate derived stats

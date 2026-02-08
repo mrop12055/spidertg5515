@@ -483,12 +483,8 @@ export default function Warmup() {
       )
       .subscribe();
 
-    // OPTIMIZED: Increased polling interval from 10s to 15s
-    const pollInterval = setInterval(fetchData, 15000);
-
     return () => {
       supabase.removeChannel(channel);
-      clearInterval(pollInterval);
       if (debounceRef.current) {
         clearTimeout(debounceRef.current);
       }
