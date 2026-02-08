@@ -1,41 +1,42 @@
 
-## Fix: Keep Conversation List Stable After Replying
+
+## Fix: New Conversations Not Appearing in Realtime
 
 ### Problem
-When you reply to a conversation at the bottom of the list and then go back (deselect it), the conversation immediately jumps to the top because its `last_message_at` was updated. You then have to scroll down again to find the next conversation to reply to. This makes bulk-replying very tedious.
+When new conversations appear (e.g., someone replies to a campaign message), they don't show up in the chat list until you manually refresh. This happens because:
 
-### Root Cause
-The `selectedConvPositionRef` freezes the sort position while a conversation is open, but clears it to `null` the moment you deselect. This triggers a re-sort using real timestamps, causing the just-replied conversation to jump to the top.
+1. The initial fetch only loads conversations with `has_reply = true`
+2. When a conversation gets its first reply, it arrives as an **UPDATE** event (changing `has_reply` from false to true)
+3. The UPDATE handler only updates **existing** conversations in the list using `.map()` -- it never **adds** new ones
+4. So conversations that transition to `has_reply = true` are silently ignored
 
 ### Solution
-Instead of clearing the frozen position on deselect, **keep it until a different conversation is selected**. This way:
 
-1. You open a conversation at position #15 -- its position is frozen
-2. You reply -- it stays at #15
-3. You go back (deselect) -- it STILL stays at #15
-4. You open conversation #16 -- NOW the old freeze clears and #15 re-sorts to the top naturally
+**File: `src/pages/SeatChat.tsx`** (lines 688-710)
 
-### Technical Change
+Update the realtime UPDATE handler to detect when a conversation isn't already in the list and **add it** instead of just mapping:
 
-**File: `src/pages/SeatChat.tsx`**
-
-Update the `useEffect` that manages `selectedConvPositionRef`:
-
-- **Before**: When `selectedConversation` is null, immediately set ref to `null`
-- **After**: When `selectedConversation` is null, do nothing (keep the previous freeze). Only clear/replace the freeze when a *new* conversation is selected (different ID)
-
-The effect at lines 175-188 changes from:
 ```
-if (!selectedConversation) {
-  selectedConvPositionRef.current = null;  // clears freeze
-  return;
-}
-```
-To:
-```
-if (!selectedConversation) {
-  return;  // keep previous freeze in place
-}
+Before (simplified):
+  setConversations(prev => 
+    prev.map(conv => conv.id === c.id ? { ...conv, ...updates } : conv)
+  );
+
+After:
+  setConversations(prev => {
+    const exists = prev.some(conv => conv.id === c.id);
+    if (exists) {
+      // Update existing conversation
+      return prev.map(conv => conv.id === c.id ? { ...conv, ...updates } : conv);
+    } else if (c.has_reply) {
+      // New conversation with a reply -- add it to the list
+      return [newConversationObject, ...prev];
+    }
+    return prev;
+  });
 ```
 
-This single change ensures the list stays stable while you work through conversations sequentially. The frozen position only gets replaced when you click on a different conversation.
+The sorting logic (with frozen positions) stays the same. The new conversation will naturally appear at the top since it has the newest timestamp and isn't frozen.
+
+This is a single change to the UPDATE branch of the realtime subscription handler -- no other files need modification.
+
