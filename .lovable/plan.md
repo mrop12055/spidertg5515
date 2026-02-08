@@ -1,51 +1,77 @@
 
-# Plan: Add Auto-Cleanup for Old Conversations Without Replies
 
-## Problem Identified
-- **2,935 conversations** older than 5 days exist without any reply (has_reply = false)
-- There is NO cleanup mechanism for conversations currently
-- The cleanup edge function only handles warmup data, proxy errors, and logs
+## Optimize Seats & SeatChat Pages: Parallel Fetching, Realtime-Only Updates, Replies-Only Rendering
 
-## Solution
+### Current Problems
 
-### 1. Add Conversation Cleanup to Utilities Edge Function
-**File:** `supabase/functions/utilities/index.ts`
+1. **Seats page (`Seats.tsx`)**: 
+   - Fetches seats, stats, pending recipients, and unread replies **sequentially** (one after another)
+   - Has a 60-second auto-refresh interval that refetches everything
+   - No realtime subscriptions for stats/conversations changes
 
-Add cleanup logic to delete old conversations without replies:
-- Delete conversations where `created_at < 5 days ago` AND `has_reply = false`
-- Also delete associated messages for those conversations
+2. **SeatChat page (`SeatChat.tsx`)**:
+   - Has a 30-second auto-refresh interval (line 788-796) that refetches all conversations + stats
+   - Already has realtime subscriptions for conversations and messages, making the polling redundant
+   - Fetches ALL conversations (including those without replies) from the database, then filters client-side
+   - The `fetchConversations` query fetches conversations where `first_message_sent OR has_reply`, but we only want `has_reply = true`
 
-### 2. Keep Conversations With Replies Forever
-- Conversations with `has_reply = true` will be preserved
-- Only conversations where outreach was sent but no response was received will be cleaned
+### Changes
 
-## Technical Details
+#### 1. Seats.tsx - Parallel Fetching + Realtime
+
+**Parallel fetching**: Convert the sequential `fetchSeats` function to run all 4 queries (seats, seat_stats, campaign_recipients pending, conversations unread) using `Promise.all` instead of awaiting each one sequentially.
+
+**Replace auto-refresh with realtime**: 
+- Remove the 60-second `setInterval` polling
+- Add realtime subscriptions for `conversations` and `campaign_recipients` tables (in addition to the existing `seats` subscription)
+- On conversation changes: incrementally update `unreadReplies` state
+- On campaign_recipients changes: incrementally update `pendingReplies` state  
+- Debounce stats refetch on realtime events (since `seat_stats` is a view, we still need to query it, but only when data changes)
+
+#### 2. SeatChat.tsx - Remove Polling + Server-Side Replies-Only Filter
+
+**Remove auto-refresh polling**:
+- Delete the 30-second interval (lines 788-796) entirely
+- The existing realtime subscriptions already handle conversation updates, message inserts, and stats refresh via debounced callbacks
+
+**Server-side replies-only filter**:
+- Change `fetchConversations` to add `.eq('has_reply', true)` to the database query instead of fetching all conversations and filtering client-side
+- Remove the client-side filter `allData.filter(conv => conv.first_message_sent || conv.has_reply)`
+- This reduces data transfer by 70-90% since most campaign conversations never get a reply
+- Update the realtime INSERT handler: when a new conversation gets `has_reply = true`, it will be picked up by the realtime UPDATE handler which already checks `has_reply`
+
+**Update filtering logic**:
+- In `timeFilteredConversations` memo, remove the `first_message_sent` check since we only fetch replied conversations now
+- Simplify the `showRepliedOnly` toggle -- since all fetched conversations have replies, this filter becomes the default behavior
+
+### Technical Details
 
 ```text
-Cleanup Criteria:
-┌─────────────────────────────────────────────────────┐
-│  DELETE conversations WHERE:                        │
-│  - created_at < NOW() - 5 days                      │
-│  - has_reply = false                                │
-│  - first_message_sent = true (optional filter)      │
-└─────────────────────────────────────────────────────┘
+Seats.tsx fetchSeats() -- Before:
+  await seats query
+  await stats query
+  await pending query
+  await unread query
+  Total: ~4 round trips sequential
+
+Seats.tsx fetchSeats() -- After:
+  Promise.all([seats, stats, pending, unread])
+  Total: ~1 round trip (parallel)
 ```
 
-### Files to Modify
+```text
+SeatChat.tsx fetchConversations() -- Before:
+  Query: seat_id = X AND last_message_at >= 5d ago
+  Client filter: first_message_sent OR has_reply
+  + 30s polling interval
 
-1. **supabase/functions/utilities/index.ts**
-   - Add conversation + message cleanup in the `/cleanup` route
-   - Delete messages first (foreign key), then conversations
-   - Add `conversation_cleanup_days` parameter (default: 5)
+SeatChat.tsx fetchConversations() -- After:
+  Query: seat_id = X AND has_reply = true AND last_message_at >= 5d ago
+  No client filter needed
+  No polling (realtime only)
+```
 
-### Implementation Steps
+### Files Modified
+- `src/pages/Seats.tsx` -- parallel fetching + realtime subscriptions, remove polling
+- `src/pages/SeatChat.tsx` -- server-side has_reply filter, remove 30s polling interval
 
-1. Modify cleanup function to accept `conversation_days` parameter (default 5)
-2. Delete messages belonging to old no-reply conversations first
-3. Delete the old no-reply conversations
-4. Return count of deleted conversations in response
-
-### Expected Impact
-- Removes ~2,935 old conversations immediately when cleanup runs
-- Keeps all conversations with replies intact
-- Reduces database size and improves query performance
