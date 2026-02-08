@@ -171,22 +171,12 @@ const SeatChat: React.FC = () => {
     return conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
   }, []);
 
-  // When user selects a conversation, freeze its position.
-  // When user goes back to the list (deselect), clear ALL freezes so replied
-  // conversations re-sort to the top (user is already looking at the top).
-  const prevSelectedIdRef = useRef<string | null>(null);
+  // When user selects a conversation, freeze its sort position so the list
+  // stays stable during bulk-replying. Positions persist across selections
+  // and are only cleared on seat/filter change.
   useEffect(() => {
-    if (!selectedConversation) {
-      // User went back to list — clear all frozen positions
-      if (prevSelectedIdRef.current) {
-        frozenPositionsRef.current.clear();
-        prevSelectedIdRef.current = null;
-      }
-      return;
-    }
+    if (!selectedConversation) return;
 
-    prevSelectedIdRef.current = selectedConversation.id;
-    // Freeze this conversation's position if not already frozen
     if (!frozenPositionsRef.current.has(selectedConversation.id)) {
       frozenPositionsRef.current.set(
         selectedConversation.id,
@@ -195,10 +185,10 @@ const SeatChat: React.FC = () => {
     }
   }, [selectedConversation?.id, getConversationTime]);
 
-  // Clear frozen positions when switching seats
+  // Clear frozen positions when switching seats or changing filters/tabs
   useEffect(() => {
     frozenPositionsRef.current.clear();
-  }, [token]);
+  }, [token, chatTab, timeFilter, showRepliedOnly]);
 
   // Request notification permission on mount
   useEffect(() => {
