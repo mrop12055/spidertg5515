@@ -152,9 +152,10 @@ const SeatChat: React.FC = () => {
   const selectedConversationRef = useRef<Conversation | null>(null);
   const conversationsRef = useRef<Conversation[]>([]);
 
-  // Freeze the active conversation's sort position while it's open
-  // so sending/receiving messages doesn't jump the list while the user is chatting.
-  const selectedConvPositionRef = useRef<{ id: string; sortTime: number } | null>(null);
+  // Freeze recently-visited conversations' sort positions so the list stays stable
+  // while bulk-replying. Positions are kept until the conversation is no longer in view
+  // or until the user changes seat/filter.
+  const frozenPositionsRef = useRef<Map<string, number>>(new Map());
 
   // Keep ref in sync with state for realtime callback
   useEffect(() => {
@@ -171,20 +172,22 @@ const SeatChat: React.FC = () => {
   }, []);
 
   // When user selects a conversation, freeze its current sort time.
-  // When user leaves chat, allow normal sorting again.
   useEffect(() => {
-    if (!selectedConversation) {
-      return; // Keep previous freeze in place until a new conversation is selected
-    }
+    if (!selectedConversation) return;
 
-    // Only capture once per selection (don't update on realtime changes)
-    if (selectedConvPositionRef.current?.id !== selectedConversation.id) {
-      selectedConvPositionRef.current = {
-        id: selectedConversation.id,
-        sortTime: getConversationTime(selectedConversation),
-      };
+    // Only capture once per selection
+    if (!frozenPositionsRef.current.has(selectedConversation.id)) {
+      frozenPositionsRef.current.set(
+        selectedConversation.id,
+        getConversationTime(selectedConversation)
+      );
     }
   }, [selectedConversation?.id, getConversationTime]);
+
+  // Clear frozen positions when switching seats
+  useEffect(() => {
+    frozenPositionsRef.current.clear();
+  }, [token]);
 
   // Request notification permission on mount
   useEffect(() => {
@@ -325,9 +328,10 @@ const SeatChat: React.FC = () => {
     // Sort by last message time (newest first), but freeze the currently open chat
     // so it doesn't jump to the top while the user is actively chatting.
     return deduplicateConversations(filtered).sort((a, b) => {
-      const frozen = selectedConvPositionRef.current;
-      const timeA = frozen && a.id === frozen.id ? frozen.sortTime : getConversationTime(a);
-      const timeB = frozen && b.id === frozen.id ? frozen.sortTime : getConversationTime(b);
+      const frozenA = frozenPositionsRef.current.get(a.id);
+      const frozenB = frozenPositionsRef.current.get(b.id);
+      const timeA = frozenA !== undefined ? frozenA : getConversationTime(a);
+      const timeB = frozenB !== undefined ? frozenB : getConversationTime(b);
       return timeB - timeA;
     });
   }, [timeFilteredConversations, conversations, chatTab, showRepliedOnly, searchQuery, deduplicateConversations, getConversationTime]);
@@ -696,9 +700,10 @@ const SeatChat: React.FC = () => {
                   is_hidden: c.is_hidden ?? conv.is_hidden,
                 } : conv
               ).sort((a, b) => {
-                const frozen = selectedConvPositionRef.current;
-                const timeA = frozen && a.id === frozen.id ? frozen.sortTime : getConversationTime(a);
-                const timeB = frozen && b.id === frozen.id ? frozen.sortTime : getConversationTime(b);
+                const frozenA = frozenPositionsRef.current.get(a.id);
+                const frozenB = frozenPositionsRef.current.get(b.id);
+                const timeA = frozenA !== undefined ? frozenA : getConversationTime(a);
+                const timeB = frozenB !== undefined ? frozenB : getConversationTime(b);
                 return timeB - timeA;
               })
             );
