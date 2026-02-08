@@ -171,17 +171,25 @@ const SeatChat: React.FC = () => {
     return conv.last_message_at ? new Date(conv.last_message_at).getTime() : 0;
   }, []);
 
-  // When user selects a new conversation, release all previous freezes
-  // so they re-sort naturally, then freeze only the newly selected one.
+  // When user selects a conversation, freeze its position.
+  // When user goes back to the list (deselect), clear ALL freezes so replied
+  // conversations re-sort to the top (user is already looking at the top).
+  const prevSelectedIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!selectedConversation) return;
+    if (!selectedConversation) {
+      // User went back to list — clear all frozen positions
+      if (prevSelectedIdRef.current) {
+        frozenPositionsRef.current.clear();
+        prevSelectedIdRef.current = null;
+      }
+      return;
+    }
 
-    const currentId = selectedConversation.id;
-    // Clear all old freezes except the current one
-    if (!frozenPositionsRef.current.has(currentId) || frozenPositionsRef.current.size > 1) {
-      frozenPositionsRef.current.clear();
+    prevSelectedIdRef.current = selectedConversation.id;
+    // Freeze this conversation's position if not already frozen
+    if (!frozenPositionsRef.current.has(selectedConversation.id)) {
       frozenPositionsRef.current.set(
-        currentId,
+        selectedConversation.id,
         getConversationTime(selectedConversation)
       );
     }
