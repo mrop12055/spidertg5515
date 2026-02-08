@@ -1,77 +1,41 @@
 
+## Fix: Keep Conversation List Stable After Replying
 
-## Optimize Seats & SeatChat Pages: Parallel Fetching, Realtime-Only Updates, Replies-Only Rendering
+### Problem
+When you reply to a conversation at the bottom of the list and then go back (deselect it), the conversation immediately jumps to the top because its `last_message_at` was updated. You then have to scroll down again to find the next conversation to reply to. This makes bulk-replying very tedious.
 
-### Current Problems
+### Root Cause
+The `selectedConvPositionRef` freezes the sort position while a conversation is open, but clears it to `null` the moment you deselect. This triggers a re-sort using real timestamps, causing the just-replied conversation to jump to the top.
 
-1. **Seats page (`Seats.tsx`)**: 
-   - Fetches seats, stats, pending recipients, and unread replies **sequentially** (one after another)
-   - Has a 60-second auto-refresh interval that refetches everything
-   - No realtime subscriptions for stats/conversations changes
+### Solution
+Instead of clearing the frozen position on deselect, **keep it until a different conversation is selected**. This way:
 
-2. **SeatChat page (`SeatChat.tsx`)**:
-   - Has a 30-second auto-refresh interval (line 788-796) that refetches all conversations + stats
-   - Already has realtime subscriptions for conversations and messages, making the polling redundant
-   - Fetches ALL conversations (including those without replies) from the database, then filters client-side
-   - The `fetchConversations` query fetches conversations where `first_message_sent OR has_reply`, but we only want `has_reply = true`
+1. You open a conversation at position #15 -- its position is frozen
+2. You reply -- it stays at #15
+3. You go back (deselect) -- it STILL stays at #15
+4. You open conversation #16 -- NOW the old freeze clears and #15 re-sorts to the top naturally
 
-### Changes
+### Technical Change
 
-#### 1. Seats.tsx - Parallel Fetching + Realtime
+**File: `src/pages/SeatChat.tsx`**
 
-**Parallel fetching**: Convert the sequential `fetchSeats` function to run all 4 queries (seats, seat_stats, campaign_recipients pending, conversations unread) using `Promise.all` instead of awaiting each one sequentially.
+Update the `useEffect` that manages `selectedConvPositionRef`:
 
-**Replace auto-refresh with realtime**: 
-- Remove the 60-second `setInterval` polling
-- Add realtime subscriptions for `conversations` and `campaign_recipients` tables (in addition to the existing `seats` subscription)
-- On conversation changes: incrementally update `unreadReplies` state
-- On campaign_recipients changes: incrementally update `pendingReplies` state  
-- Debounce stats refetch on realtime events (since `seat_stats` is a view, we still need to query it, but only when data changes)
+- **Before**: When `selectedConversation` is null, immediately set ref to `null`
+- **After**: When `selectedConversation` is null, do nothing (keep the previous freeze). Only clear/replace the freeze when a *new* conversation is selected (different ID)
 
-#### 2. SeatChat.tsx - Remove Polling + Server-Side Replies-Only Filter
-
-**Remove auto-refresh polling**:
-- Delete the 30-second interval (lines 788-796) entirely
-- The existing realtime subscriptions already handle conversation updates, message inserts, and stats refresh via debounced callbacks
-
-**Server-side replies-only filter**:
-- Change `fetchConversations` to add `.eq('has_reply', true)` to the database query instead of fetching all conversations and filtering client-side
-- Remove the client-side filter `allData.filter(conv => conv.first_message_sent || conv.has_reply)`
-- This reduces data transfer by 70-90% since most campaign conversations never get a reply
-- Update the realtime INSERT handler: when a new conversation gets `has_reply = true`, it will be picked up by the realtime UPDATE handler which already checks `has_reply`
-
-**Update filtering logic**:
-- In `timeFilteredConversations` memo, remove the `first_message_sent` check since we only fetch replied conversations now
-- Simplify the `showRepliedOnly` toggle -- since all fetched conversations have replies, this filter becomes the default behavior
-
-### Technical Details
-
-```text
-Seats.tsx fetchSeats() -- Before:
-  await seats query
-  await stats query
-  await pending query
-  await unread query
-  Total: ~4 round trips sequential
-
-Seats.tsx fetchSeats() -- After:
-  Promise.all([seats, stats, pending, unread])
-  Total: ~1 round trip (parallel)
+The effect at lines 175-188 changes from:
+```
+if (!selectedConversation) {
+  selectedConvPositionRef.current = null;  // clears freeze
+  return;
+}
+```
+To:
+```
+if (!selectedConversation) {
+  return;  // keep previous freeze in place
+}
 ```
 
-```text
-SeatChat.tsx fetchConversations() -- Before:
-  Query: seat_id = X AND last_message_at >= 5d ago
-  Client filter: first_message_sent OR has_reply
-  + 30s polling interval
-
-SeatChat.tsx fetchConversations() -- After:
-  Query: seat_id = X AND has_reply = true AND last_message_at >= 5d ago
-  No client filter needed
-  No polling (realtime only)
-```
-
-### Files Modified
-- `src/pages/Seats.tsx` -- parallel fetching + realtime subscriptions, remove polling
-- `src/pages/SeatChat.tsx` -- server-side has_reply filter, remove 30s polling interval
-
+This single change ensures the list stays stable while you work through conversations sequentially. The frozen position only gets replaced when you click on a different conversation.
