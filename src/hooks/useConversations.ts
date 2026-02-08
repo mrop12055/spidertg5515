@@ -119,23 +119,31 @@ export const useConversations = () => {
             const updated = payload.new as any;
             queryClient.setQueryData<Conversation[]>(['conversations'], (old) => {
               if (!old) return [];
-              return old.map(c => {
-                if (c.id !== updated.id) return c;
-                return {
-                  ...c,
-                  recipientName: updated.recipient_name || c.recipientName,
-                  recipientUsername: updated.recipient_username || c.recipientUsername,
-                  recipientAvatar: updated.recipient_avatar || c.recipientAvatar,
-                  unreadCount: updated.unread_count ?? c.unreadCount,
-                  isActive: updated.is_active ?? c.isActive,
-                  lastMessageAt: updated.last_message_at ? new Date(updated.last_message_at) : c.lastMessageAt,
-                  lastMessageContent: updated.last_message_content ?? c.lastMessageContent,
-                  lastMessageDirection: updated.last_message_direction as 'incoming' | 'outgoing' | undefined ?? c.lastMessageDirection,
-                  blockedByRecipient: updated.blocked_by_recipient ?? c.blockedByRecipient,
-                  hasReply: updated.has_reply ?? c.hasReply,
-                  updatedAt: new Date(updated.updated_at || Date.now()),
-                };
-              });
+              const exists = old.some(c => c.id === updated.id);
+              if (exists) {
+                return old.map(c => {
+                  if (c.id !== updated.id) return c;
+                  return {
+                    ...c,
+                    recipientName: updated.recipient_name || c.recipientName,
+                    recipientUsername: updated.recipient_username || c.recipientUsername,
+                    recipientAvatar: updated.recipient_avatar || c.recipientAvatar,
+                    unreadCount: updated.unread_count ?? c.unreadCount,
+                    isActive: updated.is_active ?? c.isActive,
+                    lastMessageAt: updated.last_message_at ? new Date(updated.last_message_at) : c.lastMessageAt,
+                    lastMessageContent: updated.last_message_content ?? c.lastMessageContent,
+                    lastMessageDirection: updated.last_message_direction as 'incoming' | 'outgoing' | undefined ?? c.lastMessageDirection,
+                    blockedByRecipient: updated.blocked_by_recipient ?? c.blockedByRecipient,
+                    hasReply: updated.has_reply ?? c.hasReply,
+                    updatedAt: new Date(updated.updated_at || Date.now()),
+                  };
+                });
+              } else if (updated.has_reply && updated.last_message_at) {
+                // Conversation just got its first reply — add it to the cache
+                const newConv = transformConversation(updated);
+                return [newConv, ...old];
+              }
+              return old;
             });
           } else if (payload.eventType === 'DELETE') {
             const deletedId = (payload.old as any)?.id;
