@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-03-catchup-timeout-v4";
+  const runnerBuild = "2026-02-09-catchup-timeout-v5";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -1243,7 +1243,7 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
                 print(f"  [CATCHUP] [{phone}] Starting...")
                 sys.stdout.flush()
                 # Keep this short so startup never appears "stuck".
-                await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=20)
+                await asyncio.wait_for(fetch_unread_messages(clients[aid], aid, last_offline_at), timeout=45)
                 print(f"  [CATCHUP] [{phone}] Done")
                 sys.stdout.flush()
             except asyncio.TimeoutError:
