@@ -1,22 +1,55 @@
 
 
-# Increase Catchup Timeout
+# Fix Runner Crash After Catchup Phase
 
-## What's Changing
+## Problem
 
-The runner's catch-up phase (which syncs offline messages when accounts reconnect) currently has a **20-second timeout per account**. This is causing some accounts to timeout before they finish syncing unread messages, especially accounts with many dialogs or slow proxy connections.
+The runner crashes after the catchup phase completes. Account `5702` shows the error `"You tried to use a method that is not available fo..."` -- this is a Telethon error indicating the client connected but isn't fully authorized (e.g., session is partially valid). While the catchup error is caught and logged, the **broken client stays in the `clients` dictionary**. When subsequent phases (handler registration, task loop) try to use this client, it crashes the runner.
 
-The plan is to increase this timeout from **20 seconds to 45 seconds**, giving accounts more time to complete the catch-up sync.
+## Solution
 
-## Technical Details
+Two changes in `src/pages/SetupGuide.tsx`:
 
-**File:** `src/pages/SetupGuide.tsx`
+### 1. Remove broken clients during catchup (Line ~1252)
 
-- **Line 1246**: Change `timeout=20` to `timeout=45` in the `_catchup_one` function
-- **Line 17**: Update the build version string to reflect the change (e.g., `2026-02-09-catchup-timeout-v5`)
+When a catchup fails with a non-timeout error (like "method not available"), **remove the client from `clients` and disconnect it**. This prevents the broken client from being used in later phases.
 
-This means each account gets up to 45 seconds to scan dialogs and fetch unread messages before being skipped. The catch-up still runs in parallel across all newly connected accounts, so total startup time depends on the slowest account (capped at 45s).
+```python
+except Exception as e:
+    phone_short = (accounts.get(aid, {}).get('phone_number') or '????')[-4:]
+    print(f"  [CATCHUP] [{phone_short}] Error: {str(e)[:60]}")
+    sys.stdout.flush()
+    # Remove broken client so it doesn't crash handler registration or task loop
+    try:
+        bad_client = clients.pop(aid, None)
+        if bad_client:
+            await bad_client.disconnect()
+    except:
+        pass
+    print(f"  [CATCHUP] [{phone_short}] Removed (will reconnect next cycle)")
+    sys.stdout.flush()
+```
 
-**Trade-off**: Startup may take slightly longer if some accounts are slow, but fewer accounts will be skipped due to timeout.
+### 2. Update the catchup "Done" message to only print on success (Lines ~1247-1248)
 
-> After this change, you will need to **re-download and restart** the runner for the new timeout to take effect.
+Move the "Done" print inside the try block so it only shows for successful catchups, not after errors.
+
+### 3. Update build version (Line 17)
+
+Change to `2026-02-09-catchup-fix-v6` to reflect the fix.
+
+## Why This Fixes the Crash
+
+Currently the flow is:
+1. Catchup runs -- account 5702 errors but stays in `clients`
+2. Handler registration tries to use account 5702's broken client -- crash
+
+After the fix:
+1. Catchup runs -- account 5702 errors, gets removed from `clients`
+2. Handler registration skips account 5702 (not in `clients`)
+3. Next polling cycle, account 5702 gets a fresh connection attempt
+
+## Trade-off
+
+Accounts that fail catchup will need to wait one polling cycle (~30s) to reconnect. This is much better than crashing the entire runner.
+
