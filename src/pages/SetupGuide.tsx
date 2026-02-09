@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-09-catchup-timeout-v5";
+  const runnerBuild = "2026-02-09-catchup-fix-v6";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -1250,7 +1250,17 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
                 print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] TIMEOUT (skipped)")
                 sys.stdout.flush()
             except Exception as e:
-                print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] Failed: {str(e)[:60]}")
+                phone_short = (accounts.get(aid, {}).get('phone_number') or '????')[-4:]
+                print(f"  [CATCHUP] [{phone_short}] Error: {str(e)[:60]}")
+                sys.stdout.flush()
+                # Remove broken client so it doesn't crash handler registration or task loop
+                try:
+                    bad_client = clients.pop(aid, None)
+                    if bad_client:
+                        await bad_client.disconnect()
+                except:
+                    pass
+                print(f"  [CATCHUP] [{phone_short}] Removed (will reconnect next cycle)")
                 sys.stdout.flush()
 
         await asyncio.gather(
