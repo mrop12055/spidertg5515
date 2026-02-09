@@ -9,7 +9,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // The access code - in production, store this securely in app_settings
-const VALID_ACCESS_CODE = 'SPIDER545415';
+const VALID_ACCESS_CODE = 'SPIDER77';
 
 const AUTH_STORAGE_KEY = 'admin_authenticated';
 
