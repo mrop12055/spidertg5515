@@ -1,44 +1,22 @@
 
 
-## Fix: Re-uploading Pending Data Shows "Campaign Cancelled"
+# Increase Catchup Timeout
 
-### What's Happening
+## What's Changing
 
-When you try to re-upload pending recipient data (e.g., for "AP Mix Data"), the system checks all phone numbers across ALL campaigns and conversations. Since those numbers already exist (they were pending/sent in a previous campaign), every single one is flagged as a duplicate. This results in 0 new recipients being inserted.
+The runner's catch-up phase (which syncs offline messages when accounts reconnect) currently has a **20-second timeout per account**. This is causing some accounts to timeout before they finish syncing unread messages, especially accounts with many dialogs or slow proxy connections.
 
-The campaign creation flow has a safety check: if no recipients are inserted, it deletes the just-created campaign and shows **"Failed to upload recipients - campaign cancelled"**. This is working as designed for brand-new campaigns (you don't want empty campaigns), but it's confusing when you're trying to re-use data.
+The plan is to increase this timeout from **20 seconds to 45 seconds**, giving accounts more time to complete the catch-up sync.
 
-### Why This Happens
+## Technical Details
 
-The deduplication is **global** -- it prevents sending to anyone who has ever been contacted in ANY campaign. So re-uploading the same phone numbers will always result in 0 inserts, even if those recipients were never successfully contacted (still pending/queued).
+**File:** `src/pages/SetupGuide.tsx`
 
-### Proposed Fix
+- **Line 1246**: Change `timeout=20` to `timeout=45` in the `_catchup_one` function
+- **Line 17**: Update the build version string to reflect the change (e.g., `2026-02-09-catchup-timeout-v5`)
 
-**1. Improve the error message** (in `src/pages/Campaigns.tsx`)
-- Instead of the vague "campaign cancelled" message, show exactly how many duplicates were found and why
-- Example: "All 500 recipients were already contacted or pending in other campaigns. Campaign was not created."
+This means each account gets up to 45 seconds to scan dialogs and fetch unread messages before being skipped. The catch-up still runs in parallel across all newly connected accounts, so total startup time depends on the slowest account (capped at 45s).
 
-**2. Exclude failed recipients from deduplication** (in `src/context/TelegramContext.tsx`)
-- Currently, `pending`, `sending`, `queued`, and `sent` statuses are all treated as "already messaged"
-- Change this so that **failed** recipients from previous campaigns can be re-targeted in new campaigns
-- This way, re-uploading pending data that previously failed will actually insert those numbers
+**Trade-off**: Startup may take slightly longer if some accounts are slow, but fewer accounts will be skipped due to timeout.
 
-**3. Add a "retry failed" option for existing campaigns**
-- When re-uploading to an existing campaign (not creating new), skip the deletion logic entirely
-- Show a clear summary: "X inserted, Y already exist in this campaign, Z already contacted elsewhere"
-
-### Technical Details
-
-**File: `src/context/TelegramContext.tsx`** (uploadRecipients function, ~line 1351)
-- The query fetches recipients with status `sent`, `pending`, `sending`, `queued` -- this is correct for preventing double-sends
-- No code change needed here unless you want failed recipients to be re-targetable
-
-**File: `src/pages/Campaigns.tsx`** (lines 688-709, 704-708)
-- The campaign deletion on `inserted === 0` only happens during the CREATE flow, not the upload-to-existing flow
-- Improve the toast message to explain WHY no recipients were inserted (all duplicates)
-- Add a count of duplicates to the error message so users understand what happened
-
-**File: `src/pages/Campaigns.tsx`** (handleUploadRecipients, ~line 776)
-- The existing-campaign upload path already handles this correctly (no deletion)
-- Add better feedback showing duplicate count vs inserted count
-
+> After this change, you will need to **re-download and restart** the runner for the new timeout to take effect.
