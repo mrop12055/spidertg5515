@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-startup-shield-v9";
+  const runnerBuild = "2026-02-10-crash-logger-v10";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -44,8 +44,38 @@ import threading
 import random
 import time
 import signal
+import traceback as tb_module
 from typing import Dict, Optional, List, Any, Tuple
 from collections import defaultdict
+
+# ========== GLOBAL CRASH HANDLER ==========
+# Catches crashes in background threads (e.g. Telethon update loops)
+def _global_thread_exception(args):
+    print(f"\\n{'='*50}")
+    print(f"  [THREAD-CRASH] Unhandled exception in thread: {args.thread.name if args.thread else 'unknown'}")
+    print(f"  Exception type: {args.exc_type.__name__}")
+    print(f"  Exception: {args.exc_value}")
+    tb_module.print_exception(args.exc_type, args.exc_value, args.exc_traceback)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    print(f"{'='*50}")
+    sys.stdout.flush()
+
+threading.excepthook = _global_thread_exception
+
+def _asyncio_exception_handler(loop, context):
+    msg = context.get("message", "No message")
+    exc = context.get("exception")
+    print(f"\\n{'='*50}")
+    print(f"  [ASYNCIO-CRASH] Unhandled asyncio exception: {msg}")
+    if exc:
+        print(f"  Exception type: {type(exc).__name__}")
+        print(f"  Exception: {exc}")
+        tb_module.print_exception(type(exc), exc, exc.__traceback__)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    print(f"{'='*50}")
+    sys.stdout.flush()
 
 # ========== CONFIG ==========
 BACKEND_URL = "${supabaseUrl}/functions/v1"
@@ -1474,6 +1504,10 @@ async def process(task: dict):
 async def main():
     global RUNNING
     
+    # Install asyncio exception handler to catch background task crashes
+    loop = asyncio.get_event_loop()
+    loop.set_exception_handler(_asyncio_exception_handler)
+    
     print("="*50)
     print("  TelegramCRM - ULTRA-SIMPLIFIED RUNNER")
     print(f"  BUILD: {BUILD_VERSION}")
@@ -1485,10 +1519,12 @@ async def main():
     print("    • send_message() - ALL sending")
     print("    • account_action() - Non-message ops")
     print("="*50 + "\\n")
+    sys.stdout.flush()
     
     # Initial fetch to get accounts and connect them
     global last_offline_at
     print("  Fetching accounts from backend...")
+    sys.stdout.flush()
     initial = await get_tasks(include_accounts=True)
     initial_accounts = initial.get("accounts", [])
     
@@ -1498,9 +1534,15 @@ async def main():
         print(f"  Runner last offline at: {last_offline_at}")
     else:
         print("  No last_offline_at found, using 24h default for catch-up")
+    sys.stdout.flush()
     
+    print("  [PHASE] Starting connect_all_from_response...")
+    sys.stdout.flush()
     _, _ = await connect_all_from_response(initial_accounts)
-    print("  [DEBUG] CATCHUP complete, setting up handlers...")
+    print("  [PHASE] connect_all_from_response DONE")
+    sys.stdout.flush()
+    
+    print("  [PHASE] Setting up handlers...")
     sys.stdout.flush()
     
     try:
