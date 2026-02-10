@@ -231,12 +231,12 @@ async function handleGetTasks(supabase: any, body: any) {
     console.log(`[runner-tasks/get] Recovered ${staleMessages.length} stale messages from sending→pending`);
   }
 
-  // Recover stale campaign recipients
+  // Recover stale campaign recipients (includes NULL sending_started_at which means they were never actually picked up)
   const { data: staleRecipients } = await supabase
     .from("campaign_recipients")
     .update({ status: "pending", sending_started_at: null })
     .eq("status", "sending")
-    .lt("sending_started_at", threeMinutesAgo)
+    .or(`sending_started_at.lt.${threeMinutesAgo},sending_started_at.is.null`)
     .select("id");
   
   if (staleRecipients?.length) {
