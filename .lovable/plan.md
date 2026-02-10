@@ -1,57 +1,101 @@
 
 
-# Bulletproof Post-Catchup Startup
+# Fix: Runner Crash After Catchup Due to Media Downloads
 
-## Problem
+## Root Cause
 
-The runner crashes right after catchup finishes, before reaching the main task loop. Even though we added error catches for `PersistentTimestampOutdatedError`, the crash can come from ANY Telethon internal error during the transition between catchup and the main loop. The current protection only catches specific timestamp errors but misses other Telethon background errors.
+The runner downloads **entire media files** (videos, documents, photos) into memory during catchup, base64-encodes them, and sends them as JSON to the backend. A single video can be 50-500MB. With multiple accounts catching up in parallel via `asyncio.gather`, RAM usage spikes massively and the OS kills the process (OOM kill with no Python traceback).
 
-## What's Happening
-
-After catchup finishes for all accounts, the runner calls `setup_handlers()` which registers message listeners on each Telethon client. During this process, Telethon's internal update manager can fire errors from its background threads. These errors crash `main()` entirely, even though they're harmless.
+This also explains why the crash started happening recently -- it only crashes when there are **unread messages with media** (especially videos) waiting during catchup.
 
 ## Solution
 
+### 1. Skip large media during catchup -- only sync text + metadata
+
+During catchup, do NOT download media files. Instead, just report the message with a placeholder like `[Video]`, `[Photo]`, `[Document]`. The media is already stored on Telegram and can be fetched on-demand later from the chat UI. Catchup's job is to sync **message history**, not download files.
+
+### 2. Cap media download size in the real-time handler
+
+For the live `on_message` handler, add a size check. Skip download for media larger than 5MB to prevent a single large incoming file from causing issues.
+
+### 3. Add full error logging in catchup
+
+Replace the truncated error on line 1113 with full traceback so any remaining issues are visible.
+
+### 4. Update version
+
+Bump to `2026-02-10-media-fix-v12`.
+
+## Technical Details
+
 **File:** `src/pages/SetupGuide.tsx`
 
-### 1. Wrap the ENTIRE setup_handlers call in a blanket try/except
+### Change 1: Catchup -- skip media downloads entirely (lines 1054-1076)
 
-Instead of only catching `PersistentTimestampOutdatedError`, catch ALL exceptions during handler setup. If handler setup fails completely, log a warning and continue to the main loop anyway -- the main loop already re-registers handlers every 60 seconds when it refreshes accounts.
-
-### 2. Add a blanket try/except around the main loop's handler re-registration
-
-Inside the main loop (line 1539-1540), the `setup_handlers()` call during account refresh is also unprotected. Wrap it so a failure there doesn't crash the entire loop.
-
-### 3. Update build version
-
-Change to `2026-02-10-startup-shield-v9`.
-
-## Technical Changes
+Replace the media download block in `fetch_unread_messages` with simple metadata detection:
 
 ```python
-# Post-catchup handler setup (lines 1504-1514) - catch EVERYTHING
-    try:
-        await setup_handlers()
-    except Exception as e:
-        print(f"  [WARN] Handler setup error (non-fatal): {str(e)[:80]}")
-        print("  [WARN] Continuing to main loop - handlers will retry on next refresh cycle")
-        sys.stdout.flush()
-
-# Main loop handler re-registration (lines 1539-1540) - also protect
-            if need_accounts and batch_accounts:
-                _, newly_connected = await connect_all_from_response(batch_accounts)
-                if newly_connected:
-                    try:
-                        await setup_handlers()
-                    except Exception as e:
-                        print(f"  [WARN] Handler re-registration failed: {str(e)[:60]}")
-                        sys.stdout.flush()
-                last_refresh = time.time()
+# Detect media type WITHOUT downloading (no memory spike)
+media_url = None
+media_type = None
+if msg.media:
+    if msg.photo:
+        media_type = "image"
+    elif msg.video:
+        media_type = "video"
+    elif msg.document:
+        media_type = "document"
+    else:
+        media_type = "media"
+    
+    if not content:
+        content = f"[{media_type.capitalize()}]"
 ```
 
-## Why This Works
+This eliminates all memory-intensive downloads during the catchup phase.
 
-- Handler setup is NOT critical for the runner to function -- the main loop processes tasks regardless
-- Handlers are re-attempted every 60 seconds during the account refresh cycle
-- By catching ALL exceptions (not just timestamp errors), we're protected against any Telethon internal error
-- The runner will always reach the main task loop, even if some handlers fail to register
+### Change 2: Real-time handler -- add size guard (lines 907-927)
+
+Add a file size check before downloading in `on_message`:
+
+```python
+if event.message.media:
+    try:
+        # Skip large files (>5MB) to prevent memory issues
+        file_size = getattr(event.message.media, 'document', None)
+        if file_size and hasattr(file_size, 'size') and file_size.size > 5 * 1024 * 1024:
+            media_type = "document"
+            content = content or "[Large file - skipped]"
+        else:
+            media_bytes = await asyncio.wait_for(event.message.download_media(bytes), timeout=30)
+            # ... existing base64 logic ...
+    except Exception as e:
+        print(f"  [MEDIA] Download failed: {e}")
+        if not content:
+            content = "[Media]"
+```
+
+### Change 3: Full error logging in catchup (line 1112-1113)
+
+```python
+except Exception as e:
+    import traceback
+    print(f"  [CATCHUP] [{phone}] Error: {type(e).__name__}: {str(e)}")
+    traceback.print_exc()
+    sys.stdout.flush()
+```
+
+### Change 4: Version bump
+
+```python
+const runnerBuild = "2026-02-10-media-fix-v12";
+```
+
+## Why This Fixes It
+
+- Catchup no longer downloads ANY media files, so RAM stays flat regardless of how many unread videos exist
+- The runner will always survive catchup and reach the main loop
+- Messages still get synced with correct text and media type labels
+- Real-time handler gets a size guard to prevent future crashes from large incoming files
+- Users can still see media in the chat -- the Telegram message ID is synced, so media can be fetched on-demand if needed later
+
