@@ -614,7 +614,7 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
         
         elif action == "get_dialogs":
             print(f"  [DIALOGS] [{phone}] Fetching...")
-            dialogs = await client.get_dialogs(limit=50)
+            dialogs = await asyncio.wait_for(client.get_dialogs(limit=50), timeout=15)
             dialog_list = []
             for d in dialogs:
                 dialog_list.append({
@@ -631,8 +631,8 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
         elif action == "read_messages":
             target = td.get("target") or td.get("chat_id") or task.get("target")
             if target:
-                entity = await client.get_input_entity(target)
-                await client.send_read_acknowledge(entity)
+                entity = await asyncio.wait_for(client.get_input_entity(target), timeout=10)
+                await asyncio.wait_for(client.send_read_acknowledge(entity), timeout=10)
                 await report("read_messages", {"task_id": task_id, "account_id": acc_id, "success": True})
                 return True, None
             return False, "No target"
@@ -876,7 +876,7 @@ async def on_message(event, acc_id: str):
         media_type = None
         if event.message.media:
             try:
-                media_bytes = await event.message.download_media(bytes)
+                media_bytes = await asyncio.wait_for(event.message.download_media(bytes), timeout=30)
                 if media_bytes:
                     b64 = base64.b64encode(media_bytes).decode()
                     if event.message.photo:
@@ -971,7 +971,7 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
     
     try:
         print(f"  [CATCHUP] [{phone}] Fetching unread messages (last {hours_back:.1f}h, {cutoff_source})...")
-        dialogs = await client.get_dialogs(limit=100)
+        dialogs = await asyncio.wait_for(client.get_dialogs(limit=100), timeout=15)
         
         total_fetched = 0
         skipped_old = 0
@@ -1026,7 +1026,7 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
                 media_type = None
                 if msg.media:
                     try:
-                        media_bytes = await client.download_media(msg, bytes)
+                        media_bytes = await asyncio.wait_for(client.download_media(msg, bytes), timeout=30)
                         if media_bytes:
                             b64 = base64.b64encode(media_bytes).decode()
                             if msg.photo:
@@ -1072,7 +1072,7 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
             users_with_messages += 1
             
             # Always mark messages as read (even old ones)
-            await client.send_read_acknowledge(dialog.entity)
+            await asyncio.wait_for(client.send_read_acknowledge(dialog.entity), timeout=10)
         
         if total_fetched > 0 or skipped_old > 0:
             print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages from {users_with_messages} users, skipped {skipped_old} old")
