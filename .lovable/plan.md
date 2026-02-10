@@ -1,55 +1,39 @@
 
 
-# Fix Runner Crash After Catchup Phase
+# Handle PersistentTimestampOutdatedError Gracefully
 
 ## Problem
 
-The runner crashes after the catchup phase completes. Account `5702` shows the error `"You tried to use a method that is not available fo..."` -- this is a Telethon error indicating the client connected but isn't fully authorized (e.g., session is partially valid). While the catchup error is caught and logged, the **broken client stays in the `clients` dictionary**. When subsequent phases (handler registration, task loop) try to use this client, it crashes the runner.
+After the catchup phase, the runner crashes with `PersistentTimestampOutdatedError: Persistent timestamp outdated (caused by GetChannelDifferenceRequest)`. This is a **Telegram server-side issue** -- it happens when Telethon tries to sync channel/group update state and the server rejects the timestamp as too old. It's not a client bug and doesn't mean accounts are broken.
+
+Currently, this error bubbles up and crashes the runner, triggering a full restart (boot cycle).
 
 ## Solution
 
-Two changes in `src/pages/SetupGuide.tsx`:
+**File:** `src/pages/SetupGuide.tsx`
 
-### 1. Remove broken clients during catchup (Line ~1252)
+### 1. Add a global error filter for Telethon's internal sync errors
 
-When a catchup fails with a non-timeout error (like "method not available"), **remove the client from `clients` and disconnect it**. This prevents the broken client from being used in later phases.
+In the main loop's `except` block (around line 1541), catch `PersistentTimestampOutdatedError` specifically and log it as a warning instead of crashing. Since this error comes from Telethon's internal update handling (not from our code), we also need to add a Telethon session-level error handler.
 
-```python
-except Exception as e:
-    phone_short = (accounts.get(aid, {}).get('phone_number') or '????')[-4:]
-    print(f"  [CATCHUP] [{phone_short}] Error: {str(e)[:60]}")
-    sys.stdout.flush()
-    # Remove broken client so it doesn't crash handler registration or task loop
-    try:
-        bad_client = clients.pop(aid, None)
-        if bad_client:
-            await bad_client.disconnect()
-    except:
-        pass
-    print(f"  [CATCHUP] [{phone_short}] Removed (will reconnect next cycle)")
-    sys.stdout.flush()
-```
+### 2. Wrap the Telethon event loop with error suppression
 
-### 2. Update the catchup "Done" message to only print on success (Lines ~1247-1248)
+Add a try/except around the `asyncio.sleep` in the main loop that catches this specific Telegram error class, logs it, and continues instead of crashing.
 
-Move the "Done" print inside the try block so it only shows for successful catchups, not after errors.
+### 3. Specific changes
 
-### 3. Update build version (Line 17)
+- **Import the error class** at the top of the Python script: `from telethon.errors import PersistentTimestampOutdatedError`
+- **Add a catch** in the main loop's except block (line 1541) to specifically handle this error with a simple warning log instead of treating it as a crash
+- **Add a catch** in the outer boot loop (line 1578) to handle it without triggering a full restart
+- **Update build version** to `2026-02-10-timestamp-fix-v7`
 
-Change to `2026-02-09-catchup-fix-v6` to reflect the fix.
+### 4. Technical detail
 
-## Why This Fixes the Crash
+The error path looks like:
+1. Telethon's internal update manager calls `GetChannelDifferenceRequest`
+2. Telegram server responds with "persistent timestamp outdated"
+3. Telethon raises `PersistentTimestampOutdatedError`
+4. This propagates up and crashes the runner
 
-Currently the flow is:
-1. Catchup runs -- account 5702 errors but stays in `clients`
-2. Handler registration tries to use account 5702's broken client -- crash
-
-After the fix:
-1. Catchup runs -- account 5702 errors, gets removed from `clients`
-2. Handler registration skips account 5702 (not in `clients`)
-3. Next polling cycle, account 5702 gets a fresh connection attempt
-
-## Trade-off
-
-Accounts that fail catchup will need to wait one polling cycle (~30s) to reconnect. This is much better than crashing the entire runner.
+After the fix, these errors will be logged as warnings and the runner will continue operating normally.
 
