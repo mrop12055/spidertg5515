@@ -1252,8 +1252,15 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
                 print(f"  [CATCHUP] [{phone}] Done")
                 sys.stdout.flush()
             except asyncio.TimeoutError:
-                print(f"  [CATCHUP] [{(accounts.get(aid, {}).get('phone_number') or '????')[-4:]}] TIMEOUT (skipped)")
+                phone_short = (accounts.get(aid, {}).get('phone_number') or '????')[-4:]
+                print(f"  [CATCHUP] [{phone_short}] TIMEOUT - removing broken client (will reconnect next cycle)")
                 sys.stdout.flush()
+                try:
+                    bad_client = clients.pop(aid, None)
+                    if bad_client:
+                        await bad_client.disconnect()
+                except:
+                    pass
             except Exception as e:
                 phone_short = (accounts.get(aid, {}).get('phone_number') or '????')[-4:]
                 print(f"  [CATCHUP] [{phone_short}] Error: {str(e)[:60]}")
