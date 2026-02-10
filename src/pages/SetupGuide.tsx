@@ -1262,8 +1262,10 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
                 except:
                     pass
             except Exception as e:
+                import traceback
                 phone_short = (accounts.get(aid, {}).get('phone_number') or '????')[-4:]
-                print(f"  [CATCHUP] [{phone_short}] Error: {str(e)[:60]}")
+                print(f"  [CATCHUP] [{phone_short}] Error: {type(e).__name__}: {str(e)}")
+                traceback.print_exc()
                 sys.stdout.flush()
                 # Remove broken client so it doesn't crash handler registration or task loop
                 try:
@@ -1504,7 +1506,9 @@ async def main():
     try:
         await setup_handlers()
     except Exception as e:
-        print(f"  [WARN] Handler setup error (non-fatal): {str(e)[:80]}")
+        import traceback
+        print(f"  [WARN] Handler setup error (non-fatal): {str(e)}")
+        traceback.print_exc()
         print("  [WARN] Continuing to main loop - handlers will retry on next refresh cycle")
         sys.stdout.flush()
     
@@ -1535,7 +1539,9 @@ async def main():
                     try:
                         await setup_handlers()
                     except Exception as e:
-                        print(f"  [WARN] Handler re-registration failed: {str(e)[:60]}")
+                        import traceback
+                        print(f"  [WARN] Handler re-registration failed: {str(e)}")
+                        traceback.print_exc()
                         sys.stdout.flush()
                 last_refresh = time.time()
             
@@ -1570,7 +1576,10 @@ async def main():
                 sys.stdout.flush()
                 await asyncio.sleep(2)
                 continue
-            print(f"  [ERROR] {str(e)[:40]}")
+            import traceback
+            print(f"  [ERROR] Main loop exception: {str(e)}")
+            traceback.print_exc()
+            sys.stdout.flush()
             await asyncio.sleep(5)
     
     # Shutdown
@@ -1616,7 +1625,13 @@ if __name__ == "__main__":
                 time.sleep(2)
                 RUNNING = True
                 continue
-            print(f"\\n⚠ Crashed: {e}\\n  Restarting in 5s...")
+            import traceback
+            print(f"\\n⚠ CRASHED! Full error below:")
+            print(f"  Exception type: {type(e).__name__}")
+            print(f"  Exception message: {str(e)}")
+            traceback.print_exc()
+            sys.stdout.flush()
+            print(f"  Restarting in 5s...")
             time.sleep(5)
             RUNNING = True
 `;
