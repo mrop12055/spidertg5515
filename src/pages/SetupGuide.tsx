@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-crash-logger-v10";
+  const runnerBuild = "2026-02-10-media-fix-v12";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -906,21 +906,33 @@ async def on_message(event, acc_id: str):
         media_type = None
         if event.message.media:
             try:
-                media_bytes = await asyncio.wait_for(event.message.download_media(bytes), timeout=30)
-                if media_bytes:
-                    b64 = base64.b64encode(media_bytes).decode()
-                    if event.message.photo:
-                        media_type = "image"
-                        media_url = f"data:image/jpeg;base64,{b64}"
-                    elif event.message.video:
+                # Skip large files (>5MB) to prevent memory issues
+                file_size_check = getattr(event.message.media, 'document', None)
+                if file_size_check and hasattr(file_size_check, 'size') and file_size_check.size > 5 * 1024 * 1024:
+                    if event.message.video:
                         media_type = "video"
-                        media_url = f"data:video/mp4;base64,{b64}"
                     elif event.message.document:
                         media_type = "document"
-                        media_url = f"data:application/octet-stream;base64,{b64}"
-                    
-                    if not content:
-                        content = f"[{media_type.capitalize()}]"
+                    else:
+                        media_type = "media"
+                    content = content or f"[{media_type.capitalize()} - too large]"
+                    print(f"  [MEDIA] Skipped large file ({file_size_check.size / 1024 / 1024:.1f} MB)")
+                else:
+                    media_bytes = await asyncio.wait_for(event.message.download_media(bytes), timeout=30)
+                    if media_bytes:
+                        b64 = base64.b64encode(media_bytes).decode()
+                        if event.message.photo:
+                            media_type = "image"
+                            media_url = f"data:image/jpeg;base64,{b64}"
+                        elif event.message.video:
+                            media_type = "video"
+                            media_url = f"data:video/mp4;base64,{b64}"
+                        elif event.message.document:
+                            media_type = "document"
+                            media_url = f"data:application/octet-stream;base64,{b64}"
+                        
+                        if not content:
+                            content = f"[{media_type.capitalize()}]"
             except Exception as e:
                 print(f"  [MEDIA] Download failed: {e}")
                 if not content:
@@ -1051,29 +1063,21 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
                 name = f"{entity.first_name or ''} {entity.last_name or ''}".strip() or str(entity.id)
                 content = msg.text or ""
                 
-                # Download media if present
+                # Detect media type WITHOUT downloading (no memory spike during catchup)
                 media_url = None
                 media_type = None
                 if msg.media:
-                    try:
-                        media_bytes = await asyncio.wait_for(client.download_media(msg, bytes), timeout=30)
-                        if media_bytes:
-                            b64 = base64.b64encode(media_bytes).decode()
-                            if msg.photo:
-                                media_type = "image"
-                                media_url = f"data:image/jpeg;base64,{b64}"
-                            elif msg.video:
-                                media_type = "video"
-                                media_url = f"data:video/mp4;base64,{b64}"
-                            else:
-                                media_type = "document"
-                                media_url = f"data:application/octet-stream;base64,{b64}"
-                            
-                            if not content:
-                                content = f"[{media_type.capitalize()}]"
-                    except:
-                        if not content:
-                            content = "[Media]"
+                    if msg.photo:
+                        media_type = "image"
+                    elif msg.video:
+                        media_type = "video"
+                    elif msg.document:
+                        media_type = "document"
+                    else:
+                        media_type = "media"
+                    
+                    if not content:
+                        content = f"[{media_type.capitalize()}]"
                 
                 if not content:
                     content = "[Media]"
@@ -1110,7 +1114,10 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
             print(f"  [CATCHUP] [{phone}] No unread messages")
             
     except Exception as e:
-        print(f"  [CATCHUP] [{phone}] Error: {str(e)[:50]}")
+        import traceback
+        print(f"  [CATCHUP] [{phone}] Error: {type(e).__name__}: {str(e)}")
+        traceback.print_exc()
+        sys.stdout.flush()
 
 
 # ==============================================================================
