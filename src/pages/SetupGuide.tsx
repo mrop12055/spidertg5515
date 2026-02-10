@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-09-catchup-fix-v6";
+  const runnerBuild = "2026-02-10-timestamp-fix-v7";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -86,7 +86,8 @@ try:
     from telethon.errors import (
         FloodWaitError, UserPrivacyRestrictedError, PeerFloodError,
         UserBlockedError, ChatWriteForbiddenError, AuthKeyUnregisteredError,
-        SessionRevokedError, UserDeactivatedBanError, PhoneNumberBannedError
+        SessionRevokedError, UserDeactivatedBanError, PhoneNumberBannedError,
+        PersistentTimestampOutdatedError
     )
     from telethon.tl.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
     from telethon.tl.functions.messages import SendMessageRequest, SendReactionRequest
@@ -1538,6 +1539,10 @@ async def main():
             
             await asyncio.sleep(batch.get("delay_after", 2))
             
+        except PersistentTimestampOutdatedError:
+            print("  [WARN] Telegram internal sync issue (PersistentTimestampOutdated) - ignoring")
+            sys.stdout.flush()
+            await asyncio.sleep(2)
         except Exception as e:
             print(f"  [ERROR] {str(e)[:40]}")
             await asyncio.sleep(5)
@@ -1575,6 +1580,10 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print("\\n⏹ Stopped")
             break
+        except PersistentTimestampOutdatedError:
+            print("\\n⚠ Telegram internal sync issue (PersistentTimestampOutdated) - continuing...")
+            time.sleep(2)
+            RUNNING = True
         except Exception as e:
             print(f"\\n⚠ Crashed: {e}\\n  Restarting in 5s...")
             time.sleep(5)
