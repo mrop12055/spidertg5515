@@ -168,13 +168,12 @@ serve(async (req) => {
         .delete({ count: 'exact' })
         .lt('created_at', cutoffDate);
 
-      // Cleanup old conversations without replies
+      // Cleanup ALL old conversations (older than conversation_days)
       // First, get IDs of conversations to delete
       const { data: oldConversations } = await supabase
         .from('conversations')
         .select('id')
-        .lt('created_at', conversationCutoff)
-        .eq('has_reply', false);
+        .lt('created_at', conversationCutoff);
 
       let messagesDeleted = 0;
       let conversationsDeleted = 0;
