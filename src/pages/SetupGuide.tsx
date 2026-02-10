@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-timestamp-fix-v7";
+  const runnerBuild = "2026-02-10-timestamp-fix-v8";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -86,9 +86,13 @@ try:
     from telethon.errors import (
         FloodWaitError, UserPrivacyRestrictedError, PeerFloodError,
         UserBlockedError, ChatWriteForbiddenError, AuthKeyUnregisteredError,
-        SessionRevokedError, UserDeactivatedBanError, PhoneNumberBannedError,
-        PersistentTimestampOutdatedError
+        SessionRevokedError, UserDeactivatedBanError, PhoneNumberBannedError
     )
+    try:
+        from telethon.errors import PersistentTimestampOutdatedError
+    except ImportError:
+        class PersistentTimestampOutdatedError(Exception):
+            pass
     from telethon.tl.functions.contacts import ResolvePhoneRequest, ImportContactsRequest
     from telethon.tl.functions.messages import SendMessageRequest, SendReactionRequest
     from telethon.tl.functions.channels import JoinChannelRequest
@@ -1490,7 +1494,18 @@ async def main():
     print("  [DEBUG] CATCHUP complete, setting up handlers...")
     sys.stdout.flush()
     
-    await setup_handlers()
+    try:
+        await setup_handlers()
+    except PersistentTimestampOutdatedError:
+        print("  [WARN] Telegram timestamp sync issue during handler setup - ignoring")
+        sys.stdout.flush()
+    except Exception as e:
+        if "PersistentTimestamp" in str(e):
+            print("  [WARN] Telegram timestamp sync issue during handler setup - ignoring")
+            sys.stdout.flush()
+        else:
+            raise
+    
     print("  [DEBUG] Handlers registered, entering main loop...")
     sys.stdout.flush()
     
@@ -1544,6 +1559,11 @@ async def main():
             sys.stdout.flush()
             await asyncio.sleep(2)
         except Exception as e:
+            if "PersistentTimestamp" in str(e):
+                print("  [WARN] Telegram internal sync issue - ignoring")
+                sys.stdout.flush()
+                await asyncio.sleep(2)
+                continue
             print(f"  [ERROR] {str(e)[:40]}")
             await asyncio.sleep(5)
     
@@ -1585,9 +1605,13 @@ if __name__ == "__main__":
             time.sleep(2)
             RUNNING = True
         except Exception as e:
+            if "PersistentTimestamp" in str(e):
+                print("\\n⚠ Telegram internal sync issue - continuing...")
+                time.sleep(2)
+                RUNNING = True
+                continue
             print(f"\\n⚠ Crashed: {e}\\n  Restarting in 5s...")
             time.sleep(5)
-            # Reset RUNNING flag for restart
             RUNNING = True
 `;
 
