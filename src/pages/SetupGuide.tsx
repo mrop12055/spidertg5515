@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-timestamp-fix-v8";
+  const runnerBuild = "2026-02-10-startup-shield-v9";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -1503,15 +1503,10 @@ async def main():
     
     try:
         await setup_handlers()
-    except PersistentTimestampOutdatedError:
-        print("  [WARN] Telegram timestamp sync issue during handler setup - ignoring")
-        sys.stdout.flush()
     except Exception as e:
-        if "PersistentTimestamp" in str(e):
-            print("  [WARN] Telegram timestamp sync issue during handler setup - ignoring")
-            sys.stdout.flush()
-        else:
-            raise
+        print(f"  [WARN] Handler setup error (non-fatal): {str(e)[:80]}")
+        print("  [WARN] Continuing to main loop - handlers will retry on next refresh cycle")
+        sys.stdout.flush()
     
     print("  [DEBUG] Handlers registered, entering main loop...")
     sys.stdout.flush()
@@ -1537,7 +1532,11 @@ async def main():
             if need_accounts and batch_accounts:
                 _, newly_connected = await connect_all_from_response(batch_accounts)
                 if newly_connected:
-                    await setup_handlers()
+                    try:
+                        await setup_handlers()
+                    except Exception as e:
+                        print(f"  [WARN] Handler re-registration failed: {str(e)[:60]}")
+                        sys.stdout.flush()
                 last_refresh = time.time()
             
             if not tasks:
