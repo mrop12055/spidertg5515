@@ -1285,6 +1285,19 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
     }
   }
 
+  if (!conversationId && senderUsername) {
+    const { data: convByUsername } = await supabase
+      .from("conversations")
+      .select("id")
+      .eq("account_id", accountId)
+      .eq("recipient_username", senderUsername)
+      .maybeSingle();
+    
+    if (convByUsername) {
+      conversationId = convByUsername.id;
+    }
+  }
+
   if (!conversationId && senderPhone) {
     const { data: convByPhone } = await supabase
       .from("conversations")
@@ -1300,7 +1313,7 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
 
   // Create new conversation if not found
   if (!conversationId) {
-    // Try to find seat_id from campaign_recipients that sent to this phone number
+    // Try to find seat_id from campaign_recipients that sent to this recipient
     let seatId: string | null = null;
     
     // Normalize phone for lookup (strip +, spaces, etc.)
@@ -1320,7 +1333,27 @@ async function processIncomingMessage(supabase: any, r: any, now: string) {
       
       if (campaignRecipient) {
         seatId = campaignRecipient.seat_id || (campaignRecipient.campaigns as any)?.seat_id || null;
-        console.log(`[incoming] Found seat_id ${seatId} from campaign_recipients`);
+        console.log(`[incoming] Found seat_id ${seatId} from campaign_recipients (by phone)`);
+      }
+    }
+
+    // Also try to find seat_id by username if phone lookup didn't work
+    if (!seatId && senderUsername) {
+      const usernameWithAt = senderUsername.startsWith('@') ? senderUsername : `@${senderUsername}`;
+      const usernameWithoutAt = senderUsername.replace(/^@/, '');
+      const { data: campaignRecipient } = await supabase
+        .from("campaign_recipients")
+        .select("seat_id, campaigns(seat_id)")
+        .eq("sent_by_account_id", accountId)
+        .eq("status", "sent")
+        .or(`phone_number.eq.${usernameWithAt},phone_number.eq.${usernameWithoutAt}`)
+        .order("sent_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (campaignRecipient) {
+        seatId = campaignRecipient.seat_id || (campaignRecipient.campaigns as any)?.seat_id || null;
+        console.log(`[incoming] Found seat_id ${seatId} from campaign_recipients (by username)`);
       }
     }
 
