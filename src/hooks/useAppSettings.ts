@@ -96,7 +96,7 @@ const defaultSettings: AllSettings = {
   campaign_speed: {
     staggerMin: 0.3,
     staggerMax: 1.5,
-    pollingInterval: 3,
+    pollingInterval: 10,
     batchSize: 100,
     messagesPerAccountPerDay: 10,
   },
