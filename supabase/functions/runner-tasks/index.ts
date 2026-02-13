@@ -56,7 +56,7 @@ function parseSettings(settingsData: Record<string, any>[]) {
     dailyLimit: 25,
     warmupBatchSize: 100,
     campaignBatchSize: 100,
-    campaignPollingInterval: 3,
+    campaignPollingInterval: 10,
     campaignMessagesPerAccountPerDay: 25,
     livechatSettings: { sameAccountStaggerMin: 1, sameAccountStaggerMax: 2, enableParallel: true },
   };
@@ -657,7 +657,7 @@ async function handleGetTasks(supabase: any, body: any) {
   return jsonResponse({
     tasks,
     accounts: listeningAccounts,
-    delay_after: tasks.length > 0 ? config.campaignPollingInterval : 5,
+    delay_after: tasks.length > 0 ? config.campaignPollingInterval : 30,
     settings: config.livechatSettings,
     last_offline_at: lastOfflineAt,  // Include runner's last offline time for smart catch-up
     config: {
