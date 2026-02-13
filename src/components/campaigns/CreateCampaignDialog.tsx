@@ -431,7 +431,7 @@ export const CreateCampaignDialog: React.FC<CreateCampaignDialogProps> = memo(({
                       <Badge variant="outline" className="mt-1 shrink-0">#{index + 1}</Badge>
                       <div className="flex-1">
                         <Textarea
-                          placeholder={`Message template... Use {name} and {phone} for personalization`}
+                          placeholder={`Message template... Use {name}, {phone}, {username} for personalization`}
                           value={template.message}
                           onChange={(e) => updateMessageTemplate(template.id, e.target.value)}
                           rows={3}

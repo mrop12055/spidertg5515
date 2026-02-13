@@ -410,9 +410,11 @@ async function handleGetTasks(supabase: any, body: any) {
         // Increment the assigned count for this account
         assignedCountByAccountId[bestAccount.id] = (assignedCountByAccountId[bestAccount.id] ?? 0) + 1;
 
+        const isUsername = r.phone_number.startsWith('@');
         const content = (r.campaigns.message_template || '')
           .replace(/{name}/g, r.name || 'there')
-          .replace(/{phone}/g, r.phone_number);
+          .replace(/{phone}/g, r.phone_number)
+          .replace(/{username}/g, isUsername ? r.phone_number : '');
 
         tasks.push({
           task_type: "send",
@@ -437,10 +439,10 @@ async function handleGetTasks(supabase: any, body: any) {
           },
           proxy: bestAccount.proxies,
           recipient: {
-            phone: r.phone_number,
+            phone: isUsername ? null : r.phone_number,
             name: r.name,
             telegram_id: null,
-            username: null,
+            username: isUsername ? r.phone_number : null,
           },
           content,
           media_url: null,
