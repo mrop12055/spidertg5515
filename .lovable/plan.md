@@ -1,39 +1,63 @@
 
 
-## Fix: Reduce Cloud Compute Costs (from ~$25/day to ~$3-4/day)
+## Add Username Support for Campaign Message Sending
 
-### Root Cause
-Your Python runner is polling the backend function every **3 seconds** when active and every **5 seconds** when idle. Each poll takes about 2 seconds of compute time. That adds up to **17,000+ function calls per day**, which is why your cloud balance drains so fast.
+### Problem
+The system already accepts usernames (e.g., `@telegram_user`) when creating campaigns -- the frontend parses them correctly and stores them in the `campaign_recipients.phone_number` field. However, the backend **never passes the username to the Python runner**. It hardcodes `username: null` in the task payload, so the runner has no way to resolve usernames and the message fails silently.
+
+LiveChat already works correctly because it reads `recipient_username` from the conversations table.
 
 ### Solution
-Increase the polling intervals significantly. The runner does not need to check for new tasks every 3 seconds -- checking every 15-30 seconds still gives excellent responsiveness while cutting costs by 70-80%.
+Fix the backend to detect when a campaign recipient's `phone_number` starts with `@` and pass it as `username` instead of `phone` in the task payload. This way the Python runner receives the username and can resolve the Telegram user correctly.
 
 ### Changes
 
-**1. Backend function (`runner-tasks`):**
-- When there are tasks to process: increase delay from **3s to 10s**
-- When idle (no tasks): increase delay from **5s to 30s**
-- When no accounts available: keep at 30s (already correct)
+**1. Backend: `supabase/functions/runner-tasks/index.ts`**
 
-**2. Campaign speed setting in database:**
-- Update `pollingInterval` from `3` to `10` in the `campaign_speed` app setting
+In the campaign task builder (around line 439), change the recipient object from:
+```
+recipient: {
+  phone: r.phone_number,
+  name: r.name,
+  telegram_id: null,
+  username: null,
+}
+```
+to detect if `phone_number` starts with `@`:
+```
+recipient: {
+  phone: r.phone_number.startsWith('@') ? null : r.phone_number,
+  name: r.name,
+  telegram_id: null,
+  username: r.phone_number.startsWith('@') ? r.phone_number : null,
+}
+```
 
-### Why This Is Safe
-- Your campaigns stagger messages with delays between them anyway (0.3-1.5s per message)
-- A 10-second poll interval still delivers messages fast enough for bulk campaigns
-- Incoming messages are handled via the listener, not polling -- they are unaffected
-- The runner will still pick up tasks promptly, just with a few seconds more latency
+Also update the message template replacement to handle usernames:
+```
+const content = (r.campaigns.message_template || '')
+  .replace(/{name}/g, r.name || 'there')
+  .replace(/{phone}/g, r.phone_number)
+  .replace(/{username}/g, r.phone_number.startsWith('@') ? r.phone_number : '');
+```
 
-### Expected Result
-- Function calls drop from ~17,000/day to ~3,000-5,000/day
-- Daily cloud cost drops from ~$25 to ~$3-5
-- No noticeable impact on campaign speed or message delivery
+**2. Frontend: `src/components/campaigns/CreateCampaignDialog.tsx`**
+
+Add `{username}` as a supported variable in the message template placeholder text so users know they can use it.
+
+### What Already Works (No Changes Needed)
+- Frontend recipient parsing (normalizeRecipient) -- already handles `@username` format
+- Recipient upload and deduplication -- works with any string in `phone_number`
+- LiveChat sending -- already passes `recipient_username` from conversations
+- Campaign recipient table -- stores usernames in `phone_number` field (this is fine)
 
 ### Technical Details
 
-**File:** `supabase/functions/runner-tasks/index.ts`
-- Line 660: Change `delay_after: tasks.length > 0 ? config.campaignPollingInterval : 5` to `delay_after: tasks.length > 0 ? config.campaignPollingInterval : 30`
-- Default `campaignPollingInterval` in `parseSettings` (line 59): Change from `3` to `10`
+| File | Change |
+|------|--------|
+| `supabase/functions/runner-tasks/index.ts` (line ~439) | Detect `@` prefix in `phone_number` and route to `username` field in task payload |
+| `supabase/functions/runner-tasks/index.ts` (line ~413) | Add `{username}` template variable support |
+| `src/components/campaigns/CreateCampaignDialog.tsx` (line ~434) | Update placeholder to mention `{username}` variable |
 
-**Database:** Update `app_settings` where `key = 'campaign_speed'` to set `pollingInterval` from `3` to `10`.
+No database changes needed. The edge function will be redeployed automatically.
 
