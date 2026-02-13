@@ -1,63 +1,100 @@
 
 
-## Add Username Support for Campaign Message Sending
+## Fix: Username Campaign Recipients - Conversation Creation Bug
 
-### Problem
-The system already accepts usernames (e.g., `@telegram_user`) when creating campaigns -- the frontend parses them correctly and stores them in the `campaign_recipients.phone_number` field. However, the backend **never passes the username to the Python runner**. It hardcodes `username: null` in the task payload, so the runner has no way to resolve usernames and the message fails silently.
+### Problem Found
+The task payload fix (sending `username` instead of `phone`) is correct, but the **result reporting** code has a bug. When the Python runner reports a successful campaign send for a username recipient:
 
-LiveChat already works correctly because it reads `recipient_username` from the conversations table.
+1. **Conversation lookup fails**: Line 740 does `.eq("recipient_phone", r.recipient_phone)` but `r.recipient_phone` is `null` for username recipients -- this query won't find anything useful
+2. **Conversation creation is incomplete**: Line 751-761 creates a conversation with `recipient_phone: null` but never sets `recipient_username`
+3. **Duplicate conversations**: Since the lookup always fails for username recipients, every retry or re-send creates a new conversation
 
 ### Solution
-Fix the backend to detect when a campaign recipient's `phone_number` starts with `@` and pass it as `username` instead of `phone` in the task payload. This way the Python runner receives the username and can resolve the Telegram user correctly.
+Update the result reporting section to handle username recipients properly:
+
+- When looking up existing conversations, also check by `recipient_username` if `recipient_phone` is null/missing
+- When creating new conversations, include `recipient_username` from the runner's report
+- The runner already sends back `recipient_username` in its result payload (it resolves the user and reports back the username)
 
 ### Changes
 
-**1. Backend: `supabase/functions/runner-tasks/index.ts`**
+**File: `supabase/functions/runner-tasks/index.ts`**
 
-In the campaign task builder (around line 439), change the recipient object from:
+**1. Conversation lookup (lines 736-741)**
+
+Change from:
+```typescript
+const { data: existingConv } = await supabase
+  .from("conversations")
+  .select("id")
+  .eq("account_id", r.account_id)
+  .eq("recipient_phone", r.recipient_phone)
+  .maybeSingle();
 ```
-recipient: {
-  phone: r.phone_number,
-  name: r.name,
-  telegram_id: null,
-  username: null,
+
+To handle both phone and username lookups:
+```typescript
+let existingConvQuery = supabase
+  .from("conversations")
+  .select("id")
+  .eq("account_id", r.account_id);
+
+if (r.recipient_phone) {
+  existingConvQuery = existingConvQuery.eq("recipient_phone", r.recipient_phone);
+} else if (r.recipient_username) {
+  existingConvQuery = existingConvQuery.eq("recipient_username", r.recipient_username);
+} else if (r.recipient_telegram_id) {
+  existingConvQuery = existingConvQuery.eq("recipient_telegram_id", r.recipient_telegram_id);
+}
+
+const { data: existingConv } = await existingConvQuery.maybeSingle();
+```
+
+**2. Conversation creation (lines 751-761)**
+
+Add `recipient_username` to the insert:
+```typescript
+const { data: newConv } = await supabase.from("conversations").insert({
+  account_id: r.account_id,
+  recipient_phone: r.recipient_phone || null,
+  recipient_name: r.recipient_name,
+  recipient_username: r.recipient_username || null,
+  recipient_telegram_id: r.recipient_telegram_id,
+  is_active: true,
+  first_message_sent: true,
+  seat_id: r.campaign_seat_id,
+  campaign_id: r.campaign_id,
+  campaign_name: r.campaign_name,
+}).select().single();
+```
+
+**3. Conversation update (lines 743-749)**
+
+Also update `recipient_username` on existing conversations if the runner resolved it:
+```typescript
+if (existingConv) {
+  conversationId = existingConv.id;
+  const convUpdates: Record<string, any> = {};
+  if (r.recipient_telegram_id) convUpdates.recipient_telegram_id = r.recipient_telegram_id;
+  if (r.recipient_username) convUpdates.recipient_username = r.recipient_username;
+  if (r.recipient_phone && !existingConv.recipient_phone) convUpdates.recipient_phone = r.recipient_phone;
+  if (Object.keys(convUpdates).length > 0) {
+    await supabase.from("conversations").update(convUpdates).eq("id", conversationId);
+  }
 }
 ```
-to detect if `phone_number` starts with `@`:
-```
-recipient: {
-  phone: r.phone_number.startsWith('@') ? null : r.phone_number,
-  name: r.name,
-  telegram_id: null,
-  username: r.phone_number.startsWith('@') ? r.phone_number : null,
-}
-```
 
-Also update the message template replacement to handle usernames:
-```
-const content = (r.campaigns.message_template || '')
-  .replace(/{name}/g, r.name || 'there')
-  .replace(/{phone}/g, r.phone_number)
-  .replace(/{username}/g, r.phone_number.startsWith('@') ? r.phone_number : '');
-```
+### No Other Changes Needed
+- The task payload fix from the previous edit is correct
+- The frontend `normalizeRecipient` already handles usernames properly
+- The "recipient not found" retry logic uses `campaign_recipient_id` (UUID) so it works for both phone and username recipients
+- The `contacts_data` marking uses `phone_number` which stores the username with `@` prefix -- this works correctly
 
-**2. Frontend: `src/components/campaigns/CreateCampaignDialog.tsx`**
+### Summary
+| File | Line | Change |
+|------|------|--------|
+| `runner-tasks/index.ts` | ~736-741 | Conversation lookup: support username and telegram_id fallback |
+| `runner-tasks/index.ts` | ~743-749 | Conversation update: also update recipient_username |
+| `runner-tasks/index.ts` | ~751-761 | Conversation insert: include recipient_username field |
 
-Add `{username}` as a supported variable in the message template placeholder text so users know they can use it.
-
-### What Already Works (No Changes Needed)
-- Frontend recipient parsing (normalizeRecipient) -- already handles `@username` format
-- Recipient upload and deduplication -- works with any string in `phone_number`
-- LiveChat sending -- already passes `recipient_username` from conversations
-- Campaign recipient table -- stores usernames in `phone_number` field (this is fine)
-
-### Technical Details
-
-| File | Change |
-|------|--------|
-| `supabase/functions/runner-tasks/index.ts` (line ~439) | Detect `@` prefix in `phone_number` and route to `username` field in task payload |
-| `supabase/functions/runner-tasks/index.ts` (line ~413) | Add `{username}` template variable support |
-| `src/components/campaigns/CreateCampaignDialog.tsx` (line ~434) | Update placeholder to mention `{username}` variable |
-
-No database changes needed. The edge function will be redeployed automatically.
-
+The edge function will be redeployed automatically after the changes.
