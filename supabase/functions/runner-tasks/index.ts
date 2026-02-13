@@ -733,25 +733,36 @@ async function handleReportResults(supabase: any, body: any) {
 
         // Create/update conversation
         let conversationId: string | null = null;
-        const { data: existingConv } = await supabase
+        let existingConvQuery = supabase
           .from("conversations")
-          .select("id")
-          .eq("account_id", r.account_id)
-          .eq("recipient_phone", r.recipient_phone)
-          .maybeSingle();
+          .select("id, recipient_phone")
+          .eq("account_id", r.account_id);
+
+        if (r.recipient_phone) {
+          existingConvQuery = existingConvQuery.eq("recipient_phone", r.recipient_phone);
+        } else if (r.recipient_username) {
+          existingConvQuery = existingConvQuery.eq("recipient_username", r.recipient_username);
+        } else if (r.recipient_telegram_id) {
+          existingConvQuery = existingConvQuery.eq("recipient_telegram_id", r.recipient_telegram_id);
+        }
+
+        const { data: existingConv } = await existingConvQuery.maybeSingle();
 
         if (existingConv) {
           conversationId = existingConv.id;
-          if (r.recipient_telegram_id) {
-            await supabase.from("conversations")
-              .update({ recipient_telegram_id: r.recipient_telegram_id })
-              .eq("id", conversationId);
+          const convUpdates: Record<string, any> = {};
+          if (r.recipient_telegram_id) convUpdates.recipient_telegram_id = r.recipient_telegram_id;
+          if (r.recipient_username) convUpdates.recipient_username = r.recipient_username;
+          if (r.recipient_phone && !existingConv.recipient_phone) convUpdates.recipient_phone = r.recipient_phone;
+          if (Object.keys(convUpdates).length > 0) {
+            await supabase.from("conversations").update(convUpdates).eq("id", conversationId);
           }
         } else {
           const { data: newConv } = await supabase.from("conversations").insert({
             account_id: r.account_id,
-            recipient_phone: r.recipient_phone,
+            recipient_phone: r.recipient_phone || null,
             recipient_name: r.recipient_name,
+            recipient_username: r.recipient_username || null,
             recipient_telegram_id: r.recipient_telegram_id,
             is_active: true,
             first_message_sent: true,
