@@ -91,7 +91,7 @@ interface TelegramContextType {
   createCampaign: (campaign: Partial<Campaign>) => Promise<Campaign | null>;
   updateCampaign: (id: string, updates: Partial<Campaign>) => void;
   deleteCampaign: (id: string) => void;
-  uploadRecipients: (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[]) => Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined>;
+  uploadRecipients: (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[], skipDedup?: boolean) => Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined>;
   startCampaign: (campaignId: string) => Promise<void>;
   
   // Refresh
@@ -1333,8 +1333,48 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [refreshData]);
 
-  const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[]): Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined> => {
+  const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[], skipDedup = false): Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined> => {
     try {
+      if (skipDedup) {
+        // Skip deduplication - just deduplicate within the batch and insert directly
+        const seenInBatch = new Set<string>();
+        const newRecipients: { campaign_id: string; phone_number: string; name: string | null; seat_id: string | null; status: string }[] = [];
+        const duplicateNumbers: string[] = [];
+
+        for (const recipient of recipients) {
+          if (seenInBatch.has(recipient.phone_number)) {
+            duplicateNumbers.push(recipient.phone_number);
+            continue;
+          }
+          newRecipients.push({
+            campaign_id: campaignId,
+            phone_number: recipient.phone_number,
+            name: recipient.name || null,
+            seat_id: recipient.seat_id || null,
+            status: 'pending'
+          });
+          seenInBatch.add(recipient.phone_number);
+        }
+
+        let inserted = 0;
+        if (newRecipients.length > 0) {
+          const CHUNK_SIZE = 1000;
+          const chunks: typeof newRecipients[] = [];
+          for (let i = 0; i < newRecipients.length; i += CHUNK_SIZE) {
+            chunks.push(newRecipients.slice(i, i + CHUNK_SIZE));
+          }
+          const results = await Promise.all(
+            chunks.map(chunk => supabase.from('campaign_recipients').insert(chunk))
+          );
+          const failedChunk = results.find(r => r.error);
+          if (failedChunk?.error) throw failedChunk.error;
+          inserted = newRecipients.length;
+        }
+
+        toast.success(`Uploaded ${inserted} recipients (dedup skipped)`);
+        return { inserted, duplicates: duplicateNumbers.length, duplicateNumbers };
+      }
+
       // STEP 1: Get ALL phone numbers that have EVER been successfully messaged or are pending/sending
       // This prevents sending to the same person from ANY campaign
       // Use paginated fetching to bypass 1000 row limit
