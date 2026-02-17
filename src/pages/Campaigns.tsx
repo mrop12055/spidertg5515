@@ -96,7 +96,7 @@ const Campaigns: React.FC = () => {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
   const [recipientText, setRecipientText] = useState('');
-  const [skipDedup, setSkipDedup] = useState(false);
+  const [skipDedup, setSkipDedup] = useState(true);
   const [isStarting, setIsStarting] = useState<string | null>(null);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [selectedReportCampaign, setSelectedReportCampaign] = useState<Campaign | null>(null);
