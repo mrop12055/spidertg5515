@@ -96,7 +96,7 @@ const Campaigns: React.FC = () => {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(null);
   const [recipientText, setRecipientText] = useState('');
-  const [skipDedup, setSkipDedup] = useState(true);
+  
   const [isStarting, setIsStarting] = useState<string | null>(null);
   const [isReportOpen, setIsReportOpen] = useState(false);
   const [selectedReportCampaign, setSelectedReportCampaign] = useState<Campaign | null>(null);
@@ -776,7 +776,7 @@ const Campaigns: React.FC = () => {
       return;
     }
 
-    const result = await uploadRecipients(selectedCampaignId, recipients, skipDedup);
+    const result = await uploadRecipients(selectedCampaignId, recipients);
     
     if (result && result.inserted === 0 && result.duplicates > 0) {
       toast.error(`All ${result.duplicates} recipients are already contacted or pending in other campaigns. No new recipients added.`);
@@ -785,7 +785,7 @@ const Campaigns: React.FC = () => {
     setRecipientText('');
     setIsUploadOpen(false);
     refreshData();
-  }, [selectedCampaignId, recipientText, skipDedup, uploadRecipients, refreshData]);
+  }, [selectedCampaignId, recipientText, uploadRecipients, refreshData]);
 
   const handleStartCampaign = async (campaignId: string) => {
     setIsStarting(campaignId);
@@ -1133,16 +1133,6 @@ const Campaigns: React.FC = () => {
               </p>
             </div>
 
-            <div className="flex items-center space-x-2">
-              <Checkbox
-                id="skip-dedup"
-                checked={skipDedup}
-                onCheckedChange={(checked) => setSkipDedup(checked === true)}
-              />
-              <Label htmlFor="skip-dedup" className="text-sm cursor-pointer">
-                Skip deduplication (allow already-uploaded recipients)
-              </Label>
-            </div>
 
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setIsUploadOpen(false)}>

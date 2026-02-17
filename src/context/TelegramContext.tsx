@@ -91,7 +91,7 @@ interface TelegramContextType {
   createCampaign: (campaign: Partial<Campaign>) => Promise<Campaign | null>;
   updateCampaign: (id: string, updates: Partial<Campaign>) => void;
   deleteCampaign: (id: string) => void;
-  uploadRecipients: (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[], skipDedup?: boolean) => Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined>;
+  uploadRecipients: (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[]) => Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined>;
   startCampaign: (campaignId: string) => Promise<void>;
   
   // Refresh
@@ -1333,127 +1333,18 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
     }
   }, [refreshData]);
 
-  const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[], skipDedup = false): Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined> => {
+  const uploadRecipients = useCallback(async (campaignId: string, recipients: { phone_number: string; name?: string; seat_id?: string }[]): Promise<{ inserted: number; duplicates: number; duplicateNumbers?: string[] } | undefined> => {
     try {
-      if (skipDedup) {
-        // Skip deduplication - just deduplicate within the batch and insert directly
-        const seenInBatch = new Set<string>();
-        const newRecipients: { campaign_id: string; phone_number: string; name: string | null; seat_id: string | null; status: string }[] = [];
-        const duplicateNumbers: string[] = [];
-
-        for (const recipient of recipients) {
-          if (seenInBatch.has(recipient.phone_number)) {
-            duplicateNumbers.push(recipient.phone_number);
-            continue;
-          }
-          newRecipients.push({
-            campaign_id: campaignId,
-            phone_number: recipient.phone_number,
-            name: recipient.name || null,
-            seat_id: recipient.seat_id || null,
-            status: 'pending'
-          });
-          seenInBatch.add(recipient.phone_number);
-        }
-
-        let inserted = 0;
-        if (newRecipients.length > 0) {
-          const CHUNK_SIZE = 1000;
-          const chunks: typeof newRecipients[] = [];
-          for (let i = 0; i < newRecipients.length; i += CHUNK_SIZE) {
-            chunks.push(newRecipients.slice(i, i + CHUNK_SIZE));
-          }
-          const results = await Promise.all(
-            chunks.map(chunk => supabase.from('campaign_recipients').insert(chunk))
-          );
-          const failedChunk = results.find(r => r.error);
-          if (failedChunk?.error) throw failedChunk.error;
-          inserted = newRecipients.length;
-        }
-
-        toast.success(`Uploaded ${inserted} recipients (dedup skipped)`);
-        return { inserted, duplicates: duplicateNumbers.length, duplicateNumbers };
-      }
-
-      // STEP 1: Get ALL phone numbers that have EVER been successfully messaged or are pending/sending
-      // This prevents sending to the same person from ANY campaign
-      // Use paginated fetching to bypass 1000 row limit
-      const PAGE_SIZE = 1000;
-      const MAX_PAGES = 100; // Up to 100k records
-      
-      // Fetch all sent recipients with pagination
-      const fetchAllSentRecipients = async () => {
-        const allData: { phone_number: string }[] = [];
-        for (let page = 0; page < MAX_PAGES; page++) {
-          const { data, error } = await supabase
-            .from('campaign_recipients')
-            .select('phone_number')
-            .in('status', ['sent', 'pending', 'sending', 'queued', 'delivered'])
-            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
-          
-          if (error) throw error;
-          if (!data || data.length === 0) break;
-          allData.push(...data);
-          if (data.length < PAGE_SIZE) break;
-        }
-        return allData;
-      };
-      
-      // Fetch all conversations with pagination
-      const fetchAllConversations = async () => {
-        const allData: { recipient_phone: string | null }[] = [];
-        for (let page = 0; page < MAX_PAGES; page++) {
-          const { data, error } = await supabase
-            .from('conversations')
-            .select('recipient_phone')
-            .eq('first_message_sent', true)
-            .not('recipient_phone', 'is', null)
-            .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
-          
-          if (error) throw error;
-          if (!data || data.length === 0) break;
-          allData.push(...data);
-          if (data.length < PAGE_SIZE) break;
-        }
-        return allData;
-      };
-      
-      // Fetch both in parallel
-      const [allSentRecipients, existingConversations] = await Promise.all([
-        fetchAllSentRecipients(),
-        fetchAllConversations()
-      ]);
-      
-      // Build a set of all already-messaged phone numbers
-      const alreadyMessaged = new Set<string>();
-      
-      // Add from campaign_recipients (sent/pending/sending)
-      (allSentRecipients || []).forEach(r => {
-        if (r.phone_number) alreadyMessaged.add(r.phone_number);
-      });
-      
-      // Add from conversations (first_message_sent = true means we already reached out)
-      (existingConversations || []).forEach(c => {
-        if (c.recipient_phone) alreadyMessaged.add(c.recipient_phone);
-      });
-      
-      // Filter out duplicates
-      const duplicateNumbers: string[] = [];
-      const newRecipients: { campaign_id: string; phone_number: string; name: string | null; seat_id: string | null; status: string }[] = [];
+      // Only deduplicate within the current batch (prevent inserting same phone twice)
       const seenInBatch = new Set<string>();
-      
+      const newRecipients: { campaign_id: string; phone_number: string; name: string | null; seat_id: string | null; status: string }[] = [];
+      const duplicateNumbers: string[] = [];
+
       for (const recipient of recipients) {
-        // Skip if already messaged in ANY campaign or conversation
-        if (alreadyMessaged.has(recipient.phone_number)) {
-          duplicateNumbers.push(recipient.phone_number);
-          continue;
-        }
-        // Skip duplicates within this batch
         if (seenInBatch.has(recipient.phone_number)) {
           duplicateNumbers.push(recipient.phone_number);
           continue;
         }
-        
         newRecipients.push({
           campaign_id: campaignId,
           phone_number: recipient.phone_number,
@@ -1463,39 +1354,28 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
         });
         seenInBatch.add(recipient.phone_number);
       }
-      
+
       let inserted = 0;
       if (newRecipients.length > 0) {
-        // Chunk recipients into batches of 1000 to avoid Supabase limit
         const CHUNK_SIZE = 1000;
         const chunks: typeof newRecipients[] = [];
         for (let i = 0; i < newRecipients.length; i += CHUNK_SIZE) {
           chunks.push(newRecipients.slice(i, i + CHUNK_SIZE));
         }
-        
-        // Insert all chunks in parallel for better performance
         const results = await Promise.all(
-          chunks.map(chunk => 
-            supabase.from('campaign_recipients').insert(chunk)
-          )
+          chunks.map(chunk => supabase.from('campaign_recipients').insert(chunk))
         );
-        
-        // Check for any errors
         const failedChunk = results.find(r => r.error);
         if (failedChunk?.error) throw failedChunk.error;
-        
         inserted = newRecipients.length;
       }
-      
-      // NOTE: recipient_count, pending_count, etc. are now managed by database trigger
-      // sync_campaign_counts - no manual update needed here
-      
+
       if (duplicateNumbers.length > 0) {
-        toast.success(`Uploaded ${inserted} recipients. ${duplicateNumbers.length} already messaged (skipped).`);
+        toast.success(`Uploaded ${inserted} recipients. ${duplicateNumbers.length} duplicates within batch skipped.`);
       } else {
         toast.success(`Uploaded ${inserted} recipients`);
       }
-      
+
       refreshData();
       return { inserted, duplicates: duplicateNumbers.length, duplicateNumbers };
     } catch (error) {
