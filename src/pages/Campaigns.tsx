@@ -783,7 +783,6 @@ const Campaigns: React.FC = () => {
     }
     
     setRecipientText('');
-    setSkipDedup(false);
     setIsUploadOpen(false);
     refreshData();
   }, [selectedCampaignId, recipientText, skipDedup, uploadRecipients, refreshData]);
