@@ -129,7 +129,7 @@ const SeatChat: React.FC = () => {
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
-  const [showRepliedOnly, setShowRepliedOnly] = useState(true);
+  const [showRepliedOnly, setShowRepliedOnly] = useState(false);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
@@ -276,7 +276,7 @@ const SeatChat: React.FC = () => {
     return Array.from(phoneMap.values());
   }, []);
 
-  // Time-filtered base conversations - all fetched conversations already have has_reply=true
+  // Time-filtered base conversations
   const timeFilteredConversations = React.useMemo(() => {
     const cutoffTime = timeFilterCutoff.getTime();
     return conversations.filter(conv => {
@@ -393,8 +393,8 @@ const SeatChat: React.FC = () => {
     validateSeat();
   }, [token]);
 
-  // Fetch conversations for this seat - ONLY conversations with replies (server-side filter)
-  // Limited to last 5 days, with PARALLEL pagination for fast loading
+  // Fetch conversations for this seat
+  // Shows all conversations with messages (not just replied) for full visibility
   const fetchConversations = useCallback(async () => {
     if (!seat) return;
 
@@ -406,12 +406,12 @@ const SeatChat: React.FC = () => {
       const PAGE_SIZE = 1000;
       const MAX_CONVERSATIONS = 50000;
       
-      // First get total count - SERVER-SIDE filter: only has_reply = true
+      // Fetch ALL conversations with messages (not just replied)
       const { count: totalCount } = await supabase
         .from('conversations')
         .select('*', { count: 'exact', head: true })
         .eq('seat_id', seat.id)
-        .eq('has_reply', true)
+        .not('last_message_at', 'is', null)
         .gte('last_message_at', fiveDaysAgo.toISOString());
       
       if (!totalCount || totalCount === 0) {
@@ -431,7 +431,7 @@ const SeatChat: React.FC = () => {
           .from('conversations')
           .select('id, account_id, recipient_phone, recipient_name, recipient_username, recipient_avatar, recipient_telegram_id, unread_count, last_message_at, is_active, seat_id, first_message_sent, last_message_content, last_message_direction, has_reply, is_pinned, is_hidden')
           .eq('seat_id', seat.id)
-          .eq('has_reply', true)
+          .not('last_message_at', 'is', null)
           .gte('last_message_at', fiveDaysAgo.toISOString())
           .order('last_message_at', { ascending: false, nullsFirst: false })
           .range(from, to);
@@ -440,18 +440,17 @@ const SeatChat: React.FC = () => {
       // Execute all page requests in parallel
       const results = await Promise.all(pagePromises);
       
-      // Combine all results - no client-side filter needed
+      // Combine all results
       const allData: any[] = [];
       for (const result of results) {
         if (result.error) throw result.error;
         if (result.data) allData.push(...result.data);
       }
       
-      console.log('[SeatChat] Fetched', allData.length, 'replied conversations (server-filtered)');
+      console.log('[SeatChat] Fetched', allData.length, 'conversations (all with messages)');
       
       setConversations(allData.map(conv => ({
         ...conv,
-        has_reply: true,
         last_message_direction: conv.last_message_direction as 'incoming' | 'outgoing' | undefined,
       })));
     } catch (err) {
