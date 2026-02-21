@@ -129,7 +129,7 @@ const SeatChat: React.FC = () => {
   const [messageSearchQuery, setMessageSearchQuery] = useState('');
   const [isMessageSearchOpen, setIsMessageSearchOpen] = useState(false);
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('today');
-  const [showAllChats, setShowAllChats] = useState(false);
+  const [showRepliedOnly, setShowRepliedOnly] = useState(true);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
@@ -188,7 +188,7 @@ const SeatChat: React.FC = () => {
   // Clear frozen positions when switching seats or changing filters/tabs
   useEffect(() => {
     frozenPositionsRef.current.clear();
-  }, [token, chatTab, timeFilter, showAllChats]);
+  }, [token, chatTab, timeFilter, showRepliedOnly]);
 
   // Request notification permission on mount
   useEffect(() => {
