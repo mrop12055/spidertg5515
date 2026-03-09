@@ -1709,7 +1709,6 @@ const Accounts: React.FC = () => {
 
       setVerifyResults(new Map(newResults));
       toast.success(`Verified: ${data.summary?.valid || 0} active, ${data.summary?.invalid || 0} invalid`);
-      refreshData();
     } catch (error) {
       console.error('Error checking accounts:', error);
       toast.error('Failed to verify accounts');
