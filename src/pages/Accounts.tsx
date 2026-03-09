@@ -861,7 +861,6 @@ const Accounts: React.FC = () => {
 
       if (error) throw error;
       toast.success(proxyId ? 'Proxy assigned' : 'Proxy removed');
-      refreshData();
     } catch (error) {
       console.error('Error updating proxy:', error);
       toast.error('Failed to update proxy');
