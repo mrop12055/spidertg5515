@@ -13,7 +13,7 @@ import {
   Send, MessageSquare, Users, Eye, CheckCheck, Check, 
   RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
   Image, X, Loader2, Phone, Smile, Paperclip, BarChart3, Settings,
-  Pin, PinOff, EyeIcon, PanelRightClose, PanelRightOpen
+  Pin, PinOff, EyeIcon, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -133,6 +133,7 @@ const SeatChat: React.FC = () => {
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [showContactPanel, setShowContactPanel] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
   const [chatTab, setChatTab] = useState<ChatTab>('all');
   const [senderAccounts, setSenderAccounts] = useState<Map<string, SenderAccount>>(new Map());
@@ -1133,73 +1134,92 @@ const SeatChat: React.FC = () => {
   return (
     <div className="h-screen flex bg-gradient-to-br from-muted/30 via-background to-muted/20 overflow-hidden">
       {/* Left Sidebar Navigation - Professional Design */}
-      <aside className="w-64 bg-gradient-to-b from-card via-card to-card/95 backdrop-blur-xl border-r border-border/30 flex flex-col flex-shrink-0 shadow-2xl">
+      <aside className={cn(
+        "bg-gradient-to-b from-card via-card to-card/95 backdrop-blur-xl border-r border-border/30 flex flex-col flex-shrink-0 shadow-2xl transition-all duration-300",
+        sidebarCollapsed ? "w-16" : "w-64"
+      )}>
         {/* Header with Logo */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-border/50">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/30">
-              <Send className="w-5 h-5 text-primary-foreground rotate-[-45deg]" />
+        <div className="h-16 flex items-center justify-between px-3 border-b border-border/50">
+          {!sidebarCollapsed && (
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary via-primary to-primary/80 flex items-center justify-center shadow-lg shadow-primary/30">
+                <Send className="w-5 h-5 text-primary-foreground rotate-[-45deg]" />
+              </div>
+              <div>
+                <h1 className="font-bold text-base text-foreground tracking-tight leading-none">{seat?.name || 'Workspace'}</h1>
+                <p className="text-xs text-muted-foreground/80 font-medium uppercase tracking-wider mt-0.5">Console</p>
+              </div>
             </div>
-            <div>
-              <h1 className="font-bold text-base text-foreground tracking-tight leading-none">{seat?.name || 'Workspace'}</h1>
-              <p className="text-xs text-muted-foreground/80 font-medium uppercase tracking-wider mt-0.5">Console</p>
-            </div>
-          </div>
-          <ThemeToggle className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg" />
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setSidebarCollapsed(prev => !prev)}
+            className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-muted/80 rounded-lg flex-shrink-0"
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen className="w-4 h-4" /> : <PanelLeftClose className="w-4 h-4" />}
+          </Button>
         </div>
 
         {/* Stats Cards */}
-        <div className="p-4 space-y-3">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="relative overflow-hidden bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-xl p-3 border border-primary/10">
-              <p className="text-2xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
-              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Chats</p>
-            </div>
-            <div className="relative overflow-hidden bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-xl p-3 border border-emerald-500/10">
-              <p className="text-2xl font-bold text-foreground tracking-tight">{stats.responses_received}</p>
-              <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Replies</p>
-            </div>
-          </div>
-          
-          {/* Messages Sent in Last 24h - Prominent Display */}
-          <div className="bg-gradient-to-r from-blue-500/10 via-blue-500/5 to-transparent rounded-xl p-4 border border-blue-500/10">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                  <Send className="w-5 h-5 text-blue-500" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Sent Today</p>
-                  <p className="text-xl font-bold text-foreground tracking-tight leading-none mt-1">{stats.messages_sent_today}</p>
-                </div>
+        {!sidebarCollapsed && (
+          <div className="p-4 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="relative overflow-hidden bg-gradient-to-br from-primary/10 via-primary/5 to-transparent rounded-xl p-3 border border-primary/10">
+                <p className="text-2xl font-bold text-foreground tracking-tight">{stats.total_conversations}</p>
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Chats</p>
               </div>
-              <span className="text-xs text-muted-foreground/70 font-medium">24h</span>
+              <div className="relative overflow-hidden bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-transparent rounded-xl p-3 border border-emerald-500/10">
+                <p className="text-2xl font-bold text-foreground tracking-tight">{stats.responses_received}</p>
+                <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Replies</p>
+              </div>
+            </div>
+            
+            {/* Messages Sent in Last 24h - Prominent Display */}
+            <div className="bg-gradient-to-r from-blue-500/10 via-blue-500/5 to-transparent rounded-xl p-4 border border-blue-500/10">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center">
+                    <Send className="w-5 h-5 text-blue-500" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground font-semibold uppercase tracking-wider">Sent Today</p>
+                    <p className="text-xl font-bold text-foreground tracking-tight leading-none mt-1">{stats.messages_sent_today}</p>
+                  </div>
+                </div>
+                <span className="text-xs text-muted-foreground/70 font-medium">24h</span>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Navigation */}
-        <nav className="flex-1 py-3 px-4">
-          <p className="px-2 py-2 text-xs font-bold text-muted-foreground/60 uppercase tracking-widest">Navigation</p>
+        <nav className={cn("flex-1 py-3", sidebarCollapsed ? "px-2" : "px-4")}>
+          {!sidebarCollapsed && (
+            <p className="px-2 py-2 text-xs font-bold text-muted-foreground/60 uppercase tracking-widest">Navigation</p>
+          )}
           
           <div className="space-y-2">
             <button
               onClick={() => setCurrentView('chats')}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
+                "w-full flex items-center gap-3 rounded-xl transition-all duration-200 group",
+                sidebarCollapsed ? "justify-center px-2 py-3" : "px-4 py-3",
                 currentView === 'chats'
                   ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-md shadow-primary/25"
                   : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"
               )}
+              title={sidebarCollapsed ? 'Conversations' : undefined}
             >
               <div className={cn(
-                "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
+                "w-9 h-9 rounded-lg flex items-center justify-center transition-all flex-shrink-0",
                 currentView === 'chats' ? "bg-white/20" : "bg-muted/80"
               )}>
                 <MessageSquare className="w-5 h-5" />
               </div>
-              <span className="text-base font-medium">Conversations</span>
-              {conversations.filter(c => (c.unread_count || 0) > 0).length > 0 && (
+              {!sidebarCollapsed && <span className="text-base font-medium">Conversations</span>}
+              {!sidebarCollapsed && conversations.filter(c => (c.unread_count || 0) > 0).length > 0 && (
                 <span className="ml-auto min-w-[22px] h-[22px] rounded-full bg-destructive text-destructive-foreground text-xs font-bold flex items-center justify-center px-1.5 shadow-sm">
                   {conversations.filter(c => (c.unread_count || 0) > 0).length}
                 </span>
@@ -1209,36 +1229,43 @@ const SeatChat: React.FC = () => {
             <button
               onClick={() => setCurrentView('reports')}
               className={cn(
-                "w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group",
+                "w-full flex items-center gap-3 rounded-xl transition-all duration-200 group",
+                sidebarCollapsed ? "justify-center px-2 py-3" : "px-4 py-3",
                 currentView === 'reports'
                   ? "bg-gradient-to-r from-primary to-primary/90 text-primary-foreground shadow-md shadow-primary/25"
                   : "text-muted-foreground hover:bg-muted/80 hover:text-foreground"
               )}
+              title={sidebarCollapsed ? 'Analytics' : undefined}
             >
               <div className={cn(
-                "w-9 h-9 rounded-lg flex items-center justify-center transition-all",
+                "w-9 h-9 rounded-lg flex items-center justify-center transition-all flex-shrink-0",
                 currentView === 'reports' ? "bg-white/20" : "bg-muted/80"
               )}>
                 <BarChart3 className="w-5 h-5" />
               </div>
-              <span className="text-base font-medium">Analytics</span>
+              {!sidebarCollapsed && <span className="text-base font-medium">Analytics</span>}
             </button>
           </div>
         </nav>
 
         {/* Seat Profile */}
-        <div className="p-4 border-t border-border/50">
-          <div className="flex items-center gap-3 p-3 rounded-xl bg-gradient-to-r from-muted/60 to-muted/30 hover:from-muted/80 hover:to-muted/50 transition-colors">
-            <div className="relative">
+        <div className={cn("border-t border-border/50", sidebarCollapsed ? "p-2" : "p-4")}>
+          <div className={cn(
+            "flex items-center rounded-xl bg-gradient-to-r from-muted/60 to-muted/30 hover:from-muted/80 hover:to-muted/50 transition-colors",
+            sidebarCollapsed ? "justify-center p-2" : "gap-3 p-3"
+          )}>
+            <div className="relative flex-shrink-0">
               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-primary via-primary/90 to-primary/70 flex items-center justify-center text-primary-foreground font-bold text-sm shadow-md">
                 {seat?.name?.charAt(0).toUpperCase() || 'S'}
               </div>
               <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-green-500 rounded-full border-2 border-card" />
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-foreground truncate">{seat?.name}</p>
-              <p className="text-xs text-green-500 font-medium">Active</p>
-            </div>
+            {!sidebarCollapsed && (
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground truncate">{seat?.name}</p>
+                <p className="text-xs text-green-500 font-medium">Active</p>
+              </div>
+            )}
           </div>
         </div>
       </aside>
