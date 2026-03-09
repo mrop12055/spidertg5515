@@ -315,10 +315,7 @@ const Accounts: React.FC = () => {
               timestamp: new Date(),
             };
             
-            // For sync_profile, refresh immediately on each completion to update UI
-            if (task.task_type === 'sync_profile' && task.status === 'completed') {
-              refreshData();
-            }
+            // sync_profile updates are handled by realtime subscription
             
             setAccountTasksProgress(prev => {
               const newCompleted = task.status === 'completed' ? prev.completed + 1 : prev.completed;
