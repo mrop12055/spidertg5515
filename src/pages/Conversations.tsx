@@ -37,9 +37,7 @@ import {
   Square,
   Reply,
   MessageCircle,
-  MessageCircleOff,
-  PanelLeftClose,
-  PanelLeft
+  MessageCircleOff
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
@@ -95,7 +93,6 @@ const Chat: React.FC = () => {
   
   // Selection mode state
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [selectedConversations, setSelectedConversations] = useState<Set<string>>(new Set());
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isBlockDialogOpen, setIsBlockDialogOpen] = useState(false);
@@ -912,10 +909,7 @@ const Chat: React.FC = () => {
 
       <div className="h-[calc(100vh-48px)] -m-6 flex overflow-hidden border border-border bg-card shadow-lg">
         {/* Sidebar - Conversation List */}
-        <div className={cn(
-          "flex-shrink-0 border-r border-border flex flex-col bg-card transition-all duration-300",
-          isSidebarCollapsed ? "w-0 min-w-0 overflow-hidden" : "w-[340px] min-w-[320px]"
-        )}>
+        <div className="w-[340px] min-w-[320px] flex-shrink-0 border-r border-border flex flex-col bg-card">
           {/* Header */}
           <div className="p-4 border-b border-border">
             {isSelectionMode ? (
@@ -990,15 +984,6 @@ const Chat: React.FC = () => {
                       title="Select chats"
                     >
                       <CheckSquare className="w-4 h-4" />
-                    </Button>
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-7 w-7 text-muted-foreground hover:text-foreground" 
-                      onClick={() => setIsSidebarCollapsed(true)} 
-                      title="Collapse sidebar"
-                    >
-                      <PanelLeftClose className="w-4 h-4" />
                     </Button>
                   </div>
                 </div>
@@ -1243,23 +1228,12 @@ const Chat: React.FC = () => {
         </div>
 
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col bg-secondary/30 dark:bg-background/50 relative">
+        <div className="flex-1 flex flex-col bg-secondary/30 dark:bg-background/50">
           {selectedConv ? (
             <>
               {/* Chat Header */}
               <div className="h-16 px-4 border-b border-border flex items-center justify-between bg-card">
                 <div className="flex items-center gap-3">
-                  {isSidebarCollapsed && (
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="text-muted-foreground hover:text-foreground h-8 w-8"
-                      onClick={() => setIsSidebarCollapsed(false)}
-                      title="Show conversation list"
-                    >
-                      <PanelLeft className="w-5 h-5" />
-                    </Button>
-                  )}
                   <Avatar className="h-10 w-10">
                     {selectedConv.recipientAvatar && (
                       <AvatarImage src={selectedConv.recipientAvatar} alt={selectedConv.recipientName || 'Contact'} />
@@ -1562,17 +1536,6 @@ const Chat: React.FC = () => {
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center bg-card/50">
-              {isSidebarCollapsed && (
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
-                  className="absolute top-4 left-4 text-muted-foreground hover:text-foreground"
-                  onClick={() => setIsSidebarCollapsed(false)}
-                  title="Show conversation list"
-                >
-                  <PanelLeft className="w-5 h-5" />
-                </Button>
-              )}
               <div className="text-center">
                 <div className="w-32 h-32 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
                   <MessageSquare className="w-16 h-16 text-primary" />

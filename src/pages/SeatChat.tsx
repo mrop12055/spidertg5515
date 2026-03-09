@@ -13,7 +13,7 @@ import {
   Send, MessageSquare, Users, Eye, CheckCheck, Check, 
   RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
   Image, X, Loader2, Phone, Smile, Paperclip, BarChart3, Settings,
-  Pin, PinOff, EyeIcon, PanelRightClose, PanelRight
+  Pin, PinOff, EyeIcon
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
@@ -134,7 +134,6 @@ const SeatChat: React.FC = () => {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
   const [chatTab, setChatTab] = useState<ChatTab>('all');
-  const [showContactPanel, setShowContactPanel] = useState(true);
   const [senderAccounts, setSenderAccounts] = useState<Map<string, SenderAccount>>(new Map());
   const [stats, setStats] = useState<SeatStats>({
     total_conversations: 0,
@@ -1597,18 +1596,6 @@ const SeatChat: React.FC = () => {
                         >
                           <Search className="w-5 h-5" />
                         </Button>
-                        <Button 
-                          variant="ghost" 
-                          size="icon"
-                          onClick={() => setShowContactPanel(!showContactPanel)}
-                          className={cn(
-                            "text-muted-foreground hover:text-foreground hover:bg-muted/60 h-10 w-10 rounded-xl transition-colors hidden xl:flex",
-                            showContactPanel && "bg-primary/10 text-primary"
-                          )}
-                          title={showContactPanel ? "Hide contact panel" : "Show contact panel"}
-                        >
-                          {showContactPanel ? <PanelRightClose className="w-5 h-5" /> : <PanelRight className="w-5 h-5" />}
-                        </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button 
@@ -1883,7 +1870,7 @@ const SeatChat: React.FC = () => {
               </div>
 
               {/* Contact Details Panel */}
-              {selectedConversation && showContactPanel && (
+              {selectedConversation && (
                 <div className="w-80 bg-gradient-to-b from-card to-card/95 border-l border-border/30 flex-shrink-0 overflow-y-auto animate-slide-in-right hidden xl:block">
                   {/* Contact Header */}
                   <div className="p-6 text-center border-b border-border/30 bg-gradient-to-br from-primary/5 to-transparent">
