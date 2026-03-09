@@ -1824,7 +1824,6 @@ const Accounts: React.FC = () => {
       
       toast.success(`Removed proxy from ${accountsWithProxy.length} account(s)`);
       setSelectedIds(new Set());
-      refreshData();
     } catch (error) {
       console.error('Error removing proxies:', error);
       toast.error('Failed to remove proxies');
