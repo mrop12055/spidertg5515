@@ -846,7 +846,6 @@ const Accounts: React.FC = () => {
       }
       
       toast.success('Account deleted (proxy also removed)');
-      refreshData();
     } catch (error) {
       console.error('Error deleting account:', error);
       toast.error('Failed to delete account');
