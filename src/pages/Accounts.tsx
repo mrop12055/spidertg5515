@@ -327,7 +327,6 @@ const Accounts: React.FC = () => {
               if (newCompleted + newFailed >= prev.total) {
                 setIsAccountTaskRunning(false);
                 toast.success(`${prev.taskType} complete: ${newCompleted} success, ${newFailed} failed`);
-                refreshData();
               }
               
               return {
