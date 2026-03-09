@@ -171,7 +171,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from('campaign_recipients').delete().eq('id', id);
       if (error) throw error;
       toast({ title: 'Recipient deleted' });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }
