@@ -1677,7 +1677,6 @@ const Accounts: React.FC = () => {
       }
       
       toast.success('Proxy removed from account');
-      refreshData();
     } catch (error) {
       console.error('Error removing proxy:', error);
       toast.error('Failed to remove proxy');
