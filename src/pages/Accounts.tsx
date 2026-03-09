@@ -959,7 +959,6 @@ const Accounts: React.FC = () => {
       
       toast.success(`Deleted ${selectedIds.size} account(s)`);
       setSelectedIds(new Set());
-      refreshData();
     } catch (error) {
       console.error('Error bulk deleting:', error);
       toast.error('Failed to delete accounts: ' + (error as Error).message);
