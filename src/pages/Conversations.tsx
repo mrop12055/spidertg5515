@@ -912,7 +912,10 @@ const Chat: React.FC = () => {
 
       <div className="h-[calc(100vh-48px)] -m-6 flex overflow-hidden border border-border bg-card shadow-lg">
         {/* Sidebar - Conversation List */}
-        <div className="w-[340px] min-w-[320px] flex-shrink-0 border-r border-border flex flex-col bg-card">
+        <div className={cn(
+          "flex-shrink-0 border-r border-border flex flex-col bg-card transition-all duration-300",
+          isSidebarCollapsed ? "w-0 min-w-0 overflow-hidden" : "w-[340px] min-w-[320px]"
+        )}>
           {/* Header */}
           <div className="p-4 border-b border-border">
             {isSelectionMode ? (
