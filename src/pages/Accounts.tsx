@@ -277,7 +277,6 @@ const Accounts: React.FC = () => {
                 
                 setIsSpamBotChecking(false);
                 toast.success(`SpamBot check: ${successCount} OK, ${failedCount} failed, ${skippedCount} skipped`);
-                refreshData();
               }
               
               return { ...prev, completed: processed, results: newResults };
