@@ -380,9 +380,8 @@ const Accounts: React.FC = () => {
        // This catches cases where realtime subscription missed some updates
        if ((count ?? 0) === 0 && processed > 0) {
          setIsAccountTaskRunning(false);
-         toast.success(`${accountTasksProgress.taskType} complete: ${accountTasksProgress.completed} success, ${accountTasksProgress.failed} failed`);
-         refreshData();
-         return;
+          toast.success(`${accountTasksProgress.taskType} complete: ${accountTasksProgress.completed} success, ${accountTasksProgress.failed} failed`);
+          return;
        }
  
        // If nothing exists shortly after starting, the queue insert likely failed (offline / permissions / backend issue)
