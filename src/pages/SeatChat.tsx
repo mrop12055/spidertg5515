@@ -13,7 +13,7 @@ import {
   Send, MessageSquare, Users, Eye, CheckCheck, Check, 
   RefreshCw, AlertCircle, Clock, Search, EyeOff, MoreVertical,
   Image, X, Loader2, Phone, Smile, Paperclip, BarChart3, Settings,
-  Pin, PinOff, EyeIcon, PanelRightClose, PanelRightOpen
+  Pin, PinOff, EyeIcon, PanelRightClose, PanelRightOpen, PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/integrations/supabase/client';
