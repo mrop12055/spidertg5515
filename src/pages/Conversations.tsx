@@ -1240,6 +1240,17 @@ const Chat: React.FC = () => {
               {/* Chat Header */}
               <div className="h-16 px-4 border-b border-border flex items-center justify-between bg-card">
                 <div className="flex items-center gap-3">
+                  {isSidebarCollapsed && (
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="text-muted-foreground hover:text-foreground h-8 w-8"
+                      onClick={() => setIsSidebarCollapsed(false)}
+                      title="Show conversation list"
+                    >
+                      <PanelLeft className="w-5 h-5" />
+                    </Button>
+                  )}
                   <Avatar className="h-10 w-10">
                     {selectedConv.recipientAvatar && (
                       <AvatarImage src={selectedConv.recipientAvatar} alt={selectedConv.recipientName || 'Contact'} />
