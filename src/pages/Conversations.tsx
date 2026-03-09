@@ -991,6 +991,15 @@ const Chat: React.FC = () => {
                     >
                       <CheckSquare className="w-4 h-4" />
                     </Button>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="h-7 w-7 text-muted-foreground hover:text-foreground" 
+                      onClick={() => setIsSidebarCollapsed(true)} 
+                      title="Collapse sidebar"
+                    >
+                      <PanelLeftClose className="w-4 h-4" />
+                    </Button>
                   </div>
                 </div>
                 
