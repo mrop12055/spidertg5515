@@ -1922,7 +1922,6 @@ const Accounts: React.FC = () => {
         .eq('id', accountId);
       
       toast.success('Tag removed');
-      refreshData();
     } catch (error) {
       console.error('Error removing tag:', error);
       toast.error('Failed to remove tag');
