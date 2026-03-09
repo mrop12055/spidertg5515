@@ -1956,7 +1956,6 @@ const Accounts: React.FC = () => {
       toast.success(`Tag renamed from "${oldTagName}" to "${newTagValue}" on ${accountsWithTag.length} account(s)`);
       setEditingTagName('');
       setEditedTagValue('');
-      refreshData();
     } catch (error) {
       console.error('Error renaming tag:', error);
       toast.error('Failed to rename tag');
