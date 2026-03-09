@@ -129,7 +129,6 @@ const Accounts: React.FC = () => {
   const { proxyErrors } = useProxyErrors();
   
   const { 
-    refreshData,
     accountTasksProgress, setAccountTasksProgress, isAccountTaskRunning, setIsAccountTaskRunning, 
     setShowAccountTaskLogs, accountTaskHistory, setAccountTaskHistory
   } = useTelegram();
