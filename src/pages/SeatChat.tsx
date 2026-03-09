@@ -1883,7 +1883,7 @@ const SeatChat: React.FC = () => {
               </div>
 
               {/* Contact Details Panel */}
-              {selectedConversation && (
+              {selectedConversation && showContactPanel && (
                 <div className="w-80 bg-gradient-to-b from-card to-card/95 border-l border-border/30 flex-shrink-0 overflow-y-auto animate-slide-in-right hidden xl:block">
                   {/* Contact Header */}
                   <div className="p-6 text-center border-b border-border/30 bg-gradient-to-br from-primary/5 to-transparent">
