@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -58,104 +59,64 @@ interface PendingMessage {
 }
 
 export const TaskQueueCard: React.FC = () => {
-  const [health, setHealth] = useState<SystemHealth | null>(null);
-  const [accountTasks, setAccountTasks] = useState<Task[]>([]);
-  const [importTasks, setImportTasks] = useState<Task[]>([]);
-  const [pendingRecipients, setPendingRecipients] = useState<Recipient[]>([]);
-  const [pendingMessages, setPendingMessages] = useState<PendingMessage[]>([]);
-  const [completedAccountTasks, setCompletedAccountTasks] = useState<Task[]>([]);
-  const [completedImportTasks, setCompletedImportTasks] = useState<Task[]>([]);
-  const [completedRecipients, setCompletedRecipients] = useState<Recipient[]>([]);
-  const [completedMessages, setCompletedMessages] = useState<PendingMessage[]>([]);
+  const queryClient = useQueryClient();
 
-  const fetchData = async () => {
-    try {
-      const { data: healthData } = await supabase
-        .from('system_health')
-        .select('*')
-        .maybeSingle();
+  const fetchTaskQueueData = async () => {
+    const LIMIT = 50;
+    const [
+      healthRes,
+      accountRes, importRes, recipientsRes, messagesRes,
+      completedAccountRes, completedImportRes, completedRecipientsRes, completedMessagesRes
+    ] = await Promise.all([
+      supabase.from('system_health').select('*').maybeSingle(),
+      supabase.from('account_check_tasks').select('id, account_id, status, task_type, created_at, result').eq('status', 'pending').order('created_at', { ascending: false }).limit(LIMIT),
+      supabase.from('contact_import_tasks').select('id, account_id, status, created_at, result').eq('status', 'pending').order('created_at', { ascending: false }).limit(LIMIT),
+      supabase.from('campaign_recipients').select('id, phone_number, name, status, campaign_id, failed_reason').eq('status', 'pending').limit(LIMIT),
+      supabase.from('messages').select('id, content, status, created_at, conversation_id, failed_reason').in('status', ['pending', 'sending']).order('created_at', { ascending: false }).limit(LIMIT),
+      supabase.from('account_check_tasks').select('id, account_id, status, task_type, created_at, result').in('status', ['completed', 'failed']).order('created_at', { ascending: false }).limit(30),
+      supabase.from('contact_import_tasks').select('id, account_id, status, created_at, result').in('status', ['completed', 'failed']).order('created_at', { ascending: false }).limit(30),
+      supabase.from('campaign_recipients').select('id, phone_number, name, status, campaign_id, failed_reason').in('status', ['sent', 'failed']).order('sent_at', { ascending: false }).limit(30),
+      supabase.from('messages').select('id, content, status, created_at, conversation_id, failed_reason').in('status', ['sent', 'delivered', 'read', 'failed']).order('created_at', { ascending: false }).limit(30),
+    ]);
 
-      if (healthData) {
-        setHealth(healthData as SystemHealth);
-      }
-
-      // OPTIMIZED: Reduced LIMIT from 100 to 50
-      const LIMIT = 50;
-      const [
-        accountRes, importRes, recipientsRes, messagesRes,
-        completedAccountRes, completedImportRes, completedRecipientsRes, completedMessagesRes
-      ] = await Promise.all([
-        supabase
-          .from('account_check_tasks')
-          .select('id, account_id, status, task_type, created_at, result')
-          .eq('status', 'pending')
-          .order('created_at', { ascending: false })
-          .limit(LIMIT),
-        supabase
-          .from('contact_import_tasks')
-          .select('id, account_id, status, created_at, result')
-          .eq('status', 'pending')
-          .order('created_at', { ascending: false })
-          .limit(LIMIT),
-        supabase
-          .from('campaign_recipients')
-          .select('id, phone_number, name, status, campaign_id, failed_reason')
-          .eq('status', 'pending')
-          .limit(LIMIT),
-        supabase
-          .from('messages')
-          .select('id, content, status, created_at, conversation_id, failed_reason')
-          .in('status', ['pending', 'sending'])
-          .order('created_at', { ascending: false })
-          .limit(LIMIT),
-        supabase
-          .from('account_check_tasks')
-          .select('id, account_id, status, task_type, created_at, result')
-          .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false })
-          .limit(30),
-        supabase
-          .from('contact_import_tasks')
-          .select('id, account_id, status, created_at, result')
-          .in('status', ['completed', 'failed'])
-          .order('created_at', { ascending: false })
-          .limit(30),
-        supabase
-          .from('campaign_recipients')
-          .select('id, phone_number, name, status, campaign_id, failed_reason')
-          .in('status', ['sent', 'failed'])
-          .order('sent_at', { ascending: false })
-          .limit(30),
-        supabase
-          .from('messages')
-          .select('id, content, status, created_at, conversation_id, failed_reason')
-          .in('status', ['sent', 'delivered', 'read', 'failed'])
-          .order('created_at', { ascending: false })
-          .limit(30)
-      ]);
-
-      if (accountRes.data) setAccountTasks(accountRes.data);
-      if (importRes.data) setImportTasks(importRes.data);
-      if (recipientsRes.data) setPendingRecipients(recipientsRes.data);
-      if (messagesRes.data) setPendingMessages(messagesRes.data);
-      if (completedAccountRes.data) setCompletedAccountTasks(completedAccountRes.data);
-      if (completedImportRes.data) setCompletedImportTasks(completedImportRes.data);
-      if (completedRecipientsRes.data) setCompletedRecipients(completedRecipientsRes.data);
-      if (completedMessagesRes.data) setCompletedMessages(completedMessagesRes.data);
-
-    } catch (error) {
-      console.error('Error fetching task queue data:', error);
-    }
+    return {
+      health: (healthRes.data as SystemHealth) || null,
+      accountTasks: (accountRes.data || []) as Task[],
+      importTasks: (importRes.data || []) as Task[],
+      pendingRecipients: (recipientsRes.data || []) as Recipient[],
+      pendingMessages: (messagesRes.data || []) as PendingMessage[],
+      completedAccountTasks: (completedAccountRes.data || []) as Task[],
+      completedImportTasks: (completedImportRes.data || []) as Task[],
+      completedRecipients: (completedRecipientsRes.data || []) as Recipient[],
+      completedMessages: (completedMessagesRes.data || []) as PendingMessage[],
+    };
   };
 
-  useEffect(() => {
-    fetchData();
+  const { data } = useQuery({
+    queryKey: ['task-queue'],
+    queryFn: fetchTaskQueueData,
+    staleTime: 300000,
+    gcTime: 600000,
+    refetchOnWindowFocus: false,
+  });
 
-    // OPTIMIZED: Increased debounce from 2s to 3s
+  const health = data?.health ?? null;
+  const accountTasks = data?.accountTasks ?? [];
+  const importTasks = data?.importTasks ?? [];
+  const pendingRecipients = data?.pendingRecipients ?? [];
+  const pendingMessages = data?.pendingMessages ?? [];
+  const completedAccountTasks = data?.completedAccountTasks ?? [];
+  const completedImportTasks = data?.completedImportTasks ?? [];
+  const completedRecipients = data?.completedRecipients ?? [];
+  const completedMessages = data?.completedMessages ?? [];
+
+  const refetchData = () => queryClient.invalidateQueries({ queryKey: ['task-queue'] });
+
+  useEffect(() => {
     let refreshTimer: NodeJS.Timeout | null = null;
     const debouncedRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => fetchData(), 3000);
+      refreshTimer = setTimeout(() => refetchData(), 3000);
     };
 
     const channel = supabase
@@ -177,7 +138,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from(table).delete().eq('status', 'pending');
       if (error) throw error;
       toast({ title: `Cleared pending tasks` });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }
@@ -188,7 +149,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from(table).delete().eq('id', id);
       if (error) throw error;
       toast({ title: 'Task deleted' });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }
@@ -199,7 +160,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from('campaign_recipients').delete().eq('status', 'pending');
       if (error) throw error;
       toast({ title: 'Cleared pending recipients' });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }
@@ -210,7 +171,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from('campaign_recipients').delete().eq('id', id);
       if (error) throw error;
       toast({ title: 'Recipient deleted' });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }
@@ -221,7 +182,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from('messages').delete().in('status', ['pending', 'sending']);
       if (error) throw error;
       toast({ title: 'Cleared pending messages' });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }
@@ -232,7 +193,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from('messages').delete().eq('id', id);
       if (error) throw error;
       toast({ title: 'Message deleted' });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }

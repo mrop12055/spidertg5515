@@ -37,8 +37,8 @@ export const useCampaigns = () => {
   const query = useQuery({
     queryKey: ['campaigns'],
     queryFn: fetchCampaigns,
-    staleTime: 30000, // Data stays fresh for 30 seconds
-    gcTime: 300000, // Cache persists for 5 minutes
+    staleTime: 300000, // 5 min — realtime handles updates
+    gcTime: 600000,
     refetchOnWindowFocus: false,
   });
 

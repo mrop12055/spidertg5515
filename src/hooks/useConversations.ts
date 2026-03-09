@@ -83,8 +83,8 @@ export const useConversations = () => {
   const query = useQuery({
     queryKey: ['conversations'],
     queryFn: fetchConversations,
-    staleTime: 30000, // Data stays fresh for 30 seconds
-    gcTime: 300000, // Cache persists for 5 minutes
+    staleTime: 300000, // 5 min — realtime handles updates
+    gcTime: 600000,
     refetchOnWindowFocus: false,
   });
 

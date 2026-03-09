@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -19,196 +20,91 @@ interface RecentError {
 }
 
 export const RecentErrorsCard: React.FC = () => {
-  const [recentErrors, setRecentErrors] = useState<RecentError[]>([]);
+  const queryClient = useQueryClient();
 
-  const fetchData = async () => {
-    try {
-      // Increased limits to support 1000 total errors capacity
-      const [
-        failedRecipientsRes,
-        failedMessagesRes,
-        failedAccountTasksRes,
-        failedBlockTasksRes,
-        failedImportTasksRes,
-        failedWarmupRes,
-        accountErrorsRes,
-        vpsErrorLogsRes
-      ] = await Promise.all([
-        supabase
-          .from('campaign_recipients')
-          .select('id, phone_number, failed_reason, sent_at')
-          .eq('status', 'failed')
-          .not('failed_reason', 'is', null)
-          .order('sent_at', { ascending: false, nullsFirst: false })
-          .limit(150),
-        supabase
-          .from('messages')
-          .select('id, failed_reason, created_at, conversation_id')
-          .eq('status', 'failed')
-          .not('failed_reason', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(150),
-        supabase
-          .from('account_check_tasks')
-          .select('id, account_id, result, created_at')
-          .eq('status', 'failed')
-          .not('result', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(150),
-        supabase
-          .from('block_contact_tasks')
-          .select('id, target_phone, result, created_at')
-          .eq('status', 'failed')
-          .not('result', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(100),
-        supabase
-          .from('contact_import_tasks')
-          .select('id, result, created_at')
-          .eq('status', 'failed')
-          .not('result', 'is', null)
-          .order('created_at', { ascending: false })
-          .limit(100),
-        supabase
-          .from('warmup_schedule')
-          .select('id, account_id, task_type, created_at')
-          .eq('status', 'failed')
-          .order('created_at', { ascending: false })
-          .limit(100),
-        supabase
-          .from('telegram_accounts')
-          .select('id, phone_number, status, ban_reason, restricted_until, created_at')
-          .not('ban_reason', 'is', null)
-          .neq('ban_reason', '')
-          .order('restricted_until', { ascending: false, nullsFirst: false })
-          .limit(150),
-        // VPS/Python runner error logs
-        supabase
-          .from('vps_logs')
-          .select('id, runner_name, message, log_level, created_at')
-          .eq('log_level', 'error')
-          .order('created_at', { ascending: false })
-          .limit(200)
-      ]);
+  const fetchRecentErrors = async (): Promise<RecentError[]> => {
+    const [
+      failedRecipientsRes, failedMessagesRes, failedAccountTasksRes,
+      failedBlockTasksRes, failedImportTasksRes, failedWarmupRes,
+      accountErrorsRes, vpsErrorLogsRes
+    ] = await Promise.all([
+      supabase.from('campaign_recipients').select('id, phone_number, failed_reason, sent_at').eq('status', 'failed').not('failed_reason', 'is', null).order('sent_at', { ascending: false, nullsFirst: false }).limit(150),
+      supabase.from('messages').select('id, failed_reason, created_at, conversation_id').eq('status', 'failed').not('failed_reason', 'is', null).order('created_at', { ascending: false }).limit(150),
+      supabase.from('account_check_tasks').select('id, account_id, result, created_at').eq('status', 'failed').not('result', 'is', null).order('created_at', { ascending: false }).limit(150),
+      supabase.from('block_contact_tasks').select('id, target_phone, result, created_at').eq('status', 'failed').not('result', 'is', null).order('created_at', { ascending: false }).limit(100),
+      supabase.from('contact_import_tasks').select('id, result, created_at').eq('status', 'failed').not('result', 'is', null).order('created_at', { ascending: false }).limit(100),
+      supabase.from('warmup_schedule').select('id, account_id, task_type, created_at').eq('status', 'failed').order('created_at', { ascending: false }).limit(100),
+      supabase.from('telegram_accounts').select('id, phone_number, status, ban_reason, restricted_until, created_at').not('ban_reason', 'is', null).neq('ban_reason', '').order('restricted_until', { ascending: false, nullsFirst: false }).limit(150),
+      supabase.from('vps_logs').select('id, runner_name, message, log_level, created_at').eq('log_level', 'error').order('created_at', { ascending: false }).limit(200),
+    ]);
 
-      const allErrors: RecentError[] = [];
+    const allErrors: RecentError[] = [];
 
-      // Only add errors that have actual error messages - no custom fallbacks
-      (failedRecipientsRes.data || []).forEach(r => {
-        if (r.failed_reason) {
-          allErrors.push({
-            id: r.id,
-            phone: r.phone_number,
-            reason: r.failed_reason,
-            timestamp: r.sent_at || new Date().toISOString(),
-            source: 'Campaign'
-          });
-        }
-      });
+    (failedRecipientsRes.data || []).forEach(r => {
+      if (r.failed_reason) {
+        allErrors.push({ id: r.id, phone: r.phone_number, reason: r.failed_reason, timestamp: r.sent_at || new Date().toISOString(), source: 'Campaign' });
+      }
+    });
 
-      (failedMessagesRes.data || []).forEach(m => {
-        if (m.failed_reason) {
-          allErrors.push({
-            id: m.id,
-            phone: m.conversation_id?.substring(0, 8) || '-',
-            reason: m.failed_reason,
-            timestamp: m.created_at || new Date().toISOString(),
-            source: 'Message'
-          });
-        }
-      });
+    (failedMessagesRes.data || []).forEach(m => {
+      if (m.failed_reason) {
+        allErrors.push({ id: m.id, phone: m.conversation_id?.substring(0, 8) || '-', reason: m.failed_reason, timestamp: m.created_at || new Date().toISOString(), source: 'Message' });
+      }
+    });
 
-      (failedAccountTasksRes.data || []).forEach(t => {
-        if (t.result) {
-          allErrors.push({
-            id: t.id,
-            phone: t.account_id?.substring(0, 8) || '-',
-            reason: t.result,
-            timestamp: t.created_at || new Date().toISOString(),
-            source: 'Account Check'
-          });
-        }
-      });
+    (failedAccountTasksRes.data || []).forEach(t => {
+      if (t.result) {
+        allErrors.push({ id: t.id, phone: t.account_id?.substring(0, 8) || '-', reason: t.result, timestamp: t.created_at || new Date().toISOString(), source: 'Account Check' });
+      }
+    });
 
-      (failedBlockTasksRes.data || []).forEach(t => {
-        if (t.result) {
-          allErrors.push({
-            id: t.id,
-            phone: t.target_phone || '-',
-            reason: t.result,
-            timestamp: t.created_at || new Date().toISOString(),
-            source: 'Block Task'
-          });
-        }
-      });
+    (failedBlockTasksRes.data || []).forEach(t => {
+      if (t.result) {
+        allErrors.push({ id: t.id, phone: t.target_phone || '-', reason: t.result, timestamp: t.created_at || new Date().toISOString(), source: 'Block Task' });
+      }
+    });
 
-      (failedImportTasksRes.data || []).forEach(t => {
-        if (t.result) {
-          allErrors.push({
-            id: t.id,
-            phone: 'Import',
-            reason: t.result,
-            timestamp: t.created_at || new Date().toISOString(),
-            source: 'Import'
-          });
-        }
-      });
+    (failedImportTasksRes.data || []).forEach(t => {
+      if (t.result) {
+        allErrors.push({ id: t.id, phone: 'Import', reason: t.result, timestamp: t.created_at || new Date().toISOString(), source: 'Import' });
+      }
+    });
 
-      // Warmup errors - fetch from warmup_errors table instead for raw messages
-      (failedWarmupRes.data || []).forEach(w => {
-        // Only show if there's task_type context
-        if (w.task_type) {
-          allErrors.push({
-            id: w.id,
-            phone: w.account_id?.substring(0, 8) || '-',
-            reason: w.task_type,
-            timestamp: w.created_at || new Date().toISOString(),
-            source: 'Warmup'
-          });
-        }
-      });
+    (failedWarmupRes.data || []).forEach(w => {
+      if (w.task_type) {
+        allErrors.push({ id: w.id, phone: w.account_id?.substring(0, 8) || '-', reason: w.task_type, timestamp: w.created_at || new Date().toISOString(), source: 'Warmup' });
+      }
+    });
 
-      (accountErrorsRes.data || []).forEach(a => {
-        if (a.ban_reason) {
-          allErrors.push({
-            id: a.id,
-            phone: a.phone_number,
-            reason: a.ban_reason,
-            timestamp: a.restricted_until || a.created_at || new Date().toISOString(),
-            source: 'Account'
-          });
-        }
-      });
+    (accountErrorsRes.data || []).forEach(a => {
+      if (a.ban_reason) {
+        allErrors.push({ id: a.id, phone: a.phone_number, reason: a.ban_reason, timestamp: a.restricted_until || a.created_at || new Date().toISOString(), source: 'Account' });
+      }
+    });
 
-      // VPS/Python runner errors - raw messages only
-      (vpsErrorLogsRes.data || []).forEach(v => {
-        if (v.message) {
-          allErrors.push({
-            id: v.id,
-            phone: v.runner_name || 'Python',
-            reason: v.message,
-            timestamp: v.created_at || new Date().toISOString(),
-            source: 'Python'
-          });
-        }
-      });
+    (vpsErrorLogsRes.data || []).forEach(v => {
+      if (v.message) {
+        allErrors.push({ id: v.id, phone: v.runner_name || 'Python', reason: v.message, timestamp: v.created_at || new Date().toISOString(), source: 'Python' });
+      }
+    });
 
-      allErrors.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      setRecentErrors(allErrors.slice(0, 1000));
-
-    } catch (error) {
-      console.error('Error fetching recent errors:', error);
-    }
+    allErrors.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    return allErrors.slice(0, 1000);
   };
 
-  useEffect(() => {
-    fetchData();
+  const { data: recentErrors = [] } = useQuery({
+    queryKey: ['recent-errors'],
+    queryFn: fetchRecentErrors,
+    staleTime: 300000,
+    gcTime: 600000,
+    refetchOnWindowFocus: false,
+  });
 
-    // OPTIMIZED: Increased debounce from 2s to 5s
+  useEffect(() => {
     let refreshTimer: NodeJS.Timeout | null = null;
     const debouncedRefresh = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => fetchData(), 5000);
+      refreshTimer = setTimeout(() => queryClient.invalidateQueries({ queryKey: ['recent-errors'] }), 5000);
     };
 
     const channel = supabase
@@ -225,7 +121,7 @@ export const RecentErrorsCard: React.FC = () => {
       if (refreshTimer) clearTimeout(refreshTimer);
       supabase.removeChannel(channel);
     };
-  }, []);
+  }, [queryClient]);
 
   return (
     <Card className="overflow-hidden">

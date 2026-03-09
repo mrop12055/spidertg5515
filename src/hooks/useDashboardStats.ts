@@ -49,9 +49,18 @@ export const useDashboardStats = () => {
   const query = useQuery({
     queryKey: ['dashboard-stats'],
     queryFn: fetchDashboardStats,
-    staleTime: 30000,
-    gcTime: 300000,
+    staleTime: 300000, // 5 min — realtime handles updates
+    gcTime: 600000,
     refetchOnWindowFocus: false,
+    refetchOnMount: true, // will use cache if fresh
+    placeholderData: {
+      totalAccounts: 0,
+      activeAccounts: 0,
+      activeProxies: 0,
+      messagesToday: 0,
+      messagesLifetime: 0,
+      repliesLifetime: 0,
+    },
   });
 
   // Realtime subscriptions instead of polling
