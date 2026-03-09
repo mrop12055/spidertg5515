@@ -1557,7 +1557,6 @@ const Accounts: React.FC = () => {
       
       setIsBulkProxyOpen(false);
       setSelectedIds(new Set());
-      refreshData();
     } catch (error) {
       console.error('Error assigning proxies:', error);
       toast.error('Failed to assign proxies');
