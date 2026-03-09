@@ -1904,7 +1904,6 @@ const Accounts: React.FC = () => {
 
       toast.success(`${ids.length} account(s) set to ${newStatus}`);
       setSelectedIds(new Set());
-      refreshData();
     } catch (error) {
       console.error('Error changing status:', error);
       toast.error('Failed to change account status');
