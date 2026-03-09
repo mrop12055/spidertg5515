@@ -347,7 +347,7 @@ const Accounts: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isAccountTaskRunning, accounts, refreshData]);
+  }, [isAccountTaskRunning, accounts]);
 
   // Watchdog: if the UI says "processing" but no tasks exist (or nothing is being picked up), stop and show a clear reason.
   useEffect(() => {
