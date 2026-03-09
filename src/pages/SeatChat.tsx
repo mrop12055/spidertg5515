@@ -132,6 +132,7 @@ const SeatChat: React.FC = () => {
   const [showRepliedOnly, setShowRepliedOnly] = useState(true);
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [showContactPanel, setShowContactPanel] = useState(false);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
   const [chatTab, setChatTab] = useState<ChatTab>('all');
   const [senderAccounts, setSenderAccounts] = useState<Map<string, SenderAccount>>(new Map());
