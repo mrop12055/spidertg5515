@@ -1762,7 +1762,6 @@ const Accounts: React.FC = () => {
       setIsTagDialogOpen(false);
       setNewTagName('');
       setSelectedTagsForBulk([]);
-      refreshData();
     } catch (error) {
       console.error('Error assigning tags:', error);
       toast.error('Failed to assign tags');
