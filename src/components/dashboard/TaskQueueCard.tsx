@@ -149,7 +149,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from(table).delete().eq('id', id);
       if (error) throw error;
       toast({ title: 'Task deleted' });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }
