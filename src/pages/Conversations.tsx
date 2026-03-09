@@ -1562,6 +1562,17 @@ const Chat: React.FC = () => {
             </>
           ) : (
             <div className="flex-1 flex items-center justify-center bg-card/50">
+              {isSidebarCollapsed && (
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  className="absolute top-4 left-4 text-muted-foreground hover:text-foreground"
+                  onClick={() => setIsSidebarCollapsed(false)}
+                  title="Show conversation list"
+                >
+                  <PanelLeft className="w-5 h-5" />
+                </Button>
+              )}
               <div className="text-center">
                 <div className="w-32 h-32 rounded-full bg-primary/10 flex items-center justify-center mx-auto mb-6">
                   <MessageSquare className="w-16 h-16 text-primary" />
