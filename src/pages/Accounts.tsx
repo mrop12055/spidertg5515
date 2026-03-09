@@ -801,8 +801,6 @@ const Accounts: React.FC = () => {
         setNewUploadTag('');
         setIsAddOpen(false);
       }
-      
-      refreshData();
     } catch (error) {
       console.error('Error uploading accounts:', error);
       toast.error('Failed to upload accounts');
