@@ -182,7 +182,7 @@ export const TaskQueueCard: React.FC = () => {
       const { error } = await supabase.from('messages').delete().in('status', ['pending', 'sending']);
       if (error) throw error;
       toast({ title: 'Cleared pending messages' });
-      fetchData();
+      refetchData();
     } catch (error: any) {
       toast({ title: 'Error', description: error.message, variant: 'destructive' });
     }
