@@ -288,7 +288,7 @@ const Accounts: React.FC = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isSpamBotChecking, refreshData]);
+  }, [isSpamBotChecking]);
   
   // Realtime subscription for account tasks (name change, privacy, password, etc.)
   const ACCOUNT_TASK_TYPES = ['change_name', 'change_photo', 'change_bio', 'privacy_settings', 'change_password', 'logout_sessions', 'sync_profile'];
