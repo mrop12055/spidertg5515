@@ -37,7 +37,9 @@ import {
   Square,
   Reply,
   MessageCircle,
-  MessageCircleOff
+  MessageCircleOff,
+  PanelLeftClose,
+  PanelLeft
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
