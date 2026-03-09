@@ -1243,7 +1243,7 @@ const Chat: React.FC = () => {
         </div>
 
         {/* Main Chat Area */}
-        <div className="flex-1 flex flex-col bg-secondary/30 dark:bg-background/50">
+        <div className="flex-1 flex flex-col bg-secondary/30 dark:bg-background/50 relative">
           {selectedConv ? (
             <>
               {/* Chat Header */}
