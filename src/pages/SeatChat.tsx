@@ -1592,6 +1592,15 @@ const SeatChat: React.FC = () => {
                         <Button 
                           variant="ghost" 
                           size="icon"
+                          onClick={() => setShowContactPanel(prev => !prev)}
+                          className="text-muted-foreground hover:text-foreground hover:bg-muted/60 h-10 w-10 rounded-xl transition-colors hidden xl:flex"
+                          title={showContactPanel ? 'Hide contact details' : 'Show contact details'}
+                        >
+                          {showContactPanel ? <PanelRightClose className="w-5 h-5" /> : <PanelRightOpen className="w-5 h-5" />}
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
                           onClick={() => setIsMessageSearchOpen(true)}
                           className="text-muted-foreground hover:text-foreground hover:bg-muted/60 h-10 w-10 rounded-xl transition-colors"
                         >
