@@ -1,0 +1,1 @@
+ALTER PUBLICATION supabase_realtime ADD TABLE public.campaign_recipients, public.lifetime_stats, public.runner_heartbeats;
