@@ -1786,7 +1786,6 @@ const Accounts: React.FC = () => {
       
       toast.success(`Removed all tags from ${selectedIds.size} account(s)`);
       setSelectedIds(new Set());
-      refreshData();
     } catch (error) {
       console.error('Error removing tags:', error);
       toast.error('Failed to remove tags');
