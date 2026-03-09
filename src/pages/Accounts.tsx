@@ -1986,7 +1986,6 @@ const Accounts: React.FC = () => {
       setEditingTagName('');
       setEditedTagValue('');
       setSelectedTagsForBulk(prev => prev.filter(t => t !== tagToDelete));
-      refreshData();
     } catch (error) {
       console.error('Error deleting tag:', error);
       toast.error('Failed to delete tag');
