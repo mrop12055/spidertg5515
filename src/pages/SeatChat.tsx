@@ -134,6 +134,7 @@ const SeatChat: React.FC = () => {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<SeatView>('chats');
   const [chatTab, setChatTab] = useState<ChatTab>('all');
+  const [showContactPanel, setShowContactPanel] = useState(true);
   const [senderAccounts, setSenderAccounts] = useState<Map<string, SenderAccount>>(new Map());
   const [stats, setStats] = useState<SeatStats>({
     total_conversations: 0,
