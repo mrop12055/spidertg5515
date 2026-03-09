@@ -1869,8 +1869,21 @@ const SeatChat: React.FC = () => {
                 )}
               </div>
 
-              {/* Contact Details Panel */}
+              {/* Contact Details Toggle Button */}
               {selectedConversation && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-3 right-3 z-10 hidden xl:flex h-8 w-8"
+                  onClick={() => setShowContactPanel(prev => !prev)}
+                  title={showContactPanel ? 'Hide contact details' : 'Show contact details'}
+                >
+                  {showContactPanel ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+                </Button>
+              )}
+
+              {/* Contact Details Panel */}
+              {selectedConversation && showContactPanel && (
                 <div className="w-80 bg-gradient-to-b from-card to-card/95 border-l border-border/30 flex-shrink-0 overflow-y-auto animate-slide-in-right hidden xl:block">
                   {/* Contact Header */}
                   <div className="p-6 text-center border-b border-border/30 bg-gradient-to-br from-primary/5 to-transparent">
