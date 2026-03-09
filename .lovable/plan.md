@@ -1,43 +1,45 @@
 
 
-## Make Accounts Page Updates Realtime (No Full Refresh)
+## Fix: Completely Remove Deduplication Check on Recipient Upload
 
 ### Problem
-Every action on the Accounts page (delete, status change, proxy assign, tag update, bulk operations) calls `refreshData()` which triggers a full data re-fetch. This causes a visible loading flash instead of instant UI updates.
+The deduplication logic is running in **three separate code paths**, but the `skipDedup` flag was only wired up to one of them. The "already messaged (skipped)" message keeps appearing because:
 
-The `useAccounts` hook **already has realtime subscriptions** that optimistically update the React Query cache on INSERT/UPDATE/DELETE events from the `telegram_accounts` table. So calling `refreshData()` is redundant and causes the jarring refresh.
+1. **Campaign creation (multi-seat)** at line 686 calls `uploadRecipients` without `skipDedup` -- always deduplicates
+2. **Campaign creation (single-seat)** at line 704 calls `uploadRecipients` without `skipDedup` -- always deduplicates
+3. **Upload dialog for existing campaign** at line 779 passes `skipDedup` correctly -- but the user still sees duplicates because the issue is in paths 1 and 2
 
 ### Solution
-Remove all `refreshData()` calls from account-related actions in `src/pages/Accounts.tsx`. The realtime subscription in `useAccounts` will automatically update the UI when the database changes. For proxy-related changes, also ensure `useProxies` has a similar realtime subscription.
+Remove the global cross-campaign deduplication logic entirely from the `uploadRecipients` function. The function will only filter duplicates **within the current upload batch** (to avoid inserting the same phone number twice in one go).
 
 ### Changes
 
-**File: `src/pages/Accounts.tsx`** (~20 locations)
+**File: `src/context/TelegramContext.tsx`**
 
-Remove `refreshData()` calls after these actions:
-- Single account delete (line ~858)
-- Proxy change (line ~874)
-- Bulk delete (line ~973)
-- Account upload/import (line ~812)
-- Spambot check complete (line ~280)
-- Account task complete (lines ~321, ~334, ~389)
-- Verify accounts (lines ~792, ~1726)
-- Bulk proxy assign (line ~1572)
-- Proxy remove (line ~1693)
-- Tag assign/remove/rename/delete (lines ~1780, ~1805, ~1844, ~1925, ~1944, ~1979, ~2010)
-- Status change (line ~1925)
-- Bulk proxy remove (line ~1844)
+Replace the entire `uploadRecipients` function body. Remove:
+- The `skipDedup` parameter (no longer needed)
+- The `fetchAllSentRecipients` function that queries all campaign_recipients
+- The `fetchAllConversations` function that queries conversations with first_message_sent
+- The `alreadyMessaged` Set and its filtering logic
 
-Keep `refreshData()` only where non-account data (campaigns, conversations) genuinely needs refreshing — which is none of these cases.
+Keep only:
+- Within-batch dedup (prevent inserting the same phone number twice in one upload)
+- Chunked insert logic (batches of 1000)
+- Toast notifications
 
-**File: `src/hooks/useProxies.ts`**
+**File: `src/pages/Campaigns.tsx`**
 
-Check if it has realtime subscriptions. If not, add one similar to `useAccounts` so proxy changes also reflect instantly.
+- Remove the `skipDedup` state variable
+- Remove the checkbox UI for "Skip deduplication"
+- Remove `skipDedup` from the `handleUploadRecipients` call
+- The three `uploadRecipients` calls (lines 686, 704, 779) no longer need any dedup parameter
 
-**File: `src/hooks/useAccounts.ts`**
+### Technical Details
 
-Already correct — has realtime subscriptions for INSERT/UPDATE/DELETE. No changes needed.
-
-### Result
-All account actions (status changes, proxy assignments, tag updates, deletions) will update the UI instantly via the existing realtime subscription, with no loading flash or full page refresh.
+The simplified `uploadRecipients` function will:
+1. Accept `campaignId` and `recipients` (no `skipDedup` parameter)
+2. Deduplicate within the batch only (using a `Set`)
+3. Insert in chunks of 1000
+4. Show a toast with the count of inserted recipients
+5. Return `{ inserted, duplicates }` for the campaign-creation validation logic (which deletes campaigns if zero recipients were inserted)
 
