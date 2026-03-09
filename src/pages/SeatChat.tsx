@@ -1597,6 +1597,18 @@ const SeatChat: React.FC = () => {
                         >
                           <Search className="w-5 h-5" />
                         </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => setShowContactPanel(!showContactPanel)}
+                          className={cn(
+                            "text-muted-foreground hover:text-foreground hover:bg-muted/60 h-10 w-10 rounded-xl transition-colors hidden xl:flex",
+                            showContactPanel && "bg-primary/10 text-primary"
+                          )}
+                          title={showContactPanel ? "Hide contact panel" : "Show contact panel"}
+                        >
+                          {showContactPanel ? <PanelRightClose className="w-5 h-5" /> : <PanelRight className="w-5 h-5" />}
+                        </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button 
