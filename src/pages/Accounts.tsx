@@ -783,7 +783,6 @@ const Accounts: React.FC = () => {
               }
               
               toast.success(`Verified: ${validCount} active, ${invalidCount} invalid`);
-              refreshData();
             } catch (e) {
               console.error('Auto-verify error:', e);
             }
