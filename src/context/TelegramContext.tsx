@@ -1387,16 +1387,15 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
 
   const startCampaign = useCallback(async (campaignId: string) => {
     try {
-      // Update campaign status to running
-      const { error } = await supabase
-        .from('campaigns')
-        .update({ status: 'running' })
-        .eq('id', campaignId);
+      // Call admin-api to start campaign AND promote queued recipients to pending
+      const { data, error } = await supabase.functions.invoke('admin-api', {
+        body: { path: '/campaigns/start', campaign_id: campaignId },
+      });
 
       if (error) throw error;
       
-      // The unified runner will pick up pending recipients automatically
-      toast.success('Campaign started - runner will process recipients');
+      const promoted = data?.promoted_count ?? 0;
+      toast.success(`Campaign started — ${promoted} recipients queued for sending`);
       refreshData();
     } catch (error) {
       console.error('Error starting campaign:', error);
