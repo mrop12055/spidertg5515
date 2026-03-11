@@ -137,6 +137,50 @@ serve(async (req) => {
 
       console.log(`[admin-api] Starting campaign ${campaign_id}`);
 
+      // === AUTO-ENROLL: Add any active accounts with remaining capacity ===
+      // This ensures resumed campaigns can use newly activated accounts
+      const { data: existingLinks } = await supabase
+        .from('campaign_accounts')
+        .select('account_id')
+        .eq('campaign_id', campaign_id);
+      
+      const existingAccountIds = new Set((existingLinks || []).map((l: any) => l.account_id));
+
+      // Fetch campaign speed settings for daily limit
+      const { data: speedSetting } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'campaign_speed')
+        .maybeSingle();
+      
+      const messagesPerAccountPerDay = (speedSetting?.value as any)?.messagesPerAccountPerDay || 10;
+
+      // Find active accounts with session data, valid proxy, and remaining daily capacity
+      const { data: availableAccounts } = await supabase
+        .from('telegram_accounts')
+        .select('id, messages_sent_today, proxy_id')
+        .eq('status', 'active')
+        .not('session_data', 'is', null)
+        .not('proxy_id', 'is', null)
+        .lt('messages_sent_today', messagesPerAccountPerDay);
+
+      // Filter to only accounts not already linked
+      const newAccountIds = (availableAccounts || [])
+        .filter((a: any) => !existingAccountIds.has(a.id))
+        .map((a: any) => a.id);
+
+      if (newAccountIds.length > 0) {
+        const { error: linkError } = await supabase
+          .from('campaign_accounts')
+          .insert(newAccountIds.map((aid: string) => ({ campaign_id, account_id: aid })));
+        
+        if (linkError) {
+          console.error(`[admin-api] Failed to auto-enroll accounts:`, linkError);
+        } else {
+          console.log(`[admin-api] Auto-enrolled ${newAccountIds.length} fresh accounts into campaign ${campaign_id}`);
+        }
+      }
+
       const { data, error } = await supabase
         .from('campaigns')
         .update({ status: 'running', updated_at: new Date().toISOString() })
@@ -161,7 +205,7 @@ serve(async (req) => {
         console.log(`[admin-api] Promoted ${count} queued recipients to pending for campaign ${campaign_id}`);
       }
 
-      return jsonResponse({ success: true, campaign: data, promoted_count: promoted?.length ?? 0 });
+      return jsonResponse({ success: true, campaign: data, promoted_count: promoted?.length ?? 0, auto_enrolled_accounts: newAccountIds.length });
     }
 
     if (path === '/campaigns/pause' && method === 'POST') {
