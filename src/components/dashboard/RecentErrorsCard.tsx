@@ -100,28 +100,8 @@ export const RecentErrorsCard: React.FC = () => {
     refetchOnWindowFocus: false,
   });
 
-  useEffect(() => {
-    let refreshTimer: NodeJS.Timeout | null = null;
-    const debouncedRefresh = () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => queryClient.invalidateQueries({ queryKey: ['recent-errors'] }), 5000);
-    };
-
-    const channel = supabase
-      .channel('recent-errors-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'account_check_tasks' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'telegram_accounts' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'vps_logs' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'warmup_errors' }, debouncedRefresh)
-      .subscribe();
-
-    return () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      supabase.removeChannel(channel);
-    };
-  }, [queryClient]);
+  // Removed 6 realtime channels — errors are not time-critical.
+  // Data refreshes when staleTime expires (5 min) or on manual navigation.
 
   return (
     <Card className="overflow-hidden">

@@ -70,8 +70,8 @@ export const useProxies = () => {
   const query = useQuery({
     queryKey: ['proxies'],
     queryFn: fetchProxiesPaged,
-    staleTime: 30000, // Data stays fresh for 30 seconds
-    gcTime: 300000, // Cache persists for 5 minutes
+    staleTime: 300000, // 5 min — realtime handles updates
+    gcTime: 600000,
     refetchOnWindowFocus: false,
   });
 

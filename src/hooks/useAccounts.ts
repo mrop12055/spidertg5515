@@ -80,9 +80,9 @@ export const useAccounts = () => {
   const query = useQuery({
     queryKey: ['accounts'],
     queryFn: fetchAccountsPaged,
-    staleTime: 30000, // Data stays fresh for 30 seconds
-    gcTime: 300000, // Cache persists for 5 minutes (formerly cacheTime)
-    refetchOnWindowFocus: false, // Don't refetch on tab focus
+    staleTime: 300000, // 5 min — realtime handles updates
+    gcTime: 600000,
+    refetchOnWindowFocus: false,
   });
 
   // Setup realtime subscription for optimistic updates
