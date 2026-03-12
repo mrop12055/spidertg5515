@@ -89,6 +89,10 @@ clients: Dict[str, Any] = {}      # account_id -> TelegramClient
 accounts: Dict[str, dict] = {}    # account_id -> account info
 RUNNING = True
 
+# Unique instance ID to detect multiple runners fighting over same accounts
+import uuid as _uuid_mod
+RUNNER_INSTANCE_ID = str(_uuid_mod.uuid4())[:8]
+
 # Track processed message IDs to avoid re-sending to backend
 # Key format: "{account_id}_{telegram_message_id}"
 processed_message_ids = set()
