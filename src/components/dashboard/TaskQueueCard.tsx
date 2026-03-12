@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -112,26 +112,7 @@ export const TaskQueueCard: React.FC = () => {
 
   const refetchData = () => queryClient.invalidateQueries({ queryKey: ['task-queue'] });
 
-  useEffect(() => {
-    let refreshTimer: NodeJS.Timeout | null = null;
-    const debouncedRefresh = () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(() => refetchData(), 3000);
-    };
-
-    const channel = supabase
-      .channel('task-queue-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'account_check_tasks' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'contact_import_tasks' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, debouncedRefresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'campaign_recipients' }, debouncedRefresh)
-      .subscribe();
-
-    return () => {
-      if (refreshTimer) clearTimeout(refreshTimer);
-      supabase.removeChannel(channel);
-    };
-  }, []);
+  // Removed 4 realtime channels — task queue refreshes on staleTime (5 min) or manual action.
 
   const clearPendingTasks = async (table: 'account_check_tasks' | 'contact_import_tasks') => {
     try {
