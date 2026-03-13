@@ -1342,6 +1342,15 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
             if aid:
                 newly_connected.add(aid)
     
+    # SESSION LOCK: Lock newly connected accounts in the database
+    # This prevents any other runner instance from connecting the same accounts
+    if newly_connected:
+        await lock_accounts(list(newly_connected))
+    
+    # Also renew locks for already-connected accounts (heartbeat for locks)
+    if already_connected:
+        await lock_accounts(list(already_connected))
+    
     # Fetch unread messages in PARALLEL for all newly connected accounts (catch-up)
     # Uses last_offline_at for smart time-based fetching.
     # IMPORTANT: Put a hard timeout per account so one stuck Telethon call can't block startup.
