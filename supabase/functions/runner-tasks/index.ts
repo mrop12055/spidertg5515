@@ -188,9 +188,23 @@ async function handleGetTasks(supabase: any, body: any) {
     
     lastOfflineAt = heartbeat?.last_offline_at || null;
     
-    // Warn if a different runner instance is already active (duplicate runner detection)
-    if (heartbeat?.server_id && server_id && heartbeat.server_id !== server_id && heartbeat.server_id !== 'legacy') {
-      console.warn(`[runner-tasks/get] ⚠️ DUPLICATE RUNNER DETECTED! Existing: ${heartbeat.server_id}, New: ${server_id}`);
+    // BLOCK duplicate runner: if another instance was active within the last 15 seconds, reject this one
+    const existingServerId = heartbeat?.server_id;
+    const lastSeen = heartbeat?.last_seen;
+    if (existingServerId && server_id && existingServerId !== server_id && existingServerId !== 'legacy' && lastSeen) {
+      const lastSeenAge = (Date.now() - new Date(lastSeen).getTime()) / 1000;
+      if (lastSeenAge < 15) {
+        console.warn(`[runner-tasks/get] ⛔ BLOCKING DUPLICATE RUNNER! Active: ${existingServerId} (${lastSeenAge.toFixed(0)}s ago), Rejected: ${server_id}`);
+        return new Response(JSON.stringify({
+          tasks: [],
+          accounts: [],
+          duplicate_runner: true,
+          active_instance: existingServerId,
+          message: `Another runner instance (${existingServerId}) is already active. This instance (${server_id}) is blocked. Stop the other runner first.`
+        }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
     }
     
     // Now record the heartbeat (this updates last_seen + server_id)
