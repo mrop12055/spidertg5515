@@ -1735,12 +1735,20 @@ if __name__ == "__main__":
         if BOOT_COUNT > 1:
             print(f"  ↑ This is a RESTART (boot #{BOOT_COUNT}), not a periodic refresh")
             # CRITICAL: Clear stale clients from previous event loop
-            # Old TelegramClient objects are bound to the dead loop and MUST be discarded.
-            # Without this, connect() would see them as "alive" and skip disconnect,
-            # then Telethon creates a NEW connection → Telegram sees 2 auth keys → REVOKES BOTH.
             print(f"  [CLEANUP] Clearing {len(clients)} stale clients from previous loop...")
             clients.clear()
             accounts.clear()
+            # Release session locks from previous crash so we can re-acquire them
+            try:
+                import httpx as _hx
+                _hx.post(
+                    f"{BACKEND_URL}/runner-tasks/unlock",
+                    headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+                    json={"server_id": RUNNER_INSTANCE_ID}, timeout=15
+                )
+                print(f"  [SESSION-LOCK] Released stale locks for instance {RUNNER_INSTANCE_ID}")
+            except:
+                pass
         
         try:
             asyncio.run(main())
