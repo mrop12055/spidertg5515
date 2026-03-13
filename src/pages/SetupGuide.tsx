@@ -267,7 +267,20 @@ async def get_tasks(include_accounts: bool = True) -> dict:
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
             json={"runner": "unified", "include_accounts": include_accounts, "server_id": RUNNER_INSTANCE_ID}, timeout=60
         )
-        return r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
+        data = r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
+        
+        # DUPLICATE RUNNER GUARD: If backend says another instance is active, EXIT immediately
+        if data.get("duplicate_runner"):
+            print(f"\\n{'='*50}")
+            print(f"  ⛔ DUPLICATE RUNNER BLOCKED!")
+            print(f"  Another instance ({data.get('active_instance', '?')}) is already running.")
+            print(f"  This instance ({RUNNER_INSTANCE_ID}) will now EXIT.")
+            print(f"  {data.get('message', '')}")
+            print(f"{'='*50}\\n")
+            sys.stdout.flush()
+            os._exit(1)
+        
+        return data
     except:
         return {"tasks": [], "accounts": []}
 
