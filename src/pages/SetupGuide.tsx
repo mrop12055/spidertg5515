@@ -157,9 +157,18 @@ def get_http() -> httpx.AsyncClient:
 
 def decode_session(phone: str, b64: str) -> Optional[str]:
     path = os.path.join(SESSION_FOLDER, phone.replace("+", ""))
+    session_file = path + ".session"
     try:
-        with open(path + ".session", "wb") as f:
-            f.write(base64.b64decode(b64))
+        raw = base64.b64decode(b64)
+        # Skip rewrite if file already exists with identical content
+        # Prevents corruption when parallel tasks decode the same session
+        if os.path.exists(session_file):
+            with open(session_file, "rb") as f:
+                existing = f.read()
+            if existing == raw:
+                return path
+        with open(session_file, "wb") as f:
+            f.write(raw)
         return path
     except:
         return None
