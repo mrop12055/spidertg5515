@@ -1386,7 +1386,7 @@ async def setup_handlers():
             # IMPORTANT: do this defensively; some stale connections can block.
             connected = False
             try:
-                connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=0.5)
+                connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=2)
             except Exception:
                 connected = False
             
@@ -1696,6 +1696,13 @@ if __name__ == "__main__":
         print(f"\\n[BOOT] #{BOOT_COUNT} at {boot_time}")
         if BOOT_COUNT > 1:
             print(f"  ↑ This is a RESTART (boot #{BOOT_COUNT}), not a periodic refresh")
+            # CRITICAL: Clear stale clients from previous event loop
+            # Old TelegramClient objects are bound to the dead loop and MUST be discarded.
+            # Without this, connect() would see them as "alive" and skip disconnect,
+            # then Telethon creates a NEW connection → Telegram sees 2 auth keys → REVOKES BOTH.
+            print(f"  [CLEANUP] Clearing {len(clients)} stale clients from previous loop...")
+            clients.clear()
+            accounts.clear()
         
         try:
             asyncio.run(main())
