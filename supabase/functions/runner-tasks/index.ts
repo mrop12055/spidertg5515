@@ -147,6 +147,37 @@ serve(async (req) => {
       });
     }
 
+    // Route: LOCK ACCOUNTS (runner claims accounts on connect)
+    if (path === '/lock') {
+      const { account_ids: lockIds, server_id: lockServerId } = body;
+      if (lockIds?.length && lockServerId) {
+        const nowIso = new Date().toISOString();
+        await supabase.from("telegram_accounts")
+          .update({ locked_by: lockServerId, locked_at: nowIso })
+          .in("id", lockIds)
+          .or(`locked_by.is.null,locked_by.eq.${lockServerId}`);
+        console.log(`[session-lock] Locked ${lockIds.length} accounts for ${lockServerId}`);
+      }
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Route: UNLOCK ACCOUNTS (runner releases accounts on shutdown)
+    if (path === '/unlock') {
+      const { server_id: unlockServerId } = body;
+      if (unlockServerId) {
+        const { data: unlocked } = await supabase.from("telegram_accounts")
+          .update({ locked_by: null, locked_at: null })
+          .eq("locked_by", unlockServerId)
+          .select("id");
+        console.log(`[session-lock] Unlocked ${unlocked?.length || 0} accounts for ${unlockServerId}`);
+      }
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     return new Response(JSON.stringify({ error: "Not found", path }), {
       status: 404,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -280,12 +311,28 @@ async function handleGetTasks(supabase: any, body: any) {
 
   const { data: accounts, error: accountsError } = await accountsQuery;
 
-  if (accountsError || !accounts?.length) {
+  // SESSION LOCK: Filter out accounts locked by a DIFFERENT runner instance
+  // An account is considered "stale locked" if locked_at is older than 60 seconds
+  // (the runner sends lock renewals every poll cycle ~10s)
+  const staleLockThreshold = new Date(Date.now() - 60 * 1000).toISOString();
+  const filteredAccounts = (accounts || []).filter((a: any) => {
+    // No lock = available
+    if (!a.locked_by) return true;
+    // Locked by THIS instance = available
+    if (a.locked_by === server_id) return true;
+    // Stale lock (other instance crashed) = available, clear the lock
+    if (a.locked_at && a.locked_at < staleLockThreshold) return true;
+    // Locked by another active instance = BLOCKED
+    console.log(`[session-lock] Account ${a.phone_number} locked by ${a.locked_by}, skipping for ${server_id}`);
+    return false;
+  });
+
+  if (accountsError || !filteredAccounts?.length) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No active accounts" });
   }
 
   // Accounts that can SEND new campaign messages (active only, under daily limit)
-  const sendableAccounts = accounts.filter((a: any) => {
+  const sendableAccounts = filteredAccounts.filter((a: any) => {
     if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
     if (a.status !== 'active') return false; // Only active accounts can send to new recipients
     const limit = config.campaignMessagesPerAccountPerDay || a.daily_limit || config.dailyLimit;
@@ -294,7 +341,7 @@ async function handleGetTasks(supabase: any, body: any) {
   });
 
   // Accounts that can LISTEN for incoming messages (broader list includes cooldown/restricted)
-  const connectableAccounts = accounts.filter((a: any) => {
+  const connectableAccounts = filteredAccounts.filter((a: any) => {
     if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
     // cooldown/restricted accounts can still listen for incoming messages
     return ['active', 'cooldown', 'restricted'].includes(a.status);

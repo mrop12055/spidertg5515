@@ -259,6 +259,34 @@ async def update_proxy_status(proxy_id: str, status: str, error_msg: str = None)
         pass
 
 
+async def lock_accounts(account_ids: list):
+    """Lock accounts in DB so no other runner instance can connect them."""
+    if not account_ids:
+        return
+    try:
+        await get_http().post(
+            f"{BACKEND_URL}/runner-tasks/lock",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+            json={"account_ids": account_ids, "server_id": RUNNER_INSTANCE_ID}, timeout=15
+        )
+        print(f"  [SESSION-LOCK] Locked {len(account_ids)} accounts for instance {RUNNER_INSTANCE_ID}")
+    except Exception as e:
+        print(f"  [SESSION-LOCK] Lock failed: {e}")
+
+
+async def unlock_all_accounts():
+    """Release all account locks held by this runner instance."""
+    try:
+        await get_http().post(
+            f"{BACKEND_URL}/runner-tasks/unlock",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+            json={"server_id": RUNNER_INSTANCE_ID}, timeout=15
+        )
+        print(f"  [SESSION-LOCK] Unlocked all accounts for instance {RUNNER_INSTANCE_ID}")
+    except Exception as e:
+        print(f"  [SESSION-LOCK] Unlock failed: {e}")
+
+
 async def get_tasks(include_accounts: bool = True) -> dict:
     """Fetch tasks from backend. Accounts payload can be disabled to avoid huge responses."""
     try:
@@ -1314,6 +1342,15 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
             if aid:
                 newly_connected.add(aid)
     
+    # SESSION LOCK: Lock newly connected accounts in the database
+    # This prevents any other runner instance from connecting the same accounts
+    if newly_connected:
+        await lock_accounts(list(newly_connected))
+    
+    # Also renew locks for already-connected accounts (heartbeat for locks)
+    if already_connected:
+        await lock_accounts(list(already_connected))
+    
     # Fetch unread messages in PARALLEL for all newly connected accounts (catch-up)
     # Uses last_offline_at for smart time-based fetching.
     # IMPORTANT: Put a hard timeout per account so one stuck Telethon call can't block startup.
@@ -1673,8 +1710,9 @@ async def main():
             sys.stdout.flush()
             await asyncio.sleep(5)
     
-    # Shutdown
+    # Shutdown - release all session locks FIRST, then disconnect
     print("\\n  [SHUTDOWN]...")
+    await unlock_all_accounts()
     for c in clients.values():
         try:
             await asyncio.wait_for(c.disconnect(), timeout=5)
@@ -1697,12 +1735,20 @@ if __name__ == "__main__":
         if BOOT_COUNT > 1:
             print(f"  ↑ This is a RESTART (boot #{BOOT_COUNT}), not a periodic refresh")
             # CRITICAL: Clear stale clients from previous event loop
-            # Old TelegramClient objects are bound to the dead loop and MUST be discarded.
-            # Without this, connect() would see them as "alive" and skip disconnect,
-            # then Telethon creates a NEW connection → Telegram sees 2 auth keys → REVOKES BOTH.
             print(f"  [CLEANUP] Clearing {len(clients)} stale clients from previous loop...")
             clients.clear()
             accounts.clear()
+            # Release session locks from previous crash so we can re-acquire them
+            try:
+                import httpx as _hx
+                _hx.post(
+                    f"{BACKEND_URL}/runner-tasks/unlock",
+                    headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+                    json={"server_id": RUNNER_INSTANCE_ID}, timeout=15
+                )
+                print(f"  [SESSION-LOCK] Released stale locks for instance {RUNNER_INSTANCE_ID}")
+            except:
+                pass
         
         try:
             asyncio.run(main())
