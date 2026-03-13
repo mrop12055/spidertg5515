@@ -1546,6 +1546,7 @@ async def main():
     print("="*50)
     print("  TelegramCRM - ULTRA-SIMPLIFIED RUNNER")
     print(f"  BUILD: {BUILD_VERSION}")
+    print(f"  INSTANCE: {RUNNER_INSTANCE_ID}")
     print("="*50)
     print("  TRUTH: Campaign = Conversation = Warmup")
     print("         They ALL just send messages!")
