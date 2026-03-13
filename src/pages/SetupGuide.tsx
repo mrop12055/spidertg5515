@@ -1710,8 +1710,9 @@ async def main():
             sys.stdout.flush()
             await asyncio.sleep(5)
     
-    # Shutdown
+    # Shutdown - release all session locks FIRST, then disconnect
     print("\\n  [SHUTDOWN]...")
+    await unlock_all_accounts()
     for c in clients.values():
         try:
             await asyncio.wait_for(c.disconnect(), timeout=5)
