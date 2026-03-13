@@ -265,7 +265,7 @@ async def get_tasks(include_accounts: bool = True) -> dict:
         r = await get_http().post(
             f"{BACKEND_URL}/runner-tasks/get",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"runner": "unified", "include_accounts": include_accounts}, timeout=60
+            json={"runner": "unified", "include_accounts": include_accounts, "server_id": RUNNER_INSTANCE_ID}, timeout=60
         )
         return r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
     except:
