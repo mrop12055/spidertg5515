@@ -259,6 +259,34 @@ async def update_proxy_status(proxy_id: str, status: str, error_msg: str = None)
         pass
 
 
+async def lock_accounts(account_ids: list):
+    """Lock accounts in DB so no other runner instance can connect them."""
+    if not account_ids:
+        return
+    try:
+        await get_http().post(
+            f"{BACKEND_URL}/runner-tasks/lock",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+            json={"account_ids": account_ids, "server_id": RUNNER_INSTANCE_ID}, timeout=15
+        )
+        print(f"  [SESSION-LOCK] Locked {len(account_ids)} accounts for instance {RUNNER_INSTANCE_ID}")
+    except Exception as e:
+        print(f"  [SESSION-LOCK] Lock failed: {e}")
+
+
+async def unlock_all_accounts():
+    """Release all account locks held by this runner instance."""
+    try:
+        await get_http().post(
+            f"{BACKEND_URL}/runner-tasks/unlock",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+            json={"server_id": RUNNER_INSTANCE_ID}, timeout=15
+        )
+        print(f"  [SESSION-LOCK] Unlocked all accounts for instance {RUNNER_INSTANCE_ID}")
+    except Exception as e:
+        print(f"  [SESSION-LOCK] Unlock failed: {e}")
+
+
 async def get_tasks(include_accounts: bool = True) -> dict:
     """Fetch tasks from backend. Accounts payload can be disabled to avoid huge responses."""
     try:
