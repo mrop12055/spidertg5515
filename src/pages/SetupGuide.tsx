@@ -1386,7 +1386,7 @@ async def setup_handlers():
             # IMPORTANT: do this defensively; some stale connections can block.
             connected = False
             try:
-                connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=0.5)
+                connected = await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=2)
             except Exception:
                 connected = False
             
