@@ -1169,7 +1169,23 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
             users_with_messages += 1
             
             # Always mark messages as read (even old ones)
-            await asyncio.wait_for(client.send_read_acknowledge(dialog.entity), timeout=10)
+            try:
+                await asyncio.wait_for(client.send_read_acknowledge(dialog.entity), timeout=10)
+            except Exception as read_err:
+                err_name = type(read_err).__name__
+                if "Frozen" in err_name or "frozen" in str(read_err).lower():
+                    print(f"  [FROZEN] [{phone}] Account is frozen by Telegram - disabling")
+                    await update_account_status(acc_id, "frozen", "Frozen by Telegram (ReadHistory failed)", auto_disabled=True)
+                    # Remove from active clients to stop further operations
+                    if acc_id in clients:
+                        try:
+                            await clients[acc_id].disconnect()
+                        except:
+                            pass
+                        del clients[acc_id]
+                    return
+                else:
+                    print(f"  [CATCHUP] [{phone}] Could not mark as read: {err_name}")
         
         if total_fetched > 0 or skipped_old > 0:
             print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages from {users_with_messages} users, skipped {skipped_old} old")
