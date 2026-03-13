@@ -135,10 +135,10 @@ serve(async (req) => {
 
     // Route: HEARTBEAT
     if (path === '/heartbeat') {
-      const { runner } = body;
+      const { runner, server_id } = body;
       if (runner) {
         await supabase.from("runner_heartbeats").upsert(
-          { runner_name: runner, last_seen: new Date().toISOString(), status: 'online' },
+          { runner_name: runner, last_seen: new Date().toISOString(), status: 'online', server_id: server_id || 'legacy' },
           { onConflict: 'runner_name' }
         );
       }
