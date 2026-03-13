@@ -725,7 +725,13 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
             target = td.get("target") or td.get("chat_id") or task.get("target")
             if target:
                 entity = await asyncio.wait_for(client.get_input_entity(target), timeout=10)
-                await asyncio.wait_for(client.send_read_acknowledge(entity), timeout=10)
+                try:
+                    await asyncio.wait_for(client.send_read_acknowledge(entity), timeout=10)
+                except Exception as read_err:
+                    if "Frozen" in type(read_err).__name__ or "frozen" in str(read_err).lower():
+                        await update_account_status(acc_id, "frozen", "Frozen by Telegram", auto_disabled=True)
+                        return False, "Account frozen by Telegram"
+                    raise
                 await report("read_messages", {"task_id": task_id, "account_id": acc_id, "success": True})
                 return True, None
             return False, "No target"
@@ -1169,7 +1175,23 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
             users_with_messages += 1
             
             # Always mark messages as read (even old ones)
-            await asyncio.wait_for(client.send_read_acknowledge(dialog.entity), timeout=10)
+            try:
+                await asyncio.wait_for(client.send_read_acknowledge(dialog.entity), timeout=10)
+            except Exception as read_err:
+                err_name = type(read_err).__name__
+                if "Frozen" in err_name or "frozen" in str(read_err).lower():
+                    print(f"  [FROZEN] [{phone}] Account is frozen by Telegram - disabling")
+                    await update_account_status(acc_id, "frozen", "Frozen by Telegram (ReadHistory failed)", auto_disabled=True)
+                    # Remove from active clients to stop further operations
+                    if acc_id in clients:
+                        try:
+                            await clients[acc_id].disconnect()
+                        except:
+                            pass
+                        del clients[acc_id]
+                    return
+                else:
+                    print(f"  [CATCHUP] [{phone}] Could not mark as read: {err_name}")
         
         if total_fetched > 0 or skipped_old > 0:
             print(f"  [CATCHUP] [{phone}] Synced {total_fetched} messages from {users_with_messages} users, skipped {skipped_old} old")
