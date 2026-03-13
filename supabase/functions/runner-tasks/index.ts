@@ -280,6 +280,22 @@ async function handleGetTasks(supabase: any, body: any) {
 
   const { data: accounts, error: accountsError } = await accountsQuery;
 
+  // SESSION LOCK: Filter out accounts locked by a DIFFERENT runner instance
+  // An account is considered "stale locked" if locked_at is older than 60 seconds
+  // (the runner sends lock renewals every poll cycle ~10s)
+  const staleLockThreshold = new Date(Date.now() - 60 * 1000).toISOString();
+  const filteredAccounts = (accounts || []).filter((a: any) => {
+    // No lock = available
+    if (!a.locked_by) return true;
+    // Locked by THIS instance = available
+    if (a.locked_by === server_id) return true;
+    // Stale lock (other instance crashed) = available, clear the lock
+    if (a.locked_at && a.locked_at < staleLockThreshold) return true;
+    // Locked by another active instance = BLOCKED
+    console.log(`[session-lock] Account ${a.phone_number} locked by ${a.locked_by}, skipping for ${server_id}`);
+    return false;
+  });
+
   if (accountsError || !accounts?.length) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No active accounts" });
   }
