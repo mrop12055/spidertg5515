@@ -725,7 +725,13 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
             target = td.get("target") or td.get("chat_id") or task.get("target")
             if target:
                 entity = await asyncio.wait_for(client.get_input_entity(target), timeout=10)
-                await asyncio.wait_for(client.send_read_acknowledge(entity), timeout=10)
+                try:
+                    await asyncio.wait_for(client.send_read_acknowledge(entity), timeout=10)
+                except Exception as read_err:
+                    if "Frozen" in type(read_err).__name__ or "frozen" in str(read_err).lower():
+                        await update_account_status(acc_id, "frozen", "Frozen by Telegram", auto_disabled=True)
+                        return False, "Account frozen by Telegram"
+                    raise
                 await report("read_messages", {"task_id": task_id, "account_id": acc_id, "success": True})
                 return True, None
             return False, "No target"
