@@ -1145,6 +1145,8 @@ export type Database = {
           last_campaign_send_at: string | null
           last_name: string | null
           last_spambot_check: string | null
+          locked_at: string | null
+          locked_by: string | null
           maturity_days: number | null
           maturity_score: number | null
           messages_sent_today: number | null
@@ -1192,6 +1194,8 @@ export type Database = {
           last_campaign_send_at?: string | null
           last_name?: string | null
           last_spambot_check?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
           maturity_days?: number | null
           maturity_score?: number | null
           messages_sent_today?: number | null
@@ -1239,6 +1243,8 @@ export type Database = {
           last_campaign_send_at?: string | null
           last_name?: string | null
           last_spambot_check?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
           maturity_days?: number | null
           maturity_score?: number | null
           messages_sent_today?: number | null
