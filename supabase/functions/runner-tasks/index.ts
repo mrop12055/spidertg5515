@@ -147,6 +147,37 @@ serve(async (req) => {
       });
     }
 
+    // Route: LOCK ACCOUNTS (runner claims accounts on connect)
+    if (path === '/lock') {
+      const { account_ids: lockIds, server_id: lockServerId } = body;
+      if (lockIds?.length && lockServerId) {
+        const nowIso = new Date().toISOString();
+        await supabase.from("telegram_accounts")
+          .update({ locked_by: lockServerId, locked_at: nowIso })
+          .in("id", lockIds)
+          .or(`locked_by.is.null,locked_by.eq.${lockServerId}`);
+        console.log(`[session-lock] Locked ${lockIds.length} accounts for ${lockServerId}`);
+      }
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Route: UNLOCK ACCOUNTS (runner releases accounts on shutdown)
+    if (path === '/unlock') {
+      const { server_id: unlockServerId } = body;
+      if (unlockServerId) {
+        const { data: unlocked } = await supabase.from("telegram_accounts")
+          .update({ locked_by: null, locked_at: null })
+          .eq("locked_by", unlockServerId)
+          .select("id");
+        console.log(`[session-lock] Unlocked ${unlocked?.length || 0} accounts for ${unlockServerId}`);
+      }
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     return new Response(JSON.stringify({ error: "Not found", path }), {
       status: 404,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
