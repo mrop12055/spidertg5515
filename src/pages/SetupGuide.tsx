@@ -1268,7 +1268,7 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
         if not c:
             continue
         try:
-            ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=0.5)
+            ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=2)
             if ok:
                 already_connected.add(aid)
         except Exception:
