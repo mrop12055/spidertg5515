@@ -296,12 +296,12 @@ async function handleGetTasks(supabase: any, body: any) {
     return false;
   });
 
-  if (accountsError || !accounts?.length) {
+  if (accountsError || !filteredAccounts?.length) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No active accounts" });
   }
 
   // Accounts that can SEND new campaign messages (active only, under daily limit)
-  const sendableAccounts = accounts.filter((a: any) => {
+  const sendableAccounts = filteredAccounts.filter((a: any) => {
     if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
     if (a.status !== 'active') return false; // Only active accounts can send to new recipients
     const limit = config.campaignMessagesPerAccountPerDay || a.daily_limit || config.dailyLimit;
@@ -310,7 +310,7 @@ async function handleGetTasks(supabase: any, body: any) {
   });
 
   // Accounts that can LISTEN for incoming messages (broader list includes cooldown/restricted)
-  const connectableAccounts = accounts.filter((a: any) => {
+  const connectableAccounts = filteredAccounts.filter((a: any) => {
     if (!a.proxy_id || !a.proxies || a.proxies.status !== 'active') return false;
     // cooldown/restricted accounts can still listen for incoming messages
     return ['active', 'cooldown', 'restricted'].includes(a.status);
