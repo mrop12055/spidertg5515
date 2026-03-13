@@ -135,10 +135,10 @@ serve(async (req) => {
 
     // Route: HEARTBEAT
     if (path === '/heartbeat') {
-      const { runner } = body;
+      const { runner, server_id } = body;
       if (runner) {
         await supabase.from("runner_heartbeats").upsert(
-          { runner_name: runner, last_seen: new Date().toISOString(), status: 'online' },
+          { runner_name: runner, last_seen: new Date().toISOString(), status: 'online', server_id: server_id || 'legacy' },
           { onConflict: 'runner_name' }
         );
       }
@@ -163,7 +163,7 @@ serve(async (req) => {
 
 // ==================== GET TASKS ====================
 async function handleGetTasks(supabase: any, body: any) {
-  const { runner, account_ids } = body;
+  const { runner, account_ids, server_id } = body;
   // IMPORTANT: for large fleets (500+ accounts), returning the full accounts payload every poll
   // can be huge and make the Python runner appear "stuck" after CATCHUP (JSON parse / IO).
   // Default is backwards compatible (include accounts). Runner can opt-out by sending include_accounts=false.
@@ -175,22 +175,27 @@ async function handleGetTasks(supabase: any, body: any) {
   const config = parseSettings(settingsData);
   const batch_size = config.campaignBatchSize;
 
-  console.log(`[runner-tasks/get] Runner: ${runner}, batch_size: ${batch_size} (from settings)`);
+  console.log(`[runner-tasks/get] Runner: ${runner}, server_id: ${server_id || 'legacy'}, batch_size: ${batch_size} (from settings)`);
 
   // Fetch last_offline_at BEFORE updating heartbeat (to know when we were last offline)
   let lastOfflineAt: string | null = null;
   if (runner) {
     const { data: heartbeat } = await supabase
       .from("runner_heartbeats")
-      .select("last_offline_at")
+      .select("last_offline_at, server_id")
       .eq("runner_name", runner)
       .single();
     
     lastOfflineAt = heartbeat?.last_offline_at || null;
     
-    // Now record the heartbeat (this updates last_seen)
+    // Warn if a different runner instance is already active (duplicate runner detection)
+    if (heartbeat?.server_id && server_id && heartbeat.server_id !== server_id && heartbeat.server_id !== 'legacy') {
+      console.warn(`[runner-tasks/get] ⚠️ DUPLICATE RUNNER DETECTED! Existing: ${heartbeat.server_id}, New: ${server_id}`);
+    }
+    
+    // Now record the heartbeat (this updates last_seen + server_id)
     supabase.from("runner_heartbeats")
-      .upsert({ runner_name: runner, last_seen: nowIso, status: 'online' }, { onConflict: 'runner_name' })
+      .upsert({ runner_name: runner, last_seen: nowIso, status: 'online', server_id: server_id || 'legacy' }, { onConflict: 'runner_name' })
       .then(() => {});
   }
 

@@ -89,6 +89,10 @@ clients: Dict[str, Any] = {}      # account_id -> TelegramClient
 accounts: Dict[str, dict] = {}    # account_id -> account info
 RUNNING = True
 
+# Unique instance ID to detect multiple runners fighting over same accounts
+import uuid as _uuid_mod
+RUNNER_INSTANCE_ID = str(_uuid_mod.uuid4())[:8]
+
 # Track processed message IDs to avoid re-sending to backend
 # Key format: "{account_id}_{telegram_message_id}"
 processed_message_ids = set()
@@ -153,9 +157,18 @@ def get_http() -> httpx.AsyncClient:
 
 def decode_session(phone: str, b64: str) -> Optional[str]:
     path = os.path.join(SESSION_FOLDER, phone.replace("+", ""))
+    session_file = path + ".session"
     try:
-        with open(path + ".session", "wb") as f:
-            f.write(base64.b64decode(b64))
+        raw = base64.b64decode(b64)
+        # Skip rewrite if file already exists with identical content
+        # Prevents corruption when parallel tasks decode the same session
+        if os.path.exists(session_file):
+            with open(session_file, "rb") as f:
+                existing = f.read()
+            if existing == raw:
+                return path
+        with open(session_file, "wb") as f:
+            f.write(raw)
         return path
     except:
         return None
@@ -252,7 +265,7 @@ async def get_tasks(include_accounts: bool = True) -> dict:
         r = await get_http().post(
             f"{BACKEND_URL}/runner-tasks/get",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"runner": "unified", "include_accounts": include_accounts}, timeout=60
+            json={"runner": "unified", "include_accounts": include_accounts, "server_id": RUNNER_INSTANCE_ID}, timeout=60
         )
         return r.json() if r.status_code == 200 else {"tasks": [], "accounts": []}
     except:
@@ -1134,8 +1147,23 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         return None, "No ID"
     
     async with get_lock(aid):
-        if aid in clients and clients[aid].is_connected():
-            return clients[aid], None
+        # FIX: Disconnect stale client BEFORE creating a new one
+        # Without this, Telegram sees 2 connections with same auth key and revokes BOTH
+        if aid in clients:
+            old = clients[aid]
+            try:
+                still_alive = await asyncio.wait_for(asyncio.to_thread(old.is_connected), timeout=2)
+            except Exception:
+                still_alive = False
+            if still_alive:
+                return old, None
+            # Old client exists but is dead — disconnect it properly
+            print(f"  [CLEANUP] [{phone[-4:]}] Disconnecting stale client before reconnect")
+            try:
+                await asyncio.wait_for(old.disconnect(), timeout=5)
+            except Exception:
+                pass
+            del clients[aid]
         
         # Validation checks - report specific failures
         if not acc.get("session_data"):
@@ -1240,7 +1268,7 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
         if not c:
             continue
         try:
-            ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=0.5)
+            ok = await asyncio.wait_for(asyncio.to_thread(c.is_connected), timeout=2)
             if ok:
                 already_connected.add(aid)
         except Exception:
@@ -1518,6 +1546,7 @@ async def main():
     print("="*50)
     print("  TelegramCRM - ULTRA-SIMPLIFIED RUNNER")
     print(f"  BUILD: {BUILD_VERSION}")
+    print(f"  INSTANCE: {RUNNER_INSTANCE_ID}")
     print("="*50)
     print("  TRUTH: Campaign = Conversation = Warmup")
     print("         They ALL just send messages!")
