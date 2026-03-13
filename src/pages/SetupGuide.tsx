@@ -1147,8 +1147,23 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         return None, "No ID"
     
     async with get_lock(aid):
-        if aid in clients and clients[aid].is_connected():
-            return clients[aid], None
+        # FIX: Disconnect stale client BEFORE creating a new one
+        # Without this, Telegram sees 2 connections with same auth key and revokes BOTH
+        if aid in clients:
+            old = clients[aid]
+            try:
+                still_alive = await asyncio.wait_for(asyncio.to_thread(old.is_connected), timeout=2)
+            except Exception:
+                still_alive = False
+            if still_alive:
+                return old, None
+            # Old client exists but is dead — disconnect it properly
+            print(f"  [CLEANUP] [{phone[-4:]}] Disconnecting stale client before reconnect")
+            try:
+                await asyncio.wait_for(old.disconnect(), timeout=5)
+            except Exception:
+                pass
+            del clients[aid]
         
         # Validation checks - report specific failures
         if not acc.get("session_data"):
