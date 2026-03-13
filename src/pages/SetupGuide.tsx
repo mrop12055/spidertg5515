@@ -66,6 +66,15 @@ threading.excepthook = _global_thread_exception
 def _asyncio_exception_handler(loop, context):
     msg = context.get("message", "No message")
     exc = context.get("exception")
+    
+    # Silently ignore known Windows networking errors (proxy/VPS instability)
+    if exc and isinstance(exc, OSError):
+        err_str = str(exc)
+        if "WinError 121" in err_str or "semaphore timeout" in err_str.lower():
+            print(f"  [NET] Windows semaphore timeout (proxy/network glitch) - ignored")
+            sys.stdout.flush()
+            return
+    
     print(f"\\n{'='*50}")
     print(f"  [ASYNCIO-CRASH] Unhandled asyncio exception: {msg}")
     if exc:
