@@ -182,7 +182,7 @@ async function handleGetTasks(supabase: any, body: any) {
   if (runner) {
     const { data: heartbeat } = await supabase
       .from("runner_heartbeats")
-      .select("last_offline_at, server_id")
+      .select("last_offline_at, server_id, last_seen")
       .eq("runner_name", runner)
       .single();
     
