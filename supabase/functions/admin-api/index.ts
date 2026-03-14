@@ -325,10 +325,14 @@ serve(async (req) => {
       for (const acc of accounts) {
         const phone = acc.phone_number || acc.phone;
         
+        // Resolve field name variations
+        const resolvedApiId = (acc.api_id || acc.app_id)?.toString() || null;
+        const resolvedApiHash = acc.api_hash || acc.app_hash || null;
+        
         // Track metadata stats for all accounts
-        if (acc.api_id && acc.api_hash) metadataStats.with_json_api++;
-        if (acc.device_model || acc.system_version) metadataStats.with_json_fingerprint++;
-        if (acc.two_fa_password) metadataStats.with_2fa++;
+        if (resolvedApiId && resolvedApiHash) metadataStats.with_json_api++;
+        if (acc.device_model || acc.device || acc.system_version || acc.sdk) metadataStats.with_json_fingerprint++;
+        if (acc.two_fa_password || acc.twoFA || acc['2fa']) metadataStats.with_2fa++;
 
         // Skip if already exists
         if (existingPhoneSet.has(phone)) continue;
@@ -340,15 +344,15 @@ serve(async (req) => {
           last_name: acc.last_name,
           username: acc.username,
           telegram_id: acc.telegram_id,
-          api_id: acc.api_id,
-          api_hash: acc.api_hash,
-          device_model: acc.device_model,
-          system_version: acc.system_version,
-          app_version: acc.app_version,
-          build_id: acc.build_id,
-          lang_code: acc.lang_code || 'en',
-          system_lang_code: acc.system_lang_code || 'en-US',
-          two_fa_password: acc.two_fa_password,
+          api_id: resolvedApiId,
+          api_hash: resolvedApiHash,
+          device_model: acc.device_model || acc.device || null,
+          system_version: acc.system_version || acc.sdk || null,
+          app_version: acc.app_version || null,
+          build_id: acc.build_id || null,
+          lang_code: acc.lang_code || acc.lang_pack || 'en',
+          system_lang_code: acc.system_lang_code || acc.system_lang_pack || 'en-US',
+          two_fa_password: acc.two_fa_password || acc.twoFA || acc['2fa'] || null,
           tags: tags || [],
           status: 'disconnected',
         });
