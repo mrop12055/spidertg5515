@@ -1310,14 +1310,14 @@ const SeatChat: React.FC = () => {
                   ? `${filteredConversations.length} chats` 
                   : 'Performance metrics'}
               </span>
+              <span className="text-[10px] text-muted-foreground/70 border-l border-border/40 pl-2 ml-1">
+                📞 Contact <a href="https://t.me/spiderman3031" target="_blank" rel="noopener noreferrer" className="text-primary font-semibold hover:underline">@spiderman3031</a> for number uploading
+              </span>
             </div>
             <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] px-2 py-0.5 font-semibold rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse" />
               Live
             </Badge>
-          </div>
-          <div className="mt-1.5 bg-primary/10 border border-primary/20 rounded-md px-2.5 py-1.5 text-[11px] text-muted-foreground">
-            📞 For number uploading, contact <a href="https://t.me/spiderman3031" target="_blank" rel="noopener noreferrer" className="text-primary font-semibold hover:underline">@spiderman3031</a>
           </div>
         </header>
 
