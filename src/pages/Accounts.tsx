@@ -683,7 +683,7 @@ const Accounts: React.FC = () => {
       setUploadProgress({ processed: 0, total: totalAccounts, currentChunk: 0, totalChunks });
 
       for (let i = 0; i < totalAccounts; i += CHUNK_SIZE) {
-        const chunk = accountsToUpload.slice(i, i + CHUNK_SIZE);
+        const chunk = accountsData.slice(i, i + CHUNK_SIZE);
         const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
 
         setUploadProgress({ 
