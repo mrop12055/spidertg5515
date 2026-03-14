@@ -695,7 +695,7 @@ const Accounts: React.FC = () => {
 
         try {
           const { data, error } = await supabase.functions.invoke('admin-api', {
-            body: { path: '/upload-accounts', accounts: chunk, tags: tagsToAssign }
+            body: { path: '/upload-accounts', accounts: chunk, tags: tagsToAssign, update_existing: updateExisting }
           });
 
           if (error) {
