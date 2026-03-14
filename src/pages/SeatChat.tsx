@@ -1602,9 +1602,9 @@ const SeatChat: React.FC = () => {
             {/* Message Area with Contact Details */}
             <div className="flex-1 flex overflow-hidden">
               {/* Chat Container */}
-              <div className="flex-1 flex flex-col overflow-hidden p-4 lg:p-6">
+              <div className="flex-1 flex flex-col overflow-hidden">
                 {selectedConversation ? (
-                  <div className="flex-1 flex flex-col bg-gradient-to-b from-card to-card/95 rounded-2xl shadow-2xl border border-border/30 overflow-hidden">
+                  <div className="flex-1 flex flex-col overflow-hidden">
                     {/* Chat Header */}
                     <div className="bg-card/80 backdrop-blur-sm border-b border-border/30 px-5 py-4 flex items-center justify-between flex-shrink-0">
                       <div className="flex items-center gap-4">
