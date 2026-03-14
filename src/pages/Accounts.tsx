@@ -151,6 +151,7 @@ const Accounts: React.FC = () => {
   const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
   const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
   const [autoAssignProxy, setAutoAssignProxy] = useState(false); // Auto-assign proxies during upload
+  const [updateExisting, setUpdateExisting] = useState(false); // Overwrite metadata for existing accounts
   const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0, currentChunk: 0, totalChunks: 0 });
   
   // Bulk selection state
@@ -616,6 +617,28 @@ const Accounts: React.FC = () => {
       // Handle all known field name variations from different JSON formats
       const accountsToUpload = sessionFiles.map(sf => {
         const metadata = (sf as any).metadata as JsonMetadata | undefined;
+        const apiId = (metadata?.api_id || metadata?.app_id)?.toString();
+        return { apiId, phoneNumber: sf.phoneNumber }; // temp for validation
+      });
+
+      // === SHARED API VALIDATION ===
+      const apiIdCounts = new Map<string, number>();
+      for (const acc of accountsToUpload) {
+        if (acc.apiId) {
+          apiIdCounts.set(acc.apiId, (apiIdCounts.get(acc.apiId) || 0) + 1);
+        }
+      }
+      const sharedApis = [...apiIdCounts.entries()].filter(([, count]) => count > 1);
+      if (sharedApis.length > 0) {
+        const [sharedId, sharedCount] = sharedApis[0];
+        toast.error(`Upload blocked: ${sharedCount} accounts share API ID ${sharedId}. Each account must have unique API credentials.`);
+        setIsUploading(false);
+        return;
+      }
+
+      // Re-build full account data now that validation passed
+      const accountsData = sessionFiles.map(sf => {
+        const metadata = (sf as any).metadata as JsonMetadata | undefined;
         return {
           phone_number: sf.phoneNumber,
           session_data: sf.base64Data,
@@ -643,10 +666,11 @@ const Accounts: React.FC = () => {
 
       // Process in chunks of 300 for speed and reliability
       const CHUNK_SIZE = 300;
-      const totalAccounts = accountsToUpload.length;
+      const totalAccounts = accountsData.length;
       const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
       let totalSuccessful = 0;
       let totalSkipped = 0;
+      let totalUpdated = 0;
       let totalFailed = 0;
       const allAccountIds: string[] = [];
       // Aggregate metadata stats across chunks
@@ -660,7 +684,7 @@ const Accounts: React.FC = () => {
       setUploadProgress({ processed: 0, total: totalAccounts, currentChunk: 0, totalChunks });
 
       for (let i = 0; i < totalAccounts; i += CHUNK_SIZE) {
-        const chunk = accountsToUpload.slice(i, i + CHUNK_SIZE);
+        const chunk = accountsData.slice(i, i + CHUNK_SIZE);
         const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
 
         setUploadProgress({ 
@@ -672,15 +696,16 @@ const Accounts: React.FC = () => {
 
         try {
           const { data, error } = await supabase.functions.invoke('admin-api', {
-            body: { path: '/upload-accounts', accounts: chunk, tags: tagsToAssign }
+            body: { path: '/upload-accounts', accounts: chunk, tags: tagsToAssign, update_existing: updateExisting }
           });
 
           if (error) {
             console.error(`Chunk ${chunkNumber} error:`, error);
             totalFailed += chunk.length;
           } else {
-            totalSuccessful += data.successful || 0;
+             totalSuccessful += data.successful || 0;
             totalSkipped += data.skipped || 0;
+            totalUpdated += data.updated || 0;
             totalFailed += data.failed || 0;
             if (data.account_ids) {
               allAccountIds.push(...data.account_ids);
@@ -713,7 +738,8 @@ const Accounts: React.FC = () => {
         const statsMsg = aggregatedStats.with_json_api > 0 
           ? ` (${aggregatedStats.with_json_api} with API, ${aggregatedStats.with_json_fingerprint} with fingerprint${aggregatedStats.with_2fa > 0 ? `, ${aggregatedStats.with_2fa} with 2FA` : ''})`
           : '';
-        toast.success(`Uploaded ${totalSuccessful} account(s)${statsMsg}`);
+        const updatedMsg = totalUpdated > 0 ? `, ${totalUpdated} updated` : '';
+        toast.success(`Uploaded ${totalSuccessful} account(s)${updatedMsg}${statsMsg}`);
         
         // Auto-assign proxies if enabled
         if (autoAssignProxy && allAccountIds.length > 0) {
@@ -2750,6 +2776,26 @@ const Accounts: React.FC = () => {
                             {uploadTags.length + (newUploadTag.trim() ? 1 : 0)} tag(s) will be assigned to {sessionFiles.length} account(s)
                           </p>
                         )}
+                      </div>
+                    )}
+
+                    {/* Update existing accounts option */}
+                    {sessionFiles.length > 0 && (
+                      <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+                        <Checkbox
+                          id="update-existing"
+                          checked={updateExisting}
+                          onCheckedChange={(checked) => setUpdateExisting(checked === true)}
+                        />
+                        <div className="flex-1">
+                          <Label htmlFor="update-existing" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                            <RefreshCw className="w-4 h-4" />
+                            Update existing accounts
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Overwrite metadata (API, fingerprint, 2FA) for accounts that already exist
+                          </p>
+                        </div>
                       </div>
                     )}
 

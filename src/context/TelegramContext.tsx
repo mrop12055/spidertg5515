@@ -749,13 +749,20 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             const metadata = jsonFiles[basename] || {};
             
             accountsToUpload.push({
-              phone_number: metadata.phone_number || basename.replace(/[^0-9+]/g, ''),
+              phone_number: metadata.phone || metadata.phone_number || basename.replace(/[^0-9+]/g, ''),
               first_name: metadata.first_name || metadata.firstName,
               last_name: metadata.last_name || metadata.lastName,
               username: metadata.username,
               session_data: sessionData,
-              api_id: metadata.api_id,
-              api_hash: metadata.api_hash,
+              api_id: (metadata.api_id || metadata.app_id)?.toString(),
+              api_hash: metadata.api_hash || metadata.app_hash,
+              device_model: metadata.device_model || metadata.device,
+              system_version: metadata.system_version || metadata.sdk,
+              app_version: metadata.app_version,
+              build_id: metadata.build_id,
+              lang_code: metadata.lang_code || metadata.lang_pack,
+              system_lang_code: metadata.system_lang_code || metadata.system_lang_pack,
+              two_fa_password: metadata.two_fa_password || metadata.twoFA || metadata['2fa'],
             });
           }
 
@@ -765,13 +772,20 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             
             if (metadata.session_string || metadata.session_data) {
               accountsToUpload.push({
-                phone_number: metadata.phone_number || basename.replace(/[^0-9+]/g, ''),
+                phone_number: metadata.phone || metadata.phone_number || basename.replace(/[^0-9+]/g, ''),
                 first_name: metadata.first_name || metadata.firstName,
                 last_name: metadata.last_name || metadata.lastName,
                 username: metadata.username,
                 session_data: metadata.session_string || metadata.session_data,
-                api_id: metadata.api_id,
-                api_hash: metadata.api_hash,
+                api_id: (metadata.api_id || metadata.app_id)?.toString(),
+                api_hash: metadata.api_hash || metadata.app_hash,
+                device_model: metadata.device_model || metadata.device,
+                system_version: metadata.system_version || metadata.sdk,
+                app_version: metadata.app_version,
+                build_id: metadata.build_id,
+                lang_code: metadata.lang_code || metadata.lang_pack,
+                system_lang_code: metadata.system_lang_code || metadata.system_lang_pack,
+                two_fa_password: metadata.two_fa_password || metadata.twoFA || metadata['2fa'],
               });
             }
           }
@@ -787,13 +801,20 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             for (const acc of accountsArray) {
               if (acc.session_string || acc.session_data) {
                 accountsToUpload.push({
-                  phone_number: acc.phone_number,
+                  phone_number: acc.phone || acc.phone_number,
                   first_name: acc.first_name || acc.firstName,
                   last_name: acc.last_name || acc.lastName,
                   username: acc.username,
                   session_data: acc.session_string || acc.session_data,
-                  api_id: acc.api_id,
-                  api_hash: acc.api_hash,
+                  api_id: (acc.api_id || acc.app_id)?.toString(),
+                  api_hash: acc.api_hash || acc.app_hash,
+                  device_model: acc.device_model || acc.device,
+                  system_version: acc.system_version || acc.sdk,
+                  app_version: acc.app_version,
+                  build_id: acc.build_id,
+                  lang_code: acc.lang_code || acc.lang_pack,
+                  system_lang_code: acc.system_lang_code || acc.system_lang_pack,
+                  two_fa_password: acc.two_fa_password || acc.twoFA || acc['2fa'],
                 });
               }
             }

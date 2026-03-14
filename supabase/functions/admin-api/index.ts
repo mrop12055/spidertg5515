@@ -293,8 +293,24 @@ serve(async (req) => {
 
     // ==================== UPLOAD ACCOUNTS ====================
     if (path === '/upload-accounts' && method === 'POST') {
-      const { accounts, tags } = body;
+      const { accounts, tags, update_existing } = body;
       if (!accounts?.length) return jsonResponse({ error: "accounts array required" }, 400);
+
+      // === SERVER-SIDE SHARED API VALIDATION ===
+      const apiIdCounts = new Map<string, number>();
+      for (const acc of accounts) {
+        const apiId = (acc.api_id || acc.app_id)?.toString();
+        if (apiId) {
+          apiIdCounts.set(apiId, (apiIdCounts.get(apiId) || 0) + 1);
+        }
+      }
+      const sharedApis = [...apiIdCounts.entries()].filter(([, count]) => count > 1);
+      if (sharedApis.length > 0) {
+        const [sharedId, sharedCount] = sharedApis[0];
+        return jsonResponse({ 
+          error: `Upload blocked: ${sharedCount} accounts share API ID ${sharedId}. Each account must have unique API credentials.` 
+        }, 400);
+      }
 
       const metadataStats = {
         with_json_api: 0,
@@ -309,7 +325,7 @@ serve(async (req) => {
       // Step 1: Fetch existing phone numbers in ONE query
       const { data: existingAccounts, error: fetchError } = await supabase
         .from('telegram_accounts')
-        .select('phone_number')
+        .select('id, phone_number')
         .in('phone_number', incomingPhones);
 
       if (fetchError) {
@@ -317,21 +333,59 @@ serve(async (req) => {
         throw fetchError;
       }
 
-      const existingPhoneSet = new Set((existingAccounts || []).map((a: any) => a.phone_number));
-      const skipped = existingPhoneSet.size;
+      const existingPhoneMap = new Map((existingAccounts || []).map((a: any) => [a.phone_number, a.id]));
+      let skipped = 0;
+      let updated = 0;
 
-      // Step 2: Filter out duplicates and prepare new accounts
+      // Step 2: If update_existing, update metadata for existing accounts
+      if (update_existing && existingPhoneMap.size > 0) {
+        for (const acc of accounts) {
+          const phone = acc.phone_number || acc.phone;
+          const existingId = existingPhoneMap.get(phone);
+          if (!existingId) continue;
+
+          const apiId = (acc.api_id || acc.app_id)?.toString();
+          const apiHash = acc.api_hash || acc.app_hash;
+
+          const updateData: any = {};
+          if (apiId) updateData.api_id = apiId;
+          if (apiHash) updateData.api_hash = apiHash;
+          if (acc.device_model || acc.device) updateData.device_model = acc.device_model || acc.device;
+          if (acc.system_version || acc.sdk) updateData.system_version = acc.system_version || acc.sdk;
+          if (acc.app_version) updateData.app_version = acc.app_version;
+          if (acc.build_id) updateData.build_id = acc.build_id;
+          if (acc.lang_code || acc.lang_pack) updateData.lang_code = acc.lang_code || acc.lang_pack;
+          if (acc.system_lang_code || acc.system_lang_pack) updateData.system_lang_code = acc.system_lang_code || acc.system_lang_pack;
+          if (acc.two_fa_password || acc.twoFA || acc['2fa']) updateData.two_fa_password = acc.two_fa_password || acc.twoFA || acc['2fa'];
+          if (acc.session_data) updateData.session_data = acc.session_data;
+
+          if (Object.keys(updateData).length > 0) {
+            const { error: updateError } = await supabase
+              .from('telegram_accounts')
+              .update(updateData)
+              .eq('id', existingId);
+            if (!updateError) updated++;
+          }
+        }
+        console.log(`[admin-api] Updated metadata for ${updated} existing accounts`);
+      } else {
+        skipped = existingPhoneMap.size;
+      }
+
+      // Step 3: Filter out existing accounts and prepare new ones
       const newAccounts: any[] = [];
       for (const acc of accounts) {
         const phone = acc.phone_number || acc.phone;
         
         // Track metadata stats for all accounts
-        if (acc.api_id && acc.api_hash) metadataStats.with_json_api++;
-        if (acc.device_model || acc.system_version) metadataStats.with_json_fingerprint++;
-        if (acc.two_fa_password) metadataStats.with_2fa++;
+        const apiId = (acc.api_id || acc.app_id)?.toString();
+        const apiHash = acc.api_hash || acc.app_hash;
+        if (apiId && apiHash) metadataStats.with_json_api++;
+        if (acc.device_model || acc.device || acc.system_version || acc.sdk) metadataStats.with_json_fingerprint++;
+        if (acc.two_fa_password || acc.twoFA || acc['2fa']) metadataStats.with_2fa++;
 
         // Skip if already exists
-        if (existingPhoneSet.has(phone)) continue;
+        if (existingPhoneMap.has(phone)) continue;
 
         newAccounts.push({
           phone_number: phone,
@@ -340,21 +394,21 @@ serve(async (req) => {
           last_name: acc.last_name,
           username: acc.username,
           telegram_id: acc.telegram_id,
-          api_id: acc.api_id,
-          api_hash: acc.api_hash,
-          device_model: acc.device_model,
-          system_version: acc.system_version,
+          api_id: apiId,
+          api_hash: apiHash,
+          device_model: acc.device_model || acc.device,
+          system_version: acc.system_version || acc.sdk,
           app_version: acc.app_version,
           build_id: acc.build_id,
-          lang_code: acc.lang_code || 'en',
-          system_lang_code: acc.system_lang_code || 'en-US',
-          two_fa_password: acc.two_fa_password,
+          lang_code: acc.lang_code || acc.lang_pack || 'en',
+          system_lang_code: acc.system_lang_code || acc.system_lang_pack || 'en-US',
+          two_fa_password: acc.two_fa_password || acc.twoFA || acc['2fa'],
           tags: tags || [],
           status: 'disconnected',
         });
       }
 
-      // Step 3: Batch insert new accounts (if any)
+      // Step 4: Batch insert new accounts (if any)
       let successful = 0;
       let failed = 0;
       const accountIds: string[] = [];
@@ -367,7 +421,6 @@ serve(async (req) => {
 
         if (insertError) {
           console.error('[admin-api] Batch insert error:', insertError);
-          // If batch fails, try one-by-one as fallback
           for (const acc of newAccounts) {
             const { data, error } = await supabase
               .from('telegram_accounts')
@@ -388,12 +441,13 @@ serve(async (req) => {
         }
       }
 
-      console.log(`[admin-api] Upload complete: ${successful} new, ${skipped} skipped, ${failed} failed`);
+      console.log(`[admin-api] Upload complete: ${successful} new, ${skipped} skipped, ${updated} updated, ${failed} failed`);
 
       return jsonResponse({
         success: true,
         successful,
         skipped,
+        updated,
         failed,
         account_ids: accountIds,
         metadata_stats: metadataStats,
