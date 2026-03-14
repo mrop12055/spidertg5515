@@ -670,6 +670,7 @@ const Accounts: React.FC = () => {
       const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
       let totalSuccessful = 0;
       let totalSkipped = 0;
+      let totalUpdated = 0;
       let totalFailed = 0;
       const allAccountIds: string[] = [];
       // Aggregate metadata stats across chunks
