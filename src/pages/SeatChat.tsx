@@ -1310,11 +1310,20 @@ const SeatChat: React.FC = () => {
                   ? `${filteredConversations.length} chats` 
                   : 'Performance metrics'}
               </span>
-              <span className="text-xs border-l border-border/40 pl-2 ml-1">
-                <span className="text-destructive font-semibold">For number uploading contact the owner</span>
-                {' '}
-                <a href="https://t.me/spiderman3031" target="_blank" rel="noopener noreferrer" className="text-[hsl(var(--status-active))] font-bold hover:underline">📩 @spiderman3031</a>
-              </span>
+              <div className="flex items-center gap-1.5 border-l border-border/40 pl-2.5 ml-1.5">
+                <span className="inline-flex items-center gap-1 bg-destructive/10 text-destructive text-[11px] font-semibold px-2 py-0.5 rounded-md">
+                  ⚠️ Number uploading — contact owner
+                </span>
+                <a 
+                  href="https://t.me/spiderman3031" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="inline-flex items-center gap-1 bg-[hsl(var(--status-active))]/10 text-[hsl(var(--status-active))] text-[11px] font-bold px-2 py-0.5 rounded-md hover:bg-[hsl(var(--status-active))]/20 transition-colors"
+                >
+                  <svg className="w-3 h-3" viewBox="0 0 24 24" fill="currentColor"><path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/></svg>
+                  @spiderman3031
+                </a>
+              </div>
             </div>
             <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] px-2 py-0.5 font-semibold rounded-full">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse" />
