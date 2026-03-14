@@ -738,7 +738,8 @@ const Accounts: React.FC = () => {
         const statsMsg = aggregatedStats.with_json_api > 0 
           ? ` (${aggregatedStats.with_json_api} with API, ${aggregatedStats.with_json_fingerprint} with fingerprint${aggregatedStats.with_2fa > 0 ? `, ${aggregatedStats.with_2fa} with 2FA` : ''})`
           : '';
-        toast.success(`Uploaded ${totalSuccessful} account(s)${statsMsg}`);
+        const updatedMsg = totalUpdated > 0 ? `, ${totalUpdated} updated` : '';
+        toast.success(`Uploaded ${totalSuccessful} account(s)${updatedMsg}${statsMsg}`);
         
         // Auto-assign proxies if enabled
         if (autoAssignProxy && allAccountIds.length > 0) {
