@@ -337,20 +337,45 @@ const Proxies: React.FC = () => {
     await testBulkProxies();
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      // First remove proxy from any accounts using it
+  // Helper to chunk arrays for large .in() queries (URL length limit)
+  const chunkArray = <T,>(arr: T[], size: number): T[][] => {
+    const chunks: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) {
+      chunks.push(arr.slice(i, i + size));
+    }
+    return chunks;
+  };
+
+  const deleteProxyIds = async (ids: string[]) => {
+    const CHUNK_SIZE = 50;
+    const chunks = chunkArray(ids, CHUNK_SIZE);
+    
+    for (const chunk of chunks) {
+      // Remove proxy references from accounts
       await supabase
         .from('telegram_accounts')
         .update({ proxy_id: null })
-        .eq('proxy_id', id);
+        .in('proxy_id', chunk);
 
+      // Delete related proxy_errors (FK constraint)
+      await supabase
+        .from('proxy_errors')
+        .delete()
+        .in('proxy_id', chunk);
+
+      // Delete the proxies
       const { error } = await supabase
         .from('proxies')
         .delete()
-        .eq('id', id);
+        .in('id', chunk);
 
       if (error) throw error;
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteProxyIds([id]);
       toast.success('Proxy deleted');
       refreshData();
     } catch (error) {
@@ -364,18 +389,7 @@ const Proxies: React.FC = () => {
     
     setIsBulkDeleting(true);
     try {
-      // First remove proxies from accounts
-      await supabase
-        .from('telegram_accounts')
-        .update({ proxy_id: null })
-        .in('proxy_id', Array.from(selectedIds));
-
-      const { error } = await supabase
-        .from('proxies')
-        .delete()
-        .in('id', Array.from(selectedIds));
-
-      if (error) throw error;
+      await deleteProxyIds(Array.from(selectedIds));
       
       toast.success(`Deleted ${selectedIds.size} proxies`);
       setSelectedIds(new Set());
