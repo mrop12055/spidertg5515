@@ -749,13 +749,20 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             const metadata = jsonFiles[basename] || {};
             
             accountsToUpload.push({
-              phone_number: metadata.phone_number || basename.replace(/[^0-9+]/g, ''),
+              phone_number: metadata.phone_number || metadata.phone || basename.replace(/[^0-9+]/g, ''),
               first_name: metadata.first_name || metadata.firstName,
               last_name: metadata.last_name || metadata.lastName,
               username: metadata.username,
               session_data: sessionData,
-              api_id: metadata.api_id,
-              api_hash: metadata.api_hash,
+              api_id: (metadata.api_id || metadata.app_id)?.toString(),
+              api_hash: metadata.api_hash || metadata.app_hash,
+              device_model: metadata.device_model || metadata.device,
+              system_version: metadata.system_version || metadata.sdk,
+              app_version: metadata.app_version,
+              build_id: metadata.build_id,
+              lang_code: metadata.lang_code || metadata.lang_pack,
+              system_lang_code: metadata.system_lang_code || metadata.system_lang_pack,
+              two_fa_password: metadata.two_fa_password || metadata.twoFA || metadata['2fa'],
             });
           }
 
