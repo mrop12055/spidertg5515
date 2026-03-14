@@ -1151,6 +1151,7 @@ const SeatChat: React.FC = () => {
               </div>
             </div>
           )}
+          <ThemeToggle />
           <Button
             variant="ghost"
             size="icon"
