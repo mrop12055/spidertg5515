@@ -800,13 +800,19 @@ export const TelegramProvider: React.FC<{ children: ReactNode }> = ({ children }
             for (const acc of accountsArray) {
               if (acc.session_string || acc.session_data) {
                 accountsToUpload.push({
-                  phone_number: acc.phone_number,
+                  phone_number: acc.phone_number || acc.phone,
                   first_name: acc.first_name || acc.firstName,
                   last_name: acc.last_name || acc.lastName,
                   username: acc.username,
                   session_data: acc.session_string || acc.session_data,
-                  api_id: acc.api_id,
-                  api_hash: acc.api_hash,
+                  api_id: (acc.api_id || acc.app_id)?.toString(),
+                  api_hash: acc.api_hash || acc.app_hash,
+                  device_model: acc.device_model || acc.device,
+                  system_version: acc.system_version || acc.sdk,
+                  app_version: acc.app_version,
+                  lang_code: acc.lang_code || acc.lang_pack,
+                  system_lang_code: acc.system_lang_code || acc.system_lang_pack,
+                  two_fa_password: acc.two_fa_password || acc.twoFA || acc['2fa'],
                 });
               }
             }
