@@ -617,6 +617,28 @@ const Accounts: React.FC = () => {
       // Handle all known field name variations from different JSON formats
       const accountsToUpload = sessionFiles.map(sf => {
         const metadata = (sf as any).metadata as JsonMetadata | undefined;
+        const apiId = (metadata?.api_id || metadata?.app_id)?.toString();
+        return { apiId, phoneNumber: sf.phoneNumber }; // temp for validation
+      });
+
+      // === SHARED API VALIDATION ===
+      const apiIdCounts = new Map<string, number>();
+      for (const acc of accountsToUpload) {
+        if (acc.apiId) {
+          apiIdCounts.set(acc.apiId, (apiIdCounts.get(acc.apiId) || 0) + 1);
+        }
+      }
+      const sharedApis = [...apiIdCounts.entries()].filter(([, count]) => count > 1);
+      if (sharedApis.length > 0) {
+        const [sharedId, sharedCount] = sharedApis[0];
+        toast.error(`Upload blocked: ${sharedCount} accounts share API ID ${sharedId}. Each account must have unique API credentials.`);
+        setIsUploading(false);
+        return;
+      }
+
+      // Re-build full account data now that validation passed
+      const accountsData = sessionFiles.map(sf => {
+        const metadata = (sf as any).metadata as JsonMetadata | undefined;
         return {
           phone_number: sf.phoneNumber,
           session_data: sf.base64Data,
