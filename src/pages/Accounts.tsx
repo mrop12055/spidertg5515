@@ -2776,6 +2776,26 @@ const Accounts: React.FC = () => {
                       </div>
                     )}
 
+                    {/* Update existing accounts option */}
+                    {sessionFiles.length > 0 && (
+                      <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+                        <Checkbox
+                          id="update-existing"
+                          checked={updateExisting}
+                          onCheckedChange={(checked) => setUpdateExisting(checked === true)}
+                        />
+                        <div className="flex-1">
+                          <Label htmlFor="update-existing" className="text-sm font-medium cursor-pointer flex items-center gap-2">
+                            <RefreshCw className="w-4 h-4" />
+                            Update existing accounts
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Overwrite metadata (API, fingerprint, 2FA) for accounts that already exist
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
                     {/* Auto-assign proxy option */}
                     {sessionFiles.length > 0 && (
                       <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
