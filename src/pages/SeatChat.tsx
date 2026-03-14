@@ -1310,7 +1310,7 @@ const SeatChat: React.FC = () => {
                   ? `${filteredConversations.length} chats` 
                   : 'Performance metrics'}
               </span>
-              <span className="text-[10px] text-muted-foreground/70 border-l border-border/40 pl-2 ml-1">
+              <span className="text-xs text-muted-foreground/70 border-l border-border/40 pl-2 ml-1">
                 📞 Contact <a href="https://t.me/spiderman3031" target="_blank" rel="noopener noreferrer" className="text-primary font-semibold hover:underline">@spiderman3031</a> for number uploading
               </span>
             </div>
