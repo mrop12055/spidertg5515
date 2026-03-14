@@ -984,7 +984,7 @@ const Accounts: React.FC = () => {
         
         const { data: accountsData, error } = await supabase
           .from('telegram_accounts')
-          .select('phone_number, session_data, first_name, last_name, username')
+          .select('phone_number, session_data, first_name, last_name, username, api_id, api_hash, device_model, system_version, app_version, build_id, lang_code, system_lang_code, two_fa_password, telegram_id')
           .in('id', batchIds);
         
         if (error) {
@@ -994,7 +994,8 @@ const Accounts: React.FC = () => {
         
         accountsData?.forEach((acc: any) => {
           if (acc.session_data) {
-            const filename = `${acc.phone_number.replace(/\+/g, '')}.session`;
+            const phoneClean = acc.phone_number.replace(/\+/g, '');
+            const filename = `${phoneClean}.session`;
             
             // Fast binary conversion using Uint8Array.from
             const binaryString = atob(acc.session_data);
@@ -1002,12 +1003,22 @@ const Accounts: React.FC = () => {
             zip.file(filename, bytes);
             
             const metadata = {
-              phone_number: acc.phone_number,
-              first_name: acc.first_name,
-              last_name: acc.last_name,
-              username: acc.username,
+              app_id: acc.api_id ? Number(acc.api_id) || acc.api_id : null,
+              app_hash: acc.api_hash || null,
+              sdk: acc.system_version || null,
+              device: acc.device_model || null,
+              app_version: acc.app_version || null,
+              lang_pack: acc.lang_code || null,
+              system_lang_pack: acc.system_lang_code || null,
+              session_file: phoneClean,
+              twoFA: acc.two_fa_password || null,
+              phone: phoneClean,
+              id: acc.telegram_id || null,
+              username: acc.username || null,
+              first_name: acc.first_name || null,
+              last_name: acc.last_name || null,
             };
-            zip.file(`${acc.phone_number.replace(/\+/g, '')}.json`, JSON.stringify(metadata, null, 2));
+            zip.file(`${phoneClean}.json`, JSON.stringify(metadata, null, 2));
           }
         });
         
