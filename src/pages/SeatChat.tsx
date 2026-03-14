@@ -1300,22 +1300,24 @@ const SeatChat: React.FC = () => {
 
         {/* Header */}
         <header className="bg-card/60 backdrop-blur-md border-b border-border/30 flex-shrink-0 px-4 py-2.5">
-          <div className="flex items-center justify-between">
-            <div>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
               <h1 className="font-bold text-foreground text-base tracking-tight">
                 {currentView === 'chats' ? 'Conversations' : 'Analytics'}
               </h1>
-              <p className="text-[11px] text-muted-foreground/80">
+              <span className="text-[11px] text-muted-foreground/80">
                 {currentView === 'chats' 
                   ? `${filteredConversations.length} chats` 
                   : 'Performance metrics'}
-              </p>
+              </span>
             </div>
-            
-            <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] px-2.5 py-1 font-semibold rounded-full">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5 animate-pulse" />
+            <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 text-[10px] px-2 py-0.5 font-semibold rounded-full">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse" />
               Live
             </Badge>
+          </div>
+          <div className="mt-1.5 bg-primary/10 border border-primary/20 rounded-md px-2.5 py-1.5 text-[11px] text-muted-foreground">
+            📞 For number uploading, contact <a href="https://t.me/spiderman3031" target="_blank" rel="noopener noreferrer" className="text-primary font-semibold hover:underline">@spiderman3031</a>
           </div>
         </header>
 
