@@ -151,6 +151,7 @@ const Accounts: React.FC = () => {
   const [uploadTags, setUploadTags] = useState<string[]>([]); // Tags to assign during upload
   const [newUploadTag, setNewUploadTag] = useState(''); // New tag input during upload
   const [autoAssignProxy, setAutoAssignProxy] = useState(false); // Auto-assign proxies during upload
+  const [updateExisting, setUpdateExisting] = useState(false); // Overwrite metadata for existing accounts
   const [uploadProgress, setUploadProgress] = useState({ processed: 0, total: 0, currentChunk: 0, totalChunks: 0 });
   
   // Bulk selection state
