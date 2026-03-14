@@ -666,7 +666,7 @@ const Accounts: React.FC = () => {
 
       // Process in chunks of 300 for speed and reliability
       const CHUNK_SIZE = 300;
-      const totalAccounts = accountsToUpload.length;
+      const totalAccounts = accountsData.length;
       const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
       let totalSuccessful = 0;
       let totalSkipped = 0;
