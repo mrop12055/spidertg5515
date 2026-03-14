@@ -703,8 +703,9 @@ const Accounts: React.FC = () => {
             console.error(`Chunk ${chunkNumber} error:`, error);
             totalFailed += chunk.length;
           } else {
-            totalSuccessful += data.successful || 0;
+             totalSuccessful += data.successful || 0;
             totalSkipped += data.skipped || 0;
+            totalUpdated += data.updated || 0;
             totalFailed += data.failed || 0;
             if (data.account_ids) {
               allAccountIds.push(...data.account_ids);
