@@ -795,6 +795,24 @@ const SeatChat: React.FC = () => {
                 media_type: m.media_type
               }];
             });
+            // Auto-mark incoming messages as read since user is viewing this conversation
+            if (m.direction === 'incoming') {
+              supabase
+                .from('messages')
+                .update({ read_at: new Date().toISOString() })
+                .eq('id', m.id)
+                .then();
+              // Reset unread count on the conversation
+              supabase
+                .from('conversations')
+                .update({ unread_count: 0 })
+                .eq('id', selectedConversation.id)
+                .then();
+              // Also update local state
+              setConversations(prev => 
+                prev.map(c => c.id === selectedConversation.id ? { ...c, unread_count: 0 } : c)
+              );
+            }
           } else if (payload.eventType === 'UPDATE') {
             const m = payload.new as any;
             // Update message status
