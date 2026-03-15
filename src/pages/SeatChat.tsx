@@ -543,21 +543,19 @@ const SeatChat: React.FC = () => {
           .select('id, content, direction, status, created_at, media_url, media_type')
           .eq('conversation_id', selectedConversation.id)
           .order('created_at', { ascending: true }),
-        // Fire-and-forget mark as read (runs in parallel, doesn't block message display)
-        selectedConversation.unread_count > 0 
-          ? Promise.all([
-              supabase
-                .from('conversations')
-                .update({ unread_count: 0 })
-                .eq('id', selectedConversation.id),
-              supabase
-                .from('messages')
-                .update({ read_at: new Date().toISOString() })
-                .eq('conversation_id', selectedConversation.id)
-                .eq('direction', 'incoming')
-                .is('read_at', null)
-            ])
-          : Promise.resolve()
+        // Always mark as read when opening a conversation (handles stale unread counts)
+        Promise.all([
+          supabase
+            .from('conversations')
+            .update({ unread_count: 0 })
+            .eq('id', selectedConversation.id),
+          supabase
+            .from('messages')
+            .update({ read_at: new Date().toISOString() })
+            .eq('conversation_id', selectedConversation.id)
+            .eq('direction', 'incoming')
+            .is('read_at', null)
+        ]).catch(() => {}) // fire-and-forget
       ]);
 
       if (messagesResult.error) throw messagesResult.error;
@@ -689,6 +687,26 @@ const SeatChat: React.FC = () => {
             
             const c = newC;
             
+            // If this conversation is currently being viewed, keep unread at 0
+            // and auto-mark as read in DB (the trigger increments unread before we can clear it)
+            const isCurrentlyViewed = selectedConversationRef.current?.id === c.id;
+            if (isCurrentlyViewed && (c.unread_count ?? 0) > 0) {
+              // Fire-and-forget: reset unread in DB
+              supabase
+                .from('conversations')
+                .update({ unread_count: 0 })
+                .eq('id', c.id)
+                .then();
+              // Also mark any unread incoming messages as read
+              supabase
+                .from('messages')
+                .update({ read_at: new Date().toISOString() })
+                .eq('conversation_id', c.id)
+                .eq('direction', 'incoming')
+                .is('read_at', null)
+                .then();
+            }
+            
             // Incremental update for conversations with time-based sorting
             setConversations(prev => {
               const exists = prev.some(conv => conv.id === c.id);
@@ -697,7 +715,8 @@ const SeatChat: React.FC = () => {
                 updated = prev.map(conv => 
                   conv.id === c.id ? {
                     ...conv,
-                    unread_count: c.unread_count ?? conv.unread_count,
+                    // If currently viewed, force unread to 0 regardless of DB value
+                    unread_count: isCurrentlyViewed ? 0 : (c.unread_count ?? conv.unread_count),
                     last_message_at: c.last_message_at ?? conv.last_message_at,
                     last_message_content: c.last_message_content ?? conv.last_message_content,
                     last_message_direction: c.last_message_direction ?? conv.last_message_direction,
@@ -776,6 +795,24 @@ const SeatChat: React.FC = () => {
                 media_type: m.media_type
               }];
             });
+            // Auto-mark incoming messages as read since user is viewing this conversation
+            if (m.direction === 'incoming') {
+              supabase
+                .from('messages')
+                .update({ read_at: new Date().toISOString() })
+                .eq('id', m.id)
+                .then();
+              // Reset unread count on the conversation
+              supabase
+                .from('conversations')
+                .update({ unread_count: 0 })
+                .eq('id', selectedConversation.id)
+                .then();
+              // Also update local state
+              setConversations(prev => 
+                prev.map(c => c.id === selectedConversation.id ? { ...c, unread_count: 0 } : c)
+              );
+            }
           } else if (payload.eventType === 'UPDATE') {
             const m = payload.new as any;
             // Update message status
