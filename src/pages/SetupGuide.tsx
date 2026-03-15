@@ -383,7 +383,7 @@ async def send_message(client, recipient: str, content: str, media_url: str = No
                         except:
                             pass
                 except Exception as e:
-                    print(f"    [CONTACT] Import failed for {phone}: {str(e)[:200]}")
+                    print(f"    [CONTACT] Import failed for {phone}: {str(e)[:500]}")
         
         if not entity:
             return False, "Recipient not found", {}
