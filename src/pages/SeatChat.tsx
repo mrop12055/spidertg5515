@@ -689,6 +689,26 @@ const SeatChat: React.FC = () => {
             
             const c = newC;
             
+            // If this conversation is currently being viewed, keep unread at 0
+            // and auto-mark as read in DB (the trigger increments unread before we can clear it)
+            const isCurrentlyViewed = selectedConversationRef.current?.id === c.id;
+            if (isCurrentlyViewed && (c.unread_count ?? 0) > 0) {
+              // Fire-and-forget: reset unread in DB
+              supabase
+                .from('conversations')
+                .update({ unread_count: 0 })
+                .eq('id', c.id)
+                .then();
+              // Also mark any unread incoming messages as read
+              supabase
+                .from('messages')
+                .update({ read_at: new Date().toISOString() })
+                .eq('conversation_id', c.id)
+                .eq('direction', 'incoming')
+                .is('read_at', null)
+                .then();
+            }
+            
             // Incremental update for conversations with time-based sorting
             setConversations(prev => {
               const exists = prev.some(conv => conv.id === c.id);
@@ -697,7 +717,8 @@ const SeatChat: React.FC = () => {
                 updated = prev.map(conv => 
                   conv.id === c.id ? {
                     ...conv,
-                    unread_count: c.unread_count ?? conv.unread_count,
+                    // If currently viewed, force unread to 0 regardless of DB value
+                    unread_count: isCurrentlyViewed ? 0 : (c.unread_count ?? conv.unread_count),
                     last_message_at: c.last_message_at ?? conv.last_message_at,
                     last_message_content: c.last_message_content ?? conv.last_message_content,
                     last_message_direction: c.last_message_direction ?? conv.last_message_direction,
