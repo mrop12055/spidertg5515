@@ -543,21 +543,19 @@ const SeatChat: React.FC = () => {
           .select('id, content, direction, status, created_at, media_url, media_type')
           .eq('conversation_id', selectedConversation.id)
           .order('created_at', { ascending: true }),
-        // Fire-and-forget mark as read (runs in parallel, doesn't block message display)
-        selectedConversation.unread_count > 0 
-          ? Promise.all([
-              supabase
-                .from('conversations')
-                .update({ unread_count: 0 })
-                .eq('id', selectedConversation.id),
-              supabase
-                .from('messages')
-                .update({ read_at: new Date().toISOString() })
-                .eq('conversation_id', selectedConversation.id)
-                .eq('direction', 'incoming')
-                .is('read_at', null)
-            ])
-          : Promise.resolve()
+        // Always mark as read when opening a conversation (handles stale unread counts)
+        Promise.all([
+          supabase
+            .from('conversations')
+            .update({ unread_count: 0 })
+            .eq('id', selectedConversation.id),
+          supabase
+            .from('messages')
+            .update({ read_at: new Date().toISOString() })
+            .eq('conversation_id', selectedConversation.id)
+            .eq('direction', 'incoming')
+            .is('read_at', null)
+        ]).catch(() => {}) // fire-and-forget
       ]);
 
       if (messagesResult.error) throw messagesResult.error;
