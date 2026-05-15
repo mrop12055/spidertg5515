@@ -1383,8 +1383,23 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     print("="*50)
     print(f"  Found {len(to_connect)} account(s) to connect (already connected: {len(already_connected)})...\\n")
     
-    # Connect only the accounts that need it
-    results = await asyncio.gather(*[connect(a) for a in to_connect], return_exceptions=True)
+    print(f"  Connection throttle: {CONNECT_CONCURRENCY} at a time, timeout {CONNECT_TIMEOUT_SECONDS}s")
+    sys.stdout.flush()
+    
+    # Connect in small waves. Starting 25 Telegram+SOCKS handshakes at once can
+    # trigger WinError 121 even when each proxy works manually in Telegram.
+    results = []
+    for start in range(0, len(to_connect), CONNECT_CONCURRENCY):
+        batch = to_connect[start:start + CONNECT_CONCURRENCY]
+        batch_no = (start // CONNECT_CONCURRENCY) + 1
+        total_batches = (len(to_connect) + CONNECT_CONCURRENCY - 1) // CONNECT_CONCURRENCY
+        print(f"  [CONNECT] Wave {batch_no}/{total_batches}: {len(batch)} account(s)")
+        sys.stdout.flush()
+        batch_results = await asyncio.gather(*[connect(a) for a in batch], return_exceptions=True)
+        results.extend(batch_results)
+        if start + CONNECT_CONCURRENCY < len(to_connect) and CONNECT_BATCH_PAUSE_SECONDS > 0:
+            await asyncio.sleep(CONNECT_BATCH_PAUSE_SECONDS)
+
     ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
     print(f"\\n  Connected: {ok}/{len(to_connect)} (total active: {len(already_connected) + ok})")
     
