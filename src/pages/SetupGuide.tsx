@@ -1292,10 +1292,10 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
                 system_version=acc.get("system_version", "Android 12"),
                 app_version=acc.get("app_version", "10.14.2"),
                 proxy=get_proxy(acc),
-                timeout=60, connection_retries=0, auto_reconnect=False
+                timeout=CONNECT_TIMEOUT_SECONDS, connection_retries=1, auto_reconnect=False
             )
             
-            await asyncio.wait_for(client.connect(), timeout=60)
+            await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
             
             if not await asyncio.wait_for(client.is_user_authorized(), timeout=10):
                 await client.disconnect()
@@ -1309,7 +1309,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
         except asyncio.TimeoutError:
             # Proxy timeout - mark both account and proxy
-            error_msg = "Connection timeout (60s) - proxy may be dead"
+            error_msg = f"Connection timeout ({CONNECT_TIMEOUT_SECONDS}s) - proxy/provider overloaded or unreachable"
             print(f"  ✗ [{phone[-4:]}] TIMEOUT")
             await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
             if proxy_id:
