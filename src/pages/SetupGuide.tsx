@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-media-fix-v12";
+  const runnerBuild = "2026-02-10-staggered-connect-v13";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -112,6 +112,29 @@ last_offline_at: Optional[str] = None
 _locks: Dict[str, asyncio.Lock] = {}
 _locks_mutex = threading.Lock()
 _http: Optional[httpx.AsyncClient] = None
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+# Residential/mobile proxies often fail when too many MTProto handshakes start at once.
+# Defaults are conservative; override with env vars if your provider can handle more.
+CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 5, 1, 15)
+CONNECT_TIMEOUT_SECONDS = _env_int("TG_CONNECT_TIMEOUT_SECONDS", 90, 30, 180)
+CONNECT_BATCH_PAUSE_SECONDS = _env_float("TG_CONNECT_BATCH_PAUSE_SECONDS", 2.0, 0.0, 30.0)
 
 
 def signal_handler(sig, frame):
@@ -1269,10 +1292,10 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
                 system_version=acc.get("system_version", "Android 12"),
                 app_version=acc.get("app_version", "10.14.2"),
                 proxy=get_proxy(acc),
-                timeout=60, connection_retries=0, auto_reconnect=False
+                timeout=CONNECT_TIMEOUT_SECONDS, connection_retries=1, auto_reconnect=False
             )
             
-            await asyncio.wait_for(client.connect(), timeout=60)
+            await asyncio.wait_for(client.connect(), timeout=CONNECT_TIMEOUT_SECONDS)
             
             if not await asyncio.wait_for(client.is_user_authorized(), timeout=10):
                 await client.disconnect()
@@ -1286,7 +1309,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
         except asyncio.TimeoutError:
             # Proxy timeout - mark both account and proxy
-            error_msg = "Connection timeout (60s) - proxy may be dead"
+            error_msg = f"Connection timeout ({CONNECT_TIMEOUT_SECONDS}s) - proxy/provider overloaded or unreachable"
             print(f"  ✗ [{phone[-4:]}] TIMEOUT")
             await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
             if proxy_id:
@@ -1360,8 +1383,23 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     print("="*50)
     print(f"  Found {len(to_connect)} account(s) to connect (already connected: {len(already_connected)})...\\n")
     
-    # Connect only the accounts that need it
-    results = await asyncio.gather(*[connect(a) for a in to_connect], return_exceptions=True)
+    print(f"  Connection throttle: {CONNECT_CONCURRENCY} at a time, timeout {CONNECT_TIMEOUT_SECONDS}s")
+    sys.stdout.flush()
+    
+    # Connect in small waves. Starting 25 Telegram+SOCKS handshakes at once can
+    # trigger WinError 121 even when each proxy works manually in Telegram.
+    results = []
+    for start in range(0, len(to_connect), CONNECT_CONCURRENCY):
+        batch = to_connect[start:start + CONNECT_CONCURRENCY]
+        batch_no = (start // CONNECT_CONCURRENCY) + 1
+        total_batches = (len(to_connect) + CONNECT_CONCURRENCY - 1) // CONNECT_CONCURRENCY
+        print(f"  [CONNECT] Wave {batch_no}/{total_batches}: {len(batch)} account(s)")
+        sys.stdout.flush()
+        batch_results = await asyncio.gather(*[connect(a) for a in batch], return_exceptions=True)
+        results.extend(batch_results)
+        if start + CONNECT_CONCURRENCY < len(to_connect) and CONNECT_BATCH_PAUSE_SECONDS > 0:
+            await asyncio.sleep(CONNECT_BATCH_PAUSE_SECONDS)
+
     ok = sum(1 for r in results if isinstance(r, tuple) and r[0])
     print(f"\\n  Connected: {ok}/{len(to_connect)} (total active: {len(already_connected) + ok})")
     
