@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-media-fix-v12";
+  const runnerBuild = "2026-02-10-staggered-connect-v13";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -112,6 +112,29 @@ last_offline_at: Optional[str] = None
 _locks: Dict[str, asyncio.Lock] = {}
 _locks_mutex = threading.Lock()
 _http: Optional[httpx.AsyncClient] = None
+
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def _env_float(name: str, default: float, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+# Residential/mobile proxies often fail when too many MTProto handshakes start at once.
+# Defaults are conservative; override with env vars if your provider can handle more.
+CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 5, 1, 15)
+CONNECT_TIMEOUT_SECONDS = _env_int("TG_CONNECT_TIMEOUT_SECONDS", 90, 30, 180)
+CONNECT_BATCH_PAUSE_SECONDS = _env_float("TG_CONNECT_BATCH_PAUSE_SECONDS", 2.0, 0.0, 30.0)
 
 
 def signal_handler(sig, frame):
