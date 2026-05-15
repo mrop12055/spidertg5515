@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-staggered-connect-v13";
+  const runnerBuild = "2026-02-10-net-resilience-v14";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -67,12 +67,26 @@ def _asyncio_exception_handler(loop, context):
     msg = context.get("message", "No message")
     exc = context.get("exception")
     
-    # Silently ignore known Windows networking errors (proxy/VPS instability)
-    if exc and isinstance(exc, OSError):
+    # Silently ignore known transient networking errors (proxy/VPS instability)
+    if exc:
+        exc_name = type(exc).__name__
         err_str = str(exc)
-        if "WinError 121" in err_str or "semaphore timeout" in err_str.lower():
-            print(f"  [NET] Windows semaphore timeout (proxy/network glitch) - ignored")
+        # IncompleteReadError = MTProto handshake cut by proxy mid-frame; Telethon auto-reconnects
+        if exc_name in ("IncompleteReadError", "ConnectionResetError", "ConnectionAbortedError", "TimeoutError"):
+            print(f"  [NET] {exc_name} (proxy dropped connection) - Telethon will reconnect")
             sys.stdout.flush()
+            return
+        if isinstance(exc, OSError):
+            if "WinError 121" in err_str or "semaphore timeout" in err_str.lower():
+                print(f"  [NET] Windows semaphore timeout (proxy/network glitch) - ignored")
+                sys.stdout.flush()
+                return
+            if "WinError 10054" in err_str or "WinError 10053" in err_str or "forcibly closed" in err_str.lower():
+                print(f"  [NET] Connection reset by proxy - Telethon will reconnect")
+                sys.stdout.flush()
+                return
+        # "shielded future" wrapping is just noise; check the underlying message
+        if "shielded future" in str(context.get("message", "")).lower() and exc_name == "IncompleteReadError":
             return
     
     print(f"\\n{'='*50}")
