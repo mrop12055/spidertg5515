@@ -131,9 +131,6 @@ const Dashboard: React.FC = () => {
         <TaskQueueCard />
         <RecentErrorsCard />
       </div>
-
-      {/* Python Runner Download */}
-      <RunnerDownloadCard />
     </DashboardLayout>
 
   );
