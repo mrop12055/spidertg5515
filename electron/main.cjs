@@ -9,9 +9,10 @@ const path = require('path');
 const fs = require('fs');
 
 const { initDb, closeDb } = require('./db.cjs');
-const { handleApiCall } = require('./api.cjs');
-const { registerRunnerIpc, stopRunner } = require('./runner.cjs');
+const { handleApiCall, setChangeEmitter } = require('./api.cjs');
+const { registerRunnerIpc, stopRunner, setRunnerEndpoint } = require('./runner.cjs');
 const { registerUpdaterIpc } = require('./updater.cjs');
+const localServer = require('./localServer.cjs');
 
 let mainWindow = null;
 
