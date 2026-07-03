@@ -39,6 +39,15 @@ const stubApi: LocalApi = {
       const list = Array.isArray(payload.values) ? payload.values : [payload.values];
       return { data: payload.single ? list[0] : list, error: null };
     }
+    if (payload.op === 'function') {
+      return {
+        data: null,
+        error: {
+          message:
+            'This feature only works in the desktop app. Open the app on your PC (dev.bat) — the browser preview has no local database.',
+        },
+      };
+    }
     return { data: null, error: null };
   },
   runner: {
