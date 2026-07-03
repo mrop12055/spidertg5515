@@ -27,7 +27,7 @@ const fetchProxyErrors = async (): Promise<Map<string, ProxyError>> => {
     return errorMap;
   }
 
-  const errorProxyIds = new Set(errorProxies.map(p => p.id));
+  const errorProxyIds = new Set<string>(errorProxies.map((p: any) => p.id as string));
 
   // Initialize all error-status proxies with default message
   errorProxyIds.forEach(proxyId => {
