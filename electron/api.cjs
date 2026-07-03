@@ -371,7 +371,7 @@ function adminUploadAccounts(body) {
       system_lang_code: a.system_lang_code || null,
       session_data: a.session_data || null,
       status: a.status || (existing ? undefined : 'disconnected'),
-      tags: JSON.stringify(tags),
+      tags: Array.isArray(tags) && tags.length > 0 ? JSON.stringify(tags) : (existing ? undefined : JSON.stringify([])),
       created_at: existing ? undefined : nowIso(),
     };
     const setCols = Object.keys(cols).filter((k) => cols[k] !== undefined);

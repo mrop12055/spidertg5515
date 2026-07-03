@@ -369,7 +369,7 @@ serve(async (req) => {
           lang_code: acc.lang_code || acc.lang_pack || 'en',
           system_lang_code: acc.system_lang_code || acc.system_lang_pack || 'en-US',
           two_fa_password: acc.two_fa_password || acc.twoFA || acc['2fa'] || null,
-          tags: tags || [],
+          ...(Array.isArray(tags) && tags.length > 0 ? { tags } : {}),
         });
       }
 
