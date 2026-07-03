@@ -356,6 +356,7 @@ function adminUploadAccounts(body) {
 
     const existing = db.prepare('SELECT id FROM telegram_accounts WHERE phone_number = ?').get(phone);
     const id = existing?.id || newId();
+    const normalizedTags = Array.isArray(tags) ? tags : [];
     const cols = {
       id,
       phone_number: phone,
@@ -371,19 +372,21 @@ function adminUploadAccounts(body) {
       system_lang_code: a.system_lang_code || null,
       session_data: a.session_data || null,
       status: a.status || (existing ? undefined : 'disconnected'),
-      tags: Array.isArray(tags) && tags.length > 0 ? JSON.stringify(tags) : (existing ? undefined : JSON.stringify([])),
+      tags: normalizedTags.length > 0 ? normalizedTags : (existing ? undefined : []),
       created_at: existing ? undefined : nowIso(),
     };
     const setCols = Object.keys(cols).filter((k) => cols[k] !== undefined);
     if (existing) {
       const sql = `UPDATE telegram_accounts SET ${setCols.filter(k=>k!=='id').map((k) => `${k} = ?`).join(', ')} WHERE id = ?`;
-      db.prepare(sql).run(...setCols.filter(k=>k!=='id').map((k) => cols[k]), id);
+      db.prepare(sql).run(...setCols.filter(k=>k!=='id').map((k) => encode(k, cols[k])), id);
     } else {
       const sql = `INSERT INTO telegram_accounts (${setCols.join(',')}) VALUES (${setCols.map(() => '?').join(',')})`;
-      db.prepare(sql).run(...setCols.map((k) => cols[k]));
+      db.prepare(sql).run(...setCols.map((k) => encode(k, cols[k])));
     }
     imported++;
     accountIds.push(id);
+    const row = db.prepare('SELECT * FROM telegram_accounts WHERE id = ?').get(id);
+    emitChange('telegram_accounts', existing ? 'UPDATE' : 'INSERT', decodeRow(row));
   });
   for (const a of accounts) {
     try {

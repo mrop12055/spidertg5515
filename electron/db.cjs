@@ -98,9 +98,6 @@ CREATE TABLE IF NOT EXISTS telegram_accounts (
   locked_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_accounts_status ON telegram_accounts(status);
-CREATE INDEX IF NOT EXISTS idx_accounts_proxy ON telegram_accounts(proxy_id);
-
 CREATE TABLE IF NOT EXISTS campaigns (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -393,17 +390,80 @@ INSERT OR IGNORE INTO lifetime_stats (id, stat_key, stat_value) VALUES
   (lower(hex(randomblob(16))), 'lifetime_unique_recipients_messaged', 0),
   (lower(hex(randomblob(16))), 'lifetime_unique_recipients_replied', 0);
 
--- Backfill older local imports so they are visible in the Inactive tab.
-UPDATE telegram_accounts
-SET status = 'disconnected'
-WHERE status = 'inactive';
-
-UPDATE telegram_accounts
-SET device_model = 'Telegram Desktop ' || COALESCE(NULLIF(substr(replace(phone_number, '+', ''), -4), ''), 'local'),
-    system_version = COALESCE(system_version, 'Windows')
-WHERE (device_model IS NULL OR device_model = '')
-  AND session_data IS NOT NULL;
 `;
+
+function existingColumns(table) {
+  return new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((row) => row.name));
+}
+
+function addMissingColumns(table, columns) {
+  const existing = existingColumns(table);
+  for (const [name, definition] of Object.entries(columns)) {
+    if (!existing.has(name)) {
+      db.prepare(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition}`).run();
+    }
+  }
+}
+
+function runMigrations() {
+  // CREATE TABLE IF NOT EXISTS does not update older desktop SQLite files.
+  // Keep existing local installs compatible with newer account import fields.
+  addMissingColumns('telegram_accounts', {
+    username: 'TEXT',
+    first_name: 'TEXT',
+    last_name: 'TEXT',
+    status: "TEXT DEFAULT 'inactive'",
+    proxy_id: 'TEXT',
+    session_data: 'TEXT',
+    api_id: 'TEXT',
+    api_hash: 'TEXT',
+    created_at: 'TEXT DEFAULT CURRENT_TIMESTAMP',
+    last_active: 'TEXT',
+    messages_sent_today: 'INTEGER DEFAULT 0',
+    daily_limit: 'INTEGER DEFAULT 50',
+    maturity_score: 'INTEGER DEFAULT 0',
+    maturity_days: 'INTEGER DEFAULT 0',
+    restricted_until: 'TEXT',
+    ban_reason: 'TEXT',
+    avatar_url: 'TEXT',
+    telegram_id: 'INTEGER',
+    last_spambot_check: 'TEXT',
+    device_model: 'TEXT',
+    system_version: 'TEXT',
+    app_version: 'TEXT',
+    lang_code: 'TEXT',
+    system_lang_code: 'TEXT',
+    api_credential_id: 'TEXT',
+    spambot_status: 'TEXT',
+    phone_country: 'TEXT',
+    geo_mismatch: 'INTEGER DEFAULT 0',
+    interaction_pair_id: 'TEXT',
+    tags: "TEXT DEFAULT '[]'",
+    last_campaign_send_at: 'TEXT',
+    success_count: 'INTEGER DEFAULT 0',
+    failure_count: 'INTEGER DEFAULT 0',
+    success_rate: 'REAL DEFAULT 0',
+    auto_disabled: 'INTEGER DEFAULT 0',
+    disabled_reason: 'TEXT',
+    build_id: 'TEXT',
+    two_fa_password: 'TEXT',
+    cooldown_until: 'TEXT',
+    locked_by: 'TEXT',
+    locked_at: 'TEXT',
+  });
+
+  db.prepare("UPDATE telegram_accounts SET status = 'disconnected' WHERE status = 'inactive'").run();
+  db.prepare(`
+    UPDATE telegram_accounts
+    SET device_model = 'Telegram Desktop ' || COALESCE(NULLIF(substr(replace(phone_number, '+', ''), -4), ''), 'local'),
+        system_version = COALESCE(system_version, 'Windows')
+    WHERE (device_model IS NULL OR device_model = '')
+      AND session_data IS NOT NULL
+  `).run();
+
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_accounts_status ON telegram_accounts(status)').run();
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_accounts_proxy ON telegram_accounts(proxy_id)').run();
+}
 
 function initDb(userDataDir) {
   if (db) return db;
@@ -411,6 +471,7 @@ function initDb(userDataDir) {
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.exec(SCHEMA);
+  runMigrations();
   return db;
 }
 
