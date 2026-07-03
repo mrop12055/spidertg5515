@@ -1925,148 +1925,22 @@ pysocks>=1.7.1
   };
 
   return (
-    <div className="space-y-6 mt-8">
-      <Card>
-        <CardContent className="p-8 text-center space-y-6">
-          <div className="space-y-2">
-            <h2 className="text-2xl font-bold">Python Runner</h2>
-            <p className="text-muted-foreground text-sm">
-              Download and run this on your PC to power the app
-            </p>
-          </div>
-
-              <p className="text-muted-foreground text-sm">
-                Campaign = Conversation = Warmup — they ALL just send messages
-              </p>
-            </div>
-            
-            <div className="bg-muted/50 rounded-lg p-4 text-left text-sm space-y-3">
-              <p className="font-semibold text-primary">THE TRUTH:</p>
-              <p className="text-muted-foreground">
-                No matter where you send from — Campaign, Conversation chat, or Warmup — 
-                it's the <span className="text-primary font-medium">same operation</span>: 
-                send a message from an account to a recipient.
-              </p>
-              <div className="border-t border-border pt-3 mt-3 space-y-2">
-                <p className="font-medium">2 Core Functions:</p>
-                <ul className="space-y-1 ml-2">
-                  <li className="flex items-center gap-2">
-                    <code className="text-primary text-xs bg-primary/10 px-2 py-0.5 rounded">send_message()</code>
-                    <span className="text-muted-foreground text-xs">— ALL sending operations</span>
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <code className="text-primary text-xs bg-primary/10 px-2 py-0.5 rounded">account_action()</code>
-                    <span className="text-muted-foreground text-xs">— Spambot, name change, etc.</span>
-                  </li>
-                </ul>
-              </div>
-            </div>
-
-            <Button onClick={downloadZip} size="lg" className="gap-2">
-              <Download className="w-5 h-5" />
-              Download Runner
-            </Button>
-            
-            <p className="text-xs text-muted-foreground">
-              Handles 2000+ accounts • Parallel task processing • ~400 lines
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            <h3 className="font-semibold">How It Works</h3>
-            
-            <div className="space-y-3 text-sm">
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold shrink-0">1</div>
-                <div>
-                  <p className="font-medium">Connect All Accounts</p>
-                  <p className="text-muted-foreground">Parallel connection with proxy + fingerprint validation</p>
-                </div>
-              </div>
-              
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold shrink-0">2</div>
-                <div>
-                  <p className="font-medium">Setup Incoming Handlers</p>
-                  <p className="text-muted-foreground">Event handlers capture incoming messages automatically</p>
-                </div>
-              </div>
-              
-              <div className="flex gap-3">
-                <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold shrink-0">3</div>
-                <div>
-                  <p className="font-medium">Process Tasks</p>
-                  <p className="text-muted-foreground">All tasks route to <code className="text-xs bg-muted px-1 rounded">send_message()</code> or <code className="text-xs bg-muted px-1 rounded">account_action()</code></p>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6 space-y-4">
-            <h3 className="font-semibold">Task → Function Mapping</h3>
-            
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div className="bg-muted/30 p-3 rounded">
-                <p className="font-medium text-primary mb-2">send_message()</p>
-                <ul className="text-muted-foreground text-xs space-y-1">
-                  <li>• Campaign send</li>
-                  <li>• Conversation reply</li>
-                  <li>• Warmup chat</li>
-                </ul>
-              </div>
-              <div className="bg-muted/30 p-3 rounded">
-                <p className="font-medium text-primary mb-2">account_action()</p>
-                <p className="text-muted-foreground text-xs mb-1">All non-message operations:</p>
-              </div>
-            </div>
-            
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-              <div className="bg-muted/20 p-2 rounded">
-                <p className="font-medium text-foreground mb-1">Profile</p>
-                <ul className="text-muted-foreground space-y-0.5">
-                  <li>• change_name</li>
-                  <li>• change_photo</li>
-                  <li>• change_bio</li>
-                  <li>• change_username</li>
-                </ul>
-              </div>
-              <div className="bg-muted/20 p-2 rounded">
-                <p className="font-medium text-foreground mb-1">Contacts</p>
-                <ul className="text-muted-foreground space-y-0.5">
-                  <li>• add_contact</li>
-                  <li>• delete_contact</li>
-                  <li>• block_contact</li>
-                  <li>• unblock_contact</li>
-                </ul>
-              </div>
-              <div className="bg-muted/20 p-2 rounded">
-                <p className="font-medium text-foreground mb-1">Channels</p>
-                <ul className="text-muted-foreground space-y-0.5">
-                  <li>• join_channel</li>
-                  <li>• leave_channel</li>
-                  <li>• react</li>
-                  <li>• view_channel</li>
-                </ul>
-              </div>
-              <div className="bg-muted/20 p-2 rounded">
-                <p className="font-medium text-foreground mb-1">Checks</p>
-                <ul className="text-muted-foreground space-y-0.5">
-                  <li>• spambot_check</li>
-                  <li>• session_check</li>
-                  <li>• get_dialogs</li>
-                  <li>• delete_chat</li>
-                </ul>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-    </DashboardLayout>
+    <Card className="mt-8">
+      <CardContent className="p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold">Python Runner</h2>
+          <p className="text-sm text-muted-foreground">
+            Download and run this on your PC to power the app. Build: {runnerBuild}
+          </p>
+        </div>
+        <Button onClick={downloadZip} size="lg" className="gap-2 shrink-0">
+          <Download className="w-5 h-5" />
+          Download Runner
+        </Button>
+      </CardContent>
+    </Card>
   );
 };
 
-export default SetupGuide;
+export default RunnerDownloadCard;
+
