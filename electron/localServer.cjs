@@ -8,6 +8,15 @@ const crypto = require('crypto');
 const { handleApiCall } = require('./api.cjs');
 const { getDb } = require('./db.cjs');
 
+// Realtime emit — wired by main.cjs to fan runner-side writes to the renderer
+// so the UI updates instantly instead of polling.
+let _emit = null;
+function setChangeEmitter(fn) { _emit = fn; }
+function emit(table, eventType, row) {
+  if (!_emit) return;
+  try { _emit({ table, eventType, new: row || null, old: row || null }); } catch (_) {}
+}
+
 let server = null;
 let port = 0;
 let token = '';
@@ -47,6 +56,7 @@ async function handleRoute(req, url, body, ctx) {
     `);
     // Use runner name as stable id so there's exactly one row.
     stmt.run(runner, runner, nowIso(), body.server_id || 'local');
+    emit('runner_heartbeats', 'UPDATE', { runner_name: runner, last_seen: nowIso(), status: 'online' });
     return { ok: true };
   }
 
@@ -90,6 +100,7 @@ async function handleRoute(req, url, body, ctx) {
     const mark = db.prepare(`UPDATE campaign_recipients SET status = 'sending', sending_started_at = ? WHERE id = ?`);
     const tx = db.transaction(() => rows.forEach((r) => mark.run(nowIso(), r.id)));
     tx();
+    for (const r of rows) emit('campaign_recipients', 'UPDATE', { id: r.id, campaign_id: r.campaign_id, status: 'sending' });
     return { tasks: rows };
   }
 
@@ -107,8 +118,11 @@ async function handleRoute(req, url, body, ctx) {
       db.prepare(`UPDATE lifetime_stats SET stat_value = stat_value + 1, updated_at = ? WHERE stat_key = 'lifetime_messages_sent'`).run(nowIso());
       if (sent_by_account_id) {
         db.prepare(`UPDATE telegram_accounts SET messages_sent_today = COALESCE(messages_sent_today,0) + 1, last_active = ? WHERE id = ?`).run(nowIso(), sent_by_account_id);
+        emit('telegram_accounts', 'UPDATE', { id: sent_by_account_id });
       }
+      emit('lifetime_stats', 'UPDATE', { stat_key: 'lifetime_messages_sent' });
     }
+    emit('campaign_recipients', 'UPDATE', { id: recipient_id, status });
     return { ok: true };
   }
 
@@ -137,11 +151,15 @@ async function handleRoute(req, url, body, ctx) {
         WHERE id = ?
       `).run(nowIso(), content, nowIso(), conv.id);
     }
+    const msgId = crypto.randomUUID();
     db.prepare(`
       INSERT INTO messages (id, account_id, conversation_id, telegram_message_id, content, direction, status, created_at)
       VALUES (?, ?, ?, ?, ?, 'incoming', 'delivered', ?)
-    `).run(crypto.randomUUID(), account_id, conv.id, telegram_message_id || null, content, nowIso());
+    `).run(msgId, account_id, conv.id, telegram_message_id || null, content, nowIso());
     db.prepare(`UPDATE lifetime_stats SET stat_value = stat_value + 1, updated_at = ? WHERE stat_key = 'lifetime_replies_received'`).run(nowIso());
+    emit('messages', 'INSERT', { id: msgId, conversation_id: conv.id, account_id, direction: 'incoming', content });
+    emit('conversations', 'UPDATE', { id: conv.id, account_id });
+    emit('lifetime_stats', 'UPDATE', { stat_key: 'lifetime_replies_received' });
     return { ok: true, conversation_id: conv.id };
   }
 
@@ -155,14 +173,17 @@ async function handleRoute(req, url, body, ctx) {
           auto_disabled = COALESCE(?, auto_disabled), last_active = ?
       WHERE id = ?
     `).run(status || null, ban_reason || null, auto_disabled == null ? null : (auto_disabled ? 1 : 0), nowIso(), account_id);
+    emit('telegram_accounts', 'UPDATE', { id: account_id, status, ban_reason, auto_disabled });
     return { ok: true };
   }
 
   // Log line from runner.
   if (path === '/logs' && req.method === 'POST') {
     const db = getDb();
+    const logId = crypto.randomUUID();
     db.prepare(`INSERT INTO vps_logs (id, runner_name, log_level, message) VALUES (?, ?, ?, ?)`)
-      .run(crypto.randomUUID(), body.runner || 'unified', body.level || 'info', body.message || '');
+      .run(logId, body.runner || 'unified', body.level || 'info', body.message || '');
+    emit('vps_logs', 'INSERT', { id: logId, runner_name: body.runner || 'unified', log_level: body.level || 'info', message: body.message || '' });
     return { ok: true };
   }
 
@@ -209,4 +230,4 @@ function stop() {
 
 function getEndpoint() { return { port, token, url: port ? `http://127.0.0.1:${port}` : '' }; }
 
-module.exports = { start, stop, getEndpoint };
+module.exports = { start, stop, getEndpoint, setChangeEmitter };

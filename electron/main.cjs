@@ -72,11 +72,13 @@ app.whenReady().then(() => {
   });
 
   // Broadcast SQLite change events to renderers as postgres_changes-shaped payloads.
-  setChangeEmitter((change) => {
+  const broadcast = (change) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       try { mainWindow.webContents.send('localApi:change', change); } catch (_) {}
     }
-  });
+  };
+  setChangeEmitter(broadcast);
+  if (typeof localServer.setChangeEmitter === 'function') localServer.setChangeEmitter(broadcast);
 
   registerRunnerIpc(ipcMain, { userDataDir, getWindow: () => mainWindow });
   registerUpdaterIpc(ipcMain, { getWindow: () => mainWindow });
