@@ -97,7 +97,13 @@ const Logs: React.FC = () => {
       const accountPhoneMap = new Map<string, string>();
       accounts?.forEach(a => accountPhoneMap.set(a.id, a.phone_number));
 
-      // Fetch from multiple tables in parallel - OPTIMIZED: Reduced limits for faster loading
+      // Fetch from multiple tables in parallel — tolerate individual failures
+      const safe = <T,>(p: PromiseLike<T>) =>
+        Promise.resolve(p).catch((e) => {
+          console.warn('[Logs] query failed:', e);
+          return { data: null, error: e } as any;
+        });
+
       const [
         vpsLogsResult,
         accountCheckResult,
@@ -106,52 +112,47 @@ const Logs: React.FC = () => {
         maturationResult,
         proxyErrorsResult
       ] = await Promise.all([
-        // VPS Logs
-        supabase
+        safe(supabase
           .from('vps_logs')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(100),
+          .limit(100)),
 
-        // Account Check Tasks
-        supabase
+        safe(supabase
           .from('account_check_tasks')
           .select('id, account_id, task_type, status, result, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(200),
+          .limit(200)),
 
-        // Block Contact Tasks
-        supabase
+        safe(supabase
           .from('block_contact_tasks')
           .select('id, account_id, status, action, target_phone, result, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(50)),
 
-        // Contact Import Tasks
-        supabase
+        safe(supabase
           .from('contact_import_tasks')
           .select('id, account_id, status, result, valid_numbers, invalid_numbers, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(50)),
 
-        // Maturation Tasks
-        supabase
+        safe(supabase
           .from('maturation_tasks')
           .select('id, account_id, task_type, status, description, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(50)),
 
-        // Proxy Errors
-        supabase
+        safe(supabase
           .from('proxy_errors')
           .select('id, proxy_id, error_type, error_message, created_at')
           .order('created_at', { ascending: false })
-          .limit(50),
+          .limit(50)),
       ]);
+
 
 
       // Process VPS Logs
@@ -321,10 +322,10 @@ const Logs: React.FC = () => {
       setSystemLogs(logs);
     } catch (error) {
       console.error('Error fetching system logs:', error);
-      toast.error('Failed to fetch system logs');
     } finally {
       setIsLoadingSystemLogs(false);
     }
+
   }, []);
 
   // Initial fetch
