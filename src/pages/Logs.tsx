@@ -676,7 +676,6 @@ const Logs: React.FC = () => {
             </TabsList>
 
 
-
             {/* Filters */}
             <div className="flex gap-2 flex-wrap">
               <div className="relative">
@@ -879,7 +878,6 @@ const Logs: React.FC = () => {
         </Tabs>
       </div>
     </DashboardLayout>
-
   );
 };
 

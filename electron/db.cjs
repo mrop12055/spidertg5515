@@ -58,7 +58,7 @@ CREATE TABLE IF NOT EXISTS telegram_accounts (
   username TEXT,
   first_name TEXT,
   last_name TEXT,
-  status TEXT DEFAULT 'disconnected',
+  status TEXT DEFAULT 'inactive',
   proxy_id TEXT,
   session_data TEXT,
   api_id TEXT,
@@ -95,8 +95,7 @@ CREATE TABLE IF NOT EXISTS telegram_accounts (
   two_fa_password TEXT,
   cooldown_until TEXT,
   locked_by TEXT,
-  locked_at TEXT,
-  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  locked_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounts_status ON telegram_accounts(status);
@@ -347,16 +346,7 @@ function initDb(userDataDir) {
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
   db.exec(SCHEMA);
-  migrateDb(db);
   return db;
-}
-
-function migrateDb(db) {
-  const accountColumns = db.prepare('PRAGMA table_info(telegram_accounts)').all().map((c) => c.name);
-  if (!accountColumns.includes('updated_at')) {
-    db.exec('ALTER TABLE telegram_accounts ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP');
-  }
-  db.exec("UPDATE telegram_accounts SET status = 'disconnected' WHERE status = 'inactive'");
 }
 
 function getDb() {

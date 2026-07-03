@@ -300,15 +300,8 @@ function adminUploadAccounts(body) {
   const db = getDb();
   const accounts = body.accounts || [];
   const tags = body.tags || [];
-  let successful = 0, skipped = 0, failed = 0;
+  let imported = 0, skipped = 0;
   const errors = [];
-  const accountIds = [];
-  const metadataStats = {
-    with_json_api: 0,
-    with_json_fingerprint: 0,
-    with_generated_fingerprint: 0,
-    with_2fa: 0,
-  };
   const upsertOne = db.transaction((a) => {
     const existing = db.prepare('SELECT id FROM telegram_accounts WHERE phone_number = ?').get(a.phone_number);
     const id = existing?.id || newId();
@@ -326,7 +319,7 @@ function adminUploadAccounts(body) {
       lang_code: a.lang_code || null,
       system_lang_code: a.system_lang_code || null,
       session_data: a.session_data || null,
-      status: a.status || 'disconnected',
+      status: a.status || 'inactive',
       tags: JSON.stringify(tags),
       updated_at: nowIso(),
       created_at: existing ? undefined : nowIso(),
@@ -339,22 +332,18 @@ function adminUploadAccounts(body) {
       const sql = `INSERT INTO telegram_accounts (${setCols.join(',')}) VALUES (${setCols.map(() => '?').join(',')})`;
       db.prepare(sql).run(...setCols.map((k) => cols[k]));
     }
-    successful++;
-    accountIds.push(id);
-    if (a.api_id && a.api_hash) metadataStats.with_json_api++;
-    if (a.device_model || a.system_version || a.app_version) metadataStats.with_json_fingerprint++;
-    if (a.two_fa_password) metadataStats.with_2fa++;
+    imported++;
   });
   for (const a of accounts) {
     try {
       if (!a.phone_number) { skipped++; continue; }
       upsertOne(a);
     } catch (e) {
-      failed++;
+      skipped++;
       errors.push({ phone: a.phone_number, error: e.message });
     }
   }
-  return { successful, skipped, failed, errors, account_ids: accountIds, metadata_stats: metadataStats };
+  return { imported, skipped, errors };
 }
 
 function adminVerifySessions(body) {
@@ -420,23 +409,16 @@ async function utilTestProxies(body) {
 
 // ---- top-level dispatcher ----
 async function handleApiCall(payload, ctx) {
-  const notify = (tbl, evt) => { try { ctx?.broadcast && ctx.broadcast(tbl, evt); } catch (_) {} };
   switch (payload.op) {
     case 'select': return opSelect(payload);
-    case 'insert': { const r = opInsert(payload); notify(payload.table, 'INSERT'); return r; }
-    case 'update': { const r = opUpdate(payload); notify(payload.table, 'UPDATE'); return r; }
-    case 'delete': { const r = opDelete(payload); notify(payload.table, 'DELETE'); return r; }
-    case 'upsert': { const r = opUpsert(payload); notify(payload.table, 'UPSERT'); return r; }
+    case 'insert': return opInsert(payload);
+    case 'update': return opUpdate(payload);
+    case 'delete': return opDelete(payload);
+    case 'upsert': return opUpsert(payload);
     case 'storage.upload': return opStorageUpload(payload, ctx);
-    case 'function': {
-      const r = await opFunction(payload);
-      // Admin functions mutate many tables; broadcast a generic tick.
-      notify('*', 'FUNCTION');
-      return r;
-    }
+    case 'function': return await opFunction(payload);
     default: return { data: null, error: { message: `Unknown op: ${payload.op}` } };
   }
 }
 
 module.exports = { handleApiCall };
-
