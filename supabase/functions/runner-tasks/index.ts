@@ -603,7 +603,9 @@ async function handleGetTasks(supabase: any, body: any) {
 
       for (const msg of pendingMessages) {
         const account: any = accountMap.get(msg.account_id);
-        if (!account?.proxies || account.proxies.status !== 'active') continue;
+        // Proxy is optional — accounts without a proxy send directly via runner IP.
+        if (!account) continue;
+        if (account.proxies && account.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, account);
         if (!creds) continue;
