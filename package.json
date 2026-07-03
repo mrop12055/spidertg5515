@@ -9,7 +9,7 @@
     "appId": "com.telegramcrm.desktop",
     "productName": "TelegramCRM",
     "publish": [
-      { "provider": "github", "owner": "YOUR_GITHUB_USER", "repo": "YOUR_REPO_NAME" }
+      { "provider": "github", "owner": "mrop12055", "repo": "spidertg5515" }
     ]
   },
   "scripts": {
