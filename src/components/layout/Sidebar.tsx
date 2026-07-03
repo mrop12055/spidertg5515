@@ -154,13 +154,45 @@ export const Sidebar: React.FC = React.memo(() => {
 
       {/* User Section */}
       <div className="p-3 border-t border-sidebar-border space-y-2">
-        {/* Theme Toggle */}
+        {/* Update + Theme Toggle */}
         <div className={cn(
-          "flex items-center justify-center",
-          !collapsed && "justify-end px-2"
+          "flex items-center gap-2",
+          collapsed ? "flex-col" : "justify-between px-1"
         )}>
+          <Button
+            variant="ghost"
+            size={collapsed ? 'icon' : 'sm'}
+            onClick={onCheckUpdate}
+            className={cn(
+              "text-muted-foreground hover:text-foreground",
+              updateInfo.state === 'downloaded' && "text-primary"
+            )}
+            title={
+              updateInfo.state === 'downloaded'
+                ? `Restart to install v${updateInfo.version}`
+                : updateInfo.state === 'available'
+                ? `Downloading v${updateInfo.version}… ${updateInfo.percent ?? 0}%`
+                : 'Check for updates'
+            }
+          >
+            {updateInfo.state === 'checking' || updateInfo.state === 'available' ? (
+              <RefreshCw className={cn('w-4 h-4', collapsed ? '' : 'mr-2', 'animate-spin')} />
+            ) : (
+              <Download className={cn('w-4 h-4', collapsed ? '' : 'mr-2')} />
+            )}
+            {!collapsed && (
+              <span className="text-xs">
+                {updateInfo.state === 'downloaded'
+                  ? 'Restart to update'
+                  : updateInfo.state === 'available'
+                  ? `Updating ${updateInfo.percent ?? 0}%`
+                  : 'Check for updates'}
+              </span>
+            )}
+          </Button>
           <ThemeToggle />
         </div>
+
 
         <div className={cn(
           "flex items-center gap-3 p-2 rounded-lg bg-sidebar-accent/50",
