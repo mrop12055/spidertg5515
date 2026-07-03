@@ -194,4 +194,4 @@ function stopRunner() {
   if (logStream) { try { logStream.end(); } catch (_) {} logStream = null; }
 }
 
-module.exports = { registerRunnerIpc, stopRunner };
+module.exports = { registerRunnerIpc, stopRunner, setRunnerEndpoint };
