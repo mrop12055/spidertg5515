@@ -481,58 +481,8 @@ async function handleGetTasks(supabase: any, body: any) {
     }
   }
 
-  // ===== WARMUP TASKS =====
-  if (runner === "warmup_chat" || runner === "unified") {
-    const { data: warmupMessages } = await supabase
-      .from("warmup_messages")
-      .select(`*, sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, proxies!fk_proxy(*)), 
-               receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(id, phone_number, telegram_id, username, first_name)`)
-      .eq("status", "pending")
-      .lte("scheduled_at", nowIso)
-      .order("scheduled_at", { ascending: true })
-      .limit(batch_size);
+  // WARMUP tasks removed
 
-    if (warmupMessages?.length > 0) {
-      for (const msg of warmupMessages) {
-        const sender = msg.sender;
-        if (!sender?.session_data || !sender?.proxies || sender.proxies.status !== 'active') continue;
-
-        const creds = await getApiCredentialsForAccount(supabase, sender);
-        if (!creds) continue;
-
-        tasks.push({
-          task_type: msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat",
-          task_id: msg.id,
-          pair_id: msg.pair_id,
-          account: {
-            id: sender.id,
-            phone_number: sender.phone_number,
-            session_data: sender.session_data,
-            device_model: sender.device_model,
-            system_version: sender.system_version,
-            build_id: sender.build_id,
-            app_version: sender.app_version,
-            lang_code: sender.lang_code,
-            system_lang_code: sender.system_lang_code,
-            api_id: creds.api_id,
-            api_hash: creds.api_hash,
-            api_credential_id: creds.api_credential_id,
-          },
-          proxy: sender.proxies,
-          recipient: {
-            phone: msg.receiver?.phone_number,
-            telegram_id: msg.receiver?.telegram_id,
-            username: msg.receiver?.username,
-            name: msg.receiver?.first_name || msg.message_content,
-          },
-          content: msg.message_content,
-          is_cycle_last: msg.is_cycle_last,
-        });
-
-        await supabase.from("warmup_messages").update({ status: "sending", claimed_at: nowIso }).eq("id", msg.id);
-      }
-    }
-  }
 
   // ===== LIVECHAT TASKS =====
   if (runner === "livechat" || runner === "unified") {
