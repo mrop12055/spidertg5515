@@ -3,10 +3,11 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
-import { AuthProvider } from "./context/AuthContext";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import { TelegramProvider } from "./context/TelegramContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import ProtectedRoute from "./components/ProtectedRoute";
+import AppPrefetch from "./components/AppPrefetch";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Accounts from "./pages/Accounts";
@@ -19,7 +20,27 @@ import Material from "./pages/Material";
 import Logs from "./pages/Logs";
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+// Aggressive cache defaults: data is fetched ONCE on app start and kept
+// forever in memory. Realtime subscriptions in each hook push updates.
+// Navigating between pages never triggers a refetch.
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: Infinity,
+      gcTime: Infinity,
+      refetchOnMount: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+      retry: 1,
+    },
+  },
+});
+
+// Mount prefetch only when authenticated so we don't hit the DB on the login screen.
+const AuthedPrefetch: React.FC = () => {
+  const { isAuthenticated } = useAuth();
+  return isAuthenticated ? <AppPrefetch /> : null;
+};
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
@@ -29,6 +50,7 @@ const App = () => (
           <TooltipProvider>
             <Toaster />
             <Sonner />
+            <AuthedPrefetch />
             <HashRouter>
               <Routes>
                 {/* Public routes */}
