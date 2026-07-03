@@ -880,10 +880,14 @@ const Logs: React.FC = () => {
             </Card>
           </TabsContent>
 
+          <TabsContent value="runner" className="mt-0">
+            <RunnerLiveLogs />
+          </TabsContent>
 
         </Tabs>
       </div>
     </DashboardLayout>
+
   );
 };
 
