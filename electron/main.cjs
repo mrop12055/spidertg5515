@@ -96,11 +96,14 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopRunner();
+  localServer.stop();
   closeDb();
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
   stopRunner();
+  localServer.stop();
   closeDb();
+});
 });
