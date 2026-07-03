@@ -14,7 +14,7 @@ import Proxies from "./pages/Proxies";
 import Conversations from "./pages/Conversations";
 import Campaigns from "./pages/Campaigns";
 import SetupGuide from "./pages/SetupGuide";
-import Reports from "./pages/Reports";
+
 import Material from "./pages/Material";
 import Logs from "./pages/Logs";
 import NotFound from "./pages/NotFound";
@@ -42,7 +42,7 @@ const App = () => (
                 <Route path="/conversations" element={<ProtectedRoute><Conversations /></ProtectedRoute>} />
                 <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
                 <Route path="/setup" element={<ProtectedRoute><SetupGuide /></ProtectedRoute>} />
-                <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+                
                 <Route path="/material" element={<ProtectedRoute><Material /></ProtectedRoute>} />
                 <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
