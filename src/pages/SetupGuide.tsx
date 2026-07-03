@@ -70,7 +70,9 @@ const SetupGuide: React.FC = () => {
                 <Badge variant="secondary">v1</Badge>
               </div>
               <p className="text-sm text-muted-foreground">
-                Includes <code className="text-xs">unified_runner.py</code>,{' '}
+                This is the Python worker that logs into your Telegram accounts and processes
+                campaigns, replies, and account tasks. Includes{' '}
+                <code className="text-xs">unified_runner.py</code>,{' '}
                 <code className="text-xs">tasks.py</code>, and{' '}
                 <code className="text-xs">requirements.txt</code>.
               </p>
@@ -109,16 +111,55 @@ const SetupGuide: React.FC = () => {
           <CodeBlock code={`pip install -r requirements.txt`} />
         </Step>
 
-        <Step n={4} title="Run the runner" icon={<PlayCircle className="w-4 h-4" />}>
+        <Step n={4} title="Point the runner at your app data" icon={<Terminal className="w-4 h-4" />}>
           <p className="text-sm text-muted-foreground">
-            Start the runner (keep this window open — the runner needs to stay running to process tasks):
+            The runner reads the same local database the desktop app writes to. Tell it where that
+            folder is. On a normal install:
           </p>
-          <CodeBlock code={`python unified_runner.py`} />
-          <p className="text-xs text-muted-foreground">
-            To stop it, press <kbd className="px-1.5 py-0.5 rounded border bg-muted">Ctrl</kbd> +{' '}
-            <kbd className="px-1.5 py-0.5 rounded border bg-muted">C</kbd>.
+          <CodeBlock
+            label="Windows"
+            code={`%APPDATA%\\TelegramCRM`}
+          />
+          <CodeBlock
+            label="macOS"
+            code={`~/Library/Application Support/TelegramCRM`}
+          />
+          <CodeBlock
+            label="Linux"
+            code={`~/.config/TelegramCRM`}
+          />
+          <p className="text-sm text-muted-foreground">
+            That folder contains <code>data.db</code>, a <code>sessions/</code> folder, and a{' '}
+            <code>files/</code> folder. Set these three environment variables to point at them.
           </p>
         </Step>
+
+        <Step n={5} title="Run the runner" icon={<PlayCircle className="w-4 h-4" />}>
+          <p className="text-sm text-muted-foreground">
+            Open a terminal in the extracted folder and run the commands below. Keep the window
+            open — the runner needs to stay running to process Telegram tasks.
+          </p>
+          <CodeBlock
+            label="Windows (PowerShell)"
+            code={`$env:TCRM_DB_PATH = "$env:APPDATA\\TelegramCRM\\data.db"
+$env:TCRM_SESSIONS_DIR = "$env:APPDATA\\TelegramCRM\\sessions"
+$env:TCRM_FILES_DIR = "$env:APPDATA\\TelegramCRM\\files"
+python unified_runner.py`}
+          />
+          <CodeBlock
+            label="macOS / Linux"
+            code={`export TCRM_DB_PATH="$HOME/Library/Application Support/TelegramCRM/data.db"
+export TCRM_SESSIONS_DIR="$HOME/Library/Application Support/TelegramCRM/sessions"
+export TCRM_FILES_DIR="$HOME/Library/Application Support/TelegramCRM/files"
+python3 unified_runner.py`}
+          />
+          <p className="text-xs text-muted-foreground">
+            To stop it, press <kbd className="px-1.5 py-0.5 rounded border bg-muted">Ctrl</kbd> +{' '}
+            <kbd className="px-1.5 py-0.5 rounded border bg-muted">C</kbd>. On Linux, swap the paths
+            above for <code>~/.config/TelegramCRM/…</code>.
+          </p>
+        </Step>
+
 
         <Card>
           <CardHeader>
