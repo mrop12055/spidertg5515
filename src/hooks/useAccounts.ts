@@ -27,8 +27,9 @@ const transformAccount = (acc: any): TelegramAccount => ({
   appVersion: acc.app_version || undefined,
   langCode: acc.lang_code || undefined,
   systemLangCode: acc.system_lang_code || undefined,
-  warmupPhase: acc.warmup_phase ?? 0,
-  warmupStartedAt: acc.warmup_started_at ? new Date(acc.warmup_started_at) : undefined,
+  warmupPhase: 0,
+  warmupStartedAt: undefined,
+
   spambotStatus: acc.spambot_status || 'unknown',
   phoneCountry: acc.phone_country || undefined,
   geoMismatch: acc.geo_mismatch || false,
