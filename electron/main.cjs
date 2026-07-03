@@ -38,10 +38,16 @@ function createWindow() {
     },
   });
 
-  const indexHtml = path.join(__dirname, '..', 'dist', 'index.html');
-  mainWindow.loadFile(indexHtml).catch((err) => {
-    console.error('[main] failed to load index.html:', err);
-  });
+  const devUrl = process.env.ELECTRON_DEV_URL;
+  if (devUrl) {
+    mainWindow.loadURL(devUrl).catch((err) => console.error('[main] failed to load dev url:', err));
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  } else {
+    const indexHtml = path.join(__dirname, '..', 'dist', 'index.html');
+    mainWindow.loadFile(indexHtml).catch((err) => {
+      console.error('[main] failed to load index.html:', err);
+    });
+  }
 
   // Open external links in the default browser.
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
