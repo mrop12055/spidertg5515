@@ -174,7 +174,8 @@ function opInsert(payload) {
   };
   const tx = db.transaction(() => list.forEach(insertOne));
   tx();
-  if (payload.returning === 'minimal') return { data: null, error: null };
+  for (const r of results) emitChange(payload.table, 'INSERT', r);
+  if (payload.returning === 'minimal') { emitChange(payload.table, 'INSERT', null); return { data: null, error: null }; }
   if (payload.single) return { data: results[0] || null, error: null };
   return { data: results, error: null };
 }
