@@ -106,4 +106,3 @@ app.on('before-quit', () => {
   localServer.stop();
   closeDb();
 });
-});
