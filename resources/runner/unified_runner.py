@@ -468,6 +468,139 @@ async def sender_loop(stop: asyncio.Event) -> None:
             pass
 
 
+async def tasks_loop(stop: asyncio.Event) -> None:
+    """Process account_check_tasks, block_contact_tasks, contact_import_tasks."""
+    try:
+        from tasks import HANDLERS, block_contact, import_contacts  # type: ignore
+    except Exception as e:
+        _log(f"tasks module unavailable: {e}")
+        return
+    while not stop.is_set():
+        try:
+            await _drain_account_check_tasks(HANDLERS)
+            await _drain_block_tasks(block_contact)
+            await _drain_import_tasks(import_contacts)
+        except Exception as e:
+            _log(f"tasks error: {e}\n{traceback.format_exc()}")
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            pass
+
+
+def _parse_result_params(raw) -> dict:
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw) if isinstance(raw, str) else dict(raw)
+    except Exception:
+        return {}
+
+
+async def _drain_account_check_tasks(handlers) -> None:
+    rows = db_all(
+        "SELECT * FROM account_check_tasks WHERE status='pending' ORDER BY created_at LIMIT 25"
+    )
+    for r in rows:
+        ttype = r["task_type"]
+        handler = handlers.get(ttype)
+        if not handler:
+            db_exec(
+                "UPDATE account_check_tasks SET status='failed', result=?, completed_at=?, updated_at=? WHERE id=?",
+                (json.dumps({"error": f"unknown task_type {ttype}"}), _now(), _now(), r["id"]),
+            )
+            continue
+        aw = CLIENTS.get(r["account_id"])
+        if not aw or not aw.connected:
+            continue  # try again once account is online
+        # claim
+        db_exec(
+            "UPDATE account_check_tasks SET status='running', updated_at=? WHERE id=? AND status='pending'",
+            (_now(), r["id"]),
+        )
+        params = _parse_result_params(r["result"])
+        try:
+            result = await handler(aw, params, FILES_DIR)
+            db_exec(
+                "UPDATE account_check_tasks SET status='completed', result=?, completed_at=?, updated_at=? WHERE id=?",
+                (json.dumps(result, default=str), _now(), _now(), r["id"]),
+            )
+            # sync_profile also writes back to telegram_accounts
+            if ttype == "sync_profile" and isinstance(result, dict):
+                db_exec(
+                    """UPDATE telegram_accounts SET username=COALESCE(?,username),
+                       first_name=COALESCE(?,first_name), last_name=COALESCE(?,last_name),
+                       telegram_id=COALESCE(?,telegram_id), updated_at=? WHERE id=?""",
+                    (result.get("username"), result.get("first_name"),
+                     result.get("last_name"), result.get("id"), _now(), aw.id),
+                )
+            if ttype == "spambot_check" and isinstance(result, dict):
+                db_exec(
+                    "UPDATE telegram_accounts SET spambot_status=?, last_spambot_check=?, updated_at=? WHERE id=?",
+                    (result.get("status"), _now(), _now(), aw.id),
+                )
+            _log(f"{aw.phone}: task {ttype} OK")
+        except Exception as e:
+            db_exec(
+                "UPDATE account_check_tasks SET status='failed', result=?, completed_at=?, updated_at=? WHERE id=?",
+                (json.dumps({"error": f"{type(e).__name__}: {e}"}), _now(), _now(), r["id"]),
+            )
+            _log(f"{aw.phone}: task {ttype} FAILED: {e}")
+
+
+async def _drain_block_tasks(handler) -> None:
+    rows = db_all(
+        "SELECT * FROM block_contact_tasks WHERE status='pending' ORDER BY created_at LIMIT 25"
+    )
+    for r in rows:
+        aw = CLIENTS.get(r["account_id"])
+        if not aw or not aw.connected:
+            continue
+        db_exec("UPDATE block_contact_tasks SET status='running' WHERE id=?", (r["id"],))
+        try:
+            result = await handler(aw, {
+                "action": r["action"],
+                "target_phone": r["target_phone"],
+                "target_username": r["target_username"],
+                "target_telegram_id": r["target_telegram_id"],
+            }, FILES_DIR)
+            db_exec(
+                "UPDATE block_contact_tasks SET status='completed', result=?, completed_at=? WHERE id=?",
+                (json.dumps(result), _now(), r["id"]),
+            )
+        except Exception as e:
+            db_exec(
+                "UPDATE block_contact_tasks SET status='failed', result=?, completed_at=? WHERE id=?",
+                (json.dumps({"error": str(e)}), _now(), r["id"]),
+            )
+
+
+async def _drain_import_tasks(handler) -> None:
+    rows = db_all(
+        "SELECT * FROM contact_import_tasks WHERE status='pending' ORDER BY created_at LIMIT 5"
+    )
+    for r in rows:
+        aw = CLIENTS.get(r["account_id"])
+        if not aw or not aw.connected:
+            continue
+        db_exec("UPDATE contact_import_tasks SET status='running', current_account_id=? WHERE id=?",
+                (aw.id, r["id"]))
+        try:
+            phones = json.loads(r["phone_numbers"] or "[]")
+            result = await handler(aw, {"phone_numbers": phones}, FILES_DIR)
+            db_exec(
+                """UPDATE contact_import_tasks SET status='completed', result=?,
+                   valid_numbers=?, completed_at=? WHERE id=?""",
+                (json.dumps(result), json.dumps(result.get("phones", [])), _now(), r["id"]),
+            )
+        except Exception as e:
+            db_exec(
+                "UPDATE contact_import_tasks SET status='failed', result=?, completed_at=? WHERE id=?",
+                (json.dumps({"error": str(e)}), _now(), r["id"]),
+            )
+
+
+
 async def _drain_campaigns() -> None:
     rows = db_all(
         """
@@ -617,6 +750,7 @@ async def async_main() -> int:
         asyncio.create_task(keepalive_loop(stop)),
         asyncio.create_task(reconcile_loop(stop)),
         asyncio.create_task(sender_loop(stop)),
+        asyncio.create_task(tasks_loop(stop)),
     ]
 
     await stop.wait()
