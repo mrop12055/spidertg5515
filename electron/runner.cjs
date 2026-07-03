@@ -64,6 +64,13 @@ function resolveRunnerPaths() {
     path.join(__dirname, '..', 'resources', 'python'),
   ].filter(Boolean);
 
+  // process.resourcesPath is the packaged `resources/` dir; in dev it points
+  // into Electron's own resources, so we also probe the project root.
+  const candidates = [
+    process.resourcesPath && path.join(process.resourcesPath, 'python'),
+    path.join(__dirname, '..', 'resources', 'python'),
+  ].filter(Boolean);
+
   let pythonBin = null;
   for (const dir of candidates) {
     const exe = process.platform === 'win32'
