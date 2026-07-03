@@ -246,21 +246,8 @@ const Logs: React.FC = () => {
       summaries.sort((a, b) => b.total - a.total);
       setOperationSummaries(summaries);
 
-      // Process Warmup Messages
-      if (warmupMessagesResult.data) {
-        warmupMessagesResult.data.forEach(msg => {
-          logs.push({
-            id: msg.id,
-            source: 'Warmup Chat',
-            type: msg.message_type || 'message',
-            message: `Warmup message ${msg.status}`,
-            status: msg.status === 'sent' ? 'success' : 'error',
-            details: msg.error_message || msg.message_content?.substring(0, 50),
-            accountPhone: accountPhoneMap.get(msg.sender_account_id) || msg.sender_account_id,
-            timestamp: new Date(msg.sent_at || msg.created_at || Date.now()),
-          });
-        });
-      }
+      // Warmup Messages removed
+
 
       // Process Block Tasks
       if (blockTasksResult.data) {
