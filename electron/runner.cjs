@@ -211,31 +211,22 @@ TCRM_SESSIONS_DIR=${path.join(ctx.userDataDir, 'sessions')}
 TCRM_FILES_DIR=${path.join(ctx.userDataDir, 'files')}
 TCRM_USER_DATA=${ctx.userDataDir}
 `;
-      fs.writeFileSync(path.join(outDir, '.env'), envContent);
+      fs.writeFileSync(path.join(outDir, '.env'), envContent.replace(/\r?\n/g, '\r\n'));
 
       const runBat =
 `@echo off
-setlocal enabledelayedexpansion
 cd /d "%~dp0"
-for /f "usebackq tokens=1,* delims==" %%A in (".env") do set %%A=%%B
 
-REM Find a real Python interpreter. The Windows "python" alias that opens
-REM the Microsoft Store is NOT a real Python — skip WindowsApps shims.
+for /f "usebackq tokens=1,* delims==" %%A in (".env") do set "%%A=%%B"
+
 set "PYEXE="
 where py >nul 2>nul && set "PYEXE=py -3"
-if not defined PYEXE (
-  for /f "delims=" %%P in ('where python 2^>nul') do (
-    echo %%P | find /i "WindowsApps" >nul
-    if errorlevel 1 (
-      set "PYEXE=%%P"
-      goto :gotpy
-    )
-  )
-)
-:gotpy
+if not defined PYEXE where python3 >nul 2>nul && set "PYEXE=python3"
+if not defined PYEXE where python  >nul 2>nul && set "PYEXE=python"
+
 if not defined PYEXE (
   echo.
-  echo [ERROR] Python 3.10+ is not installed.
+  echo [ERROR] Python 3.10+ is not installed or not on PATH.
   echo Download from https://www.python.org/downloads/windows/
   echo During install, TICK "Add python.exe to PATH".
   echo.
@@ -247,9 +238,10 @@ echo Using Python: %PYEXE%
 %PYEXE% -m pip install --quiet --disable-pip-version-check telethon httpx pysocks
 %PYEXE% -u unified_runner.py
 pause
-endlocal
 `;
-      fs.writeFileSync(path.join(outDir, 'run.bat'), runBat);
+      // Windows cmd.exe requires CRLF line endings — LF-only files get
+      // parsed one character short per line ("setlocal" -> "tlocal").
+      fs.writeFileSync(path.join(outDir, 'run.bat'), runBat.replace(/\r?\n/g, '\r\n'));
 
       const runSh =
 `#!/usr/bin/env bash
@@ -264,6 +256,7 @@ fi
 "$PYEXE" -u unified_runner.py
 `;
       fs.writeFileSync(path.join(outDir, 'run.sh'), runSh, { mode: 0o755 });
+
 
       const readme =
 `Telegram CRM — Local Runner
