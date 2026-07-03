@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
 import { useDashboardStats } from '@/hooks/useDashboardStats';
 import { useCampaigns } from '@/hooks/useCampaigns';
-import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
+
 import { TaskQueueCard } from '@/components/dashboard/TaskQueueCard';
 import { RecentErrorsCard } from '@/components/dashboard/RecentErrorsCard';
 import RunnerDownloadCard from '@/components/dashboard/RunnerDownloadCard';
@@ -87,10 +87,6 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
-      {/* Runner Status */}
-      <div className="mb-8">
-        <RunnerStatusCard />
-      </div>
 
       {/* Running Campaigns */}
       {runningCampaigns > 0 && (
