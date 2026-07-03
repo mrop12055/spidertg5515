@@ -39,18 +39,13 @@ interface CachedSettings {
 let settingsCache: CachedSettings | null = null;
 const SETTINGS_CACHE_TTL_MS = 30 * 1000;
 
-async function getCachedSettings(supabase: any): Promise<Record<string, any>[]> {
-  const now = Date.now();
-  if (settingsCache && (now - settingsCache.timestamp) < SETTINGS_CACHE_TTL_MS) {
-    return settingsCache.data;
-  }
-  const { data: settingsData } = await supabase.from("app_settings").select("key, value");
-  settingsCache = { data: settingsData || [], timestamp: now };
-  return settingsCache.data;
+async function getCachedSettings(_supabase: any): Promise<Record<string, any>[]> {
+  // app_settings table removed — return empty; parseSettings falls back to defaults
+  return [];
 }
 
-function parseSettings(settingsData: Record<string, any>[]) {
-  const config = {
+function parseSettings(_settingsData: Record<string, any>[]) {
+  return {
     messageDelayMin: 5,
     messageDelayMax: 15,
     dailyLimit: 25,
@@ -60,42 +55,8 @@ function parseSettings(settingsData: Record<string, any>[]) {
     campaignMessagesPerAccountPerDay: 25,
     livechatSettings: { sameAccountStaggerMin: 1, sameAccountStaggerMax: 2, enableParallel: true },
   };
-  
-  for (const setting of settingsData) {
-    const value = setting.value as Record<string, unknown>;
-    switch (setting.key) {
-      case "message_timing":
-        if (value) {
-          config.messageDelayMin = (value.minDelaySeconds as number) || config.messageDelayMin;
-          config.messageDelayMax = (value.maxDelaySeconds as number) || config.messageDelayMax;
-        }
-        break;
-      case "account_limits":
-        if (value) config.dailyLimit = (value.dailyMessageLimit as number) || config.dailyLimit;
-        break;
-      case "warmup_batch_size":
-        if (value) config.warmupBatchSize = (value.batchSize as number) || config.warmupBatchSize;
-        break;
-      case "campaign_speed":
-        if (value) {
-          config.campaignPollingInterval = (value.pollingInterval as number) ?? config.campaignPollingInterval;
-          config.campaignBatchSize = (value.batchSize as number) ?? config.campaignBatchSize;
-          config.campaignMessagesPerAccountPerDay = (value.messagesPerAccountPerDay as number) ?? config.campaignMessagesPerAccountPerDay;
-        }
-        break;
-      case "livechat":
-        if (value) {
-          config.livechatSettings = {
-            sameAccountStaggerMin: (value.sameAccountStaggerMin as number) ?? 1,
-            sameAccountStaggerMax: (value.sameAccountStaggerMax as number) ?? 2,
-            enableParallel: (value.enableParallel as boolean) ?? true,
-          };
-        }
-        break;
-    }
-  }
-  return config;
 }
+
 
 // Get API credentials for account (per-account only - no pool fallback)
 async function getApiCredentialsForAccount(supabase: any, account: any) {
