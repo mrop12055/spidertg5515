@@ -148,7 +148,7 @@ app.whenReady().then(() => {
   try {
     const runner = require('./runner.cjs');
     stopRunner = runner.stopRunner;
-    runner.registerRunnerIpc(ipcMain, { userDataDir, getWindow: () => mainWindow });
+    runner.registerRunnerIpc(ipcMain, { userDataDir, getWindow: () => mainWindow, broadcast });
   } catch (err) {
     console.error('[main] runner init failed:', err);
   }
