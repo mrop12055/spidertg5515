@@ -725,10 +725,13 @@ async function handleGetTasks(supabase: any, body: any) {
 
   console.log(`[runner-tasks/get] Returning ${tasks.length} tasks, ${includeAccounts ? listeningAccounts.length : 0} accounts (includeAccounts=${includeAccounts})`);
 
+  // Aggressive polling for responsiveness:
+  // - When we just processed tasks, poll again in 1s so livechat sends feel instant
+  // - When idle, poll every 5s (was 30s) so a newly-queued message picks up quickly
   return jsonResponse({
     tasks,
     accounts: listeningAccounts,
-    delay_after: tasks.length > 0 ? config.campaignPollingInterval : 30,
+    delay_after: tasks.length > 0 ? 1 : 5,
     settings: config.livechatSettings,
     last_offline_at: lastOfflineAt,  // Include runner's last offline time for smart catch-up
     config: {
