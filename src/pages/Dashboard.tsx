@@ -87,10 +87,12 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
-      {/* Runner Status */}
-      <div className="mb-8">
+      {/* Runner Status + Export */}
+      <div className="mb-8 space-y-4">
         <RunnerStatusCard />
+        <RunnerDownloadCard />
       </div>
+
 
       {/* Running Campaigns */}
       {runningCampaigns > 0 && (
