@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('localApi', {
     stop: () => ipcRenderer.invoke('runner:stop'),
     restart: () => ipcRenderer.invoke('runner:restart'),
     status: () => ipcRenderer.invoke('runner:status'),
+    export: () => ipcRenderer.invoke('runner:export'),
     onLog: (cb) => {
       const listener = (_e, line) => cb(line);
       ipcRenderer.on('runner:log', listener);
@@ -28,6 +29,7 @@ contextBridge.exposeInMainWorld('localApi', {
       return () => ipcRenderer.removeListener('runner:status', listener);
     },
   },
+
   updater: {
     check: () => ipcRenderer.invoke('update:check'),
     install: () => ipcRenderer.invoke('update:install'),
