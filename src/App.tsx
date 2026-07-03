@@ -2,7 +2,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { HashRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider } from "./context/AuthContext";
 import { TelegramProvider } from "./context/TelegramContext";
 import { ThemeProvider } from "./context/ThemeContext";
@@ -29,7 +29,7 @@ const App = () => (
           <TooltipProvider>
             <Toaster />
             <Sonner />
-            <BrowserRouter>
+            <HashRouter>
               <Routes>
                 {/* Public routes */}
                 <Route path="/login" element={<Login />} />
@@ -47,7 +47,7 @@ const App = () => (
                 <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </BrowserRouter>
+            </HashRouter>
           </TooltipProvider>
         </TelegramProvider>
       </AuthProvider>
