@@ -248,6 +248,8 @@ class AccountWorker:
                         self.id,
                     ),
                 )
+            print("#CHANGE telegram_accounts", flush=True)
+
             self._register_handlers()
             _log(f"{self.phone}: connected as @{getattr(me, 'username', None) or me.id}")
             return True
