@@ -101,74 +101,58 @@ const Logs: React.FC = () => {
       const [
         vpsLogsResult,
         accountCheckResult,
-        warmupMessagesResult,
         blockTasksResult,
         contactImportResult,
         maturationResult,
-        warmupErrorsResult,
         proxyErrorsResult
       ] = await Promise.all([
-        // VPS Logs - reduced from 200 to 100
+        // VPS Logs
         supabase
           .from('vps_logs')
           .select('*')
           .order('created_at', { ascending: false })
           .limit(100),
-        
-        // Account Check Tasks - reduced from 500 to 200
+
+        // Account Check Tasks
         supabase
           .from('account_check_tasks')
           .select('id, account_id, task_type, status, result, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
           .limit(200),
-        
-        // Warmup Messages - reduced from 200 to 100
-        supabase
-          .from('warmup_messages')
-          .select('id, sender_account_id, status, message_content, message_type, error_message, sent_at, created_at')
-          .in('status', ['sent', 'failed'])
-          .order('created_at', { ascending: false })
-          .limit(100),
-        
-        // Block Contact Tasks - reduced from 100 to 50
+
+        // Block Contact Tasks
         supabase
           .from('block_contact_tasks')
           .select('id, account_id, status, action, target_phone, result, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
           .limit(50),
-        
-        // Contact Import Tasks - reduced from 100 to 50
+
+        // Contact Import Tasks
         supabase
           .from('contact_import_tasks')
           .select('id, account_id, status, result, valid_numbers, invalid_numbers, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
           .limit(50),
-        
-        // Maturation Tasks - reduced from 100 to 50
+
+        // Maturation Tasks
         supabase
           .from('maturation_tasks')
           .select('id, account_id, task_type, status, description, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
           .limit(50),
-        
-        // Warmup Errors - reduced from 100 to 50
-        supabase
-          .from('warmup_errors')
-          .select('id, account_id, error_type, error_message, created_at')
-          .order('created_at', { ascending: false })
-          .limit(50),
-        
-        // Proxy Errors - reduced from 100 to 50
+
+        // Proxy Errors
         supabase
           .from('proxy_errors')
           .select('id, proxy_id, error_type, error_message, created_at')
           .order('created_at', { ascending: false })
           .limit(50),
       ]);
+
 
       // Process VPS Logs
       if (vpsLogsResult.data) {
