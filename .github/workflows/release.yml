@@ -48,11 +48,34 @@ jobs:
             exit 1
           fi
 
+      - name: Download embedded Python (python-build-standalone)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $url = "https://github.com/astral-sh/python-build-standalone/releases/download/20240814/cpython-3.11.9+20240814-x86_64-pc-windows-msvc-install_only.tar.gz"
+          $dst = "resources/python"
+          New-Item -ItemType Directory -Force -Path $dst | Out-Null
+          curl.exe -L -o python.tar.gz $url
+          tar -xzf python.tar.gz
+          # Archive extracts to a top-level `python/` folder — move its contents into resources/python
+          Get-ChildItem -Path "python" -Force | Move-Item -Destination $dst -Force
+          Remove-Item -Recurse -Force python
+          Remove-Item python.tar.gz
+          if (!(Test-Path "$dst/python.exe")) { throw "python.exe not found after extract" }
+
+      - name: Pre-install runner deps into vendor dir
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          resources/python/python.exe -m pip install --disable-pip-version-check `
+            --target resources/runner/_vendor -r resources/runner/requirements.txt
+          New-Item -ItemType File -Path resources/runner/_vendor/.installed -Force | Out-Null
+
       - name: Build renderer
         run: bun run build
 
       - name: Build Windows installer
-        run: npx electron-builder --win nsis --publish never
+        run: npx electron-builder --win nsis portable --publish never
 
       - name: Upload installer to this GitHub release
         if: startsWith(github.ref, 'refs/tags/')
