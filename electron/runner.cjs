@@ -24,6 +24,8 @@ let manualStop = false;
 let logStream = null;
 let ctxRef = null;
 let apiPort = 0;
+let apiToken = '';
+function setRunnerEndpoint({ port, token }) { apiPort = port; apiToken = token; }
 
 function emit(channel, payload) {
   const win = ctxRef && ctxRef.getWindow && ctxRef.getWindow();
