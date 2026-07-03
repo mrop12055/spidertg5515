@@ -650,8 +650,10 @@ const Accounts: React.FC = () => {
         tagsToAssign.push(newUploadTag.trim());
       }
 
-      // Process in chunks of 300 for speed and reliability
-      const CHUNK_SIZE = 300;
+      // Process in small chunks — session_data payloads are large (base64) and
+      // big Electron IPC messages fail silently. 25 keeps each message small.
+      const CHUNK_SIZE = 25;
+
       const totalAccounts = accountsToUpload.length;
       const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
       let totalSuccessful = 0;
