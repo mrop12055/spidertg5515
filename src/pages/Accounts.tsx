@@ -608,6 +608,15 @@ const Accounts: React.FC = () => {
       return;
     }
 
+    // Uploads write to the local SQLite DB via the Electron bridge.
+    // In the Lovable browser preview that bridge does not exist, so uploads
+    // silently produce zero results and the old "All accounts failed" toast
+    // fires. Tell the user plainly what's going on instead.
+    if (!(window as any).localApi?.isDesktop) {
+      toast.error('Uploads only work in the desktop app. Run dev.bat on your PC to open the real app, then upload there.');
+      return;
+    }
+
     setIsUploading(true);
     setUploadResults(null);
 
