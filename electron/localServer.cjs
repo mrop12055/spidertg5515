@@ -100,6 +100,7 @@ async function handleRoute(req, url, body, ctx) {
     const mark = db.prepare(`UPDATE campaign_recipients SET status = 'sending', sending_started_at = ? WHERE id = ?`);
     const tx = db.transaction(() => rows.forEach((r) => mark.run(nowIso(), r.id)));
     tx();
+    for (const r of rows) emit('campaign_recipients', 'UPDATE', { id: r.id, campaign_id: r.campaign_id, status: 'sending' });
     return { tasks: rows };
   }
 
