@@ -230,4 +230,4 @@ function stop() {
 
 function getEndpoint() { return { port, token, url: port ? `http://127.0.0.1:${port}` : '' }; }
 
-module.exports = { start, stop, getEndpoint };
+module.exports = { start, stop, getEndpoint, setChangeEmitter };
