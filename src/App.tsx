@@ -13,13 +13,9 @@ import Accounts from "./pages/Accounts";
 import Proxies from "./pages/Proxies";
 import Conversations from "./pages/Conversations";
 import Campaigns from "./pages/Campaigns";
-import Settings from "./pages/Settings";
 import SetupGuide from "./pages/SetupGuide";
 import Reports from "./pages/Reports";
 import Material from "./pages/Material";
-import Seats from "./pages/Seats";
-import SeatChat from "./pages/SeatChat";
-import Warmup from "./pages/Warmup";
 import Logs from "./pages/Logs";
 import NotFound from "./pages/NotFound";
 
@@ -37,8 +33,7 @@ const App = () => (
               <Routes>
                 {/* Public routes */}
                 <Route path="/login" element={<Login />} />
-                <Route path="/seat/:token" element={<SeatChat />} />
-                
+
                 {/* Protected routes */}
                 <Route path="/" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -46,12 +41,9 @@ const App = () => (
                 <Route path="/proxies" element={<ProtectedRoute><Proxies /></ProtectedRoute>} />
                 <Route path="/conversations" element={<ProtectedRoute><Conversations /></ProtectedRoute>} />
                 <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
-                <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
                 <Route path="/setup" element={<ProtectedRoute><SetupGuide /></ProtectedRoute>} />
                 <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
                 <Route path="/material" element={<ProtectedRoute><Material /></ProtectedRoute>} />
-                <Route path="/seats" element={<ProtectedRoute><Seats /></ProtectedRoute>} />
-                <Route path="/warmup" element={<ProtectedRoute><Warmup /></ProtectedRoute>} />
                 <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
