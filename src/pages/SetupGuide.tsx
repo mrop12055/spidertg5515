@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-direct-net-timeout-v15";
+  const runnerBuild = "2026-02-10-direct-cleanup-v16";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -145,8 +145,9 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
 
 
 # Residential/mobile proxies and direct ISP connections can fail when too many
-# MTProto handshakes start at once. Defaults are conservative; override with env vars.
-CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 5, 1, 15)
+# MTProto handshakes start at once. Default is intentionally low for Windows/direct IP.
+# Override with TG_CONNECT_CONCURRENCY only if your route is stable.
+CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 2, 1, 15)
 CONNECT_TIMEOUT_SECONDS = _env_int("TG_CONNECT_TIMEOUT_SECONDS", 90, 30, 180)
 CONNECT_BATCH_PAUSE_SECONDS = _env_float("TG_CONNECT_BATCH_PAUSE_SECONDS", 2.0, 0.0, 30.0)
 
@@ -228,6 +229,16 @@ def get_proxy(acc: dict) -> Optional[tuple]:
     if p.get("username"):
         return (ptype, p["host"], int(p["port"]), True, p["username"], p["password"])
     return (ptype, p["host"], int(p["port"]))
+
+
+async def safe_disconnect_client(client, phone: str = "????"):
+    """Best-effort cleanup after failed connects so Telethon leaves no reconnect task behind."""
+    if not client:
+        return
+    try:
+        await asyncio.wait_for(client.disconnect(), timeout=5)
+    except Exception:
+        pass
 
 
 def variate(text: str) -> str:
@@ -1299,6 +1310,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         else:
             print(f"  [DIRECT] [{phone[-4:]}] No proxy/VPN — using this machine's normal internet")
         
+        client = None
         try:
             client = TelegramClient(
                 path, int(acc["api_id"]), acc["api_hash"],
@@ -1322,6 +1334,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             return client, None
             
         except asyncio.TimeoutError:
+            await safe_disconnect_client(client, phone)
             if using_proxy:
                 error_msg = f"Proxy connection timeout ({CONNECT_TIMEOUT_SECONDS}s) - proxy/provider overloaded or unreachable"
             else:
@@ -1334,6 +1347,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             return None, error_msg
             
         except (AuthKeyUnregisteredError, SessionRevokedError) as e:
+            await safe_disconnect_client(client, phone)
             # Session invalid - account needs re-auth
             error_msg = f"Session revoked: {str(e)[:50]}"
             print(f"  ✗ [{phone[-4:]}] SESSION REVOKED")
@@ -1341,6 +1355,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             return None, error_msg
             
         except (UserDeactivatedBanError, PhoneNumberBannedError) as e:
+            await safe_disconnect_client(client, phone)
             # Account banned
             error_msg = f"Account banned: {str(e)[:50]}"
             print(f"  ✗ [{phone[-4:]}] BANNED")
@@ -1348,6 +1363,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             return None, error_msg
             
         except Exception as e:
+            await safe_disconnect_client(client, phone)
             error_str = str(e)
             print(f"  ✗ [{phone[-4:]}] {error_str[:30]}")
             
