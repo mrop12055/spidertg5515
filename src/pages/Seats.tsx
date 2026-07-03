@@ -128,7 +128,7 @@ const Seats: React.FC = () => {
   const debouncedStatsRefetch = useCallback(() => {
     if (statsDebounceRef.current) clearTimeout(statsDebounceRef.current);
     statsDebounceRef.current = setTimeout(async () => {
-      const { data, error } = await supabase.from('seat_stats').select('*');
+      const { data, error } = await (supabase as any).from('seat_stats').select('*');
       if (!error && data) {
         const statsMap = new Map<string, SeatStats>();
         data.forEach((s: SeatStats) => statsMap.set(s.seat_id, s));
