@@ -114,6 +114,7 @@ async function startChild() {
       env: {
         ...process.env,
         TCRM_API_URL: `http://127.0.0.1:${apiPort}`,
+        TCRM_API_TOKEN: apiToken,
         TCRM_SESSIONS_DIR: sessionsDir,
         TCRM_FILES_DIR: filesDir,
         TCRM_USER_DATA: userDataDir,
