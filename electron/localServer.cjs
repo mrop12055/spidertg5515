@@ -118,8 +118,11 @@ async function handleRoute(req, url, body, ctx) {
       db.prepare(`UPDATE lifetime_stats SET stat_value = stat_value + 1, updated_at = ? WHERE stat_key = 'lifetime_messages_sent'`).run(nowIso());
       if (sent_by_account_id) {
         db.prepare(`UPDATE telegram_accounts SET messages_sent_today = COALESCE(messages_sent_today,0) + 1, last_active = ? WHERE id = ?`).run(nowIso(), sent_by_account_id);
+        emit('telegram_accounts', 'UPDATE', { id: sent_by_account_id });
       }
+      emit('lifetime_stats', 'UPDATE', { stat_key: 'lifetime_messages_sent' });
     }
+    emit('campaign_recipients', 'UPDATE', { id: recipient_id, status });
     return { ok: true };
   }
 
