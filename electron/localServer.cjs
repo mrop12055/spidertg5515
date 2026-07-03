@@ -8,6 +8,15 @@ const crypto = require('crypto');
 const { handleApiCall } = require('./api.cjs');
 const { getDb } = require('./db.cjs');
 
+// Realtime emit — wired by main.cjs to fan runner-side writes to the renderer
+// so the UI updates instantly instead of polling.
+let _emit = null;
+function setChangeEmitter(fn) { _emit = fn; }
+function emit(table, eventType, row) {
+  if (!_emit) return;
+  try { _emit({ table, eventType, new: row || null, old: row || null }); } catch (_) {}
+}
+
 let server = null;
 let port = 0;
 let token = '';
