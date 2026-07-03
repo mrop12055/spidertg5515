@@ -174,18 +174,47 @@ const functions = {
   },
 };
 
-// Minimal channel stub — real-time not supported in Phase 1. Returns a chainable
-// object with .on().subscribe() so existing call sites keep type-checking.
+// Real-time channel — bridges Supabase-style .on('postgres_changes', {table}, cb)
+// to Electron IPC 'data:changed' events emitted by api.cjs (UI writes) and
+// runner.cjs (Python-runner writes). No polling anywhere.
+type ChangeCb = (payload: { eventType: string; table: string; new: any; old: any }) => void;
+type Subscription = { table: string; event: string; cb: ChangeCb };
+
+const _subs: Set<Subscription> = new Set();
+let _wired = false;
+
+function _wireOnce() {
+  if (_wired) return;
+  const api = getLocalApi();
+  if (!api.onDataChange) { _wired = true; return; }
+  api.onDataChange((evt) => {
+    for (const s of _subs) {
+      if (s.table !== evt.table && evt.table !== '*' && s.table !== '*') continue;
+      // Best-effort: we don't ship row payloads over IPC — subscribers refetch.
+      try { s.cb({ eventType: evt.event, table: evt.table, new: null, old: null }); } catch (_) {}
+    }
+  });
+  _wired = true;
+}
+
 const makeChannel = (_name?: string) => {
+  const local: Subscription[] = [];
   const chan: any = {
-    on: (_event?: any, _filter?: any, _cb?: any) => chan,
-    subscribe: (_cb?: any) => ({ unsubscribe: () => {} }),
-    unsubscribe: () => {},
+    on: (_event: string, filter: any, cb: ChangeCb) => {
+      _wireOnce();
+      const sub: Subscription = { table: filter?.table || '*', event: filter?.event || '*', cb };
+      local.push(sub);
+      _subs.add(sub);
+      return chan;
+    },
+    subscribe: (_cb?: any) => ({ unsubscribe: () => { for (const s of local) _subs.delete(s); } }),
+    unsubscribe: () => { for (const s of local) _subs.delete(s); },
   };
   return chan;
 };
 const channel = (name?: string) => makeChannel(name);
-const removeChannel = (_chan?: any) => {};
+const removeChannel = (chan?: any) => { try { chan?.unsubscribe?.(); } catch (_) {} };
+
 
 
 const auth = {
