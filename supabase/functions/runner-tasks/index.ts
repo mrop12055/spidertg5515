@@ -792,15 +792,8 @@ async function handleReportResults(supabase: any, body: any) {
       }
 
     } else if (taskType === "warmup_chat" || taskType === "warmup_add_contact") {
-      await supabase.from("warmup_messages")
-        .update({ status: "sent", sent_at: now })
-        .eq("id", r.task_id);
+      // warmup removed — ignore
 
-      if (r.is_cycle_last && r.pair_id) {
-        await supabase.from("warmup_pairs")
-          .update({ contacts_exchanged: true })
-          .eq("id", r.pair_id);
-      }
     } else if (isAccountActionType(taskType)) {
       // Account action success - update task and account fields
       await supabase.from("account_check_tasks")
