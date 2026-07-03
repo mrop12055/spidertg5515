@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-net-resilience-v14";
+  const runnerBuild = "2026-02-10-direct-net-timeout-v15";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -144,8 +144,8 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
     return max(minimum, min(maximum, value))
 
 
-# Residential/mobile proxies often fail when too many MTProto handshakes start at once.
-# Defaults are conservative; override with env vars if your provider can handle more.
+# Residential/mobile proxies and direct ISP connections can fail when too many
+# MTProto handshakes start at once. Defaults are conservative; override with env vars.
 CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 5, 1, 15)
 CONNECT_TIMEOUT_SECONDS = _env_int("TG_CONNECT_TIMEOUT_SECONDS", 90, 30, 180)
 CONNECT_BATCH_PAUSE_SECONDS = _env_float("TG_CONNECT_BATCH_PAUSE_SECONDS", 2.0, 0.0, 30.0)
@@ -1293,10 +1293,11 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         
         # Debug: Show proxy being used
         p_data = acc.get("proxies") or acc.get("proxy")
+        using_proxy = bool(p_data and p_data.get("host"))
         if p_data:
             print(f"  [PROXY] [{phone[-4:]}] Using: {p_data.get('host')}:{p_data.get('port')} ({p_data.get('proxy_type', 'socks5')})")
         else:
-            print(f"  [PROXY] [{phone[-4:]}] No proxy — connecting directly via VPS IP")
+            print(f"  [DIRECT] [{phone[-4:]}] No proxy/VPN — using this machine's normal internet")
         
         try:
             client = TelegramClient(
@@ -1321,10 +1322,13 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             return client, None
             
         except asyncio.TimeoutError:
-            # Proxy timeout - mark both account and proxy
-            error_msg = f"Connection timeout ({CONNECT_TIMEOUT_SECONDS}s) - proxy/provider overloaded or unreachable"
+            if using_proxy:
+                error_msg = f"Proxy connection timeout ({CONNECT_TIMEOUT_SECONDS}s) - proxy/provider overloaded or unreachable"
+            else:
+                error_msg = f"Direct connection timeout ({CONNECT_TIMEOUT_SECONDS}s) - this network/ISP/Windows could not reach Telegram"
             print(f"  ✗ [{phone[-4:]}] TIMEOUT")
-            await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
+            print(f"  [NET] [{phone[-4:]}] {error_msg}")
+            await update_account_status(aid, "disconnected", error_msg, auto_disabled=using_proxy)
             if proxy_id:
                 await update_proxy_status(proxy_id, "error", error_msg)
             return None, error_msg
@@ -1347,16 +1351,28 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             error_str = str(e)
             print(f"  ✗ [{phone[-4:]}] {error_str[:30]}")
             
+            if isinstance(e, OSError) and ("WinError 121" in error_str or "semaphore timeout" in error_str.lower()):
+                if using_proxy:
+                    error_msg = "Proxy/network timeout: Windows semaphore timeout"
+                    await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
+                    if proxy_id:
+                        await update_proxy_status(proxy_id, "error", error_msg)
+                else:
+                    error_msg = "Direct network timeout: Windows/ISP could not reach Telegram"
+                    print(f"  [NET] [{phone[-4:]}] {error_msg}; account will retry, not auto-disabled")
+                    await update_account_status(aid, "disconnected", error_msg, auto_disabled=False)
+                return None, error_msg
+            
             # Check if it's a proxy-related error
             proxy_errors = ["proxy", "socks", "connection refused", "network unreachable", "host unreachable", "timed out"]
             is_proxy_error = any(pe in error_str.lower() for pe in proxy_errors)
             
-            if is_proxy_error:
+            if is_proxy_error and using_proxy:
                 await update_account_status(aid, "disconnected", f"Proxy error: {error_str[:100]}", auto_disabled=True)
                 if proxy_id:
                     await update_proxy_status(proxy_id, "error", error_str[:100])
             else:
-                await update_account_status(aid, "disconnected", error_str[:100], auto_disabled=True)
+                await update_account_status(aid, "disconnected", error_str[:100], auto_disabled=False)
             
             return None, error_str
 
@@ -1399,8 +1415,8 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     print(f"  Connection throttle: {CONNECT_CONCURRENCY} at a time, timeout {CONNECT_TIMEOUT_SECONDS}s")
     sys.stdout.flush()
     
-    # Connect in small waves. Starting 25 Telegram+SOCKS handshakes at once can
-    # trigger WinError 121 even when each proxy works manually in Telegram.
+    # Connect in small waves. Starting too many Telegram handshakes at once can
+    # trigger WinError 121 even when the proxy or direct internet works manually.
     results = []
     for start in range(0, len(to_connect), CONNECT_CONCURRENCY):
         batch = to_connect[start:start + CONNECT_CONCURRENCY]
