@@ -5,6 +5,9 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  // Electron loads via file:// — relative paths are required.
+  // In the Lovable web preview this is harmless.
+  base: mode === "development" ? "/" : "./",
   server: {
     host: "::",
     port: 8080,
@@ -16,3 +19,4 @@ export default defineConfig(({ mode }) => ({
     },
   },
 }));
+

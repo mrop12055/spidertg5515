@@ -43,7 +43,7 @@ import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
 import { format, isToday, isYesterday, isSameDay, subDays } from 'date-fns';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
+import { localClient as supabase } from '@/lib/localClient';
 
 type TimeFilter = 'today' | '3d' | '5d';
 
