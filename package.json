@@ -14,7 +14,6 @@
     "electron:dev": "vite build && electron .",
     "electron:pack": "vite build && electron-packager . TelegramCRM --platform=win32 --arch=x64 --out=electron-release --overwrite --ignore='^/src' --ignore='^/public' --ignore='^/supabase' --ignore='^/electron-release'"
   },
-
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
