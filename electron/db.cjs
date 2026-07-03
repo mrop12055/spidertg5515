@@ -393,16 +393,6 @@ INSERT OR IGNORE INTO lifetime_stats (id, stat_key, stat_value) VALUES
   (lower(hex(randomblob(16))), 'lifetime_unique_recipients_messaged', 0),
   (lower(hex(randomblob(16))), 'lifetime_unique_recipients_replied', 0);
 
--- Backfill older local imports so they are visible in the Inactive tab.
-UPDATE telegram_accounts
-SET status = 'disconnected'
-WHERE status = 'inactive';
-
-UPDATE telegram_accounts
-SET device_model = 'Telegram Desktop ' || COALESCE(NULLIF(substr(replace(phone_number, '+', ''), -4), ''), 'local'),
-    system_version = COALESCE(system_version, 'Windows')
-WHERE (device_model IS NULL OR device_model = '')
-  AND session_data IS NOT NULL;
 `;
 
 function existingColumns(table) {
