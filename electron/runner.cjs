@@ -181,8 +181,9 @@ function registerRunnerIpc(ipcMain, ctx) {
   ipcMain.handle('runner:restart', async () => { stopChild(); setTimeout(() => startChild(), 500); return { status: 'starting' }; });
   ipcMain.handle('runner:status', async () => ({ status, error: lastError, pid: child && child.pid, port: apiPort }));
 
-  // Auto-start once the UI has mounted.
-  setTimeout(() => { startChild().catch(() => {}); }, 1500);
+  // Do NOT auto-start. The runner is launched only when the user
+  // downloads it and clicks Start from the Dashboard.
+  setStatus('stopped');
 }
 
 function stopRunner() {
