@@ -13,7 +13,8 @@ import {
   Package,
   ClipboardList,
   Download,
-  RefreshCw
+  RefreshCw,
+  Rocket
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -39,7 +40,7 @@ const navItems: NavItem[] = [
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: Package, label: 'Material', path: '/material' },
   { icon: ClipboardList, label: 'Logs', path: '/logs' },
-  
+  { icon: Rocket, label: 'Setup Guide', path: '/setup' },
 ];
 
 export const Sidebar: React.FC = React.memo(() => {
