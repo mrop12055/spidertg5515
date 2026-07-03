@@ -118,7 +118,7 @@ export function useAppSettings() {
   // Fetch all settings from database
   const fetchSettings = useCallback(async () => {
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('app_settings')
         .select('key, value');
 
@@ -151,7 +151,7 @@ export function useAppSettings() {
     setIsSaving(true);
     try {
       // Check if setting exists
-      const { data: existing } = await supabase
+      const { data: existing } = await (supabase as any)
         .from('app_settings')
         .select('id')
         .eq('key', key)
@@ -161,14 +161,14 @@ export function useAppSettings() {
 
       if (existing) {
         // Update existing
-        const { error } = await supabase
+        const { error } = await (supabase as any)
           .from('app_settings')
           .update({ value: jsonValue })
           .eq('key', key);
         if (error) throw error;
       } else {
         // Insert new
-        const { error } = await supabase
+        const { error } = await (supabase as any)
           .from('app_settings')
           .insert({ key, value: jsonValue });
         if (error) throw error;
@@ -190,7 +190,7 @@ export function useAppSettings() {
     setIsSaving(true);
     try {
       for (const [key, value] of Object.entries(newSettings)) {
-        const { data: existing } = await supabase
+        const { data: existing } = await (supabase as any)
           .from('app_settings')
           .select('id')
           .eq('key', key)
@@ -199,13 +199,13 @@ export function useAppSettings() {
         const jsonValue = JSON.parse(JSON.stringify(value)) as Json;
 
         if (existing) {
-          const { error } = await supabase
+          const { error } = await (supabase as any)
             .from('app_settings')
             .update({ value: jsonValue })
             .eq('key', key);
           if (error) throw error;
         } else {
-          const { error } = await supabase
+          const { error } = await (supabase as any)
             .from('app_settings')
             .insert({ key, value: jsonValue });
           if (error) throw error;

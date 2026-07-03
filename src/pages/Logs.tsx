@@ -124,7 +124,7 @@ const Logs: React.FC = () => {
           .limit(200),
         
         // Warmup Messages - reduced from 200 to 100
-        supabase
+        (supabase as any)
           .from('warmup_messages')
           .select('id, sender_account_id, status, message_content, message_type, error_message, sent_at, created_at')
           .in('status', ['sent', 'failed'])
@@ -156,7 +156,7 @@ const Logs: React.FC = () => {
           .limit(50),
         
         // Warmup Errors - reduced from 100 to 50
-        supabase
+        (supabase as any)
           .from('warmup_errors')
           .select('id, account_id, error_type, error_message, created_at')
           .order('created_at', { ascending: false })

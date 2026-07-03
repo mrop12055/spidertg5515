@@ -363,7 +363,7 @@ const SeatChat: React.FC = () => {
       }
 
       try {
-        const { data, error: seatError } = await supabase
+        const { data, error: seatError } = await (supabase as any)
           .from('seats')
           .select('id, name, is_active')
           .eq('access_token', token)
@@ -466,7 +466,7 @@ const SeatChat: React.FC = () => {
     if (!seat) return;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('seat_stats')
         .select('*')
         .eq('seat_id', seat.id)
