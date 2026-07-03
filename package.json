@@ -10,6 +10,9 @@
   "build": {
     "appId": "com.telegramcrm.desktop",
     "productName": "TelegramCRM",
+    "directories": {
+      "output": "electron-release"
+    },
     "files": [
       "dist/**/*",
       "electron/**/*",
