@@ -29,7 +29,7 @@ const App = () => (
           <TooltipProvider>
             <Toaster />
             <Sonner />
-            <BrowserRouter>
+            <HashRouter>
               <Routes>
                 {/* Public routes */}
                 <Route path="/login" element={<Login />} />
@@ -47,7 +47,7 @@ const App = () => (
                 <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </BrowserRouter>
+            </HashRouter>
           </TooltipProvider>
         </TelegramProvider>
       </AuthProvider>
