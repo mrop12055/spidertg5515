@@ -19,8 +19,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:dev": "vite build && electron .",
-    "electron:clean": "node -e \"const fs=require('fs'),p=require('path');const d='electron-release';if(!fs.existsSync(d))process.exit(0);try{fs.rmSync(d,{recursive:true,force:true,maxRetries:5,retryDelay:200});console.log('cleaned',d);}catch(e){console.warn('[clean] could not remove',d,'-',e.code||e.message);const bak=d+'.old-'+Date.now();try{fs.renameSync(d,bak);console.warn('[clean] moved locked folder to',bak,'- delete it manually later');}catch(e2){console.warn('[clean] rename also failed:',e2.code||e2.message,'- continuing anyway');}}\"",
-    "electron:pack": "npm run electron:clean && vite build && electron-packager . TelegramCRM --platform=win32 --arch=x64 --out=electron-release --overwrite --asar --ignore=\"(^/src|^/public|^/supabase|^/electron-release|^/\\.git|^/\\.lovable|^/\\.env)\""
+    "electron:clean": "node electron/clean-release.cjs",
+    "electron:pack": "vite build && node electron/package-win.cjs"
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
