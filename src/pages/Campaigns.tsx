@@ -512,12 +512,12 @@ const Campaigns: React.FC = () => {
     fetchAccountUniqueRecipients();
   }, [fetchAccountUniqueRecipients]);
 
-  // Fetch seats for campaign assignment
+  // Seats feature removed — keep empty list for backward-compatible UI
   const fetchSeats = useCallback(async () => {
-    const { data } = await supabase.from('seats').select('id, name, is_active').eq('is_active', true);
-    setSeats(data || []);
+    setSeats([]);
     setSeatsLoaded(true);
   }, []);
+
 
   useEffect(() => {
     fetchSeats();
