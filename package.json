@@ -18,7 +18,7 @@
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",
-    "electron:dev": "vite build && electron .",
+    "electron:dev": "node electron/dev.cjs",
     "electron:clean": "node electron/clean-release.cjs",
     "electron:pack": "vite build && node electron/package-win.cjs"
   },
