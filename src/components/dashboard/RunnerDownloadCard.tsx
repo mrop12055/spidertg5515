@@ -1278,9 +1278,9 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             await update_account_status(aid, "disconnected", "No session data")
             return None, "No session"
         
+        # Proxy is optional on desktop — connect directly if not assigned.
         if not get_proxy(acc):
-            await update_account_status(aid, "disconnected", "No proxy assigned", auto_disabled=True)
-            return None, "No proxy"
+            print(f"  [PROXY] [{phone[-4:]}] No proxy - connecting directly from local PC")
         
         if not acc.get("device_model") or not acc.get("api_id"):
             await update_account_status(aid, "disconnected", "Missing fingerprint or API credentials", auto_disabled=True)
