@@ -665,12 +665,13 @@ const Logs: React.FC = () => {
                 )}
               </TabsTrigger>
               <TabsTrigger value="history" className="gap-2">
-                <History className="w-4 h-4" />
-                History
-                {accountTaskHistory.length > 0 && (
-                  <Badge variant="secondary" className="ml-1">{accountTaskHistory.length}</Badge>
+                <Server className="w-4 h-4" />
+                Logs
+                {systemLogs.length > 0 && (
+                  <Badge variant="secondary" className="ml-1">{systemLogs.length}</Badge>
                 )}
               </TabsTrigger>
+
             </TabsList>
 
 
@@ -785,78 +786,93 @@ const Logs: React.FC = () => {
             </Card>
           </TabsContent>
 
-          {/* History Tab - Shows Operation Summaries */}
+          {/* Logs Tab - Shows all system logs */}
           <TabsContent value="history" className="mt-0">
             <Card>
               <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2 flex-wrap">
                   <div>
-                    <CardTitle className="text-base">Operation History</CardTitle>
+                    <CardTitle className="text-base">Logs</CardTitle>
                     <CardDescription>
-                      Summary of all operations with success/failed counts
+                      {systemLogStats.total} total • {systemLogStats.success} success • {systemLogStats.errors} errors
                     </CardDescription>
                   </div>
-                  <Button 
-                    variant="outline" 
-                    size="sm" 
-                    onClick={fetchSystemLogs}
-                    disabled={isLoadingSystemLogs}
-                  >
-                    <RefreshCw className={cn("w-4 h-4 mr-2", isLoadingSystemLogs && "animate-spin")} />
-                    Refresh
-                  </Button>
+                  <div className="flex gap-2 flex-wrap">
+                    <Select value={systemLogFilter} onValueChange={setSystemLogFilter}>
+                      <SelectTrigger className="w-40 h-9">
+                        <SelectValue placeholder="All Sources" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Sources</SelectItem>
+                        {uniqueSystemLogSources.map(source => (
+                          <SelectItem key={source} value={source}>{source}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={fetchSystemLogs}
+                      disabled={isLoadingSystemLogs}
+                    >
+                      <RefreshCw className={cn("w-4 h-4 mr-2", isLoadingSystemLogs && "animate-spin")} />
+                      Refresh
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={systemLogs.length === 0}
+                        >
+                          <Download className="w-4 h-4 mr-2" />
+                          Export
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => exportSystemLogsToJSON(filteredSystemLogs, 'logs')}>
+                          <FileJson className="w-4 h-4 mr-2" />
+                          Export as JSON
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => exportSystemLogsToCSV(filteredSystemLogs, 'logs')}>
+                          <FileSpreadsheet className="w-4 h-4 mr-2" />
+                          Export as CSV
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
                 {isLoadingSystemLogs ? (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                     <Loader2 className="w-8 h-8 animate-spin mb-3" />
-                    <p className="text-sm">Loading operation history...</p>
+                    <p className="text-sm">Loading logs...</p>
                   </div>
-                ) : operationSummaries.length > 0 ? (
-                  <div className="space-y-1">
-                    {operationSummaries.map((summary) => (
-                      <div 
-                        key={summary.taskType}
-                        className="flex items-center justify-between py-2.5 px-3 rounded-md hover:bg-muted/50 transition-colors border-b last:border-b-0"
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="text-muted-foreground">
-                            {summary.icon}
-                          </div>
-                          <span className="font-medium text-sm">{summary.operation}</span>
-                        </div>
-                        <div className="flex items-center gap-6 text-sm">
-                          <span className="text-muted-foreground">
-                            {format(summary.lastRun, 'MMM d, HH:mm')}
-                          </span>
-                          <div className="flex items-center gap-1.5 min-w-[80px]">
-                            <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-                            <span className="text-green-600 dark:text-green-400 font-medium">{summary.success}</span>
-                            <span className="text-muted-foreground text-xs">success</span>
-                          </div>
-                          <div className="flex items-center gap-1.5 min-w-[70px]">
-                            <XCircle className="w-3.5 h-3.5 text-red-500" />
-                            <span className="text-red-600 dark:text-red-400 font-medium">{summary.failed}</span>
-                            <span className="text-muted-foreground text-xs">failed</span>
-                          </div>
-                          <Badge variant="outline" className="text-xs min-w-[60px] justify-center">
-                            {summary.total} total
-                          </Badge>
-                        </div>
-                      </div>
-                    ))}
+                ) : filteredSystemLogs.length > 0 ? (
+                  <ScrollArea className="h-[500px] pr-4">
+                    <div className="space-y-2">
+                      {filteredSystemLogs.map((log, index) => (
+                        <SystemLogEntry key={`${log.id}-${index}`} log={log} getSourceIcon={getSourceIcon} />
+                      ))}
+                    </div>
+                  </ScrollArea>
+                ) : systemLogs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Server className="w-8 h-8 mb-3 opacity-50" />
+                    <p className="text-sm">No logs found</p>
+                    <p className="text-xs mt-1">Logs from all system activity will appear here</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                    <History className="w-8 h-8 mb-3 opacity-50" />
-                    <p className="text-sm">No operation history yet</p>
-                    <p className="text-xs mt-1">Run account tasks to see operation history</p>
+                    <Search className="w-8 h-8 mb-3 opacity-50" />
+                    <p className="text-sm">No logs match your filters</p>
                   </div>
                 )}
               </CardContent>
             </Card>
           </TabsContent>
+
 
         </Tabs>
       </div>
