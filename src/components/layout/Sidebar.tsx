@@ -11,7 +11,9 @@ import {
   BookOpen,
   Globe,
   Package,
-  ClipboardList
+  ClipboardList,
+  Download,
+  RefreshCw
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -19,6 +21,8 @@ import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useTelegram } from '@/context/TelegramContext';
 import { useRunnerStatus } from '@/hooks/useRunnerStatus';
+import { useAppUpdater } from '@/hooks/useAppUpdater';
+import { toast } from 'sonner';
 
 interface NavItem {
   icon: React.ElementType;
@@ -44,6 +48,16 @@ export const Sidebar: React.FC = React.memo(() => {
   const [collapsed, setCollapsed] = useState(false);
   const { conversations } = useTelegram();
   const { anyOfflineConfirmed } = useRunnerStatus();
+  const { info: updateInfo, check: checkUpdate, install: installUpdate, isDesktop } = useAppUpdater();
+
+  const onCheckUpdate = React.useCallback(async () => {
+    if (!isDesktop) { toast.info('Updates are only available in the desktop app.'); return; }
+    if (updateInfo.state === 'downloaded') { await installUpdate(); return; }
+    toast.info('Checking for updates…');
+    const r: any = await checkUpdate();
+    if (r?.ok === false) toast.error(r.message || 'Update check failed');
+    else if (updateInfo.state === 'none') toast.success('You are on the latest version');
+  }, [isDesktop, updateInfo.state, checkUpdate, installUpdate]);
 
   // Calculate count of unread *visible* chats (campaign/user-initiated only)
   // Memoize to prevent recalculation on every render
