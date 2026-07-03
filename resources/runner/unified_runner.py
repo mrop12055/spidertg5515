@@ -80,9 +80,21 @@ def db_one(sql: str, params: tuple = ()) -> Optional[sqlite3.Row]:
         return c.execute(sql, params).fetchone()
 
 
+import re as _re
+_TABLE_RE = _re.compile(r"^\s*(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO)\s+([\w.]+)", _re.I)
+
+
+def _emit_change(sql: str) -> None:
+    m = _TABLE_RE.match(sql or "")
+    if m:
+        print(f"#CHANGE {m.group(1)}", flush=True)
+
+
 def db_exec(sql: str, params: tuple = ()) -> None:
     with db_connect() as c:
         c.execute(sql, params)
+    _emit_change(sql)
+
 
 
 def ensure_outbound_table() -> None:
