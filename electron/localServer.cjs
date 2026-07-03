@@ -56,6 +56,7 @@ async function handleRoute(req, url, body, ctx) {
     `);
     // Use runner name as stable id so there's exactly one row.
     stmt.run(runner, runner, nowIso(), body.server_id || 'local');
+    emit('runner_heartbeats', 'UPDATE', { runner_name: runner, last_seen: nowIso(), status: 'online' });
     return { ok: true };
   }
 
