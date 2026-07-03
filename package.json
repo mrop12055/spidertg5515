@@ -19,7 +19,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:dev": "vite build && electron .",
-    "electron:pack": "vite build && electron-packager . TelegramCRM --platform=win32 --arch=x64 --out=electron-release --overwrite --ignore='^/src' --ignore='^/public' --ignore='^/supabase' --ignore='^/electron-release'"
+    "electron:clean": "node -e \"require('fs').rmSync('electron-release',{recursive:true,force:true})\"",
+    "electron:pack": "npm run electron:clean && vite build && electron-packager . TelegramCRM --platform=win32 --arch=x64 --out=electron-release --overwrite --asar --ignore=\"(^/src|^/public|^/supabase|^/electron-release|^/\\.git|^/\\.lovable|^/\\.env)\""
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
