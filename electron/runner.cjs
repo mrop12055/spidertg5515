@@ -11,9 +11,11 @@
 // UI can still exercise Start/Stop/Restart without a real interpreter.
 
 const { spawn } = require('child_process');
+const { shell, app } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+
 
 let child = null;
 let status = 'stopped';      // 'stopped' | 'starting' | 'running' | 'crashed'
@@ -184,10 +186,74 @@ function registerRunnerIpc(ipcMain, ctx) {
   ipcMain.handle('runner:restart', async () => { stopChild(); setTimeout(() => startChild(), 500); return { status: 'starting' }; });
   ipcMain.handle('runner:status', async () => ({ status, error: lastError, pid: child && child.pid, port: apiPort }));
 
-  // Do NOT auto-start. The runner is launched only when the user
-  // downloads it and clicks Start from the Dashboard.
+  // Export the runner Python script to a folder next to the app executable so
+  // the user can run `python unified_runner.py` MANUALLY. No auto-spawn.
+  ipcMain.handle('runner:export', async () => {
+    try {
+      if (!apiPort) { try { apiPort = await findFreePort(); } catch (_) {} }
+      const { script } = resolveRunnerPaths();
+      if (!fs.existsSync(script)) {
+        return { ok: false, error: `runner script not found: ${script}` };
+      }
+      // Folder next to the portable exe (or project root in dev).
+      const baseDir = app.isPackaged
+        ? path.dirname(process.execPath)
+        : path.join(__dirname, '..');
+      const outDir = path.join(baseDir, 'runner');
+      fs.mkdirSync(outDir, { recursive: true });
+      const dstPy = path.join(outDir, 'unified_runner.py');
+      fs.copyFileSync(script, dstPy);
+
+      const envContent =
+`TCRM_API_URL=http://127.0.0.1:${apiPort}
+TCRM_API_TOKEN=${apiToken}
+TCRM_SESSIONS_DIR=${path.join(ctx.userDataDir, 'sessions')}
+TCRM_FILES_DIR=${path.join(ctx.userDataDir, 'files')}
+TCRM_USER_DATA=${ctx.userDataDir}
+`;
+      fs.writeFileSync(path.join(outDir, '.env'), envContent);
+
+      const runBat =
+`@echo off
+cd /d "%~dp0"
+for /f "usebackq tokens=1,* delims==" %%A in (".env") do set %%A=%%B
+python -u unified_runner.py
+pause
+`;
+      fs.writeFileSync(path.join(outDir, 'run.bat'), runBat);
+
+      const runSh =
+`#!/usr/bin/env bash
+cd "$(dirname "$0")"
+set -a; source .env; set +a
+python3 -u unified_runner.py
+`;
+      fs.writeFileSync(path.join(outDir, 'run.sh'), runSh, { mode: 0o755 });
+
+      const readme =
+`Telegram CRM — Local Runner
+===========================
+1) Install Python 3.10+ and dependencies:
+     pip install telethon httpx pysocks
+2) Keep the desktop app OPEN (it hosts the local API).
+3) Run the runner MANUALLY:
+     Windows: double-click run.bat
+     macOS/Linux: ./run.sh
+Proxies are OPTIONAL — accounts without a proxy connect directly.
+`;
+      fs.writeFileSync(path.join(outDir, 'README.txt'), readme);
+
+      try { await shell.openPath(outDir); } catch (_) {}
+      return { ok: true, path: outDir };
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  });
+
+  // Do NOT auto-start. Users run the exported runner manually.
   setStatus('stopped');
 }
+
 
 function stopRunner() {
   stopChild();

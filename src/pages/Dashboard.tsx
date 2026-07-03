@@ -9,7 +9,7 @@ import { useCampaigns } from '@/hooks/useCampaigns';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
 import { TaskQueueCard } from '@/components/dashboard/TaskQueueCard';
 import { RecentErrorsCard } from '@/components/dashboard/RecentErrorsCard';
-// RunnerDownloadCard removed — runner is bundled with the desktop app.
+import RunnerDownloadCard from '@/components/dashboard/RunnerDownloadCard';
 import { 
   LayoutDashboard, 
   Phone, 
