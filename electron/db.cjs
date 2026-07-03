@@ -98,9 +98,6 @@ CREATE TABLE IF NOT EXISTS telegram_accounts (
   locked_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_accounts_status ON telegram_accounts(status);
-CREATE INDEX IF NOT EXISTS idx_accounts_proxy ON telegram_accounts(proxy_id);
-
 CREATE TABLE IF NOT EXISTS campaigns (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
@@ -463,6 +460,9 @@ function runMigrations() {
     WHERE (device_model IS NULL OR device_model = '')
       AND session_data IS NOT NULL
   `).run();
+
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_accounts_status ON telegram_accounts(status)').run();
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_accounts_proxy ON telegram_accounts(proxy_id)').run();
 }
 
 function initDb(userDataDir) {
