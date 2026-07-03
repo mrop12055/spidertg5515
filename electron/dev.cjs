@@ -38,7 +38,7 @@ console.log('[dev] starting vite dev server...');
 const vite = spawn(npmCmd, ['run', 'dev'], {
   cwd: path.join(__dirname, '..'),
   stdio: 'inherit',
-  shell: false,
+  shell: isWin,
 });
 
 let electron = null;
