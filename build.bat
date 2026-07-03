@@ -23,7 +23,8 @@ if errorlevel 1 goto :err
 echo.
 echo ====================================================
 echo  BUILD OK
-echo  App is at: electron-release\TelegramCRM-win32-x64\TelegramCRM.exe
+echo  App is at:
+type electron-release-latest.txt
 echo  Double-click TelegramCRM.exe to launch.
 echo ====================================================
 pause
