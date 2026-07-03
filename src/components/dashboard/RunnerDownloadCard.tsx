@@ -13,7 +13,7 @@ const RunnerDownloadCard: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-net-resilience-v14";
+  const runnerBuild = "2026-07-03-optional-proxy-v15";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
