@@ -146,14 +146,9 @@ serve(async (req) => {
       
       const existingAccountIds = new Set((existingLinks || []).map((l: any) => l.account_id));
 
-      // Fetch campaign speed settings for daily limit
-      const { data: speedSetting } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'campaign_speed')
-        .maybeSingle();
-      
-      const messagesPerAccountPerDay = (speedSetting?.value as any)?.messagesPerAccountPerDay || 10;
+      // app_settings removed — use hardcoded default
+      const messagesPerAccountPerDay = 10;
+
 
       // Find active accounts with session data, valid proxy, and remaining daily capacity
       const { data: availableAccounts } = await supabase
