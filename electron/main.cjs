@@ -139,16 +139,25 @@ function createWindow() {
     showStartupError('Renderer crashed', JSON.stringify(details, null, 2));
   });
 
-  if (!fs.existsSync(indexHtml)) {
-    showStartupError(
-      'Build files are missing',
-      `Could not find ${indexHtml}\n\nRun npm run build first, then package the app again.`
-    );
-  } else {
+  const loadRenderer = () => {
     mainWindow.loadFile(indexHtml).catch((err) => {
       console.error('[main] failed to load index.html:', err);
       showStartupError('Failed to load app', err && err.stack ? err.stack : String(err));
     });
+  };
+
+  if (needsRebuild()) {
+    console.log('[main] dist is missing or stale — running auto build');
+    runAutoBuild(mainWindow).then((res) => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (res.ok && fs.existsSync(indexHtml)) {
+        loadRenderer();
+      } else {
+        showStartupError('Automatic build failed', res.log || 'Unknown error running `npm run build`.');
+      }
+    });
+  } else {
+    loadRenderer();
   }
 
   // Open external links in the default browser.
