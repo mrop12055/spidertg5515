@@ -397,9 +397,12 @@ function adminUploadAccounts(body) {
       upsertOne(a);
     } catch (e) {
       failed++;
-      errors.push({ phone: a.phone_number || a.phone || a.phone_num || null, error: e.message });
+      const phone = a.phone_number || a.phone || a.phone_num || null;
+      console.error(`[upload-accounts] FAILED phone=${phone}:`, e && e.stack || e.message || e);
+      errors.push({ phone, error: e.message || String(e) });
     }
   }
+  console.log(`[upload-accounts] done: imported=${imported} failed=${failed} skipped=${skipped}`);
   return {
     success: true,
     successful: imported,
@@ -411,6 +414,7 @@ function adminUploadAccounts(body) {
     metadata_stats: metadataStats,
   };
 }
+
 
 function adminVerifySessions(body) {
   // Real verification requires Telethon (runner-side). For now mark accounts we
