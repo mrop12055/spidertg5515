@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { DashboardLayout } from '@/components/layout/DashboardLayout';
+import { RunnerLiveLogs } from '@/components/logs/RunnerLiveLogs';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -672,8 +673,13 @@ const Logs: React.FC = () => {
                   <Badge variant="secondary" className="ml-1">{systemLogs.length}</Badge>
                 )}
               </TabsTrigger>
+              <TabsTrigger value="runner" className="gap-2">
+                <Server className="w-4 h-4" />
+                Runner (Live)
+              </TabsTrigger>
 
             </TabsList>
+
 
 
             {/* Filters */}
@@ -874,10 +880,14 @@ const Logs: React.FC = () => {
             </Card>
           </TabsContent>
 
+          <TabsContent value="runner" className="mt-0">
+            <RunnerLiveLogs />
+          </TabsContent>
 
         </Tabs>
       </div>
     </DashboardLayout>
+
   );
 };
 
