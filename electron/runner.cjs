@@ -211,7 +211,7 @@ TCRM_SESSIONS_DIR=${path.join(ctx.userDataDir, 'sessions')}
 TCRM_FILES_DIR=${path.join(ctx.userDataDir, 'files')}
 TCRM_USER_DATA=${ctx.userDataDir}
 `;
-      fs.writeFileSync(path.join(outDir, '.env'), envContent);
+      fs.writeFileSync(path.join(outDir, '.env'), envContent.replace(/\r?\n/g, '\r\n'));
 
       const runBat =
 `@echo off
