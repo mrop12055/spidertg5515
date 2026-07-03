@@ -1,10 +1,8 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { 
-  LayoutDashboard, 
-  Users, 
-  MessageSquare, 
-  Settings, 
+import {
+  LayoutDashboard,
+  MessageSquare,
   Send,
   LogOut,
   ChevronLeft,
@@ -12,7 +10,6 @@ import {
   Phone,
   BookOpen,
   Globe,
-  Flame,
   Package,
   ClipboardList
 } from 'lucide-react';
@@ -36,12 +33,9 @@ const navItems: NavItem[] = [
   { icon: Globe, label: 'Proxy Management', path: '/proxies' },
   { icon: MessageSquare, label: 'Chat', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
-  { icon: Flame, label: 'Warmup', path: '/warmup' },
-  { icon: Users, label: 'Seats', path: '/seats' },
   { icon: Package, label: 'Material', path: '/material' },
   { icon: ClipboardList, label: 'Logs', path: '/logs' },
   { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
-  { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
 export const Sidebar: React.FC = React.memo(() => {
