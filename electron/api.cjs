@@ -8,6 +8,16 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { getDb } = require('./db.cjs');
 
+// Change-event broadcaster: registered by main.cjs so writes fan out over IPC
+// to renderer subscribers (localClient.channel().on('postgres_changes', ...)).
+let _emitChange = null;
+function setChangeEmitter(fn) { _emitChange = fn; }
+function emitChange(table, eventType, row) {
+  if (_emitChange) {
+    try { _emitChange({ table, eventType, new: row || null, old: row || null }); } catch (_) {}
+  }
+}
+
 const JSON_COLUMNS = new Set([
   'tags',
   'phone_numbers', 'valid_numbers', 'invalid_numbers',
