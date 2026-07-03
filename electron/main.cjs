@@ -71,8 +71,21 @@ app.whenReady().then(() => {
     }
   });
 
+  // Broadcast SQLite change events to renderers as postgres_changes-shaped payloads.
+  setChangeEmitter((change) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send('localApi:change', change); } catch (_) {}
+    }
+  });
+
   registerRunnerIpc(ipcMain, { userDataDir, getWindow: () => mainWindow });
   registerUpdaterIpc(ipcMain, { getWindow: () => mainWindow });
+
+  // Start local HTTP server for the Python runner, then hand endpoint to runner.cjs.
+  Promise.resolve(localServer.start({ userDataDir })).then(({ port, token }) => {
+    if (typeof setRunnerEndpoint === 'function') setRunnerEndpoint({ port, token });
+    console.log(`[main] local API ready on 127.0.0.1:${port}`);
+  }).catch((e) => console.error('[main] localServer start failed:', e));
 
   createWindow();
 
