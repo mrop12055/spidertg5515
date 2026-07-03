@@ -820,16 +820,13 @@ const Accounts: React.FC = () => {
       
       const proxyId = account?.proxy_id;
       
-      // Clear warmup pair references
+      // Clear interaction pair references
       await supabase
         .from('telegram_accounts')
-        .update({ warmup_pair_id: null, interaction_pair_id: null })
+        .update({ interaction_pair_id: null })
         .eq('id', id);
-      
-      await supabase
-        .from('telegram_accounts')
-        .update({ warmup_pair_id: null })
-        .eq('warmup_pair_id', id);
+
+
       
       // Delete the account
       const { error } = await supabase
@@ -895,34 +892,26 @@ const Accounts: React.FC = () => {
       for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
         const batch = idsToDelete.slice(i, i + BATCH_SIZE);
         
-        // Clear warmup_pair_id references
+        // Clear interaction pair references
         await supabase
           .from('telegram_accounts')
-          .update({ warmup_pair_id: null, interaction_pair_id: null })
+          .update({ interaction_pair_id: null })
           .in('id', batch);
-        
-        await supabase
-          .from('telegram_accounts')
-          .update({ warmup_pair_id: null })
-          .in('warmup_pair_id', batch);
-        
+
         await supabase
           .from('telegram_accounts')
           .update({ interaction_pair_id: null })
           .in('interaction_pair_id', batch);
-        
+
         // Clear proxy assignments
         await supabase
           .from('proxies')
           .update({ assigned_account_id: null })
           .in('assigned_account_id', batch);
-        
+
         // Delete related records in parallel
         await Promise.all([
           supabase.from('account_check_tasks').delete().in('account_id', batch),
-          supabase.from('warmup_messages').delete().in('sender_account_id', batch),
-          supabase.from('warmup_messages').delete().in('receiver_account_id', batch),
-          supabase.from('warmup_schedule').delete().in('account_id', batch),
           supabase.from('maturation_tasks').delete().in('account_id', batch),
           supabase.from('scheduled_interactions').delete().in('sender_account_id', batch),
           supabase.from('scheduled_interactions').delete().in('receiver_account_id', batch),
@@ -931,12 +920,8 @@ const Accounts: React.FC = () => {
           supabase.from('block_contact_tasks').delete().in('account_id', batch),
           supabase.from('contact_import_tasks').delete().in('account_id', batch),
         ]);
-        
-        // Delete warmup pairs
-        await Promise.all([
-          supabase.from('warmup_pairs').delete().in('account_a_id', batch),
-          supabase.from('warmup_pairs').delete().in('account_b_id', batch),
-        ]);
+
+
         
         // Delete the accounts
         const { error } = await supabase

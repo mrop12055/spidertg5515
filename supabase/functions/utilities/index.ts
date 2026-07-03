@@ -143,18 +143,8 @@ serve(async (req) => {
 
       console.log(`[utilities] Cleanup: removing data older than ${days_old} days, conversations without replies older than ${conversation_days} days`);
 
-      // Cleanup old warmup messages
-      const { count: warmupDeleted } = await supabase
-        .from('warmup_messages')
-        .delete({ count: 'exact' })
-        .in('status', ['sent', 'failed', 'cancelled'])
-        .lt('created_at', cutoffDate);
+      // warmup tables removed
 
-      // Cleanup old warmup errors
-      const { count: errorsDeleted } = await supabase
-        .from('warmup_errors')
-        .delete({ count: 'exact' })
-        .lt('created_at', cutoffDate);
 
       // Cleanup old proxy errors
       const { count: proxyErrorsDeleted } = await supabase
@@ -207,14 +197,13 @@ serve(async (req) => {
       return jsonResponse({
         success: true,
         deleted: {
-          warmup_messages: warmupDeleted || 0,
-          warmup_errors: errorsDeleted || 0,
           proxy_errors: proxyErrorsDeleted || 0,
           vps_logs: logsDeleted || 0,
           messages: messagesDeleted,
           conversations: conversationsDeleted,
         },
       });
+
     }
 
     // ==================== MAINTENANCE ====================
