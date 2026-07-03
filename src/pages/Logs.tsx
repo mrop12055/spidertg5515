@@ -654,7 +654,7 @@ const Logs: React.FC = () => {
           </Card>
         )}
 
-        <Tabs defaultValue="system" className="space-y-4">
+        <Tabs defaultValue="current" className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
             <TabsList className="h-10">
               <TabsTrigger value="current" className="gap-2">
@@ -671,14 +671,8 @@ const Logs: React.FC = () => {
                   <Badge variant="secondary" className="ml-1">{accountTaskHistory.length}</Badge>
                 )}
               </TabsTrigger>
-              <TabsTrigger value="system" className="gap-2">
-                <Server className="w-4 h-4" />
-                System Logs
-                {systemLogs.length > 0 && (
-                  <Badge variant="secondary" className="ml-1">{systemLogs.length}</Badge>
-                )}
-              </TabsTrigger>
             </TabsList>
+
 
             {/* Filters */}
             <div className="flex gap-2 flex-wrap">
@@ -864,92 +858,6 @@ const Logs: React.FC = () => {
             </Card>
           </TabsContent>
 
-          {/* System Logs Tab */}
-          <TabsContent value="system" className="mt-0">
-            <Card>
-              <CardHeader className="pb-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-base">System Logs</CardTitle>
-                    <CardDescription>
-                      {systemLogStats.total} total • {systemLogStats.success} success • {systemLogStats.errors} errors
-                    </CardDescription>
-                  </div>
-                  <div className="flex gap-2">
-                    <Select value={systemLogFilter} onValueChange={setSystemLogFilter}>
-                      <SelectTrigger className="w-40 h-9">
-                        <SelectValue placeholder="All Sources" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All Sources</SelectItem>
-                        {uniqueSystemLogSources.map(source => (
-                          <SelectItem key={source} value={source}>{source}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      onClick={fetchSystemLogs}
-                      disabled={isLoadingSystemLogs}
-                    >
-                      <RefreshCw className={cn("w-4 h-4 mr-2", isLoadingSystemLogs && "animate-spin")} />
-                      Refresh
-                    </Button>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button 
-                          variant="outline" 
-                          size="sm"
-                          disabled={systemLogs.length === 0}
-                        >
-                          <Download className="w-4 h-4 mr-2" />
-                          Export
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => exportSystemLogsToJSON(filteredSystemLogs, 'system-logs')}>
-                          <FileJson className="w-4 h-4 mr-2" />
-                          Export as JSON
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => exportSystemLogsToCSV(filteredSystemLogs, 'system-logs')}>
-                          <FileSpreadsheet className="w-4 h-4 mr-2" />
-                          Export as CSV
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {isLoadingSystemLogs ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                    <Loader2 className="w-8 h-8 animate-spin mb-3" />
-                    <p className="text-sm">Loading system logs...</p>
-                  </div>
-                ) : filteredSystemLogs.length > 0 ? (
-                  <ScrollArea className="h-[500px] pr-4">
-                    <div className="space-y-2">
-                      {filteredSystemLogs.map((log, index) => (
-                        <SystemLogEntry key={`${log.id}-${index}`} log={log} getSourceIcon={getSourceIcon} />
-                      ))}
-                    </div>
-                  </ScrollArea>
-                ) : systemLogs.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                    <Server className="w-8 h-8 mb-3 opacity-50" />
-                    <p className="text-sm">No system logs found</p>
-                    <p className="text-xs mt-1">Logs from all system functions will appear here</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                    <Search className="w-8 h-8 mb-3 opacity-50" />
-                    <p className="text-sm">No logs match your filters</p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
