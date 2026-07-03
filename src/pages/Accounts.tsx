@@ -679,9 +679,15 @@ const Accounts: React.FC = () => {
             console.error(`Chunk ${chunkNumber} error:`, error);
             totalFailed += chunk.length;
           } else {
-            totalSuccessful += data.successful || 0;
-            totalSkipped += data.skipped || 0;
-            totalFailed += data.failed || 0;
+            const successful = data?.successful ?? data?.imported ?? data?.inserted ?? 0;
+            const skipped = data?.skipped ?? 0;
+            const failed = data?.failed ?? 0;
+            totalSuccessful += successful;
+            totalSkipped += skipped;
+            totalFailed += failed;
+            if (failed > 0 && data?.errors?.length) {
+              console.error(`Chunk ${chunkNumber} upload errors:`, data.errors);
+            }
             if (data.account_ids) {
               allAccountIds.push(...data.account_ids);
             }
@@ -787,6 +793,9 @@ const Accounts: React.FC = () => {
             }
           }, 1000);
         }
+      }
+      if (totalSuccessful > 0) {
+        await refetchAccounts();
       }
       if (totalFailed > 0 && totalFailed < totalAccounts) {
         toast.warning(`${totalFailed} account(s) skipped (duplicates or errors)`);
