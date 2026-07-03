@@ -51,6 +51,27 @@ function generatedDeviceModel(phone) {
   return `Telegram Desktop ${suffix}`;
 }
 
+function tableInfo(db, table) {
+  return db.prepare(`PRAGMA table_info(${table})`).all();
+}
+
+function tableColumns(db, table) {
+  return new Set(tableInfo(db, table).map((row) => row.name));
+}
+
+function newAccountId(db) {
+  const idInfo = tableInfo(db, 'telegram_accounts').find((row) => row.name === 'id');
+  const idType = String(idInfo && idInfo.type || '').toUpperCase();
+  // Old local databases may have INTEGER PRIMARY KEY for telegram_accounts.id.
+  // Writing a UUID string into that schema causes "datatype mismatch", making
+  // every parsed session show as failed. Generate an integer only for that old
+  // schema; current installs keep UUID strings.
+  if (idType.includes('INT')) {
+    return Date.now() * 1000 + crypto.randomInt(0, 1000);
+  }
+  return newId();
+}
+
 // Coerce a JS value to something SQLite accepts (JSON-encode arrays/objects,
 // booleans -> 0/1, dates -> ISO strings).
 function encode(col, val) {
@@ -333,6 +354,7 @@ function adminUploadAccounts(body) {
   const db = getDb();
   const accounts = body.accounts || [];
   const tags = body.tags || [];
+  const accountColumns = tableColumns(db, 'telegram_accounts');
   console.log(`[upload-accounts] received chunk: ${accounts.length} account(s), tags=${JSON.stringify(tags)}`);
   let imported = 0, skipped = 0, failed = 0;
   const errors = [];
@@ -359,7 +381,7 @@ function adminUploadAccounts(body) {
     if (a.two_fa_password || a.twoFA || a['2fa']) metadataStats.with_2fa++;
 
     const existing = db.prepare('SELECT id FROM telegram_accounts WHERE phone_number = ?').get(phone);
-    const id = existing?.id || newId();
+    const id = existing?.id || newAccountId(db);
     const normalizedTags = Array.isArray(tags) ? tags : [];
     const cols = {
       id,
@@ -379,7 +401,7 @@ function adminUploadAccounts(body) {
       tags: normalizedTags.length > 0 ? normalizedTags : (existing ? undefined : []),
       created_at: existing ? undefined : nowIso(),
     };
-    const setCols = Object.keys(cols).filter((k) => cols[k] !== undefined);
+    const setCols = Object.keys(cols).filter((k) => cols[k] !== undefined && accountColumns.has(k));
     if (existing) {
       const sql = `UPDATE telegram_accounts SET ${setCols.filter(k=>k!=='id').map((k) => `${k} = ?`).join(', ')} WHERE id = ?`;
       db.prepare(sql).run(...setCols.filter(k=>k!=='id').map((k) => encode(k, cols[k])), id);
@@ -389,7 +411,9 @@ function adminUploadAccounts(body) {
     }
     imported++;
     accountIds.push(id);
-    const row = db.prepare('SELECT * FROM telegram_accounts WHERE id = ?').get(id);
+    const row = accountColumns.has('id')
+      ? db.prepare('SELECT * FROM telegram_accounts WHERE id = ?').get(id)
+      : db.prepare('SELECT * FROM telegram_accounts WHERE phone_number = ?').get(phone);
     emitChange('telegram_accounts', existing ? 'UPDATE' : 'INSERT', decodeRow(row));
   });
   for (const a of accounts) {

@@ -141,6 +141,7 @@ const Accounts: React.FC = () => {
     successful: number; 
     skipped: number;
     failed: number;
+    errors?: { phone?: string | null; error: string }[];
     metadata_stats?: {
       with_json_api: number;
       with_json_fingerprint: number;
@@ -660,6 +661,7 @@ const Accounts: React.FC = () => {
       let totalSkipped = 0;
       let totalFailed = 0;
       const allAccountIds: string[] = [];
+      const allUploadErrors: { phone?: string | null; error: string }[] = [];
       // Aggregate metadata stats across chunks
       const aggregatedStats = {
         with_json_api: 0,
@@ -690,6 +692,7 @@ const Accounts: React.FC = () => {
             console.error(`Chunk ${chunkNumber} error:`, error);
             toast.error(`Upload error (chunk ${chunkNumber}): ${error.message || 'unknown'}`);
             totalFailed += chunk.length;
+            allUploadErrors.push({ phone: null, error: error.message || 'Unknown upload error' });
           } else {
 
             const successful = data?.successful ?? data?.imported ?? data?.inserted ?? 0;
@@ -700,6 +703,10 @@ const Accounts: React.FC = () => {
             totalFailed += failed;
             if (failed > 0 && data?.errors?.length) {
               console.error(`Chunk ${chunkNumber} upload errors:`, data.errors);
+              allUploadErrors.push(...data.errors.map((err: any) => ({
+                phone: err.phone ?? null,
+                error: err.error || String(err),
+              })));
             }
             if (data.account_ids) {
               allAccountIds.push(...data.account_ids);
@@ -715,6 +722,7 @@ const Accounts: React.FC = () => {
         } catch (err) {
           console.error(`Chunk ${chunkNumber} exception:`, err);
           totalFailed += chunk.length;
+          allUploadErrors.push({ phone: null, error: err instanceof Error ? err.message : String(err) });
         }
       }
 
@@ -724,6 +732,7 @@ const Accounts: React.FC = () => {
         successful: totalSuccessful,
         skipped: totalSkipped,
         failed: totalFailed,
+        errors: allUploadErrors,
         metadata_stats: aggregatedStats,
       });
 
@@ -811,9 +820,11 @@ const Accounts: React.FC = () => {
         await refetchAccounts();
       }
       if (totalFailed > 0 && totalFailed < totalAccounts) {
-        toast.warning(`${totalFailed} account(s) skipped (duplicates or errors)`);
+        const firstError = allUploadErrors[0]?.error;
+        toast.warning(`${totalFailed} account(s) failed${firstError ? `: ${firstError}` : ''}`);
       } else if (totalFailed === totalAccounts && totalAccounts > 0) {
-        toast.error(`All accounts failed or already exist`);
+        const firstError = allUploadErrors[0]?.error;
+        toast.error(firstError ? `All accounts failed: ${firstError}` : `All accounts failed`);
       }
 
       if (totalSuccessful > 0 && totalFailed === 0) {
@@ -2710,19 +2721,30 @@ const Accounts: React.FC = () => {
                     )}
 
                     {uploadResults && !isUploading && (
-                      <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 text-sm">
-                        <span className="flex items-center gap-1 text-status-active">
-                          <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
-                        </span>
-                        {uploadResults.skipped > 0 && (
-                          <span className="flex items-center gap-1 text-muted-foreground">
-                            <AlertCircle className="w-4 h-4" /> {uploadResults.skipped} already exist
+                      <div className="space-y-2 p-3 rounded-lg bg-muted/50 text-sm">
+                        <div className="flex items-center gap-4">
+                          <span className="flex items-center gap-1 text-status-active">
+                            <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
                           </span>
-                        )}
-                        {uploadResults.failed > 0 && (
-                          <span className="flex items-center gap-1 text-destructive">
-                            <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
-                          </span>
+                          {uploadResults.skipped > 0 && (
+                            <span className="flex items-center gap-1 text-muted-foreground">
+                              <AlertCircle className="w-4 h-4" /> {uploadResults.skipped} already exist
+                            </span>
+                          )}
+                          {uploadResults.failed > 0 && (
+                            <span className="flex items-center gap-1 text-destructive">
+                              <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
+                            </span>
+                          )}
+                        </div>
+                        {uploadResults.errors && uploadResults.errors.length > 0 && (
+                          <div className="space-y-1 text-xs text-destructive">
+                            {uploadResults.errors.slice(0, 3).map((err, idx) => (
+                              <p key={idx} className="break-words">
+                                {err.phone ? `${err.phone}: ` : ''}{err.error}
+                              </p>
+                            ))}
+                          </div>
                         )}
                       </div>
                     )}

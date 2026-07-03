@@ -409,6 +409,11 @@ function runMigrations() {
   // CREATE TABLE IF NOT EXISTS does not update older desktop SQLite files.
   // Keep existing local installs compatible with newer account import fields.
   addMissingColumns('telegram_accounts', {
+    // Some early desktop/dev databases were created before the current local
+    // schema.  If those base columns are missing, every imported session fails
+    // during the first SELECT/INSERT even though parsing succeeded.
+    id: 'TEXT',
+    phone_number: 'TEXT',
     username: 'TEXT',
     first_name: 'TEXT',
     last_name: 'TEXT',
@@ -451,6 +456,8 @@ function runMigrations() {
     locked_by: 'TEXT',
     locked_at: 'TEXT',
   });
+
+  db.prepare("UPDATE telegram_accounts SET id = lower(hex(randomblob(16))) WHERE id IS NULL OR id = ''").run();
 
   db.prepare("UPDATE telegram_accounts SET status = 'disconnected' WHERE status = 'inactive'").run();
   db.prepare(`
