@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const packager = require('@electron/packager');
+const packagerMod = require('@electron/packager');
+const packager = typeof packagerMod === 'function' ? packagerMod : (packagerMod.packager || packagerMod.default);
 
 async function main() {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
