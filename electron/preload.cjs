@@ -7,6 +7,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('localApi', {
   isDesktop: true,
   query: (payload) => ipcRenderer.invoke('localApi:query', payload),
+  onChange: (cb) => {
+    const listener = (_e, change) => cb(change);
+    ipcRenderer.on('localApi:change', listener);
+    return () => ipcRenderer.removeListener('localApi:change', listener);
+  },
   runner: {
     start: () => ipcRenderer.invoke('runner:start'),
     stop: () => ipcRenderer.invoke('runner:stop'),
