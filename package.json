@@ -23,6 +23,11 @@
         "from": "resources/runner",
         "to": "runner",
         "filter": ["**/*"]
+      },
+      {
+        "from": "resources/python",
+        "to": "python",
+        "filter": ["**/*"]
       }
     ],
     "asarUnpack": [
