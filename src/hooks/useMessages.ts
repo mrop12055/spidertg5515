@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 import { Message } from '@/types/telegram';
 import { useEffect, useCallback } from 'react';
 

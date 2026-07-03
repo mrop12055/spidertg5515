@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 
 // Parallel paged fetcher for conversation stats
 const fetchUniqueConversations = async (): Promise<Map<string, { total: number; withReplies: number }>> => {

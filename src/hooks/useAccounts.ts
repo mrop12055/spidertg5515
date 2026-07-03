@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 import { TelegramAccount } from '@/types/telegram';
 import { useEffect } from 'react';
 
@@ -27,9 +27,8 @@ const transformAccount = (acc: any): TelegramAccount => ({
   appVersion: acc.app_version || undefined,
   langCode: acc.lang_code || undefined,
   systemLangCode: acc.system_lang_code || undefined,
-  warmupPhase: 0,
-  warmupStartedAt: undefined,
-
+  warmupPhase: acc.warmup_phase ?? 0,
+  warmupStartedAt: acc.warmup_started_at ? new Date(acc.warmup_started_at) : undefined,
   spambotStatus: acc.spambot_status || 'unknown',
   phoneCountry: acc.phone_country || undefined,
   geoMismatch: acc.geo_mismatch || false,
@@ -47,7 +46,7 @@ const fetchAccountsPaged = async (): Promise<TelegramAccount[]> => {
   const PAGE_SIZE = 1000;
   const MAX_PAGES = 100; // Max 100K accounts
   
-  const selectColumns = 'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, spambot_status, phone_country, geo_mismatch, telegram_id, last_spambot_check, tags, success_count, failure_count, success_rate, auto_disabled, disabled_reason';
+  const selectColumns = 'id, phone_number, username, first_name, last_name, status, proxy_id, created_at, last_active, messages_sent_today, daily_limit, maturity_score, maturity_days, restricted_until, ban_reason, avatar_url, device_model, system_version, app_version, lang_code, system_lang_code, warmup_phase, warmup_started_at, spambot_status, phone_country, geo_mismatch, telegram_id, last_spambot_check, tags, success_count, failure_count, success_rate, auto_disabled, disabled_reason';
 
   // NOTE: Avoid firing MAX_PAGES requests in parallel.
   // The previous implementation launched up to 99 extra queries even when

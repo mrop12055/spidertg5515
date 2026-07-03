@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import {
-  LayoutDashboard,
-  MessageSquare,
+import { 
+  LayoutDashboard, 
+  Users, 
+  MessageSquare, 
+  Settings, 
   Send,
   LogOut,
   ChevronLeft,
@@ -10,10 +12,9 @@ import {
   Phone,
   BookOpen,
   Globe,
+  Flame,
   Package,
-  ClipboardList,
-  Download,
-  RefreshCw
+  ClipboardList
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
@@ -21,8 +22,6 @@ import { Button } from '@/components/ui/button';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { useTelegram } from '@/context/TelegramContext';
 import { useRunnerStatus } from '@/hooks/useRunnerStatus';
-import { useAppUpdater } from '@/hooks/useAppUpdater';
-import { toast } from 'sonner';
 
 interface NavItem {
   icon: React.ElementType;
@@ -37,9 +36,12 @@ const navItems: NavItem[] = [
   { icon: Globe, label: 'Proxy Management', path: '/proxies' },
   { icon: MessageSquare, label: 'Chat', path: '/conversations' },
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
+  { icon: Flame, label: 'Warmup', path: '/warmup' },
+  { icon: Users, label: 'Seats', path: '/seats' },
   { icon: Package, label: 'Material', path: '/material' },
   { icon: ClipboardList, label: 'Logs', path: '/logs' },
-  
+  { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
+  { icon: Settings, label: 'Settings', path: '/settings' },
 ];
 
 export const Sidebar: React.FC = React.memo(() => {
@@ -48,16 +50,6 @@ export const Sidebar: React.FC = React.memo(() => {
   const [collapsed, setCollapsed] = useState(false);
   const { conversations } = useTelegram();
   const { anyOfflineConfirmed } = useRunnerStatus();
-  const { info: updateInfo, check: checkUpdate, install: installUpdate, isDesktop } = useAppUpdater();
-
-  const onCheckUpdate = React.useCallback(async () => {
-    if (!isDesktop) { toast.info('Updates are only available in the desktop app.'); return; }
-    if (updateInfo.state === 'downloaded') { await installUpdate(); return; }
-    toast.info('Checking for updates…');
-    const r: any = await checkUpdate();
-    if (r?.ok === false) toast.error(r.message || 'Update check failed');
-    else if (updateInfo.state === 'none') toast.success('You are on the latest version');
-  }, [isDesktop, updateInfo.state, checkUpdate, installUpdate]);
 
   // Calculate count of unread *visible* chats (campaign/user-initiated only)
   // Memoize to prevent recalculation on every render
@@ -154,45 +146,13 @@ export const Sidebar: React.FC = React.memo(() => {
 
       {/* User Section */}
       <div className="p-3 border-t border-sidebar-border space-y-2">
-        {/* Update + Theme Toggle */}
+        {/* Theme Toggle */}
         <div className={cn(
-          "flex items-center gap-2",
-          collapsed ? "flex-col" : "justify-between px-1"
+          "flex items-center justify-center",
+          !collapsed && "justify-end px-2"
         )}>
-          <Button
-            variant="ghost"
-            size={collapsed ? 'icon' : 'sm'}
-            onClick={onCheckUpdate}
-            className={cn(
-              "text-muted-foreground hover:text-foreground",
-              updateInfo.state === 'downloaded' && "text-primary"
-            )}
-            title={
-              updateInfo.state === 'downloaded'
-                ? `Restart to install v${updateInfo.version}`
-                : updateInfo.state === 'available'
-                ? `Downloading v${updateInfo.version}… ${updateInfo.percent ?? 0}%`
-                : 'Check for updates'
-            }
-          >
-            {updateInfo.state === 'checking' || updateInfo.state === 'available' ? (
-              <RefreshCw className={cn('w-4 h-4', collapsed ? '' : 'mr-2', 'animate-spin')} />
-            ) : (
-              <Download className={cn('w-4 h-4', collapsed ? '' : 'mr-2')} />
-            )}
-            {!collapsed && (
-              <span className="text-xs">
-                {updateInfo.state === 'downloaded'
-                  ? 'Restart to update'
-                  : updateInfo.state === 'available'
-                  ? `Updating ${updateInfo.percent ?? 0}%`
-                  : 'Check for updates'}
-              </span>
-            )}
-          </Button>
           <ThemeToggle />
         </div>
-
 
         <div className={cn(
           "flex items-center gap-3 p-2 rounded-lg bg-sidebar-accent/50",

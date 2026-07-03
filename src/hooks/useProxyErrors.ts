@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ProxyError {
   error_type: string;
@@ -27,7 +27,7 @@ const fetchProxyErrors = async (): Promise<Map<string, ProxyError>> => {
     return errorMap;
   }
 
-  const errorProxyIds = new Set<string>(errorProxies.map((p: any) => p.id as string));
+  const errorProxyIds = new Set(errorProxies.map(p => p.id));
 
   // Initialize all error-status proxies with default message
   errorProxyIds.forEach(proxyId => {

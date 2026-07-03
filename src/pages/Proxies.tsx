@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import { Proxy } from '@/types/telegram';
 import { toast } from 'sonner';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 const proxyTypeOptions = [
   { value: 'http', label: 'HTTP' },

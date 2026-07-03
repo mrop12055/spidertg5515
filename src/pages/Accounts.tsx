@@ -29,7 +29,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
 import { toast } from 'sonner';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 import { useDropzone } from 'react-dropzone';
 import { cn } from '@/lib/utils';
 import JSZip from 'jszip';
@@ -141,7 +141,6 @@ const Accounts: React.FC = () => {
     successful: number; 
     skipped: number;
     failed: number;
-    errors?: { phone?: string | null; error: string }[];
     metadata_stats?: {
       with_json_api: number;
       with_json_fingerprint: number;
@@ -609,15 +608,6 @@ const Accounts: React.FC = () => {
       return;
     }
 
-    // Uploads write to the local SQLite DB via the Electron bridge.
-    // In the Lovable browser preview that bridge does not exist, so uploads
-    // silently produce zero results and the old "All accounts failed" toast
-    // fires. Tell the user plainly what's going on instead.
-    if (!(window as any).localApi?.isDesktop) {
-      toast.error('Uploads only work in the desktop app. Run dev.bat on your PC to open the real app, then upload there.');
-      return;
-    }
-
     setIsUploading(true);
     setUploadResults(null);
 
@@ -651,17 +641,14 @@ const Accounts: React.FC = () => {
         tagsToAssign.push(newUploadTag.trim());
       }
 
-      // Process in small chunks — session_data payloads are large (base64) and
-      // big Electron IPC messages fail silently. 25 keeps each message small.
-      const CHUNK_SIZE = 25;
-
+      // Process in chunks of 300 for speed and reliability
+      const CHUNK_SIZE = 300;
       const totalAccounts = accountsToUpload.length;
       const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
       let totalSuccessful = 0;
       let totalSkipped = 0;
       let totalFailed = 0;
       const allAccountIds: string[] = [];
-      const allUploadErrors: { phone?: string | null; error: string }[] = [];
       // Aggregate metadata stats across chunks
       const aggregatedStats = {
         with_json_api: 0,
@@ -690,24 +677,11 @@ const Accounts: React.FC = () => {
 
           if (error) {
             console.error(`Chunk ${chunkNumber} error:`, error);
-            toast.error(`Upload error (chunk ${chunkNumber}): ${error.message || 'unknown'}`);
             totalFailed += chunk.length;
-            allUploadErrors.push({ phone: null, error: error.message || 'Unknown upload error' });
           } else {
-
-            const successful = data?.successful ?? data?.imported ?? data?.inserted ?? 0;
-            const skipped = data?.skipped ?? 0;
-            const failed = data?.failed ?? 0;
-            totalSuccessful += successful;
-            totalSkipped += skipped;
-            totalFailed += failed;
-            if (failed > 0 && data?.errors?.length) {
-              console.error(`Chunk ${chunkNumber} upload errors:`, data.errors);
-              allUploadErrors.push(...data.errors.map((err: any) => ({
-                phone: err.phone ?? null,
-                error: err.error || String(err),
-              })));
-            }
+            totalSuccessful += data.successful || 0;
+            totalSkipped += data.skipped || 0;
+            totalFailed += data.failed || 0;
             if (data.account_ids) {
               allAccountIds.push(...data.account_ids);
             }
@@ -722,7 +696,6 @@ const Accounts: React.FC = () => {
         } catch (err) {
           console.error(`Chunk ${chunkNumber} exception:`, err);
           totalFailed += chunk.length;
-          allUploadErrors.push({ phone: null, error: err instanceof Error ? err.message : String(err) });
         }
       }
 
@@ -732,7 +705,6 @@ const Accounts: React.FC = () => {
         successful: totalSuccessful,
         skipped: totalSkipped,
         failed: totalFailed,
-        errors: allUploadErrors,
         metadata_stats: aggregatedStats,
       });
 
@@ -816,15 +788,10 @@ const Accounts: React.FC = () => {
           }, 1000);
         }
       }
-      if (totalSuccessful > 0) {
-        await refetchAccounts();
-      }
       if (totalFailed > 0 && totalFailed < totalAccounts) {
-        const firstError = allUploadErrors[0]?.error;
-        toast.warning(`${totalFailed} account(s) failed${firstError ? `: ${firstError}` : ''}`);
+        toast.warning(`${totalFailed} account(s) skipped (duplicates or errors)`);
       } else if (totalFailed === totalAccounts && totalAccounts > 0) {
-        const firstError = allUploadErrors[0]?.error;
-        toast.error(firstError ? `All accounts failed: ${firstError}` : `All accounts failed`);
+        toast.error(`All accounts failed or already exist`);
       }
 
       if (totalSuccessful > 0 && totalFailed === 0) {
@@ -853,13 +820,16 @@ const Accounts: React.FC = () => {
       
       const proxyId = account?.proxy_id;
       
-      // Clear interaction pair references
+      // Clear warmup pair references
       await supabase
         .from('telegram_accounts')
-        .update({ interaction_pair_id: null })
+        .update({ warmup_pair_id: null, interaction_pair_id: null })
         .eq('id', id);
-
-
+      
+      await supabase
+        .from('telegram_accounts')
+        .update({ warmup_pair_id: null })
+        .eq('warmup_pair_id', id);
       
       // Delete the account
       const { error } = await supabase
@@ -925,26 +895,34 @@ const Accounts: React.FC = () => {
       for (let i = 0; i < idsToDelete.length; i += BATCH_SIZE) {
         const batch = idsToDelete.slice(i, i + BATCH_SIZE);
         
-        // Clear interaction pair references
+        // Clear warmup_pair_id references
         await supabase
           .from('telegram_accounts')
-          .update({ interaction_pair_id: null })
+          .update({ warmup_pair_id: null, interaction_pair_id: null })
           .in('id', batch);
-
+        
+        await supabase
+          .from('telegram_accounts')
+          .update({ warmup_pair_id: null })
+          .in('warmup_pair_id', batch);
+        
         await supabase
           .from('telegram_accounts')
           .update({ interaction_pair_id: null })
           .in('interaction_pair_id', batch);
-
+        
         // Clear proxy assignments
         await supabase
           .from('proxies')
           .update({ assigned_account_id: null })
           .in('assigned_account_id', batch);
-
+        
         // Delete related records in parallel
         await Promise.all([
           supabase.from('account_check_tasks').delete().in('account_id', batch),
+          supabase.from('warmup_messages').delete().in('sender_account_id', batch),
+          supabase.from('warmup_messages').delete().in('receiver_account_id', batch),
+          supabase.from('warmup_schedule').delete().in('account_id', batch),
           supabase.from('maturation_tasks').delete().in('account_id', batch),
           supabase.from('scheduled_interactions').delete().in('sender_account_id', batch),
           supabase.from('scheduled_interactions').delete().in('receiver_account_id', batch),
@@ -953,8 +931,12 @@ const Accounts: React.FC = () => {
           supabase.from('block_contact_tasks').delete().in('account_id', batch),
           supabase.from('contact_import_tasks').delete().in('account_id', batch),
         ]);
-
-
+        
+        // Delete warmup pairs
+        await Promise.all([
+          supabase.from('warmup_pairs').delete().in('account_a_id', batch),
+          supabase.from('warmup_pairs').delete().in('account_b_id', batch),
+        ]);
         
         // Delete the accounts
         const { error } = await supabase
@@ -2721,30 +2703,19 @@ const Accounts: React.FC = () => {
                     )}
 
                     {uploadResults && !isUploading && (
-                      <div className="space-y-2 p-3 rounded-lg bg-muted/50 text-sm">
-                        <div className="flex items-center gap-4">
-                          <span className="flex items-center gap-1 text-status-active">
-                            <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
+                      <div className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 text-sm">
+                        <span className="flex items-center gap-1 text-status-active">
+                          <CheckCircle className="w-4 h-4" /> {uploadResults.successful} uploaded
+                        </span>
+                        {uploadResults.skipped > 0 && (
+                          <span className="flex items-center gap-1 text-muted-foreground">
+                            <AlertCircle className="w-4 h-4" /> {uploadResults.skipped} already exist
                           </span>
-                          {uploadResults.skipped > 0 && (
-                            <span className="flex items-center gap-1 text-muted-foreground">
-                              <AlertCircle className="w-4 h-4" /> {uploadResults.skipped} already exist
-                            </span>
-                          )}
-                          {uploadResults.failed > 0 && (
-                            <span className="flex items-center gap-1 text-destructive">
-                              <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
-                            </span>
-                          )}
-                        </div>
-                        {uploadResults.errors && uploadResults.errors.length > 0 && (
-                          <div className="space-y-1 text-xs text-destructive">
-                            {uploadResults.errors.slice(0, 3).map((err, idx) => (
-                              <p key={idx} className="break-words">
-                                {err.phone ? `${err.phone}: ` : ''}{err.error}
-                              </p>
-                            ))}
-                          </div>
+                        )}
+                        {uploadResults.failed > 0 && (
+                          <span className="flex items-center gap-1 text-destructive">
+                            <XCircle className="w-4 h-4" /> {uploadResults.failed} failed
+                          </span>
                         )}
                       </div>
                     )}

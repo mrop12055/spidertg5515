@@ -29,7 +29,7 @@ import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
 import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { cn } from '@/lib/utils';
 
@@ -512,12 +512,12 @@ const Campaigns: React.FC = () => {
     fetchAccountUniqueRecipients();
   }, [fetchAccountUniqueRecipients]);
 
-  // Seats feature removed — keep empty list for backward-compatible UI
+  // Fetch seats for campaign assignment
   const fetchSeats = useCallback(async () => {
-    setSeats([]);
+    const { data } = await supabase.from('seats').select('id, name, is_active').eq('is_active', true);
+    setSeats(data || []);
     setSeatsLoaded(true);
   }, []);
-
 
   useEffect(() => {
     fetchSeats();

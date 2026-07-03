@@ -35,7 +35,7 @@ import { format } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 
 interface SystemLog {
   id: string;
@@ -97,63 +97,78 @@ const Logs: React.FC = () => {
       const accountPhoneMap = new Map<string, string>();
       accounts?.forEach(a => accountPhoneMap.set(a.id, a.phone_number));
 
-      // Fetch from multiple tables in parallel — tolerate individual failures
-      const safe = <T,>(p: PromiseLike<T>) =>
-        Promise.resolve(p).catch((e) => {
-          console.warn('[Logs] query failed:', e);
-          return { data: null, error: e } as any;
-        });
-
+      // Fetch from multiple tables in parallel - OPTIMIZED: Reduced limits for faster loading
       const [
         vpsLogsResult,
         accountCheckResult,
+        warmupMessagesResult,
         blockTasksResult,
         contactImportResult,
         maturationResult,
+        warmupErrorsResult,
         proxyErrorsResult
       ] = await Promise.all([
-        safe(supabase
+        // VPS Logs - reduced from 200 to 100
+        supabase
           .from('vps_logs')
           .select('*')
           .order('created_at', { ascending: false })
-          .limit(100)),
-
-        safe(supabase
+          .limit(100),
+        
+        // Account Check Tasks - reduced from 500 to 200
+        supabase
           .from('account_check_tasks')
           .select('id, account_id, task_type, status, result, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(200)),
-
-        safe(supabase
+          .limit(200),
+        
+        // Warmup Messages - reduced from 200 to 100
+        supabase
+          .from('warmup_messages')
+          .select('id, sender_account_id, status, message_content, message_type, error_message, sent_at, created_at')
+          .in('status', ['sent', 'failed'])
+          .order('created_at', { ascending: false })
+          .limit(100),
+        
+        // Block Contact Tasks - reduced from 100 to 50
+        supabase
           .from('block_contact_tasks')
           .select('id, account_id, status, action, target_phone, result, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(50)),
-
-        safe(supabase
+          .limit(50),
+        
+        // Contact Import Tasks - reduced from 100 to 50
+        supabase
           .from('contact_import_tasks')
           .select('id, account_id, status, result, valid_numbers, invalid_numbers, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(50)),
-
-        safe(supabase
+          .limit(50),
+        
+        // Maturation Tasks - reduced from 100 to 50
+        supabase
           .from('maturation_tasks')
           .select('id, account_id, task_type, status, description, created_at, completed_at')
           .in('status', ['completed', 'failed'])
           .order('created_at', { ascending: false })
-          .limit(50)),
-
-        safe(supabase
+          .limit(50),
+        
+        // Warmup Errors - reduced from 100 to 50
+        supabase
+          .from('warmup_errors')
+          .select('id, account_id, error_type, error_message, created_at')
+          .order('created_at', { ascending: false })
+          .limit(50),
+        
+        // Proxy Errors - reduced from 100 to 50
+        supabase
           .from('proxy_errors')
           .select('id, proxy_id, error_type, error_message, created_at')
           .order('created_at', { ascending: false })
-          .limit(50)),
+          .limit(50),
       ]);
-
-
 
       // Process VPS Logs
       if (vpsLogsResult.data) {
@@ -247,8 +262,21 @@ const Logs: React.FC = () => {
       summaries.sort((a, b) => b.total - a.total);
       setOperationSummaries(summaries);
 
-      // Warmup Messages removed
-
+      // Process Warmup Messages
+      if (warmupMessagesResult.data) {
+        warmupMessagesResult.data.forEach(msg => {
+          logs.push({
+            id: msg.id,
+            source: 'Warmup Chat',
+            type: msg.message_type || 'message',
+            message: `Warmup message ${msg.status}`,
+            status: msg.status === 'sent' ? 'success' : 'error',
+            details: msg.error_message || msg.message_content?.substring(0, 50),
+            accountPhone: accountPhoneMap.get(msg.sender_account_id) || msg.sender_account_id,
+            timestamp: new Date(msg.sent_at || msg.created_at || Date.now()),
+          });
+        });
+      }
 
       // Process Block Tasks
       if (blockTasksResult.data) {
@@ -299,8 +327,20 @@ const Logs: React.FC = () => {
         });
       }
 
-      // Warmup Errors removed
-
+      // Process Warmup Errors
+      if (warmupErrorsResult.data) {
+        warmupErrorsResult.data.forEach(err => {
+          logs.push({
+            id: err.id,
+            source: 'Warmup Error',
+            type: err.error_type || 'error',
+            message: err.error_message,
+            status: 'error',
+            accountPhone: err.account_id ? (accountPhoneMap.get(err.account_id) || err.account_id) : undefined,
+            timestamp: new Date(err.created_at || Date.now()),
+          });
+        });
+      }
 
       // Process Proxy Errors
       if (proxyErrorsResult.data) {
@@ -322,10 +362,10 @@ const Logs: React.FC = () => {
       setSystemLogs(logs);
     } catch (error) {
       console.error('Error fetching system logs:', error);
+      toast.error('Failed to fetch system logs');
     } finally {
       setIsLoadingSystemLogs(false);
     }
-
   }, []);
 
   // Initial fetch
@@ -655,7 +695,7 @@ const Logs: React.FC = () => {
           </Card>
         )}
 
-        <Tabs defaultValue="current" className="space-y-4">
+        <Tabs defaultValue="system" className="space-y-4">
           <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
             <TabsList className="h-10">
               <TabsTrigger value="current" className="gap-2">
@@ -666,15 +706,20 @@ const Logs: React.FC = () => {
                 )}
               </TabsTrigger>
               <TabsTrigger value="history" className="gap-2">
+                <History className="w-4 h-4" />
+                History
+                {accountTaskHistory.length > 0 && (
+                  <Badge variant="secondary" className="ml-1">{accountTaskHistory.length}</Badge>
+                )}
+              </TabsTrigger>
+              <TabsTrigger value="system" className="gap-2">
                 <Server className="w-4 h-4" />
-                Logs
+                System Logs
                 {systemLogs.length > 0 && (
                   <Badge variant="secondary" className="ml-1">{systemLogs.length}</Badge>
                 )}
               </TabsTrigger>
-
             </TabsList>
-
 
             {/* Filters */}
             <div className="flex gap-2 flex-wrap">
@@ -787,18 +832,91 @@ const Logs: React.FC = () => {
             </Card>
           </TabsContent>
 
-          {/* Logs Tab - Shows all system logs */}
+          {/* History Tab - Shows Operation Summaries */}
           <TabsContent value="history" className="mt-0">
             <Card>
               <CardHeader className="pb-3">
-                <div className="flex items-center justify-between gap-2 flex-wrap">
+                <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle className="text-base">Logs</CardTitle>
+                    <CardTitle className="text-base">Operation History</CardTitle>
+                    <CardDescription>
+                      Summary of all operations with success/failed counts
+                    </CardDescription>
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    onClick={fetchSystemLogs}
+                    disabled={isLoadingSystemLogs}
+                  >
+                    <RefreshCw className={cn("w-4 h-4 mr-2", isLoadingSystemLogs && "animate-spin")} />
+                    Refresh
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoadingSystemLogs ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Loader2 className="w-8 h-8 animate-spin mb-3" />
+                    <p className="text-sm">Loading operation history...</p>
+                  </div>
+                ) : operationSummaries.length > 0 ? (
+                  <div className="space-y-1">
+                    {operationSummaries.map((summary) => (
+                      <div 
+                        key={summary.taskType}
+                        className="flex items-center justify-between py-2.5 px-3 rounded-md hover:bg-muted/50 transition-colors border-b last:border-b-0"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="text-muted-foreground">
+                            {summary.icon}
+                          </div>
+                          <span className="font-medium text-sm">{summary.operation}</span>
+                        </div>
+                        <div className="flex items-center gap-6 text-sm">
+                          <span className="text-muted-foreground">
+                            {format(summary.lastRun, 'MMM d, HH:mm')}
+                          </span>
+                          <div className="flex items-center gap-1.5 min-w-[80px]">
+                            <CheckCircle className="w-3.5 h-3.5 text-green-500" />
+                            <span className="text-green-600 dark:text-green-400 font-medium">{summary.success}</span>
+                            <span className="text-muted-foreground text-xs">success</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 min-w-[70px]">
+                            <XCircle className="w-3.5 h-3.5 text-red-500" />
+                            <span className="text-red-600 dark:text-red-400 font-medium">{summary.failed}</span>
+                            <span className="text-muted-foreground text-xs">failed</span>
+                          </div>
+                          <Badge variant="outline" className="text-xs min-w-[60px] justify-center">
+                            {summary.total} total
+                          </Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <History className="w-8 h-8 mb-3 opacity-50" />
+                    <p className="text-sm">No operation history yet</p>
+                    <p className="text-xs mt-1">Run account tasks to see operation history</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* System Logs Tab */}
+          <TabsContent value="system" className="mt-0">
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="text-base">System Logs</CardTitle>
                     <CardDescription>
                       {systemLogStats.total} total • {systemLogStats.success} success • {systemLogStats.errors} errors
                     </CardDescription>
                   </div>
-                  <div className="flex gap-2 flex-wrap">
+                  <div className="flex gap-2">
                     <Select value={systemLogFilter} onValueChange={setSystemLogFilter}>
                       <SelectTrigger className="w-40 h-9">
                         <SelectValue placeholder="All Sources" />
@@ -810,9 +928,9 @@ const Logs: React.FC = () => {
                         ))}
                       </SelectContent>
                     </Select>
-                    <Button
-                      variant="outline"
-                      size="sm"
+                    <Button 
+                      variant="outline" 
+                      size="sm" 
                       onClick={fetchSystemLogs}
                       disabled={isLoadingSystemLogs}
                     >
@@ -821,8 +939,8 @@ const Logs: React.FC = () => {
                     </Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="outline"
+                        <Button 
+                          variant="outline" 
                           size="sm"
                           disabled={systemLogs.length === 0}
                         >
@@ -831,11 +949,11 @@ const Logs: React.FC = () => {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => exportSystemLogsToJSON(filteredSystemLogs, 'logs')}>
+                        <DropdownMenuItem onClick={() => exportSystemLogsToJSON(filteredSystemLogs, 'system-logs')}>
                           <FileJson className="w-4 h-4 mr-2" />
                           Export as JSON
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => exportSystemLogsToCSV(filteredSystemLogs, 'logs')}>
+                        <DropdownMenuItem onClick={() => exportSystemLogsToCSV(filteredSystemLogs, 'system-logs')}>
                           <FileSpreadsheet className="w-4 h-4 mr-2" />
                           Export as CSV
                         </DropdownMenuItem>
@@ -848,7 +966,7 @@ const Logs: React.FC = () => {
                 {isLoadingSystemLogs ? (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                     <Loader2 className="w-8 h-8 animate-spin mb-3" />
-                    <p className="text-sm">Loading logs...</p>
+                    <p className="text-sm">Loading system logs...</p>
                   </div>
                 ) : filteredSystemLogs.length > 0 ? (
                   <ScrollArea className="h-[500px] pr-4">
@@ -861,8 +979,8 @@ const Logs: React.FC = () => {
                 ) : systemLogs.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                     <Server className="w-8 h-8 mb-3 opacity-50" />
-                    <p className="text-sm">No logs found</p>
-                    <p className="text-xs mt-1">Logs from all system activity will appear here</p>
+                    <p className="text-sm">No system logs found</p>
+                    <p className="text-xs mt-1">Logs from all system functions will appear here</p>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
@@ -873,8 +991,6 @@ const Logs: React.FC = () => {
               </CardContent>
             </Card>
           </TabsContent>
-
-
         </Tabs>
       </div>
     </DashboardLayout>

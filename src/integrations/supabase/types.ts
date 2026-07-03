@@ -55,6 +55,33 @@ export type Database = {
           },
         ]
       }
+      app_settings: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          key: string
+          updated_at: string
+          value: Json
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          key: string
+          updated_at?: string
+          value: Json
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          key?: string
+          updated_at?: string
+          value?: Json
+        }
+        Relationships: []
+      }
       block_contact_tasks: {
         Row: {
           account_id: string
@@ -235,6 +262,20 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "campaign_recipients_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seat_stats"
+            referencedColumns: ["seat_id"]
+          },
+          {
+            foreignKeyName: "campaign_recipients_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seats"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "campaign_recipients_sent_by_account_id_fkey"
             columns: ["sent_by_account_id"]
             isOneToOne: false
@@ -292,7 +333,22 @@ export type Database = {
           status?: Database["public"]["Enums"]["campaign_status"] | null
           updated_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "campaigns_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seat_stats"
+            referencedColumns: ["seat_id"]
+          },
+          {
+            foreignKeyName: "campaigns_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seats"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       contact_import_tasks: {
         Row: {
@@ -534,6 +590,20 @@ export type Database = {
             columns: ["campaign_id"]
             isOneToOne: false
             referencedRelation: "campaigns"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "conversations_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seat_stats"
+            referencedColumns: ["seat_id"]
+          },
+          {
+            foreignKeyName: "conversations_seat_id_fkey"
+            columns: ["seat_id"]
+            isOneToOne: false
+            referencedRelation: "seats"
             referencedColumns: ["id"]
           },
         ]
@@ -1023,6 +1093,33 @@ export type Database = {
           },
         ]
       }
+      seats: {
+        Row: {
+          access_token: string
+          created_at: string | null
+          id: string
+          is_active: boolean | null
+          name: string
+          updated_at: string | null
+        }
+        Insert: {
+          access_token?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name: string
+          updated_at?: string | null
+        }
+        Update: {
+          access_token?: string
+          created_at?: string | null
+          id?: string
+          is_active?: boolean | null
+          name?: string
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       telegram_accounts: {
         Row: {
           api_credential_id: string | null
@@ -1068,6 +1165,10 @@ export type Database = {
           telegram_id: number | null
           two_fa_password: string | null
           username: string | null
+          warmup_pair_id: string | null
+          warmup_phase: number | null
+          warmup_started_at: string | null
+          warmup_unpaired: boolean | null
         }
         Insert: {
           api_credential_id?: string | null
@@ -1113,6 +1214,10 @@ export type Database = {
           telegram_id?: number | null
           two_fa_password?: string | null
           username?: string | null
+          warmup_pair_id?: string | null
+          warmup_phase?: number | null
+          warmup_started_at?: string | null
+          warmup_unpaired?: boolean | null
         }
         Update: {
           api_credential_id?: string | null
@@ -1158,6 +1263,10 @@ export type Database = {
           telegram_id?: number | null
           two_fa_password?: string | null
           username?: string | null
+          warmup_pair_id?: string | null
+          warmup_phase?: number | null
+          warmup_started_at?: string | null
+          warmup_unpaired?: boolean | null
         }
         Relationships: [
           {
@@ -1172,6 +1281,13 @@ export type Database = {
             columns: ["api_credential_id"]
             isOneToOne: false
             referencedRelation: "telegram_api_credentials"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "telegram_accounts_warmup_pair_id_fkey"
+            columns: ["warmup_pair_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
             referencedColumns: ["id"]
           },
         ]
@@ -1354,8 +1470,341 @@ export type Database = {
           },
         ]
       }
+      warmup_errors: {
+        Row: {
+          account_id: string | null
+          created_at: string | null
+          error_message: string
+          error_type: string | null
+          id: string
+          pair_id: string | null
+          session_id: string | null
+        }
+        Insert: {
+          account_id?: string | null
+          created_at?: string | null
+          error_message: string
+          error_type?: string | null
+          id?: string
+          pair_id?: string | null
+          session_id?: string | null
+        }
+        Update: {
+          account_id?: string | null
+          created_at?: string | null
+          error_message?: string
+          error_type?: string | null
+          id?: string
+          pair_id?: string | null
+          session_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_errors_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_errors_pair_id_fkey"
+            columns: ["pair_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_pairs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_errors_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      warmup_message_templates: {
+        Row: {
+          category: string | null
+          created_at: string | null
+          id: string
+          is_question: boolean | null
+          message_text: string
+          sender_position: string
+          sequence_order: number
+        }
+        Insert: {
+          category?: string | null
+          created_at?: string | null
+          id?: string
+          is_question?: boolean | null
+          message_text: string
+          sender_position: string
+          sequence_order: number
+        }
+        Update: {
+          category?: string | null
+          created_at?: string | null
+          id?: string
+          is_question?: boolean | null
+          message_text?: string
+          sender_position?: string
+          sequence_order?: number
+        }
+        Relationships: []
+      }
+      warmup_messages: {
+        Row: {
+          claimed_at: string | null
+          claimed_by: string | null
+          created_at: string | null
+          error_message: string | null
+          id: string
+          is_cycle_last: boolean | null
+          message_content: string
+          message_type: string | null
+          pair_id: string
+          receiver_account_id: string
+          reply_delay_seconds: number | null
+          scheduled_at: string
+          sender_account_id: string
+          sent_at: string | null
+          status: string | null
+          template_id: string | null
+        }
+        Insert: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          is_cycle_last?: boolean | null
+          message_content: string
+          message_type?: string | null
+          pair_id: string
+          receiver_account_id: string
+          reply_delay_seconds?: number | null
+          scheduled_at: string
+          sender_account_id: string
+          sent_at?: string | null
+          status?: string | null
+          template_id?: string | null
+        }
+        Update: {
+          claimed_at?: string | null
+          claimed_by?: string | null
+          created_at?: string | null
+          error_message?: string | null
+          id?: string
+          is_cycle_last?: boolean | null
+          message_content?: string
+          message_type?: string | null
+          pair_id?: string
+          receiver_account_id?: string
+          reply_delay_seconds?: number | null
+          scheduled_at?: string
+          sender_account_id?: string
+          sent_at?: string | null
+          status?: string | null
+          template_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_messages_pair_id_fkey"
+            columns: ["pair_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_pairs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_messages_receiver_account_id_fkey"
+            columns: ["receiver_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_messages_sender_account_id_fkey"
+            columns: ["sender_account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_messages_template_id_fkey"
+            columns: ["template_id"]
+            isOneToOne: false
+            referencedRelation: "warmup_message_templates"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      warmup_pairs: {
+        Row: {
+          account_a_id: string
+          account_b_id: string
+          contacts_exchanged: boolean | null
+          created_at: string | null
+          cycles_completed_today: number | null
+          failed_reason: string | null
+          id: string
+          last_category_used: string | null
+          last_cycle_date: string | null
+          last_message_at: string | null
+          last_template_id: string | null
+          messages_exchanged: number | null
+          session_id: string
+          status: string | null
+          used_categories: string[] | null
+        }
+        Insert: {
+          account_a_id: string
+          account_b_id: string
+          contacts_exchanged?: boolean | null
+          created_at?: string | null
+          cycles_completed_today?: number | null
+          failed_reason?: string | null
+          id?: string
+          last_category_used?: string | null
+          last_cycle_date?: string | null
+          last_message_at?: string | null
+          last_template_id?: string | null
+          messages_exchanged?: number | null
+          session_id: string
+          status?: string | null
+          used_categories?: string[] | null
+        }
+        Update: {
+          account_a_id?: string
+          account_b_id?: string
+          contacts_exchanged?: boolean | null
+          created_at?: string | null
+          cycles_completed_today?: number | null
+          failed_reason?: string | null
+          id?: string
+          last_category_used?: string | null
+          last_cycle_date?: string | null
+          last_message_at?: string | null
+          last_template_id?: string | null
+          messages_exchanged?: number | null
+          session_id?: string
+          status?: string | null
+          used_categories?: string[] | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_pairs_account_a_id_fkey"
+            columns: ["account_a_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "warmup_pairs_account_b_id_fkey"
+            columns: ["account_b_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      warmup_schedule: {
+        Row: {
+          account_id: string
+          channel_username: string | null
+          completed_at: string | null
+          created_at: string | null
+          day_number: number
+          id: string
+          priority: number | null
+          scheduled_at: string | null
+          status: string | null
+          task_description: string | null
+          task_type: string
+        }
+        Insert: {
+          account_id: string
+          channel_username?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          day_number: number
+          id?: string
+          priority?: number | null
+          scheduled_at?: string | null
+          status?: string | null
+          task_description?: string | null
+          task_type: string
+        }
+        Update: {
+          account_id?: string
+          channel_username?: string | null
+          completed_at?: string | null
+          created_at?: string | null
+          day_number?: number
+          id?: string
+          priority?: number | null
+          scheduled_at?: string | null
+          status?: string | null
+          task_description?: string | null
+          task_type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "warmup_schedule_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "telegram_accounts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      warmup_sessions: {
+        Row: {
+          created_at: string | null
+          id: string
+          messages_per_pair_max: number | null
+          messages_per_pair_min: number | null
+          started_at: string | null
+          status: string | null
+          stopped_at: string | null
+          total_pairs: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          messages_per_pair_max?: number | null
+          messages_per_pair_min?: number | null
+          started_at?: string | null
+          status?: string | null
+          stopped_at?: string | null
+          total_pairs?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          messages_per_pair_max?: number | null
+          messages_per_pair_min?: number | null
+          started_at?: string | null
+          status?: string | null
+          stopped_at?: string | null
+          total_pairs?: number | null
+        }
+        Relationships: []
+      }
     }
     Views: {
+      seat_stats: {
+        Row: {
+          conversations_started: number | null
+          messages_read: number | null
+          messages_sent_today: number | null
+          responses_received: number | null
+          responses_today: number | null
+          seat_id: string | null
+          seat_name: string | null
+          total_conversations: number | null
+        }
+        Relationships: []
+      }
       system_health: {
         Row: {
           active_accounts: number | null

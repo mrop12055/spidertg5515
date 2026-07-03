@@ -14,7 +14,7 @@ import {
   RefreshCw, MoreVertical, Phone, AtSign, Download
 } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import {

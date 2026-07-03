@@ -39,13 +39,18 @@ interface CachedSettings {
 let settingsCache: CachedSettings | null = null;
 const SETTINGS_CACHE_TTL_MS = 30 * 1000;
 
-async function getCachedSettings(_supabase: any): Promise<Record<string, any>[]> {
-  // app_settings table removed — return empty; parseSettings falls back to defaults
-  return [];
+async function getCachedSettings(supabase: any): Promise<Record<string, any>[]> {
+  const now = Date.now();
+  if (settingsCache && (now - settingsCache.timestamp) < SETTINGS_CACHE_TTL_MS) {
+    return settingsCache.data;
+  }
+  const { data: settingsData } = await supabase.from("app_settings").select("key, value");
+  settingsCache = { data: settingsData || [], timestamp: now };
+  return settingsCache.data;
 }
 
-function parseSettings(_settingsData: Record<string, any>[]) {
-  return {
+function parseSettings(settingsData: Record<string, any>[]) {
+  const config = {
     messageDelayMin: 5,
     messageDelayMax: 15,
     dailyLimit: 25,
@@ -55,8 +60,42 @@ function parseSettings(_settingsData: Record<string, any>[]) {
     campaignMessagesPerAccountPerDay: 25,
     livechatSettings: { sameAccountStaggerMin: 1, sameAccountStaggerMax: 2, enableParallel: true },
   };
+  
+  for (const setting of settingsData) {
+    const value = setting.value as Record<string, unknown>;
+    switch (setting.key) {
+      case "message_timing":
+        if (value) {
+          config.messageDelayMin = (value.minDelaySeconds as number) || config.messageDelayMin;
+          config.messageDelayMax = (value.maxDelaySeconds as number) || config.messageDelayMax;
+        }
+        break;
+      case "account_limits":
+        if (value) config.dailyLimit = (value.dailyMessageLimit as number) || config.dailyLimit;
+        break;
+      case "warmup_batch_size":
+        if (value) config.warmupBatchSize = (value.batchSize as number) || config.warmupBatchSize;
+        break;
+      case "campaign_speed":
+        if (value) {
+          config.campaignPollingInterval = (value.pollingInterval as number) ?? config.campaignPollingInterval;
+          config.campaignBatchSize = (value.batchSize as number) ?? config.campaignBatchSize;
+          config.campaignMessagesPerAccountPerDay = (value.messagesPerAccountPerDay as number) ?? config.campaignMessagesPerAccountPerDay;
+        }
+        break;
+      case "livechat":
+        if (value) {
+          config.livechatSettings = {
+            sameAccountStaggerMin: (value.sameAccountStaggerMin as number) ?? 1,
+            sameAccountStaggerMax: (value.sameAccountStaggerMax as number) ?? 2,
+            enableParallel: (value.enableParallel as boolean) ?? true,
+          };
+        }
+        break;
+    }
+  }
+  return config;
 }
-
 
 // Get API credentials for account (per-account only - no pool fallback)
 async function getApiCredentialsForAccount(supabase: any, account: any) {
@@ -481,8 +520,58 @@ async function handleGetTasks(supabase: any, body: any) {
     }
   }
 
-  // WARMUP tasks removed
+  // ===== WARMUP TASKS =====
+  if (runner === "warmup_chat" || runner === "unified") {
+    const { data: warmupMessages } = await supabase
+      .from("warmup_messages")
+      .select(`*, sender:telegram_accounts!warmup_messages_sender_account_id_fkey(*, proxies!fk_proxy(*)), 
+               receiver:telegram_accounts!warmup_messages_receiver_account_id_fkey(id, phone_number, telegram_id, username, first_name)`)
+      .eq("status", "pending")
+      .lte("scheduled_at", nowIso)
+      .order("scheduled_at", { ascending: true })
+      .limit(batch_size);
 
+    if (warmupMessages?.length > 0) {
+      for (const msg of warmupMessages) {
+        const sender = msg.sender;
+        if (!sender?.session_data || !sender?.proxies || sender.proxies.status !== 'active') continue;
+
+        const creds = await getApiCredentialsForAccount(supabase, sender);
+        if (!creds) continue;
+
+        tasks.push({
+          task_type: msg.message_type === "add_contact" ? "warmup_add_contact" : "warmup_chat",
+          task_id: msg.id,
+          pair_id: msg.pair_id,
+          account: {
+            id: sender.id,
+            phone_number: sender.phone_number,
+            session_data: sender.session_data,
+            device_model: sender.device_model,
+            system_version: sender.system_version,
+            build_id: sender.build_id,
+            app_version: sender.app_version,
+            lang_code: sender.lang_code,
+            system_lang_code: sender.system_lang_code,
+            api_id: creds.api_id,
+            api_hash: creds.api_hash,
+            api_credential_id: creds.api_credential_id,
+          },
+          proxy: sender.proxies,
+          recipient: {
+            phone: msg.receiver?.phone_number,
+            telegram_id: msg.receiver?.telegram_id,
+            username: msg.receiver?.username,
+            name: msg.receiver?.first_name || msg.message_content,
+          },
+          content: msg.message_content,
+          is_cycle_last: msg.is_cycle_last,
+        });
+
+        await supabase.from("warmup_messages").update({ status: "sending", claimed_at: nowIso }).eq("id", msg.id);
+      }
+    }
+  }
 
   // ===== LIVECHAT TASKS =====
   if (runner === "livechat" || runner === "unified") {
@@ -792,8 +881,15 @@ async function handleReportResults(supabase: any, body: any) {
       }
 
     } else if (taskType === "warmup_chat" || taskType === "warmup_add_contact") {
-      // warmup removed — ignore
+      await supabase.from("warmup_messages")
+        .update({ status: "sent", sent_at: now })
+        .eq("id", r.task_id);
 
+      if (r.is_cycle_last && r.pair_id) {
+        await supabase.from("warmup_pairs")
+          .update({ contacts_exchanged: true })
+          .eq("id", r.pair_id);
+      }
     } else if (isAccountActionType(taskType)) {
       // Account action success - update task and account fields
       await supabase.from("account_check_tasks")
@@ -1075,7 +1171,31 @@ async function handleReportResults(supabase: any, body: any) {
       }
 
     } else if (taskType === "warmup_chat" || taskType === "warmup_add_contact") {
-      // warmup removed — ignore
+      await supabase.from("warmup_messages")
+        .update({ status: "failed", error_message: r.error })
+        .eq("id", r.task_id);
+
+      if (r.pair_id) {
+        await supabase.from("warmup_pairs")
+          .update({ status: "failed", failed_reason: r.error })
+          .eq("id", r.pair_id);
+      }
+      
+      // Also put account in cooldown/restricted for account-level errors during warmup
+      if (isAccountError && r.account_id) {
+        const isPeerFlood = errorLower.includes('peerflood');
+        const cooldownMinutes = isPeerFlood ? 720 : 30;
+        const cooldownUntil = new Date(Date.now() + cooldownMinutes * 60 * 1000).toISOString();
+        
+        await supabase.from("telegram_accounts")
+          .update({ 
+            status: isPeerFlood ? "restricted" : "cooldown", 
+            cooldown_until: cooldownUntil,
+            restricted_until: cooldownUntil,
+            ban_reason: r.error 
+          })
+          .eq("id", r.account_id);
+      }
     } else if (isAccountActionType(taskType)) {
       // Account action failure
       await supabase.from("account_check_tasks")

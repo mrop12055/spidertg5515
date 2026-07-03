@@ -43,7 +43,7 @@ import { cn } from '@/lib/utils';
 import { LinkifiedText } from '@/components/chat/LinkifiedText';
 import { format, isToday, isYesterday, isSameDay, subDays } from 'date-fns';
 import { toast } from 'sonner';
-import { localClient as supabase } from '@/lib/localClient';
+import { supabase } from '@/integrations/supabase/client';
 
 type TimeFilter = 'today' | '3d' | '5d';
 
@@ -110,11 +110,14 @@ const Chat: React.FC = () => {
   // Seats data for displaying seat names
   const [seats, setSeats] = useState<{ id: string; name: string }[]>([]);
   
-  // Seats feature removed
+  // Fetch seats on mount
   useEffect(() => {
-    setSeats([]);
+    const fetchSeats = async () => {
+      const { data } = await supabase.from('seats').select('id, name');
+      if (data) setSeats(data);
+    };
+    fetchSeats();
   }, []);
-
   
   // Color palette for seat badges
   const seatColors = [

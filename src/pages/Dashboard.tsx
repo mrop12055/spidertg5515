@@ -9,7 +9,6 @@ import { useCampaigns } from '@/hooks/useCampaigns';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
 import { TaskQueueCard } from '@/components/dashboard/TaskQueueCard';
 import { RecentErrorsCard } from '@/components/dashboard/RecentErrorsCard';
-import RunnerDownloadCard from '@/components/dashboard/RunnerDownloadCard';
 import { 
   LayoutDashboard, 
   Phone, 
@@ -87,12 +86,10 @@ const Dashboard: React.FC = () => {
         />
       </div>
 
-      {/* Runner Status + Export */}
-      <div className="mb-8 space-y-4">
+      {/* Runner Status */}
+      <div className="mb-8">
         <RunnerStatusCard />
-        <RunnerDownloadCard />
       </div>
-
 
       {/* Running Campaigns */}
       {runningCampaigns > 0 && (
@@ -138,9 +135,7 @@ const Dashboard: React.FC = () => {
         <TaskQueueCard />
         <RecentErrorsCard />
       </div>
-
     </DashboardLayout>
-
   );
 };
 
