@@ -37,6 +37,20 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function normalizePhoneNumber(value) {
+  if (value == null) return '';
+  const raw = String(value).trim();
+  if (!raw) return '';
+  if (raw.startsWith('+unknown_')) return raw;
+  const digits = raw.replace(/\D/g, '');
+  return digits ? `+${digits}` : raw.startsWith('+') ? raw : `+${raw}`;
+}
+
+function generatedDeviceModel(phone) {
+  const suffix = String(phone || '').replace(/\D/g, '').slice(-4) || 'local';
+  return `Telegram Desktop ${suffix}`;
+}
+
 // Coerce a JS value to something SQLite accepts (JSON-encode arrays/objects,
 // booleans -> 0/1, dates -> ISO strings).
 function encode(col, val) {
@@ -244,7 +258,7 @@ function opUpsert(payload) {
 
 // ---- helpers ----
 const TABLES_WITH_UPDATED_AT = new Set([
-  'telegram_accounts', 'conversations', 'campaigns', 'contacts_data', 'account_check_tasks', 'lifetime_stats',
+  'conversations', 'campaigns', 'contacts_data', 'account_check_tasks', 'lifetime_stats',
 ]);
 const TABLES_WITH_CREATED_AT = new Set([
   'telegram_accounts', 'proxies', 'proxy_errors', 'conversations', 'messages', 'campaigns',
@@ -317,28 +331,47 @@ function adminUploadAccounts(body) {
   const db = getDb();
   const accounts = body.accounts || [];
   const tags = body.tags || [];
-  let imported = 0, skipped = 0;
+  let imported = 0, skipped = 0, failed = 0;
   const errors = [];
+  const accountIds = [];
+  const metadataStats = {
+    with_json_api: 0,
+    with_json_fingerprint: 0,
+    with_generated_fingerprint: 0,
+    with_2fa: 0,
+  };
   const upsertOne = db.transaction((a) => {
-    const existing = db.prepare('SELECT id FROM telegram_accounts WHERE phone_number = ?').get(a.phone_number);
+    const phone = normalizePhoneNumber(a.phone_number || a.phone || a.phone_num);
+    if (!phone) throw new Error('Missing phone number');
+
+    const resolvedApiId = (a.api_id || a.app_id)?.toString() || null;
+    const resolvedApiHash = a.api_hash || a.app_hash || null;
+    const resolvedDeviceModel = a.device_model || a.device || generatedDeviceModel(phone);
+    const resolvedSystemVersion = a.system_version || a.sdk || 'Windows';
+
+    if (resolvedApiId && resolvedApiHash) metadataStats.with_json_api++;
+    if (a.device_model || a.device || a.system_version || a.sdk) metadataStats.with_json_fingerprint++;
+    else metadataStats.with_generated_fingerprint++;
+    if (a.two_fa_password || a.twoFA || a['2fa']) metadataStats.with_2fa++;
+
+    const existing = db.prepare('SELECT id FROM telegram_accounts WHERE phone_number = ?').get(phone);
     const id = existing?.id || newId();
     const cols = {
       id,
-      phone_number: a.phone_number,
+      phone_number: phone,
       username: a.username || null,
       first_name: a.first_name || null,
       last_name: a.last_name || null,
-      api_id: a.api_id || null,
-      api_hash: a.api_hash || null,
-      device_model: a.device_model || null,
-      system_version: a.system_version || null,
+      api_id: resolvedApiId,
+      api_hash: resolvedApiHash,
+      device_model: resolvedDeviceModel,
+      system_version: resolvedSystemVersion,
       app_version: a.app_version || null,
       lang_code: a.lang_code || null,
       system_lang_code: a.system_lang_code || null,
       session_data: a.session_data || null,
-      status: a.status || 'inactive',
+      status: a.status || 'disconnected',
       tags: JSON.stringify(tags),
-      updated_at: nowIso(),
       created_at: existing ? undefined : nowIso(),
     };
     const setCols = Object.keys(cols).filter((k) => cols[k] !== undefined);
@@ -350,17 +383,26 @@ function adminUploadAccounts(body) {
       db.prepare(sql).run(...setCols.map((k) => cols[k]));
     }
     imported++;
+    accountIds.push(id);
   });
   for (const a of accounts) {
     try {
-      if (!a.phone_number) { skipped++; continue; }
       upsertOne(a);
     } catch (e) {
-      skipped++;
-      errors.push({ phone: a.phone_number, error: e.message });
+      failed++;
+      errors.push({ phone: a.phone_number || a.phone || a.phone_num || null, error: e.message });
     }
   }
-  return { imported, skipped, errors };
+  return {
+    success: true,
+    successful: imported,
+    imported,
+    skipped,
+    failed,
+    errors,
+    account_ids: accountIds,
+    metadata_stats: metadataStats,
+  };
 }
 
 function adminVerifySessions(body) {
