@@ -173,14 +173,17 @@ async function handleRoute(req, url, body, ctx) {
           auto_disabled = COALESCE(?, auto_disabled), last_active = ?
       WHERE id = ?
     `).run(status || null, ban_reason || null, auto_disabled == null ? null : (auto_disabled ? 1 : 0), nowIso(), account_id);
+    emit('telegram_accounts', 'UPDATE', { id: account_id, status, ban_reason, auto_disabled });
     return { ok: true };
   }
 
   // Log line from runner.
   if (path === '/logs' && req.method === 'POST') {
     const db = getDb();
+    const logId = crypto.randomUUID();
     db.prepare(`INSERT INTO vps_logs (id, runner_name, log_level, message) VALUES (?, ?, ?, ?)`)
-      .run(crypto.randomUUID(), body.runner || 'unified', body.level || 'info', body.message || '');
+      .run(logId, body.runner || 'unified', body.level || 'info', body.message || '');
+    emit('vps_logs', 'INSERT', { id: logId, runner_name: body.runner || 'unified', log_level: body.level || 'info', message: body.message || '' });
     return { ok: true };
   }
 
