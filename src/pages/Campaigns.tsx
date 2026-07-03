@@ -29,7 +29,7 @@ import { format } from 'date-fns';
 import * as XLSX from 'xlsx';
 import { Campaign } from '@/types/telegram';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
+import { localClient as supabase } from '@/lib/localClient';
 import { useAppSettings } from '@/hooks/useAppSettings';
 import { cn } from '@/lib/utils';
 

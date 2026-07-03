@@ -35,7 +35,7 @@ import { format } from 'date-fns';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
+import { localClient as supabase } from '@/lib/localClient';
 
 interface SystemLog {
   id: string;

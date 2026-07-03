@@ -8,7 +8,7 @@ import {
   DashboardStats,
   UploadProgress 
 } from '@/types/telegram';
-import { supabase } from '@/integrations/supabase/client';
+import { localClient as supabase } from '@/lib/localClient';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 

@@ -29,7 +29,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TelegramAccount, AccountStatus } from '@/types/telegram';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
+import { localClient as supabase } from '@/lib/localClient';
 import { useDropzone } from 'react-dropzone';
 import { cn } from '@/lib/utils';
 import JSZip from 'jszip';
