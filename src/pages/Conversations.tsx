@@ -110,14 +110,11 @@ const Chat: React.FC = () => {
   // Seats data for displaying seat names
   const [seats, setSeats] = useState<{ id: string; name: string }[]>([]);
   
-  // Fetch seats on mount
+  // Seats feature removed
   useEffect(() => {
-    const fetchSeats = async () => {
-      const { data } = await supabase.from('seats').select('id, name');
-      if (data) setSeats(data);
-    };
-    fetchSeats();
+    setSeats([]);
   }, []);
+
   
   // Color palette for seat badges
   const seatColors = [
