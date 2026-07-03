@@ -8,7 +8,7 @@ const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
-const { initDb, closeDb } = require('./db.cjs');
+const { initDb, closeDb, ensureDb } = require('./db.cjs');
 const { handleApiCall, setChangeEmitter } = require('./api.cjs');
 const { registerRunnerIpc, stopRunner, setRunnerEndpoint } = require('./runner.cjs');
 const { registerUpdaterIpc } = require('./updater.cjs');
@@ -65,6 +65,7 @@ app.whenReady().then(() => {
   // Generic API bridge — frontend calls window.localApi.query(payload).
   ipcMain.handle('localApi:query', async (_event, payload) => {
     try {
+      ensureDb(userDataDir);
       return await handleApiCall(payload, { userDataDir });
     } catch (err) {
       return { data: null, error: { message: err && err.message ? err.message : String(err) } };
