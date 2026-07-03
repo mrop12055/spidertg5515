@@ -1075,31 +1075,7 @@ async function handleReportResults(supabase: any, body: any) {
       }
 
     } else if (taskType === "warmup_chat" || taskType === "warmup_add_contact") {
-      await supabase.from("warmup_messages")
-        .update({ status: "failed", error_message: r.error })
-        .eq("id", r.task_id);
-
-      if (r.pair_id) {
-        await supabase.from("warmup_pairs")
-          .update({ status: "failed", failed_reason: r.error })
-          .eq("id", r.pair_id);
-      }
-      
-      // Also put account in cooldown/restricted for account-level errors during warmup
-      if (isAccountError && r.account_id) {
-        const isPeerFlood = errorLower.includes('peerflood');
-        const cooldownMinutes = isPeerFlood ? 720 : 30;
-        const cooldownUntil = new Date(Date.now() + cooldownMinutes * 60 * 1000).toISOString();
-        
-        await supabase.from("telegram_accounts")
-          .update({ 
-            status: isPeerFlood ? "restricted" : "cooldown", 
-            cooldown_until: cooldownUntil,
-            restricted_until: cooldownUntil,
-            ban_reason: r.error 
-          })
-          .eq("id", r.account_id);
-      }
+      // warmup removed — ignore
     } else if (isAccountActionType(taskType)) {
       // Account action failure
       await supabase.from("account_check_tasks")
