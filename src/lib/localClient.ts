@@ -13,6 +13,7 @@ type OrderSpec = { col: string; ascending: boolean; nullsFirst?: boolean };
 type LocalApi = {
   isDesktop: boolean;
   query: (payload: any) => Promise<{ data: any; error: any; count?: number }>;
+  onDataChange?: (cb: (evt: { table: string; event: string }) => void) => () => void;
   runner: {
     start: () => Promise<{ status: string }>;
     stop: () => Promise<{ status: string }>;
@@ -40,6 +41,7 @@ const stubApi: LocalApi = {
     }
     return { data: null, error: null };
   },
+  onDataChange: () => () => {},
   runner: {
     start: async () => ({ status: 'stopped' }),
     stop: async () => ({ status: 'stopped' }),
@@ -49,6 +51,7 @@ const stubApi: LocalApi = {
     onStatus: () => () => {},
   },
 };
+
 
 export function getLocalApi(): LocalApi {
   return (typeof window !== 'undefined' && window.localApi) || stubApi;
