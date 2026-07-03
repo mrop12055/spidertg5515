@@ -118,13 +118,20 @@ app.whenReady().then(() => {
 
   // Register the bridge before the renderer starts. That prevents a blank screen
   // if React asks for data immediately during app boot.
+  const broadcast = (table, event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send('data:changed', { table, event }); } catch (_) {}
+    }
+  };
+
   ipcMain.handle('localApi:query', async (_event, payload) => {
     try {
-      return await localApiHandler(payload, { userDataDir });
+      return await localApiHandler(payload, { userDataDir, broadcast });
     } catch (err) {
       return { data: null, error: { message: err && err.message ? err.message : String(err) } };
     }
   });
+
 
   try {
     const dbApi = require('./db.cjs');
