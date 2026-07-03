@@ -293,9 +293,11 @@ async function opFunction(payload) {
     const result = await handler(body || {});
     return { data: result, error: null };
   } catch (err) {
+    console.error(`[api] function ${name} (path=${body && body.path}) threw:`, err && err.stack || err);
     return { data: null, error: { message: err.message || String(err) } };
   }
 }
+
 
 const FUNCTIONS = {
   ping: async () => ({ ok: true, at: nowIso() }),
@@ -331,6 +333,7 @@ function adminUploadAccounts(body) {
   const db = getDb();
   const accounts = body.accounts || [];
   const tags = body.tags || [];
+  console.log(`[upload-accounts] received chunk: ${accounts.length} account(s), tags=${JSON.stringify(tags)}`);
   let imported = 0, skipped = 0, failed = 0;
   const errors = [];
   const accountIds = [];
@@ -340,6 +343,7 @@ function adminUploadAccounts(body) {
     with_generated_fingerprint: 0,
     with_2fa: 0,
   };
+
   const upsertOne = db.transaction((a) => {
     const phone = normalizePhoneNumber(a.phone_number || a.phone || a.phone_num);
     if (!phone) throw new Error('Missing phone number');
@@ -393,9 +397,12 @@ function adminUploadAccounts(body) {
       upsertOne(a);
     } catch (e) {
       failed++;
-      errors.push({ phone: a.phone_number || a.phone || a.phone_num || null, error: e.message });
+      const phone = a.phone_number || a.phone || a.phone_num || null;
+      console.error(`[upload-accounts] FAILED phone=${phone}:`, e && e.stack || e.message || e);
+      errors.push({ phone, error: e.message || String(e) });
     }
   }
+  console.log(`[upload-accounts] done: imported=${imported} failed=${failed} skipped=${skipped}`);
   return {
     success: true,
     successful: imported,
@@ -407,6 +414,7 @@ function adminUploadAccounts(body) {
     metadata_stats: metadataStats,
   };
 }
+
 
 function adminVerifySessions(body) {
   // Real verification requires Telethon (runner-side). For now mark accounts we

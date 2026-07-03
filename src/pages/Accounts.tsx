@@ -650,8 +650,10 @@ const Accounts: React.FC = () => {
         tagsToAssign.push(newUploadTag.trim());
       }
 
-      // Process in chunks of 300 for speed and reliability
-      const CHUNK_SIZE = 300;
+      // Process in small chunks — session_data payloads are large (base64) and
+      // big Electron IPC messages fail silently. 25 keeps each message small.
+      const CHUNK_SIZE = 25;
+
       const totalAccounts = accountsToUpload.length;
       const totalChunks = Math.ceil(totalAccounts / CHUNK_SIZE);
       let totalSuccessful = 0;
@@ -686,8 +688,10 @@ const Accounts: React.FC = () => {
 
           if (error) {
             console.error(`Chunk ${chunkNumber} error:`, error);
+            toast.error(`Upload error (chunk ${chunkNumber}): ${error.message || 'unknown'}`);
             totalFailed += chunk.length;
           } else {
+
             const successful = data?.successful ?? data?.imported ?? data?.inserted ?? 0;
             const skipped = data?.skipped ?? 0;
             const failed = data?.failed ?? 0;
