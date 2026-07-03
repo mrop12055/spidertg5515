@@ -171,14 +171,19 @@ const functions = {
   },
 };
 
-// Minimal channel stub — real-time not supported in Phase 1.
-const channel = (_name: string) => ({
-  on: () => ({ subscribe: () => ({ unsubscribe: () => {} }) }),
-  subscribe: () => ({ unsubscribe: () => {} }),
-  unsubscribe: () => {},
-});
+// Minimal channel stub — real-time not supported in Phase 1. Returns a chainable
+// object with .on().subscribe() so existing call sites keep type-checking.
+const makeChannel = (_name?: string) => {
+  const chan: any = {
+    on: (_event?: any, _filter?: any, _cb?: any) => chan,
+    subscribe: (_cb?: any) => ({ unsubscribe: () => {} }),
+    unsubscribe: () => {},
+  };
+  return chan;
+};
+const channel = (name?: string) => makeChannel(name);
+const removeChannel = (_chan?: any) => {};
 
-const removeChannel = () => {};
 
 const auth = {
   getSession: async () => ({ data: { session: null }, error: null }),
