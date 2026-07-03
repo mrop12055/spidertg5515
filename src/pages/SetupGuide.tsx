@@ -1296,7 +1296,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         if p_data:
             print(f"  [PROXY] [{phone[-4:]}] Using: {p_data.get('host')}:{p_data.get('port')} ({p_data.get('proxy_type', 'socks5')})")
         else:
-            print(f"  [PROXY] [{phone[-4:]}] WARNING: No proxy configured!")
+            print(f"  [PROXY] [{phone[-4:]}] No proxy — connecting directly via VPS IP")
         
         try:
             client = TelegramClient(
