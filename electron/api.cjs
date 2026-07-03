@@ -300,8 +300,15 @@ function adminUploadAccounts(body) {
   const db = getDb();
   const accounts = body.accounts || [];
   const tags = body.tags || [];
-  let imported = 0, skipped = 0;
+  let successful = 0, skipped = 0, failed = 0;
   const errors = [];
+  const accountIds = [];
+  const metadataStats = {
+    with_json_api: 0,
+    with_json_fingerprint: 0,
+    with_generated_fingerprint: 0,
+    with_2fa: 0,
+  };
   const upsertOne = db.transaction((a) => {
     const existing = db.prepare('SELECT id FROM telegram_accounts WHERE phone_number = ?').get(a.phone_number);
     const id = existing?.id || newId();
@@ -319,7 +326,7 @@ function adminUploadAccounts(body) {
       lang_code: a.lang_code || null,
       system_lang_code: a.system_lang_code || null,
       session_data: a.session_data || null,
-      status: a.status || 'inactive',
+      status: a.status || 'disconnected',
       tags: JSON.stringify(tags),
       updated_at: nowIso(),
       created_at: existing ? undefined : nowIso(),
@@ -332,18 +339,22 @@ function adminUploadAccounts(body) {
       const sql = `INSERT INTO telegram_accounts (${setCols.join(',')}) VALUES (${setCols.map(() => '?').join(',')})`;
       db.prepare(sql).run(...setCols.map((k) => cols[k]));
     }
-    imported++;
+    successful++;
+    accountIds.push(id);
+    if (a.api_id && a.api_hash) metadataStats.with_json_api++;
+    if (a.device_model || a.system_version || a.app_version) metadataStats.with_json_fingerprint++;
+    if (a.two_fa_password) metadataStats.with_2fa++;
   });
   for (const a of accounts) {
     try {
       if (!a.phone_number) { skipped++; continue; }
       upsertOne(a);
     } catch (e) {
-      skipped++;
+      failed++;
       errors.push({ phone: a.phone_number, error: e.message });
     }
   }
-  return { imported, skipped, errors };
+  return { successful, skipped, failed, errors, account_ids: accountIds, metadata_stats: metadataStats };
 }
 
 function adminVerifySessions(body) {
