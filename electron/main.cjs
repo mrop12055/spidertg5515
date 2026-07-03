@@ -11,6 +11,7 @@ const fs = require('fs');
 const { initDb, closeDb } = require('./db.cjs');
 const { handleApiCall } = require('./api.cjs');
 const { registerRunnerIpc, stopRunner } = require('./runner.cjs');
+const { registerUpdaterIpc } = require('./updater.cjs');
 
 let mainWindow = null;
 
@@ -70,6 +71,7 @@ app.whenReady().then(() => {
   });
 
   registerRunnerIpc(ipcMain, { userDataDir, getWindow: () => mainWindow });
+  registerUpdaterIpc(ipcMain, { getWindow: () => mainWindow });
 
   createWindow();
 

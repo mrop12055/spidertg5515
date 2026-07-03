@@ -1,0 +1,47 @@
+name: Release Windows Desktop
+
+# Builds a Windows installer with electron-builder and publishes it as a
+# GitHub Release. The installed app auto-updates from these releases via
+# electron-updater (configured in package.json > build.publish).
+#
+# Usage:
+#   1. Bump "version" in package.json.
+#   2. Tag a commit:  git tag v0.1.1 && git push --tags
+#   3. This workflow runs, publishes the installer, users get an update prompt.
+#
+# Prerequisites (one-time):
+#   - Set "build.publish.owner" and "build.publish.repo" in package.json to
+#     match this repository.
+#   - GITHUB_TOKEN is provided automatically; no secrets to add.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.2.15
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Add electron-builder
+        run: bun add -d electron-builder
+
+      - name: Build renderer
+        run: bun run build
+
+      - name: Build + publish Windows installer
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win nsis --publish always

@@ -2,9 +2,16 @@
   "name": "vite_react_shadcn_ts",
   "private": true,
   "packageManager": "bun@1.2.15",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "main": "electron/main.cjs",
+  "build": {
+    "appId": "com.telegramcrm.desktop",
+    "productName": "TelegramCRM",
+    "publish": [
+      { "provider": "github", "owner": "YOUR_GITHUB_USER", "repo": "YOUR_REPO_NAME" }
+    ]
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -14,7 +21,6 @@
     "electron:dev": "vite build && electron .",
     "electron:pack": "vite build && electron-packager . TelegramCRM --platform=win32 --arch=x64 --out=electron-release --overwrite --ignore='^/src' --ignore='^/public' --ignore='^/supabase' --ignore='^/electron-release'"
   },
-
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
     "@emoji-mart/react": "^1.1.1",
