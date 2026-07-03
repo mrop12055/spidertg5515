@@ -3,9 +3,43 @@
 // UUIDs are stored as TEXT, timestamps as ISO TEXT, arrays as JSON TEXT.
 
 const path = require('path');
-const Database = require('better-sqlite3');
+const { Database } = require('node-sqlite3-wasm');
 
 let db = null;
+
+// --- Compatibility shim ---------------------------------------------------
+// node-sqlite3-wasm has a nearly-identical API to better-sqlite3, but is
+// missing the `.pragma()` helper and the `.transaction()` wrapper. We add
+// both so the rest of the codebase (api.cjs, localServer.cjs) works unchanged.
+function applyCompatShim(instance) {
+  if (typeof instance.pragma !== 'function') {
+    instance.pragma = function pragma(stmt) {
+      // Accept "journal_mode = WAL" or "foreign_keys = OFF"
+      try {
+        return instance.exec('PRAGMA ' + stmt);
+      } catch (_) {
+        return null;
+      }
+    };
+  }
+  if (typeof instance.transaction !== 'function') {
+    instance.transaction = function transaction(fn) {
+      return function wrapped(...args) {
+        instance.exec('BEGIN');
+        try {
+          const result = fn(...args);
+          instance.exec('COMMIT');
+          return result;
+        } catch (err) {
+          try { instance.exec('ROLLBACK'); } catch (_) {}
+          throw err;
+        }
+      };
+    };
+  }
+  return instance;
+}
+
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -475,12 +509,13 @@ function runMigrations() {
 function initDb(userDataDir) {
   if (db) return db;
   const dbPath = path.join(userDataDir, 'data.db');
-  db = new Database(dbPath);
+  db = applyCompatShim(new Database(dbPath));
   db.pragma('journal_mode = WAL');
   db.exec(SCHEMA);
   runMigrations();
   return db;
 }
+
 
 function getDb() {
   if (!db) throw new Error('DB not initialized');
