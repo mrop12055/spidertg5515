@@ -232,7 +232,9 @@ const auth = {
   signUp: async () => ({ data: { user: null, session: null }, error: null }),
 };
 
-export const localClient = {
+import { supabase as cloudSupabase } from '@/integrations/supabase/client';
+
+const desktopClient = {
   from,
   storage: { from: storageFrom },
   functions,
@@ -241,4 +243,13 @@ export const localClient = {
   auth,
 };
 
-export type LocalClient = typeof localClient;
+// In the Electron desktop app, window.localApi is injected and we route
+// everything through the local SQLite runner. In the Lovable browser preview
+// (and any normal web build) window.localApi does not exist, so fall back to
+// the real Lovable Cloud (Supabase) client so pages actually work against
+// live data instead of hitting the empty stub.
+const isDesktop = typeof window !== 'undefined' && !!window.localApi;
+
+export const localClient: any = isDesktop ? desktopClient : cloudSupabase;
+
+export type LocalClient = typeof desktopClient;
