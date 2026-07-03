@@ -9,6 +9,7 @@ import { useCampaigns } from '@/hooks/useCampaigns';
 import { RunnerStatusCard } from '@/components/dashboard/RunnerStatus';
 import { TaskQueueCard } from '@/components/dashboard/TaskQueueCard';
 import { RecentErrorsCard } from '@/components/dashboard/RecentErrorsCard';
+import RunnerDownloadCard from '@/components/dashboard/RunnerDownloadCard';
 import { 
   LayoutDashboard, 
   Phone, 
@@ -135,7 +136,11 @@ const Dashboard: React.FC = () => {
         <TaskQueueCard />
         <RecentErrorsCard />
       </div>
+
+      {/* Python Runner Download */}
+      <RunnerDownloadCard />
     </DashboardLayout>
+
   );
 };
 

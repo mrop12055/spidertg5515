@@ -35,7 +35,7 @@ const navItems: NavItem[] = [
   { icon: Send, label: 'Campaigns', path: '/campaigns' },
   { icon: Package, label: 'Material', path: '/material' },
   { icon: ClipboardList, label: 'Logs', path: '/logs' },
-  { icon: BookOpen, label: 'Setup Guide', path: '/setup' },
+  
 ];
 
 export const Sidebar: React.FC = React.memo(() => {
