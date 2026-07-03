@@ -711,15 +711,35 @@ async def _drain_outbound() -> None:
 
 
 async def heartbeat_loop(stop: asyncio.Event) -> None:
+    """Write a heartbeat row every 10s so the desktop app can show the runner as online."""
     tick = 0
+    hb_id = "unified"
+    server_id = uuid.uuid4().hex[:12]
     while not stop.is_set():
         tick += 1
         online = sum(1 for aw in CLIENTS.values() if aw.connected)
-        _log(f"heartbeat {tick} online={online}/{len(CLIENTS)}")
+        total = len(CLIENTS)
+        _log(f"heartbeat {tick} online={online}/{total}")
+        try:
+            # Upsert a single row keyed by id='unified' so useRunnerStatus sees us.
+            db_exec(
+                """
+                INSERT INTO runner_heartbeats (id, runner_name, last_seen, status, server_id)
+                VALUES (?, 'unified', ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  last_seen = excluded.last_seen,
+                  status = excluded.status,
+                  server_id = excluded.server_id
+                """,
+                (hb_id, _now(), f"online:{online}/{total}", server_id),
+            )
+        except Exception as e:
+            _log(f"heartbeat write failed: {e}")
         try:
             await asyncio.wait_for(stop.wait(), timeout=10)
         except asyncio.TimeoutError:
             pass
+
 
 
 # ---------------------------------------------------------------------------
