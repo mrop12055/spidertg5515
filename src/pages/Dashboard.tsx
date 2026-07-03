@@ -137,8 +137,6 @@ const Dashboard: React.FC = () => {
         <RecentErrorsCard />
       </div>
 
-      {/* Python Runner Download */}
-      <RunnerDownloadCard />
     </DashboardLayout>
 
   );
