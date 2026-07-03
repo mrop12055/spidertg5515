@@ -298,20 +298,8 @@ const Logs: React.FC = () => {
         });
       }
 
-      // Process Warmup Errors
-      if (warmupErrorsResult.data) {
-        warmupErrorsResult.data.forEach(err => {
-          logs.push({
-            id: err.id,
-            source: 'Warmup Error',
-            type: err.error_type || 'error',
-            message: err.error_message,
-            status: 'error',
-            accountPhone: err.account_id ? (accountPhoneMap.get(err.account_id) || err.account_id) : undefined,
-            timestamp: new Date(err.created_at || Date.now()),
-          });
-        });
-      }
+      // Warmup Errors removed
+
 
       // Process Proxy Errors
       if (proxyErrorsResult.data) {
