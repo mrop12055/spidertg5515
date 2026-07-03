@@ -2,7 +2,14 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from "react-router-dom";
+
+// Electron loads via file:// — BrowserRouter can't resolve paths there, so
+// use HashRouter when running inside the desktop shell. Web preview keeps
+// BrowserRouter for clean URLs.
+const Router = (typeof window !== "undefined" && (window as any).localApi?.isDesktop)
+  ? HashRouter
+  : BrowserRouter;
 import { AuthProvider } from "./context/AuthContext";
 import { TelegramProvider } from "./context/TelegramContext";
 import { ThemeProvider } from "./context/ThemeContext";
@@ -29,7 +36,7 @@ const App = () => (
           <TooltipProvider>
             <Toaster />
             <Sonner />
-            <BrowserRouter>
+            <Router>
               <Routes>
                 {/* Public routes */}
                 <Route path="/login" element={<Login />} />
@@ -47,7 +54,7 @@ const App = () => (
                 <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
-            </BrowserRouter>
+            </Router>
           </TooltipProvider>
         </TelegramProvider>
       </AuthProvider>
