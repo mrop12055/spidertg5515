@@ -537,7 +537,10 @@ async function handleGetTasks(supabase: any, body: any) {
     if (warmupMessages?.length > 0) {
       for (const msg of warmupMessages) {
         const sender = msg.sender;
-        if (!sender?.session_data || !sender?.proxies || sender.proxies.status !== 'active') continue;
+        // Proxy is optional — accounts without a proxy connect directly.
+        // Only skip when a proxy IS assigned but is not active (broken proxy).
+        if (!sender?.session_data) continue;
+        if (sender?.proxies && sender.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, sender);
         if (!creds) continue;
