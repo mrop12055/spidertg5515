@@ -85,6 +85,33 @@ function resolveRunnerPaths() {
   return { pythonBin, script };
 }
 
+// Install Telethon into resources/runner/_vendor once. Marker file skips reruns.
+async function ensureRunnerDeps(pythonBin, script) {
+  const runnerDir = path.dirname(script);
+  const vendor = path.join(runnerDir, '_vendor');
+  const marker = path.join(vendor, '.installed');
+  const req = path.join(runnerDir, 'requirements.txt');
+  if (fs.existsSync(marker) || !fs.existsSync(req)) return;
+  writeLog('sys', 'installing runner deps (first run)…');
+  await new Promise((resolve) => {
+    const p = spawn(pythonBin, ['-m', 'pip', 'install', '--quiet',
+      '--disable-pip-version-check', '--target', vendor, '-r', req], { windowsHide: true });
+    p.stdout && p.stdout.on('data', (b) => writeLog('sys', b.toString().trim()));
+    p.stderr && p.stderr.on('data', (b) => writeLog('sys', b.toString().trim()));
+    p.on('exit', (code) => {
+      if (code === 0) {
+        try { fs.mkdirSync(vendor, { recursive: true }); fs.writeFileSync(marker, new Date().toISOString()); } catch (_) {}
+        writeLog('sys', 'runner deps installed');
+      } else {
+        writeLog('sys', `pip install exited code=${code}`);
+      }
+      resolve();
+    });
+    p.on('error', (e) => { writeLog('sys', `pip spawn error: ${e.message}`); resolve(); });
+  });
+}
+
+
 async function startChild() {
   if (child) return;
   manualStop = false;
@@ -106,6 +133,14 @@ async function startChild() {
   const userDataDir = ctxRef && ctxRef.userDataDir;
   const sessionsDir = path.join(userDataDir, 'sessions');
   const filesDir = path.join(userDataDir, 'files');
+  const dbPath = path.join(userDataDir, 'data.db');
+  if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
+  if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true });
+
+  // Vendor deps once: pip install -r requirements.txt --target resources/runner/_vendor.
+  // Bundled Python installs go under the app resources; dev falls back to system python.
+  try { await ensureRunnerDeps(pythonBin, script); }
+  catch (e) { writeLog('sys', `dep install warning: ${e.message}`); }
 
   try {
     child = spawn(pythonBin, ['-u', script], {
@@ -115,6 +150,7 @@ async function startChild() {
         TCRM_SESSIONS_DIR: sessionsDir,
         TCRM_FILES_DIR: filesDir,
         TCRM_USER_DATA: userDataDir,
+        TCRM_DB_PATH: dbPath,
         PYTHONIOENCODING: 'utf-8',
       },
       windowsHide: true,
