@@ -166,12 +166,22 @@ async function startChild() {
   setStatus('running');
   backoffMs = 1000;
 
+  const handleLine = (stream, l) => {
+    if (!l) return;
+    if (l.startsWith('#CHANGE ')) {
+      const table = l.slice(8).trim();
+      if (ctxRef && ctxRef.broadcast) ctxRef.broadcast(table, 'RUNNER');
+      return;
+    }
+    writeLog(stream, l);
+  };
   child.stdout.on('data', (buf) => {
-    buf.toString('utf8').split(/\r?\n/).forEach((l) => l && writeLog('out', l));
+    buf.toString('utf8').split(/\r?\n/).forEach((l) => handleLine('out', l));
   });
   child.stderr.on('data', (buf) => {
-    buf.toString('utf8').split(/\r?\n/).forEach((l) => l && writeLog('err', l));
+    buf.toString('utf8').split(/\r?\n/).forEach((l) => handleLine('err', l));
   });
+
   child.on('exit', (code, signal) => {
     writeLog('sys', `runner exited code=${code} signal=${signal}`);
     child = null;

@@ -420,16 +420,23 @@ async function utilTestProxies(body) {
 
 // ---- top-level dispatcher ----
 async function handleApiCall(payload, ctx) {
+  const notify = (tbl, evt) => { try { ctx?.broadcast && ctx.broadcast(tbl, evt); } catch (_) {} };
   switch (payload.op) {
     case 'select': return opSelect(payload);
-    case 'insert': return opInsert(payload);
-    case 'update': return opUpdate(payload);
-    case 'delete': return opDelete(payload);
-    case 'upsert': return opUpsert(payload);
+    case 'insert': { const r = opInsert(payload); notify(payload.table, 'INSERT'); return r; }
+    case 'update': { const r = opUpdate(payload); notify(payload.table, 'UPDATE'); return r; }
+    case 'delete': { const r = opDelete(payload); notify(payload.table, 'DELETE'); return r; }
+    case 'upsert': { const r = opUpsert(payload); notify(payload.table, 'UPSERT'); return r; }
     case 'storage.upload': return opStorageUpload(payload, ctx);
-    case 'function': return await opFunction(payload);
+    case 'function': {
+      const r = await opFunction(payload);
+      // Admin functions mutate many tables; broadcast a generic tick.
+      notify('*', 'FUNCTION');
+      return r;
+    }
     default: return { data: null, error: { message: `Unknown op: ${payload.op}` } };
   }
 }
 
 module.exports = { handleApiCall };
+

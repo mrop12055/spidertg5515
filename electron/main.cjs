@@ -118,13 +118,20 @@ app.whenReady().then(() => {
 
   // Register the bridge before the renderer starts. That prevents a blank screen
   // if React asks for data immediately during app boot.
+  const broadcast = (table, event) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send('data:changed', { table, event }); } catch (_) {}
+    }
+  };
+
   ipcMain.handle('localApi:query', async (_event, payload) => {
     try {
-      return await localApiHandler(payload, { userDataDir });
+      return await localApiHandler(payload, { userDataDir, broadcast });
     } catch (err) {
       return { data: null, error: { message: err && err.message ? err.message : String(err) } };
     }
   });
+
 
   try {
     const dbApi = require('./db.cjs');
@@ -141,7 +148,7 @@ app.whenReady().then(() => {
   try {
     const runner = require('./runner.cjs');
     stopRunner = runner.stopRunner;
-    runner.registerRunnerIpc(ipcMain, { userDataDir, getWindow: () => mainWindow });
+    runner.registerRunnerIpc(ipcMain, { userDataDir, getWindow: () => mainWindow, broadcast });
   } catch (err) {
     console.error('[main] runner init failed:', err);
   }
