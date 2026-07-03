@@ -688,8 +688,10 @@ const Accounts: React.FC = () => {
 
           if (error) {
             console.error(`Chunk ${chunkNumber} error:`, error);
+            toast.error(`Upload error (chunk ${chunkNumber}): ${error.message || 'unknown'}`);
             totalFailed += chunk.length;
           } else {
+
             const successful = data?.successful ?? data?.imported ?? data?.inserted ?? 0;
             const skipped = data?.skipped ?? 0;
             const failed = data?.failed ?? 0;
