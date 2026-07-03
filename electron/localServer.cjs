@@ -6,7 +6,7 @@
 const http = require('http');
 const crypto = require('crypto');
 const { handleApiCall } = require('./api.cjs');
-const { getDb } = require('./db.cjs');
+const { ensureDb } = require('./db.cjs');
 
 // Realtime emit — wired by main.cjs to fan runner-side writes to the renderer
 // so the UI updates instantly instead of polling.
@@ -44,10 +44,10 @@ function send(res, status, obj) {
 
 async function handleRoute(req, url, body, ctx) {
   const path = url.pathname;
+  const db = ensureDb(ctx && ctx.userDataDir);
 
   // Simple heartbeat — one runner per PC, no server_id checks.
   if (path === '/heartbeat' && req.method === 'POST') {
-    const db = getDb();
     const runner = body.runner || 'unified';
     const stmt = db.prepare(`
       INSERT INTO runner_heartbeats (id, runner_name, last_seen, status, server_id)
@@ -63,7 +63,6 @@ async function handleRoute(req, url, body, ctx) {
   // Return active accounts + optional proxy join. Session data is included so
   // the runner can restore Telethon clients locally.
   if (path === '/accounts' && req.method === 'GET') {
-    const db = getDb();
     const rows = db.prepare(`
       SELECT a.*, p.host AS proxy_host, p.port AS proxy_port, p.username AS proxy_username,
              p.password AS proxy_password, p.proxy_type AS proxy_type
@@ -86,7 +85,6 @@ async function handleRoute(req, url, body, ctx) {
 
   // Task fetch — pending campaign_recipients ready to send.
   if (path === '/tasks/get' && req.method === 'POST') {
-    const db = getDb();
     const limit = Math.min(parseInt(body.batch_size || 50, 10), 500);
     const rows = db.prepare(`
       SELECT cr.*, c.message_template, c.name AS campaign_name
@@ -106,7 +104,6 @@ async function handleRoute(req, url, body, ctx) {
 
   // Report task result.
   if (path === '/tasks/report' && req.method === 'POST') {
-    const db = getDb();
     const { recipient_id, status, failed_reason, sent_by_account_id } = body;
     db.prepare(`
       UPDATE campaign_recipients
@@ -128,7 +125,6 @@ async function handleRoute(req, url, body, ctx) {
 
   // Ingest an incoming message from Telethon.
   if (path === '/messages/incoming' && req.method === 'POST') {
-    const db = getDb();
     const { account_id, from_phone, from_username, from_telegram_id, from_name, content, telegram_message_id } = body;
     // Find or create conversation.
     let conv = db.prepare(`
@@ -165,7 +161,6 @@ async function handleRoute(req, url, body, ctx) {
 
   // Update account status (used when runner detects frozen/banned).
   if (path === '/accounts/status' && req.method === 'POST') {
-    const db = getDb();
     const { account_id, status, ban_reason, auto_disabled } = body;
     db.prepare(`
       UPDATE telegram_accounts
@@ -179,7 +174,6 @@ async function handleRoute(req, url, body, ctx) {
 
   // Log line from runner.
   if (path === '/logs' && req.method === 'POST') {
-    const db = getDb();
     const logId = crypto.randomUUID();
     db.prepare(`INSERT INTO vps_logs (id, runner_name, log_level, message) VALUES (?, ?, ?, ?)`)
       .run(logId, body.runner || 'unified', body.level || 'info', body.message || '');

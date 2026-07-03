@@ -408,6 +408,16 @@ function getDb() {
   return db;
 }
 
+function ensureDb(userDataDir) {
+  if (db) return db;
+  if (!userDataDir) throw new Error('DB not initialized: missing userDataDir');
+  return initDb(userDataDir);
+}
+
+function isDbReady() {
+  return !!db;
+}
+
 function closeDb() {
   if (db) {
     try { db.close(); } catch (_) {}
@@ -415,4 +425,4 @@ function closeDb() {
   }
 }
 
-module.exports = { initDb, getDb, closeDb };
+module.exports = { initDb, getDb, ensureDb, isDbReady, closeDb };
