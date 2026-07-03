@@ -438,4 +438,4 @@ async function handleApiCall(payload, ctx) {
   }
 }
 
-module.exports = { handleApiCall };
+module.exports = { handleApiCall, setChangeEmitter };
