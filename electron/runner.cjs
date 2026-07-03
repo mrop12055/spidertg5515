@@ -106,6 +106,14 @@ async function startChild() {
   const userDataDir = ctxRef && ctxRef.userDataDir;
   const sessionsDir = path.join(userDataDir, 'sessions');
   const filesDir = path.join(userDataDir, 'files');
+  const dbPath = path.join(userDataDir, 'data.db');
+  if (!fs.existsSync(sessionsDir)) fs.mkdirSync(sessionsDir, { recursive: true });
+  if (!fs.existsSync(filesDir)) fs.mkdirSync(filesDir, { recursive: true });
+
+  // Vendor deps once: pip install -r requirements.txt --target resources/runner/_vendor.
+  // Bundled Python installs go under the app resources; dev falls back to system python.
+  try { await ensureRunnerDeps(pythonBin, script); }
+  catch (e) { writeLog('sys', `dep install warning: ${e.message}`); }
 
   try {
     child = spawn(pythonBin, ['-u', script], {
@@ -115,6 +123,7 @@ async function startChild() {
         TCRM_SESSIONS_DIR: sessionsDir,
         TCRM_FILES_DIR: filesDir,
         TCRM_USER_DATA: userDataDir,
+        TCRM_DB_PATH: dbPath,
         PYTHONIOENCODING: 'utf-8',
       },
       windowsHide: true,
