@@ -236,6 +236,7 @@ function opUpsert(payload) {
   };
   const tx = db.transaction(() => list.forEach(upsertOne));
   tx();
+  for (const r of results) emitChange(payload.table, 'UPDATE', r);
   if (payload.returning === 'minimal') return { data: null, error: null };
   if (payload.single) return { data: results[0] || null, error: null };
   return { data: results, error: null };
