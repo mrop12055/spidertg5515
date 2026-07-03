@@ -212,7 +212,8 @@ function start(ctx) {
       if (result == null) return send(res, 404, { error: 'not found', path: url.pathname });
       return send(res, 200, result);
     } catch (err) {
-      return send(res, 500, { error: err.message || String(err) });
+      console.error(`[localServer] ${req.method} ${url.pathname} failed:`, err);
+      return send(res, 500, { error: err.message || String(err), stack: err.stack });
     }
   });
   return new Promise((resolve) => {

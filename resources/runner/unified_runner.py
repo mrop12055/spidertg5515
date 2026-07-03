@@ -94,12 +94,16 @@ def auth_headers() -> Dict[str, str]:
 
 async def api_get(client: httpx.AsyncClient, path: str) -> dict:
     r = await client.get(f"{API_URL}{path}", headers=auth_headers(), timeout=15)
+    if r.status_code >= 400:
+        log(f"GET {path} -> {r.status_code}: {r.text[:500]}")
     r.raise_for_status()
     return r.json()
 
 
 async def api_post(client: httpx.AsyncClient, path: str, body: dict) -> dict:
     r = await client.post(f"{API_URL}{path}", headers=auth_headers(), json=body, timeout=15)
+    if r.status_code >= 400:
+        log(f"POST {path} -> {r.status_code}: {r.text[:500]}")
     r.raise_for_status()
     return r.json()
 
