@@ -514,8 +514,8 @@ const Campaigns: React.FC = () => {
 
   // Fetch seats for campaign assignment
   const fetchSeats = useCallback(async () => {
-    const { data } = await supabase.from('seats').select('id, name, is_active').eq('is_active', true);
-    setSeats(data || []);
+    const { data } = await (supabase as any).from('seats').select('id, name, is_active').eq('is_active', true);
+    setSeats((data as any[]) || []);
     setSeatsLoaded(true);
   }, []);
 

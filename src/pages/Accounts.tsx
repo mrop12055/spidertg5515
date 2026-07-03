@@ -821,12 +821,12 @@ const Accounts: React.FC = () => {
       const proxyId = account?.proxy_id;
       
       // Clear warmup pair references
-      await supabase
+      await (supabase as any)
         .from('telegram_accounts')
         .update({ warmup_pair_id: null, interaction_pair_id: null })
         .eq('id', id);
       
-      await supabase
+      await (supabase as any)
         .from('telegram_accounts')
         .update({ warmup_pair_id: null })
         .eq('warmup_pair_id', id);
@@ -896,12 +896,12 @@ const Accounts: React.FC = () => {
         const batch = idsToDelete.slice(i, i + BATCH_SIZE);
         
         // Clear warmup_pair_id references
-        await supabase
+        await (supabase as any)
           .from('telegram_accounts')
           .update({ warmup_pair_id: null, interaction_pair_id: null })
           .in('id', batch);
         
-        await supabase
+        await (supabase as any)
           .from('telegram_accounts')
           .update({ warmup_pair_id: null })
           .in('warmup_pair_id', batch);
@@ -918,24 +918,25 @@ const Accounts: React.FC = () => {
           .in('assigned_account_id', batch);
         
         // Delete related records in parallel
+        const sb: any = supabase;
         await Promise.all([
-          supabase.from('account_check_tasks').delete().in('account_id', batch),
-          supabase.from('warmup_messages').delete().in('sender_account_id', batch),
-          supabase.from('warmup_messages').delete().in('receiver_account_id', batch),
-          supabase.from('warmup_schedule').delete().in('account_id', batch),
-          supabase.from('maturation_tasks').delete().in('account_id', batch),
-          supabase.from('scheduled_interactions').delete().in('sender_account_id', batch),
-          supabase.from('scheduled_interactions').delete().in('receiver_account_id', batch),
-          supabase.from('interaction_scheduler').delete().in('sender_account_id', batch),
-          supabase.from('interaction_scheduler').delete().in('receiver_account_id', batch),
-          supabase.from('block_contact_tasks').delete().in('account_id', batch),
-          supabase.from('contact_import_tasks').delete().in('account_id', batch),
+          sb.from('account_check_tasks').delete().in('account_id', batch),
+          sb.from('warmup_messages').delete().in('sender_account_id', batch),
+          sb.from('warmup_messages').delete().in('receiver_account_id', batch),
+          sb.from('warmup_schedule').delete().in('account_id', batch),
+          sb.from('maturation_tasks').delete().in('account_id', batch),
+          sb.from('scheduled_interactions').delete().in('sender_account_id', batch),
+          sb.from('scheduled_interactions').delete().in('receiver_account_id', batch),
+          sb.from('interaction_scheduler').delete().in('sender_account_id', batch),
+          sb.from('interaction_scheduler').delete().in('receiver_account_id', batch),
+          sb.from('block_contact_tasks').delete().in('account_id', batch),
+          sb.from('contact_import_tasks').delete().in('account_id', batch),
         ]);
         
         // Delete warmup pairs
         await Promise.all([
-          supabase.from('warmup_pairs').delete().in('account_a_id', batch),
-          supabase.from('warmup_pairs').delete().in('account_b_id', batch),
+          sb.from('warmup_pairs').delete().in('account_a_id', batch),
+          sb.from('warmup_pairs').delete().in('account_b_id', batch),
         ]);
         
         // Delete the accounts

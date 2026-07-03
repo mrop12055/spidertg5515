@@ -33,7 +33,7 @@ export const RecentErrorsCard: React.FC = () => {
       supabase.from('account_check_tasks').select('id, account_id, result, created_at').eq('status', 'failed').not('result', 'is', null).order('created_at', { ascending: false }).limit(150),
       supabase.from('block_contact_tasks').select('id, target_phone, result, created_at').eq('status', 'failed').not('result', 'is', null).order('created_at', { ascending: false }).limit(100),
       supabase.from('contact_import_tasks').select('id, result, created_at').eq('status', 'failed').not('result', 'is', null).order('created_at', { ascending: false }).limit(100),
-      supabase.from('warmup_schedule').select('id, account_id, task_type, created_at').eq('status', 'failed').order('created_at', { ascending: false }).limit(100),
+      (supabase as any).from('warmup_schedule').select('id, account_id, task_type, created_at').eq('status', 'failed').order('created_at', { ascending: false }).limit(100),
       supabase.from('telegram_accounts').select('id, phone_number, status, ban_reason, restricted_until, created_at').not('ban_reason', 'is', null).neq('ban_reason', '').order('restricted_until', { ascending: false, nullsFirst: false }).limit(150),
       supabase.from('vps_logs').select('id, runner_name, message, log_level, created_at').eq('log_level', 'error').order('created_at', { ascending: false }).limit(200),
     ]);
@@ -70,7 +70,7 @@ export const RecentErrorsCard: React.FC = () => {
       }
     });
 
-    (failedWarmupRes.data || []).forEach(w => {
+    ((failedWarmupRes.data as any[]) || []).forEach((w: any) => {
       if (w.task_type) {
         allErrors.push({ id: w.id, phone: w.account_id?.substring(0, 8) || '-', reason: w.task_type, timestamp: w.created_at || new Date().toISOString(), source: 'Warmup' });
       }
