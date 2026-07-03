@@ -215,10 +215,39 @@ TCRM_USER_DATA=${ctx.userDataDir}
 
       const runBat =
 `@echo off
+setlocal enabledelayedexpansion
 cd /d "%~dp0"
 for /f "usebackq tokens=1,* delims==" %%A in (".env") do set %%A=%%B
-python -u unified_runner.py
+
+REM Find a real Python interpreter. The Windows "python" alias that opens
+REM the Microsoft Store is NOT a real Python — skip WindowsApps shims.
+set "PYEXE="
+where py >nul 2>nul && set "PYEXE=py -3"
+if not defined PYEXE (
+  for /f "delims=" %%P in ('where python 2^>nul') do (
+    echo %%P | find /i "WindowsApps" >nul
+    if errorlevel 1 (
+      set "PYEXE=%%P"
+      goto :gotpy
+    )
+  )
+)
+:gotpy
+if not defined PYEXE (
+  echo.
+  echo [ERROR] Python 3.10+ is not installed.
+  echo Download from https://www.python.org/downloads/windows/
+  echo During install, TICK "Add python.exe to PATH".
+  echo.
+  pause
+  exit /b 1
+)
+
+echo Using Python: %PYEXE%
+%PYEXE% -m pip install --quiet --disable-pip-version-check telethon httpx pysocks
+%PYEXE% -u unified_runner.py
 pause
+endlocal
 `;
       fs.writeFileSync(path.join(outDir, 'run.bat'), runBat);
 
@@ -226,19 +255,28 @@ pause
 `#!/usr/bin/env bash
 cd "$(dirname "$0")"
 set -a; source .env; set +a
-python3 -u unified_runner.py
+PYEXE="$(command -v python3 || command -v python)"
+if [ -z "$PYEXE" ]; then
+  echo "[ERROR] Python 3.10+ not installed. Get it from https://www.python.org/downloads/"
+  exit 1
+fi
+"$PYEXE" -m pip install --quiet --disable-pip-version-check telethon httpx pysocks
+"$PYEXE" -u unified_runner.py
 `;
       fs.writeFileSync(path.join(outDir, 'run.sh'), runSh, { mode: 0o755 });
 
       const readme =
 `Telegram CRM — Local Runner
 ===========================
-1) Install Python 3.10+ and dependencies:
-     pip install telethon httpx pysocks
+1) Install Python 3.10+ from https://www.python.org/downloads/
+   Windows: TICK "Add python.exe to PATH" during install.
+   Do NOT use the Microsoft Store "python" shortcut — it is not real Python.
 2) Keep the desktop app OPEN (it hosts the local API).
 3) Run the runner MANUALLY:
      Windows: double-click run.bat
      macOS/Linux: ./run.sh
+   Dependencies (telethon, httpx, pysocks) auto-install on first run.
+
 Proxies are OPTIONAL — accounts without a proxy connect directly.
 `;
       fs.writeFileSync(path.join(outDir, 'README.txt'), readme);
