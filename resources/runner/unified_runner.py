@@ -750,6 +750,7 @@ async def async_main() -> int:
         asyncio.create_task(keepalive_loop(stop)),
         asyncio.create_task(reconcile_loop(stop)),
         asyncio.create_task(sender_loop(stop)),
+        asyncio.create_task(tasks_loop(stop)),
     ]
 
     await stop.wait()
