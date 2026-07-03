@@ -820,16 +820,13 @@ const Accounts: React.FC = () => {
       
       const proxyId = account?.proxy_id;
       
-      // Clear warmup pair references
+      // Clear interaction pair references
       await supabase
         .from('telegram_accounts')
-        .update({ warmup_pair_id: null, interaction_pair_id: null })
+        .update({ interaction_pair_id: null })
         .eq('id', id);
-      
-      await supabase
-        .from('telegram_accounts')
-        .update({ warmup_pair_id: null })
-        .eq('warmup_pair_id', id);
+
+
       
       // Delete the account
       const { error } = await supabase
