@@ -1,13 +1,12 @@
 import React from 'react';
-import { DashboardLayout } from '@/components/layout/DashboardLayout';
-import { PageHeader } from '@/components/layout/PageHeader';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Download, BookOpen } from 'lucide-react';
+import { Download } from 'lucide-react';
 import { toast } from 'sonner';
 import JSZip from 'jszip';
 
-const SetupGuide: React.FC = () => {
+const RunnerDownloadCard: React.FC = () => {
+
   const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
   const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
@@ -1926,18 +1925,16 @@ pysocks>=1.7.1
   };
 
   return (
-    <DashboardLayout>
-      <div className="space-y-6 max-w-3xl mx-auto">
-        <PageHeader
-          title="Setup"
-          description="Download Python runner"
-          icon={BookOpen}
-        />
+    <div className="space-y-6 mt-8">
+      <Card>
+        <CardContent className="p-8 text-center space-y-6">
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold">Python Runner</h2>
+            <p className="text-muted-foreground text-sm">
+              Download and run this on your PC to power the app
+            </p>
+          </div>
 
-        <Card>
-          <CardContent className="p-8 text-center space-y-6">
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold">Ultra-Simplified Runner</h2>
               <p className="text-muted-foreground text-sm">
                 Campaign = Conversation = Warmup — they ALL just send messages
               </p>
