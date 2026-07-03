@@ -64,13 +64,6 @@ function resolveRunnerPaths() {
     path.join(__dirname, '..', 'resources', 'python'),
   ].filter(Boolean);
 
-  // process.resourcesPath is the packaged `resources/` dir; in dev it points
-  // into Electron's own resources, so we also probe the project root.
-  const candidates = [
-    process.resourcesPath && path.join(process.resourcesPath, 'python'),
-    path.join(__dirname, '..', 'resources', 'python'),
-  ].filter(Boolean);
-
   let pythonBin = null;
   for (const dir of candidates) {
     const exe = process.platform === 'win32'
@@ -91,6 +84,33 @@ function resolveRunnerPaths() {
 
   return { pythonBin, script };
 }
+
+// Install Telethon into resources/runner/_vendor once. Marker file skips reruns.
+async function ensureRunnerDeps(pythonBin, script) {
+  const runnerDir = path.dirname(script);
+  const vendor = path.join(runnerDir, '_vendor');
+  const marker = path.join(vendor, '.installed');
+  const req = path.join(runnerDir, 'requirements.txt');
+  if (fs.existsSync(marker) || !fs.existsSync(req)) return;
+  writeLog('sys', 'installing runner deps (first run)…');
+  await new Promise((resolve) => {
+    const p = spawn(pythonBin, ['-m', 'pip', 'install', '--quiet',
+      '--disable-pip-version-check', '--target', vendor, '-r', req], { windowsHide: true });
+    p.stdout && p.stdout.on('data', (b) => writeLog('sys', b.toString().trim()));
+    p.stderr && p.stderr.on('data', (b) => writeLog('sys', b.toString().trim()));
+    p.on('exit', (code) => {
+      if (code === 0) {
+        try { fs.mkdirSync(vendor, { recursive: true }); fs.writeFileSync(marker, new Date().toISOString()); } catch (_) {}
+        writeLog('sys', 'runner deps installed');
+      } else {
+        writeLog('sys', `pip install exited code=${code}`);
+      }
+      resolve();
+    });
+    p.on('error', (e) => { writeLog('sys', `pip spawn error: ${e.message}`); resolve(); });
+  });
+}
+
 
 async function startChild() {
   if (child) return;
