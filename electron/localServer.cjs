@@ -151,11 +151,15 @@ async function handleRoute(req, url, body, ctx) {
         WHERE id = ?
       `).run(nowIso(), content, nowIso(), conv.id);
     }
+    const msgId = crypto.randomUUID();
     db.prepare(`
       INSERT INTO messages (id, account_id, conversation_id, telegram_message_id, content, direction, status, created_at)
       VALUES (?, ?, ?, ?, ?, 'incoming', 'delivered', ?)
-    `).run(crypto.randomUUID(), account_id, conv.id, telegram_message_id || null, content, nowIso());
+    `).run(msgId, account_id, conv.id, telegram_message_id || null, content, nowIso());
     db.prepare(`UPDATE lifetime_stats SET stat_value = stat_value + 1, updated_at = ? WHERE stat_key = 'lifetime_replies_received'`).run(nowIso());
+    emit('messages', 'INSERT', { id: msgId, conversation_id: conv.id, account_id, direction: 'incoming', content });
+    emit('conversations', 'UPDATE', { id: conv.id, account_id });
+    emit('lifetime_stats', 'UPDATE', { stat_key: 'lifetime_replies_received' });
     return { ok: true, conversation_id: conv.id };
   }
 
