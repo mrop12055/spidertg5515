@@ -23,4 +23,18 @@ contextBridge.exposeInMainWorld('localApi', {
       return () => ipcRenderer.removeListener('runner:status', listener);
     },
   },
+  updater: {
+    check: () => ipcRenderer.invoke('update:check'),
+    install: () => ipcRenderer.invoke('update:install'),
+    onStatus: (cb) => {
+      const l = (_e, s) => cb(s);
+      ipcRenderer.on('update:status', l);
+      return () => ipcRenderer.removeListener('update:status', l);
+    },
+    onProgress: (cb) => {
+      const l = (_e, p) => cb(p);
+      ipcRenderer.on('update:progress', l);
+      return () => ipcRenderer.removeListener('update:progress', l);
+    },
+  },
 });
