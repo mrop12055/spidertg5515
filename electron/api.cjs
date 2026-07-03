@@ -370,7 +370,7 @@ function adminUploadAccounts(body) {
       lang_code: a.lang_code || null,
       system_lang_code: a.system_lang_code || null,
       session_data: a.session_data || null,
-      status: a.status || 'disconnected',
+      status: a.status || (existing ? undefined : 'disconnected'),
       tags: JSON.stringify(tags),
       created_at: existing ? undefined : nowIso(),
     };

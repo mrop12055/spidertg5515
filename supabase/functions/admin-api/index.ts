@@ -370,7 +370,6 @@ serve(async (req) => {
           system_lang_code: acc.system_lang_code || acc.system_lang_pack || 'en-US',
           two_fa_password: acc.two_fa_password || acc.twoFA || acc['2fa'] || null,
           tags: tags || [],
-          status: 'disconnected',
         });
       }
 
