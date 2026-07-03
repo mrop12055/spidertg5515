@@ -197,14 +197,13 @@ serve(async (req) => {
       return jsonResponse({
         success: true,
         deleted: {
-          warmup_messages: warmupDeleted || 0,
-          warmup_errors: errorsDeleted || 0,
           proxy_errors: proxyErrorsDeleted || 0,
           vps_logs: logsDeleted || 0,
           messages: messagesDeleted,
           conversations: conversationsDeleted,
         },
       });
+
     }
 
     // ==================== MAINTENANCE ====================
