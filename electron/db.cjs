@@ -464,6 +464,15 @@ function runMigrations() {
     locked_by: 'TEXT',
     locked_at: 'TEXT',
   });
+
+  db.prepare("UPDATE telegram_accounts SET status = 'disconnected' WHERE status = 'inactive'").run();
+  db.prepare(`
+    UPDATE telegram_accounts
+    SET device_model = 'Telegram Desktop ' || COALESCE(NULLIF(substr(replace(phone_number, '+', ''), -4), ''), 'local'),
+        system_version = COALESCE(system_version, 'Windows')
+    WHERE (device_model IS NULL OR device_model = '')
+      AND session_data IS NOT NULL
+  `).run();
 }
 
 function initDb(userDataDir) {
