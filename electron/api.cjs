@@ -190,8 +190,10 @@ function opUpdate(payload) {
   const where = buildWhere(payload.filters);
   const sql = `UPDATE ${payload.table} SET ${setSql} ${where.sql}`;
   const info = db.prepare(sql).run(...setParams, ...where.params);
-  if (payload.returning === 'minimal') return { data: null, error: null, count: info.changes };
   const rows = db.prepare(`SELECT * FROM ${payload.table} ${where.sql}`).all(...where.params).map(decodeRow);
+  for (const r of rows) emitChange(payload.table, 'UPDATE', r);
+  if (info.changes && rows.length === 0) emitChange(payload.table, 'UPDATE', null);
+  if (payload.returning === 'minimal') return { data: null, error: null, count: info.changes };
   if (payload.single) return { data: rows[0] || null, error: null };
   return { data: rows, error: null };
 }
@@ -199,8 +201,11 @@ function opUpdate(payload) {
 function opDelete(payload) {
   const db = getDb();
   const where = buildWhere(payload.filters);
+  // Capture rows before delete so subscribers can react.
+  const doomed = db.prepare(`SELECT * FROM ${payload.table} ${where.sql}`).all(...where.params).map(decodeRow);
   const sql = `DELETE FROM ${payload.table} ${where.sql}`;
   const info = db.prepare(sql).run(...where.params);
+  for (const r of doomed) emitChange(payload.table, 'DELETE', r);
   return { data: null, error: null, count: info.changes };
 }
 
