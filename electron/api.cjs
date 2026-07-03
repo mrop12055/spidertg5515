@@ -8,6 +8,16 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { getDb } = require('./db.cjs');
 
+// Change-event broadcaster: registered by main.cjs so writes fan out over IPC
+// to renderer subscribers (localClient.channel().on('postgres_changes', ...)).
+let _emitChange = null;
+function setChangeEmitter(fn) { _emitChange = fn; }
+function emitChange(table, eventType, row) {
+  if (_emitChange) {
+    try { _emitChange({ table, eventType, new: row || null, old: row || null }); } catch (_) {}
+  }
+}
+
 const JSON_COLUMNS = new Set([
   'tags',
   'phone_numbers', 'valid_numbers', 'invalid_numbers',
@@ -164,7 +174,8 @@ function opInsert(payload) {
   };
   const tx = db.transaction(() => list.forEach(insertOne));
   tx();
-  if (payload.returning === 'minimal') return { data: null, error: null };
+  for (const r of results) emitChange(payload.table, 'INSERT', r);
+  if (payload.returning === 'minimal') { emitChange(payload.table, 'INSERT', null); return { data: null, error: null }; }
   if (payload.single) return { data: results[0] || null, error: null };
   return { data: results, error: null };
 }
@@ -179,8 +190,10 @@ function opUpdate(payload) {
   const where = buildWhere(payload.filters);
   const sql = `UPDATE ${payload.table} SET ${setSql} ${where.sql}`;
   const info = db.prepare(sql).run(...setParams, ...where.params);
-  if (payload.returning === 'minimal') return { data: null, error: null, count: info.changes };
   const rows = db.prepare(`SELECT * FROM ${payload.table} ${where.sql}`).all(...where.params).map(decodeRow);
+  for (const r of rows) emitChange(payload.table, 'UPDATE', r);
+  if (info.changes && rows.length === 0) emitChange(payload.table, 'UPDATE', null);
+  if (payload.returning === 'minimal') return { data: null, error: null, count: info.changes };
   if (payload.single) return { data: rows[0] || null, error: null };
   return { data: rows, error: null };
 }
@@ -188,8 +201,11 @@ function opUpdate(payload) {
 function opDelete(payload) {
   const db = getDb();
   const where = buildWhere(payload.filters);
+  // Capture rows before delete so subscribers can react.
+  const doomed = db.prepare(`SELECT * FROM ${payload.table} ${where.sql}`).all(...where.params).map(decodeRow);
   const sql = `DELETE FROM ${payload.table} ${where.sql}`;
   const info = db.prepare(sql).run(...where.params);
+  for (const r of doomed) emitChange(payload.table, 'DELETE', r);
   return { data: null, error: null, count: info.changes };
 }
 
@@ -220,6 +236,7 @@ function opUpsert(payload) {
   };
   const tx = db.transaction(() => list.forEach(upsertOne));
   tx();
+  for (const r of results) emitChange(payload.table, 'UPDATE', r);
   if (payload.returning === 'minimal') return { data: null, error: null };
   if (payload.single) return { data: results[0] || null, error: null };
   return { data: results, error: null };
@@ -421,4 +438,4 @@ async function handleApiCall(payload, ctx) {
   }
 }
 
-module.exports = { handleApiCall };
+module.exports = { handleApiCall, setChangeEmitter };

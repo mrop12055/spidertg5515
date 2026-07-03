@@ -9,9 +9,10 @@ const path = require('path');
 const fs = require('fs');
 
 const { initDb, closeDb } = require('./db.cjs');
-const { handleApiCall } = require('./api.cjs');
-const { registerRunnerIpc, stopRunner } = require('./runner.cjs');
+const { handleApiCall, setChangeEmitter } = require('./api.cjs');
+const { registerRunnerIpc, stopRunner, setRunnerEndpoint } = require('./runner.cjs');
 const { registerUpdaterIpc } = require('./updater.cjs');
+const localServer = require('./localServer.cjs');
 
 let mainWindow = null;
 
@@ -70,8 +71,21 @@ app.whenReady().then(() => {
     }
   });
 
+  // Broadcast SQLite change events to renderers as postgres_changes-shaped payloads.
+  setChangeEmitter((change) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.send('localApi:change', change); } catch (_) {}
+    }
+  });
+
   registerRunnerIpc(ipcMain, { userDataDir, getWindow: () => mainWindow });
   registerUpdaterIpc(ipcMain, { getWindow: () => mainWindow });
+
+  // Start local HTTP server for the Python runner, then hand endpoint to runner.cjs.
+  Promise.resolve(localServer.start({ userDataDir })).then(({ port, token }) => {
+    if (typeof setRunnerEndpoint === 'function') setRunnerEndpoint({ port, token });
+    console.log(`[main] local API ready on 127.0.0.1:${port}`);
+  }).catch((e) => console.error('[main] localServer start failed:', e));
 
   createWindow();
 
@@ -82,11 +96,14 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   stopRunner();
+  localServer.stop();
   closeDb();
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', () => {
   stopRunner();
+  localServer.stop();
   closeDb();
+});
 });

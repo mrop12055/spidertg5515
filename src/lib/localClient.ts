@@ -13,6 +13,7 @@ type OrderSpec = { col: string; ascending: boolean; nullsFirst?: boolean };
 type LocalApi = {
   isDesktop: boolean;
   query: (payload: any) => Promise<{ data: any; error: any; count?: number }>;
+  onChange?: (cb: (change: { table: string; eventType: string; new: any; old: any }) => void) => () => void;
   runner: {
     start: () => Promise<{ status: string }>;
     stop: () => Promise<{ status: string }>;
@@ -171,18 +172,55 @@ const functions = {
   },
 };
 
-// Minimal channel stub — real-time not supported in Phase 1. Returns a chainable
-// object with .on().subscribe() so existing call sites keep type-checking.
+// Real-time bridge — wires window.localApi.onChange into a Supabase-style
+// .channel().on('postgres_changes', { table }, cb).subscribe() flow so
+// existing frontend hooks keep working without changes.
+type ChangeListener = {
+  event: string;                     // '*', 'INSERT', 'UPDATE', 'DELETE'
+  table?: string;
+  cb: (payload: any) => void;
+};
+
 const makeChannel = (_name?: string) => {
+  const listeners: ChangeListener[] = [];
+  let off: (() => void) | null = null;
+
   const chan: any = {
-    on: (_event?: any, _filter?: any, _cb?: any) => chan,
-    subscribe: (_cb?: any) => ({ unsubscribe: () => {} }),
-    unsubscribe: () => {},
+    on: (event: string, filter: any, cb: any) => {
+      // Signature: on('postgres_changes', { event, schema, table }, cb)
+      const evt = (filter && filter.event) || '*';
+      const tbl = filter && filter.table;
+      listeners.push({ event: evt, table: tbl, cb });
+      return chan;
+    },
+    subscribe: (_cb?: any) => {
+      const api = getLocalApi();
+      if (api.onChange) {
+        off = api.onChange((change) => {
+          for (const l of listeners) {
+            if (l.table && l.table !== change.table) continue;
+            if (l.event !== '*' && l.event !== change.eventType) continue;
+            try {
+              l.cb({
+                eventType: change.eventType,
+                new: change.new,
+                old: change.old,
+                schema: 'public',
+                table: change.table,
+              });
+            } catch (_) {}
+          }
+        });
+      }
+      if (typeof _cb === 'function') _cb('SUBSCRIBED');
+      return { unsubscribe: () => { if (off) off(); off = null; } };
+    },
+    unsubscribe: () => { if (off) off(); off = null; },
   };
   return chan;
 };
 const channel = (name?: string) => makeChannel(name);
-const removeChannel = (_chan?: any) => {};
+const removeChannel = (chan?: any) => { if (chan && chan.unsubscribe) chan.unsubscribe(); };
 
 
 const auth = {

@@ -338,6 +338,60 @@ CREATE TABLE IF NOT EXISTS lifetime_stats (
   stat_value INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS interaction_scheduler (
+  id TEXT PRIMARY KEY,
+  sender_account_id TEXT NOT NULL,
+  receiver_account_id TEXT NOT NULL,
+  next_run_at TEXT,
+  status TEXT DEFAULT 'active',
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS scheduled_interactions (
+  id TEXT PRIMARY KEY,
+  sender_account_id TEXT NOT NULL,
+  receiver_account_id TEXT NOT NULL,
+  scheduled_at TEXT,
+  executed_at TEXT,
+  status TEXT DEFAULT 'pending',
+  action TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS vps_commands (
+  id TEXT PRIMARY KEY,
+  vps_id TEXT,
+  command TEXT NOT NULL,
+  payload TEXT,
+  status TEXT DEFAULT 'pending',
+  result TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  completed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS vps_connections (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  host TEXT,
+  status TEXT,
+  last_seen TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed lifetime stats keys the UI expects.
+INSERT OR IGNORE INTO lifetime_stats (id, stat_key, stat_value) VALUES
+  (lower(hex(randomblob(16))), 'lifetime_messages_sent', 0),
+  (lower(hex(randomblob(16))), 'lifetime_replies_received', 0),
+  (lower(hex(randomblob(16))), 'lifetime_unique_recipients_messaged', 0),
+  (lower(hex(randomblob(16))), 'lifetime_unique_recipients_replied', 0);
 `;
 
 function initDb(userDataDir) {

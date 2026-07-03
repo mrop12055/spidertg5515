@@ -24,6 +24,8 @@ let manualStop = false;
 let logStream = null;
 let ctxRef = null;
 let apiPort = 0;
+let apiToken = '';
+function setRunnerEndpoint({ port, token }) { apiPort = port; apiToken = token; }
 
 function emit(channel, payload) {
   const win = ctxRef && ctxRef.getWindow && ctxRef.getWindow();
@@ -112,6 +114,7 @@ async function startChild() {
       env: {
         ...process.env,
         TCRM_API_URL: `http://127.0.0.1:${apiPort}`,
+        TCRM_API_TOKEN: apiToken,
         TCRM_SESSIONS_DIR: sessionsDir,
         TCRM_FILES_DIR: filesDir,
         TCRM_USER_DATA: userDataDir,
@@ -191,4 +194,4 @@ function stopRunner() {
   if (logStream) { try { logStream.end(); } catch (_) {} logStream = null; }
 }
 
-module.exports = { registerRunnerIpc, stopRunner };
+module.exports = { registerRunnerIpc, stopRunner, setRunnerEndpoint };
