@@ -659,7 +659,7 @@ async function handleGetTasks(supabase: any, body: any) {
       for (const task of actionTasks) {
         const account = task.account;
         if (!account?.session_data) continue;
-        if (!account?.proxies || account.proxies.status !== 'active') continue;
+        if (account.proxies && account.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, account);
         if (!creds) continue;
