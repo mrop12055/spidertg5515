@@ -227,8 +227,8 @@ function registerRunnerIpc(ipcMain, ctx) {
   ipcMain.handle('runner:restart', async () => { stopChild(); setTimeout(() => startChild(), 500); return { status: 'starting' }; });
   ipcMain.handle('runner:status', async () => ({ status, error: lastError, pid: child && child.pid, port: apiPort }));
 
-  // Auto-start once the UI has mounted.
-  setTimeout(() => { startChild().catch(() => {}); }, 1500);
+  // Auto-start disabled — the Python runner is now shipped separately and
+  // the user launches it manually from the Setup Guide instructions.
 }
 
 function stopRunner() {

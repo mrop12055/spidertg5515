@@ -18,6 +18,7 @@ import Campaigns from "./pages/Campaigns";
 
 import Material from "./pages/Material";
 import Logs from "./pages/Logs";
+import SetupGuide from "./pages/SetupGuide";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -47,6 +48,7 @@ const App = () => (
                   
                   <Route path="/material" element={<ProtectedRoute><Material /></ProtectedRoute>} />
                   <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
+                  <Route path="/setup" element={<ProtectedRoute><SetupGuide /></ProtectedRoute>} />
                   <Route path="*" element={<NotFound />} />
                 </Routes>
               </HashRouter>
