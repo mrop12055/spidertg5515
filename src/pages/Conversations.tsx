@@ -113,7 +113,7 @@ const Chat: React.FC = () => {
   // Fetch seats on mount
   useEffect(() => {
     const fetchSeats = async () => {
-      const { data } = await supabase.from('seats').select('id, name');
+      const { data } = await (supabase as any).from('seats').select('id, name');
       if (data) setSeats(data);
     };
     fetchSeats();

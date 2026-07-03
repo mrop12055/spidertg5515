@@ -63,11 +63,11 @@ const Seats: React.FC = () => {
     try {
       // PARALLEL: Run all 4 queries simultaneously instead of sequentially
       const [seatsResult, statsResult, pendingResult, unreadResult] = await Promise.all([
-        supabase
+        (supabase as any)
           .from('seats')
           .select('*')
           .order('created_at', { ascending: false }),
-        supabase
+        (supabase as any)
           .from('seat_stats')
           .select('*'),
         supabase
@@ -128,7 +128,7 @@ const Seats: React.FC = () => {
   const debouncedStatsRefetch = useCallback(() => {
     if (statsDebounceRef.current) clearTimeout(statsDebounceRef.current);
     statsDebounceRef.current = setTimeout(async () => {
-      const { data, error } = await supabase.from('seat_stats').select('*');
+      const { data, error } = await (supabase as any).from('seat_stats').select('*');
       if (!error && data) {
         const statsMap = new Map<string, SeatStats>();
         data.forEach((s: SeatStats) => statsMap.set(s.seat_id, s));
@@ -227,7 +227,7 @@ const Seats: React.FC = () => {
     }
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await (supabase as any)
         .from('seats')
         .insert({ name: newSeatName.trim() })
         .select()
@@ -247,7 +247,7 @@ const Seats: React.FC = () => {
 
   const handleToggleActive = async (seat: Seat) => {
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('seats')
         .update({ is_active: !seat.is_active, updated_at: new Date().toISOString() })
         .eq('id', seat.id);
@@ -264,7 +264,7 @@ const Seats: React.FC = () => {
 
 const handleDeleteSeat = async (seat: Seat) => {
     try {
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('seats')
         .delete()
         .eq('id', seat.id);
@@ -285,7 +285,7 @@ const handleDeleteSeat = async (seat: Seat) => {
       // Generate a new UUID for access_token
       const newToken = crypto.randomUUID();
       
-      const { error } = await supabase
+      const { error } = await (supabase as any)
         .from('seats')
         .update({ access_token: newToken, updated_at: new Date().toISOString() })
         .eq('id', seat.id);

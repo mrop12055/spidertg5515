@@ -7,7 +7,9 @@ import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { supabase } from "@/integrations/supabase/client";
+import { supabase as supabaseClient } from "@/integrations/supabase/client";
+// Warmup uses legacy tables/columns not in generated types
+const supabase: any = supabaseClient;
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
@@ -179,7 +181,7 @@ export default function Warmup() {
 
       if (sessionData) {
         // Fetch pairs for this session
-        const { data: pairsData } = await supabase
+        const { data: pairsData } = await (supabase as any)
           .from("warmup_pairs")
           .select(`
             id,
@@ -200,7 +202,7 @@ export default function Warmup() {
       }
 
       // Fetch sent messages
-      const { data: sentData } = await supabase
+      const { data: sentData } = await (supabase as any)
         .from("warmup_messages")
         .select(`
           id,
@@ -219,7 +221,7 @@ export default function Warmup() {
       setSentMessages((sentData as unknown as WarmupMessage[]) || []);
 
       // Fetch pending messages
-      const { data: pendingData } = await supabase
+      const { data: pendingData } = await (supabase as any)
         .from("warmup_messages")
         .select(`
           id,
@@ -238,7 +240,7 @@ export default function Warmup() {
       setPendingMessages((pendingData as unknown as WarmupMessage[]) || []);
 
       // Fetch failed messages - also limit to 100 most recent (will be combined with sent)
-      const { data: errorData } = await supabase
+      const { data: errorData } = await (supabase as any)
         .from("warmup_messages")
         .select(`
           id,
@@ -290,7 +292,7 @@ export default function Warmup() {
       const todayStart = new Date();
       todayStart.setHours(0, 0, 0, 0);
       
-      const { data: todayMessagesData } = await supabase
+      const { data: todayMessagesData } = await (supabase as any)
         .from("warmup_messages")
         .select("sender_account_id, receiver_account_id")
         .eq("status", "sent")
@@ -364,26 +366,26 @@ export default function Warmup() {
       // Calculate stats - count pre-paired accounts as pairs
       const prePairedCount = uniquePairs.length;
       
-      const { count: activePairsInSession } = await supabase
+      const { count: activePairsInSession } = await (supabase as any)
         .from("warmup_pairs")
         .select("*", { count: "exact", head: true })
         .eq("status", "active");
 
-      const { count: messagesScheduled } = await supabase
+      const { count: messagesScheduled } = await (supabase as any)
         .from("warmup_messages")
         .select("*", { count: "exact", head: true });
 
-      const { count: messagesSent } = await supabase
+      const { count: messagesSent } = await (supabase as any)
         .from("warmup_messages")
         .select("*", { count: "exact", head: true })
         .eq("status", "sent");
 
-      const { count: pendingMessages } = await supabase
+      const { count: pendingMessages } = await (supabase as any)
         .from("warmup_messages")
         .select("*", { count: "exact", head: true })
         .eq("status", "pending");
 
-      const { count: failedMessages } = await supabase
+      const { count: failedMessages } = await (supabase as any)
         .from("warmup_messages")
         .select("*", { count: "exact", head: true })
         .eq("status", "failed");
@@ -391,7 +393,7 @@ export default function Warmup() {
       // Calculate remaining time based on the last scheduled pending message
       let estimatedMinutesRemaining = 0;
       if (pendingMessages && pendingMessages > 0) {
-        const { data: lastPendingMessage } = await supabase
+        const { data: lastPendingMessage } = await (supabase as any)
           .from("warmup_messages")
           .select("scheduled_at")
           .eq("status", "pending")
@@ -426,7 +428,7 @@ export default function Warmup() {
   // Load warmup batch size from settings
   useEffect(() => {
     const loadBatchSize = async () => {
-      const { data } = await supabase
+      const { data } = await (supabase as any)
         .from('app_settings')
         .select('value')
         .eq('key', 'warmup_batch_size')
@@ -494,7 +496,7 @@ export default function Warmup() {
   const handleSaveBatchSize = async () => {
     setIsSavingBatchSize(true);
     try {
-      await supabase
+      await (supabase as any)
         .from('app_settings')
         .upsert({
           key: 'warmup_batch_size',
@@ -797,7 +799,7 @@ export default function Warmup() {
             .single();
 
           if (sessionData) {
-            await supabase
+            await (supabase as any)
               .from("warmup_pairs")
               .insert({
                 session_id: sessionData.id,
