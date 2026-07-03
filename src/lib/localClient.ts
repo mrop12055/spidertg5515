@@ -13,6 +13,7 @@ type OrderSpec = { col: string; ascending: boolean; nullsFirst?: boolean };
 type LocalApi = {
   isDesktop: boolean;
   query: (payload: any) => Promise<{ data: any; error: any; count?: number }>;
+  onChange?: (cb: (change: { table: string; eventType: string; new: any; old: any }) => void) => () => void;
   runner: {
     start: () => Promise<{ status: string }>;
     stop: () => Promise<{ status: string }>;
