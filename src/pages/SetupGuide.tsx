@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-fast-poll-v17";
+  const runnerBuild = "2026-07-04-connect-50-v18";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
