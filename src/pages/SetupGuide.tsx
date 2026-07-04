@@ -155,6 +155,7 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
 CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 50, 1, 200)
 CONNECT_TIMEOUT_SECONDS = _env_int("TG_CONNECT_TIMEOUT_SECONDS", 90, 30, 180)
 CONNECT_BATCH_PAUSE_SECONDS = _env_float("TG_CONNECT_BATCH_PAUSE_SECONDS", 1.0, 0.0, 30.0)
+CLIENT_RECONNECT_GRACE_SECONDS = _env_int("TG_CLIENT_RECONNECT_GRACE_SECONDS", 120, 15, 600)
 
 
 def signal_handler(sig, frame):
@@ -174,6 +175,11 @@ try:
         UserBlockedError, ChatWriteForbiddenError, AuthKeyUnregisteredError,
         SessionRevokedError, UserDeactivatedBanError, PhoneNumberBannedError
     )
+    try:
+        from telethon.errors import AuthKeyDuplicatedError
+    except ImportError:
+        class AuthKeyDuplicatedError(Exception):
+            pass
     try:
         from telethon.errors import PersistentTimestampOutdatedError
     except ImportError:
