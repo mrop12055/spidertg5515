@@ -983,7 +983,19 @@ async function handleReportResults(supabase: any, body: any) {
 
     // === ACCOUNT-LEVEL ERRORS (PeerFlood, FloodWait, etc.) ===
     // These errors mean the SENDER account is rate-limited, not that the recipient is unreachable
-    const accountLevelErrors = ['peerflood', 'floodwait', 'userdeactivated', 'authkeyunregistered'];
+    const accountLevelErrors = [
+      'peerflood',
+      'floodwait',
+      'userdeactivated',
+      'authkeyunregistered',
+      'authorization key',
+      'auth key',
+      'authkey',
+      'session revoked',
+      'session invalid',
+      'session duplicated',
+      'duplicated'
+    ];
     const isAccountError = accountLevelErrors.some(e => errorLower.includes(e.toLowerCase()));
 
     // Check for frozen account
