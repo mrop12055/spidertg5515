@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-07-04-connect-50-v18";
+  const runnerBuild = "2026-07-04-single-client-v19";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -76,6 +76,10 @@ def _asyncio_exception_handler(loop, context):
             print(f"  [NET] {exc_name} (proxy dropped connection) - Telethon will reconnect")
             sys.stdout.flush()
             return
+        if exc_name == "ConnectionError" and "not connected" in err_str.lower():
+            print(f"  [NET] Telethon background task ended after disconnect - ignored")
+            sys.stdout.flush()
+            return
         if isinstance(exc, OSError):
             if "WinError 121" in err_str or "semaphore timeout" in err_str.lower():
                 print(f"  [NET] Windows semaphore timeout (proxy/network glitch) - ignored")
@@ -110,6 +114,7 @@ BUILD_VERSION = "${runnerBuild}"
 SESSION_FOLDER = tempfile.mkdtemp(prefix="tg_")
 clients: Dict[str, Any] = {}      # account_id -> TelegramClient
 accounts: Dict[str, dict] = {}    # account_id -> account info
+client_last_seen: Dict[str, float] = {}  # account_id -> last successful activity timestamp
 RUNNING = True
 
 # Unique instance ID to detect multiple runners fighting over same accounts
