@@ -1309,8 +1309,10 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         return None, "No ID"
     
     async with get_lock(aid):
-        # FIX: Disconnect stale client BEFORE creating a new one
-        # Without this, Telegram sees 2 connections with same auth key and revokes BOTH
+        # SINGLE-CLIENT RULE: Never create a second TelegramClient for the same
+        # session while Telethon's old update-loop may still be shutting down.
+        # Starting two clients with one auth key is what causes Telegram to block
+        # the session with "authorization key" / duplicated auth-key errors.
         if aid in clients:
             old = clients[aid]
             try:
@@ -1318,14 +1320,16 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             except Exception:
                 still_alive = False
             if still_alive:
+                accounts[aid] = acc
+                client_last_seen[aid] = time.time()
                 return old, None
-            # Old client exists but is dead — disconnect it properly
-            print(f"  [CLEANUP] [{phone[-4:]}] Disconnecting stale client before reconnect")
-            try:
-                await asyncio.wait_for(old.disconnect(), timeout=5)
-            except Exception:
-                pass
-            del clients[aid]
+            last_seen = client_last_seen.get(aid, 0)
+            age = time.time() - last_seen if last_seen else 999999
+            if age < CLIENT_RECONNECT_GRACE_SECONDS:
+                print(f"  [SKIP] [{phone[-4:]}] Client just went stale {age:.0f}s ago; waiting before reconnect")
+                sys.stdout.flush()
+                return None, "Waiting for stale client cleanup"
+            await drop_client(aid, phone, "stale before reconnect")
         
         # Validation checks - report specific failures
         if not acc.get("session_data"):
@@ -1372,6 +1376,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
             clients[aid] = client
             accounts[aid] = acc
+            client_last_seen[aid] = time.time()
             print(f"  ✓ [{phone[-4:]}] Connected")
             return client, None
             
@@ -1388,11 +1393,11 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
                 await update_proxy_status(proxy_id, "error", error_msg)
             return None, error_msg
             
-        except (AuthKeyUnregisteredError, SessionRevokedError) as e:
+        except (AuthKeyUnregisteredError, SessionRevokedError, AuthKeyDuplicatedError) as e:
             await safe_disconnect_client(client, phone)
             # Session invalid - account needs re-auth
-            error_msg = f"Session revoked: {str(e)[:50]}"
-            print(f"  ✗ [{phone[-4:]}] SESSION REVOKED")
+            error_msg = f"Session invalid/duplicated: {str(e)[:80]}"
+            print(f"  ✗ [{phone[-4:]}] SESSION INVALID/DUPLICATED")
             await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
             return None, error_msg
             
@@ -1408,6 +1413,11 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             await safe_disconnect_client(client, phone)
             error_str = str(e)
             print(f"  ✗ [{phone[-4:]}] {error_str[:30]}")
+            
+            if is_invalid_session_error(e):
+                error_msg = f"Session invalid/duplicated: {error_str[:100]}"
+                await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
+                return None, error_msg
             
             if isinstance(e, OSError) and ("WinError 121" in error_str or "semaphore timeout" in error_str.lower()):
                 if using_proxy:
