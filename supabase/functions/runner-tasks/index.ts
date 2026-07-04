@@ -1251,7 +1251,7 @@ async function handleReportResults(supabase: any, body: any) {
       }
       
       // Also put account in cooldown/restricted for account-level errors during warmup
-      if (isAccountError && r.account_id) {
+      if (!isInvalidSessionError && isAccountError && r.account_id) {
         const isPeerFlood = errorLower.includes('peerflood');
         const cooldownMinutes = isPeerFlood ? 720 : 30;
         const cooldownUntil = new Date(Date.now() + cooldownMinutes * 60 * 1000).toISOString();
@@ -1281,9 +1281,9 @@ async function handleReportResults(supabase: any, body: any) {
           await supabase.from("telegram_accounts")
             .update({ status: "banned", ban_reason: r.error })
             .eq("id", r.account_id);
-        } else if (errorLower.includes('session') || errorLower.includes('auth key')) {
+        } else if (isInvalidSessionError || errorLower.includes('session') || errorLower.includes('auth key')) {
           await supabase.from("telegram_accounts")
-            .update({ status: "disconnected", ban_reason: r.error })
+            .update({ status: "disconnected", auto_disabled: true, disabled_reason: r.error, ban_reason: r.error, locked_by: null, locked_at: null })
             .eq("id", r.account_id);
         }
       }
