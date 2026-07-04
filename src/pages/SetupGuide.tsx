@@ -247,9 +247,40 @@ async def safe_disconnect_client(client, phone: str = "????"):
     if not client:
         return
     try:
-        await asyncio.wait_for(client.disconnect(), timeout=5)
+        await asyncio.wait_for(client.disconnect(), timeout=10)
     except Exception:
         pass
+
+
+async def drop_client(aid: str, phone: str = "????", reason: str = "cleanup"):
+    """Remove a client from local state before disconnecting it.
+
+    Pop first so stale incoming handlers cannot keep the account looking healthy
+    while a second TelegramClient is created for the same session.
+    """
+    old = clients.pop(aid, None)
+    accounts.pop(aid, None)
+    client_last_seen.pop(aid, None)
+    if old:
+        try:
+            print(f"  [CLEANUP] [{phone[-4:]}] Dropping local client ({reason})")
+            sys.stdout.flush()
+            await asyncio.wait_for(old.disconnect(), timeout=10)
+        except Exception:
+            pass
+
+
+def is_invalid_session_error(exc: Exception) -> bool:
+    """Detect revoked/duplicated/corrupt Telegram session errors across Telethon versions."""
+    text = str(exc).lower()
+    name = type(exc).__name__.lower()
+    return (
+        isinstance(exc, (AuthKeyUnregisteredError, SessionRevokedError, AuthKeyDuplicatedError))
+        or "authkey" in name
+        or "authorization key" in text
+        or "session revoked" in text
+        or ("session file" in text and "invalid" in text)
+    )
 
 
 def variate(text: str) -> str:
