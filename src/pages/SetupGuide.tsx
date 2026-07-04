@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-07-04-connect-50-v18";
+  const runnerBuild = "2026-07-04-single-client-v19";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -76,6 +76,10 @@ def _asyncio_exception_handler(loop, context):
             print(f"  [NET] {exc_name} (proxy dropped connection) - Telethon will reconnect")
             sys.stdout.flush()
             return
+        if exc_name == "ConnectionError" and "not connected" in err_str.lower():
+            print(f"  [NET] Telethon background task ended after disconnect - ignored")
+            sys.stdout.flush()
+            return
         if isinstance(exc, OSError):
             if "WinError 121" in err_str or "semaphore timeout" in err_str.lower():
                 print(f"  [NET] Windows semaphore timeout (proxy/network glitch) - ignored")
@@ -110,6 +114,7 @@ BUILD_VERSION = "${runnerBuild}"
 SESSION_FOLDER = tempfile.mkdtemp(prefix="tg_")
 clients: Dict[str, Any] = {}      # account_id -> TelegramClient
 accounts: Dict[str, dict] = {}    # account_id -> account info
+client_last_seen: Dict[str, float] = {}  # account_id -> last successful activity timestamp
 RUNNING = True
 
 # Unique instance ID to detect multiple runners fighting over same accounts
@@ -150,6 +155,7 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
 CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 50, 1, 200)
 CONNECT_TIMEOUT_SECONDS = _env_int("TG_CONNECT_TIMEOUT_SECONDS", 90, 30, 180)
 CONNECT_BATCH_PAUSE_SECONDS = _env_float("TG_CONNECT_BATCH_PAUSE_SECONDS", 1.0, 0.0, 30.0)
+CLIENT_RECONNECT_GRACE_SECONDS = _env_int("TG_CLIENT_RECONNECT_GRACE_SECONDS", 120, 15, 600)
 
 
 def signal_handler(sig, frame):
@@ -169,6 +175,11 @@ try:
         UserBlockedError, ChatWriteForbiddenError, AuthKeyUnregisteredError,
         SessionRevokedError, UserDeactivatedBanError, PhoneNumberBannedError
     )
+    try:
+        from telethon.errors import AuthKeyDuplicatedError
+    except ImportError:
+        class AuthKeyDuplicatedError(Exception):
+            pass
     try:
         from telethon.errors import PersistentTimestampOutdatedError
     except ImportError:
@@ -236,9 +247,42 @@ async def safe_disconnect_client(client, phone: str = "????"):
     if not client:
         return
     try:
-        await asyncio.wait_for(client.disconnect(), timeout=5)
+        await asyncio.wait_for(client.disconnect(), timeout=10)
     except Exception:
         pass
+
+
+async def drop_client(aid: str, phone: str = "????", reason: str = "cleanup"):
+    """Remove a client from local state before disconnecting it.
+
+    Pop first so stale incoming handlers cannot keep the account looking healthy
+    while a second TelegramClient is created for the same session.
+    """
+    old = clients.pop(aid, None)
+    accounts.pop(aid, None)
+    # Keep/set last_seen as a reconnect cooldown marker. If Telethon still has a
+    # background update task alive, incoming events will refresh this timestamp.
+    client_last_seen[aid] = time.time()
+    if old:
+        try:
+            print(f"  [CLEANUP] [{phone[-4:]}] Dropping local client ({reason})")
+            sys.stdout.flush()
+            await asyncio.wait_for(old.disconnect(), timeout=10)
+        except Exception:
+            pass
+
+
+def is_invalid_session_error(exc: Exception) -> bool:
+    """Detect revoked/duplicated/corrupt Telegram session errors across Telethon versions."""
+    text = str(exc).lower()
+    name = type(exc).__name__.lower()
+    return (
+        isinstance(exc, (AuthKeyUnregisteredError, SessionRevokedError, AuthKeyDuplicatedError))
+        or "authkey" in name
+        or "authorization key" in text
+        or "session revoked" in text
+        or ("session file" in text and "invalid" in text)
+    )
 
 
 def variate(text: str) -> str:
@@ -999,6 +1043,7 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
 async def on_message(event, acc_id: str):
     """Handle incoming messages - registered on all clients."""
     try:
+        client_last_seen[acc_id] = time.time()
         # Only process private messages (DMs)
         if not event.is_private:
             return
@@ -1129,8 +1174,10 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
     hours_back = (datetime.now(timezone.utc) - cutoff_time).total_seconds() / 3600
     
     try:
+        client_last_seen[acc_id] = time.time()
         print(f"  [CATCHUP] [{phone}] Fetching unread messages (last {hours_back:.1f}h, {cutoff_source})...")
         dialogs = await asyncio.wait_for(client.get_dialogs(limit=100), timeout=15)
+        client_last_seen[acc_id] = time.time()
         
         total_fetched = 0
         skipped_old = 0
@@ -1267,8 +1314,17 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         return None, "No ID"
     
     async with get_lock(aid):
-        # FIX: Disconnect stale client BEFORE creating a new one
-        # Without this, Telegram sees 2 connections with same auth key and revokes BOTH
+        last_seen = client_last_seen.get(aid, 0)
+        if aid not in clients and last_seen and (time.time() - last_seen) < CLIENT_RECONNECT_GRACE_SECONDS:
+            wait_left = CLIENT_RECONNECT_GRACE_SECONDS - (time.time() - last_seen)
+            print(f"  [SKIP] [{phone[-4:]}] Waiting {wait_left:.0f}s before reconnect to avoid duplicate session")
+            sys.stdout.flush()
+            return None, "Reconnect grace period"
+
+        # SINGLE-CLIENT RULE: Never create a second TelegramClient for the same
+        # session while Telethon's old update-loop may still be shutting down.
+        # Starting two clients with one auth key is what causes Telegram to block
+        # the session with "authorization key" / duplicated auth-key errors.
         if aid in clients:
             old = clients[aid]
             try:
@@ -1276,14 +1332,16 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             except Exception:
                 still_alive = False
             if still_alive:
+                accounts[aid] = acc
+                client_last_seen[aid] = time.time()
                 return old, None
-            # Old client exists but is dead — disconnect it properly
-            print(f"  [CLEANUP] [{phone[-4:]}] Disconnecting stale client before reconnect")
-            try:
-                await asyncio.wait_for(old.disconnect(), timeout=5)
-            except Exception:
-                pass
-            del clients[aid]
+            age = time.time() - last_seen if last_seen else 999999
+            if age < CLIENT_RECONNECT_GRACE_SECONDS:
+                print(f"  [SKIP] [{phone[-4:]}] Client just went stale {age:.0f}s ago; waiting before reconnect")
+                sys.stdout.flush()
+                return None, "Waiting for stale client cleanup"
+            await drop_client(aid, phone, "stale before reconnect")
+            return None, "Dropped stale client; will reconnect after grace period"
         
         # Validation checks - report specific failures
         if not acc.get("session_data"):
@@ -1330,6 +1388,7 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
             clients[aid] = client
             accounts[aid] = acc
+            client_last_seen[aid] = time.time()
             print(f"  ✓ [{phone[-4:]}] Connected")
             return client, None
             
@@ -1346,11 +1405,11 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
                 await update_proxy_status(proxy_id, "error", error_msg)
             return None, error_msg
             
-        except (AuthKeyUnregisteredError, SessionRevokedError) as e:
+        except (AuthKeyUnregisteredError, SessionRevokedError, AuthKeyDuplicatedError) as e:
             await safe_disconnect_client(client, phone)
             # Session invalid - account needs re-auth
-            error_msg = f"Session revoked: {str(e)[:50]}"
-            print(f"  ✗ [{phone[-4:]}] SESSION REVOKED")
+            error_msg = f"Session invalid/duplicated: {str(e)[:80]}"
+            print(f"  ✗ [{phone[-4:]}] SESSION INVALID/DUPLICATED")
             await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
             return None, error_msg
             
@@ -1366,6 +1425,11 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             await safe_disconnect_client(client, phone)
             error_str = str(e)
             print(f"  ✗ [{phone[-4:]}] {error_str[:30]}")
+            
+            if is_invalid_session_error(e):
+                error_msg = f"Session invalid/duplicated: {error_str[:100]}"
+                await update_account_status(aid, "disconnected", error_msg, auto_disabled=True)
+                return None, error_msg
             
             if isinstance(e, OSError) and ("WinError 121" in error_str or "semaphore timeout" in error_str.lower()):
                 if using_proxy:
@@ -1583,6 +1647,12 @@ async def process(task: dict):
     
     # Get client
     client = clients.get(aid)
+    if client:
+        try:
+            if not await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=2):
+                client = None
+        except Exception:
+            client = None
     if not client:
         client, err = await connect(acc) if acc.get("id") else (None, "No account data")
         if not client:
@@ -1620,7 +1690,9 @@ async def process(task: dict):
         media = msg.get("media_url") or task.get("media_url")
         
         # SEND THE MESSAGE - same function for everything
+        client_last_seen[aid] = time.time()
         success, error, meta = await send_message(client, str(recipient) if recipient else "", content, media)
+        client_last_seen[aid] = time.time()
         
         if success:
             print(f"  ✓ [{phone}] → {str(recipient)[:15]}")
@@ -1654,45 +1726,58 @@ async def process(task: dict):
     # ========== ALL ACCOUNT ACTIONS ==========
     # Profile actions
     elif tt in ("change_name", "change_photo", "change_bio", "change_username"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Contact actions
     elif tt in ("add_contact", "delete_contact", "block_contact", "unblock_contact", "import_contact"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     elif "add_contact" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "add_contact", task)
     elif "block" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "block_contact" if "unblock" not in tt else "unblock_contact", task)
     
     # Channel actions
     elif tt in ("join_channel", "leave_channel", "view_channel"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     elif "join" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "join_channel", task)
     elif "leave" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "leave_channel", task)
     elif "react" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "react", task)
     
     # Check actions
     elif tt in ("spambot_check", "session_check", "get_me", "sync_profile"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Privacy/Security actions
     elif tt in ("privacy_settings", "change_password", "logout_sessions"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Dialog/chat actions
     elif tt in ("get_dialogs", "read_messages", "delete_chat"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Warmup non-send actions
     elif tt.startswith("warmup") and "chat" not in tt and "send" not in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Unknown - try to handle as account action anyway
     else:
         print(f"  [?] Unknown task type: {tt} - trying as account action")
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
 
 
