@@ -1023,6 +1023,33 @@ export type Database = {
           },
         ]
       }
+      seats: {
+        Row: {
+          access_token: string
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          access_token?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          access_token?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       telegram_accounts: {
         Row: {
           api_credential_id: string | null
@@ -1356,6 +1383,18 @@ export type Database = {
       }
     }
     Views: {
+      seat_stats: {
+        Row: {
+          messages_read: number | null
+          messages_sent_today: number | null
+          responses_received: number | null
+          responses_today: number | null
+          seat_id: string | null
+          seat_name: string | null
+          total_conversations: number | null
+        }
+        Relationships: []
+      }
       system_health: {
         Row: {
           active_accounts: number | null
