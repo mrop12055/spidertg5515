@@ -997,6 +997,26 @@ async function handleReportResults(supabase: any, body: any) {
       'duplicated'
     ];
     const isAccountError = accountLevelErrors.some(e => errorLower.includes(e.toLowerCase()));
+    const isInvalidSessionError = errorLower.includes('authorization key') ||
+      errorLower.includes('auth key') ||
+      errorLower.includes('authkey') ||
+      errorLower.includes('session revoked') ||
+      errorLower.includes('session invalid') ||
+      errorLower.includes('session duplicated') ||
+      errorLower.includes('duplicated');
+
+    if (isInvalidSessionError && r.account_id) {
+      await supabase.from("telegram_accounts")
+        .update({
+          status: "disconnected",
+          auto_disabled: true,
+          disabled_reason: r.error,
+          ban_reason: r.error,
+          locked_by: null,
+          locked_at: null,
+        })
+        .eq("id", r.account_id);
+    }
 
     // Check for frozen account
     if (errorLower.includes('frozen')) {
@@ -1006,7 +1026,33 @@ async function handleReportResults(supabase: any, body: any) {
     }
 
     if (taskType === "send") {
-      if (isAccountError && r.account_id) {
+      if (isInvalidSessionError && r.account_id) {
+        if (r.campaign_recipient_id) {
+          const { data: recipient } = await supabase
+            .from("campaign_recipients")
+            .select("failed_account_ids")
+            .eq("id", r.campaign_recipient_id)
+            .single();
+
+          const failedIds = recipient?.failed_account_ids || [];
+          const updatedFailedIds = failedIds.includes(r.account_id) ? failedIds : [...failedIds, r.account_id];
+
+          await supabase.from("campaign_recipients")
+            .update({
+              status: "pending",
+              failed_reason: null,
+              sent_by_account_id: null,
+              failed_account_ids: updatedFailedIds,
+            })
+            .eq("id", r.campaign_recipient_id);
+        } else if (r.message_id) {
+          await supabase.from("messages")
+            .update({ status: "failed", failed_reason: `Sender session invalid: ${r.error}` })
+            .eq("id", r.message_id);
+        }
+
+        await supabase.rpc('increment_account_failure', { acc_id: r.account_id });
+      } else if (isAccountError && r.account_id) {
         // === ACCOUNT ERROR: Put account in cooldown/restricted, reset recipient for retry ===
         const isPeerFlood = errorLower.includes('peerflood');
         
