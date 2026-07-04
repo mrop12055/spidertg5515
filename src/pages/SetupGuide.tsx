@@ -1647,6 +1647,12 @@ async def process(task: dict):
     
     # Get client
     client = clients.get(aid)
+    if client:
+        try:
+            if not await asyncio.wait_for(asyncio.to_thread(client.is_connected), timeout=2):
+                client = None
+        except Exception:
+            client = None
     if not client:
         client, err = await connect(acc) if acc.get("id") else (None, "No account data")
         if not client:
@@ -1684,7 +1690,9 @@ async def process(task: dict):
         media = msg.get("media_url") or task.get("media_url")
         
         # SEND THE MESSAGE - same function for everything
+        client_last_seen[aid] = time.time()
         success, error, meta = await send_message(client, str(recipient) if recipient else "", content, media)
+        client_last_seen[aid] = time.time()
         
         if success:
             print(f"  ✓ [{phone}] → {str(recipient)[:15]}")
@@ -1718,45 +1726,58 @@ async def process(task: dict):
     # ========== ALL ACCOUNT ACTIONS ==========
     # Profile actions
     elif tt in ("change_name", "change_photo", "change_bio", "change_username"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Contact actions
     elif tt in ("add_contact", "delete_contact", "block_contact", "unblock_contact", "import_contact"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     elif "add_contact" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "add_contact", task)
     elif "block" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "block_contact" if "unblock" not in tt else "unblock_contact", task)
     
     # Channel actions
     elif tt in ("join_channel", "leave_channel", "view_channel"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     elif "join" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "join_channel", task)
     elif "leave" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "leave_channel", task)
     elif "react" in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, "react", task)
     
     # Check actions
     elif tt in ("spambot_check", "session_check", "get_me", "sync_profile"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Privacy/Security actions
     elif tt in ("privacy_settings", "change_password", "logout_sessions"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Dialog/chat actions
     elif tt in ("get_dialogs", "read_messages", "delete_chat"):
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Warmup non-send actions
     elif tt.startswith("warmup") and "chat" not in tt and "send" not in tt:
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
     
     # Unknown - try to handle as account action anyway
     else:
         print(f"  [?] Unknown task type: {tt} - trying as account action")
+        client_last_seen[aid] = time.time()
         await account_action(client, tt, task)
 
 
