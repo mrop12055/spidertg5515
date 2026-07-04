@@ -260,7 +260,9 @@ async def drop_client(aid: str, phone: str = "????", reason: str = "cleanup"):
     """
     old = clients.pop(aid, None)
     accounts.pop(aid, None)
-    client_last_seen.pop(aid, None)
+    # Keep/set last_seen as a reconnect cooldown marker. If Telethon still has a
+    # background update task alive, incoming events will refresh this timestamp.
+    client_last_seen[aid] = time.time()
     if old:
         try:
             print(f"  [CLEANUP] [{phone[-4:]}] Dropping local client ({reason})")
@@ -1312,6 +1314,13 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         return None, "No ID"
     
     async with get_lock(aid):
+        last_seen = client_last_seen.get(aid, 0)
+        if aid not in clients and last_seen and (time.time() - last_seen) < CLIENT_RECONNECT_GRACE_SECONDS:
+            wait_left = CLIENT_RECONNECT_GRACE_SECONDS - (time.time() - last_seen)
+            print(f"  [SKIP] [{phone[-4:]}] Waiting {wait_left:.0f}s before reconnect to avoid duplicate session")
+            sys.stdout.flush()
+            return None, "Reconnect grace period"
+
         # SINGLE-CLIENT RULE: Never create a second TelegramClient for the same
         # session while Telethon's old update-loop may still be shutting down.
         # Starting two clients with one auth key is what causes Telegram to block
@@ -1326,13 +1335,13 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
                 accounts[aid] = acc
                 client_last_seen[aid] = time.time()
                 return old, None
-            last_seen = client_last_seen.get(aid, 0)
             age = time.time() - last_seen if last_seen else 999999
             if age < CLIENT_RECONNECT_GRACE_SECONDS:
                 print(f"  [SKIP] [{phone[-4:]}] Client just went stale {age:.0f}s ago; waiting before reconnect")
                 sys.stdout.flush()
                 return None, "Waiting for stale client cleanup"
             await drop_client(aid, phone, "stale before reconnect")
+            return None, "Dropped stale client; will reconnect after grace period"
         
         # Validation checks - report specific failures
         if not acc.get("session_data"):
