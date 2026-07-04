@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-02-10-fast-poll-v17";
+  const runnerBuild = "2026-07-04-connect-50-v18";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -144,12 +144,12 @@ def _env_float(name: str, default: float, minimum: float, maximum: float) -> flo
     return max(minimum, min(maximum, value))
 
 
-# Residential/mobile proxies and direct ISP connections can fail when too many
-# MTProto handshakes start at once. Default is intentionally low for Windows/direct IP.
-# Override with TG_CONNECT_CONCURRENCY only if your route is stable.
-CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 2, 1, 15)
+# Connect accounts in large waves. Override with TG_CONNECT_CONCURRENCY if your
+# network/proxy route is unstable and you need to slow this down.
+# Default 50 at a time; hard cap 200.
+CONNECT_CONCURRENCY = _env_int("TG_CONNECT_CONCURRENCY", 50, 1, 200)
 CONNECT_TIMEOUT_SECONDS = _env_int("TG_CONNECT_TIMEOUT_SECONDS", 90, 30, 180)
-CONNECT_BATCH_PAUSE_SECONDS = _env_float("TG_CONNECT_BATCH_PAUSE_SECONDS", 2.0, 0.0, 30.0)
+CONNECT_BATCH_PAUSE_SECONDS = _env_float("TG_CONNECT_BATCH_PAUSE_SECONDS", 1.0, 0.0, 30.0)
 
 
 def signal_handler(sig, frame):
