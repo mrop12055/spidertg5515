@@ -1041,6 +1041,7 @@ async def account_action(client, action: str, task: dict) -> Tuple[bool, Optiona
 async def on_message(event, acc_id: str):
     """Handle incoming messages - registered on all clients."""
     try:
+        client_last_seen[acc_id] = time.time()
         # Only process private messages (DMs)
         if not event.is_private:
             return
@@ -1171,8 +1172,10 @@ async def fetch_unread_messages(client, acc_id: str, offline_since: Optional[str
     hours_back = (datetime.now(timezone.utc) - cutoff_time).total_seconds() / 3600
     
     try:
+        client_last_seen[acc_id] = time.time()
         print(f"  [CATCHUP] [{phone}] Fetching unread messages (last {hours_back:.1f}h, {cutoff_source})...")
         dialogs = await asyncio.wait_for(client.get_dialogs(limit=100), timeout=15)
+        client_last_seen[acc_id] = time.time()
         
         total_fetched = 0
         skipped_old = 0
