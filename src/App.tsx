@@ -25,39 +25,46 @@ import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
 
+// Wraps protected routes with TelegramProvider so the public /seat route
+// doesn't spin up global realtime channels + a full conversations preload
+// (which was starving the seat page's own realtime subscription).
+const ProtectedShell = ({ children }: { children: React.ReactNode }) => (
+  <TelegramProvider>
+    <ProtectedRoute>{children}</ProtectedRoute>
+  </TelegramProvider>
+);
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <ThemeProvider>
       <AuthProvider>
-        <TelegramProvider>
-          <TooltipProvider>
-            <Toaster />
-            <Sonner />
-            <BrowserRouter>
-              <Routes>
-                {/* Public routes */}
-                <Route path="/login" element={<Login />} />
-                <Route path="/seat/:token" element={<SeatChat />} />
-                
-                {/* Protected routes */}
-                <Route path="/" element={<Navigate to="/dashboard" replace />} />
-                <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                <Route path="/accounts" element={<ProtectedRoute><Accounts /></ProtectedRoute>} />
-                <Route path="/proxies" element={<ProtectedRoute><Proxies /></ProtectedRoute>} />
-                <Route path="/conversations" element={<ProtectedRoute><Conversations /></ProtectedRoute>} />
-                <Route path="/campaigns" element={<ProtectedRoute><Campaigns /></ProtectedRoute>} />
-                <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
-                <Route path="/setup" element={<ProtectedRoute><SetupGuide /></ProtectedRoute>} />
-                <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
-                <Route path="/material" element={<ProtectedRoute><Material /></ProtectedRoute>} />
-                <Route path="/seats" element={<ProtectedRoute><Seats /></ProtectedRoute>} />
-                <Route path="/warmup" element={<ProtectedRoute><Warmup /></ProtectedRoute>} />
-                <Route path="/logs" element={<ProtectedRoute><Logs /></ProtectedRoute>} />
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </BrowserRouter>
-          </TooltipProvider>
-        </TelegramProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Routes>
+              {/* Public routes (no TelegramProvider — keeps realtime lean) */}
+              <Route path="/login" element={<Login />} />
+              <Route path="/seat/:token" element={<SeatChat />} />
+
+              {/* Protected routes */}
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/dashboard" element={<ProtectedShell><Dashboard /></ProtectedShell>} />
+              <Route path="/accounts" element={<ProtectedShell><Accounts /></ProtectedShell>} />
+              <Route path="/proxies" element={<ProtectedShell><Proxies /></ProtectedShell>} />
+              <Route path="/conversations" element={<ProtectedShell><Conversations /></ProtectedShell>} />
+              <Route path="/campaigns" element={<ProtectedShell><Campaigns /></ProtectedShell>} />
+              <Route path="/settings" element={<ProtectedShell><Settings /></ProtectedShell>} />
+              <Route path="/setup" element={<ProtectedShell><SetupGuide /></ProtectedShell>} />
+              <Route path="/reports" element={<ProtectedShell><Reports /></ProtectedShell>} />
+              <Route path="/material" element={<ProtectedShell><Material /></ProtectedShell>} />
+              <Route path="/seats" element={<ProtectedShell><Seats /></ProtectedShell>} />
+              <Route path="/warmup" element={<ProtectedShell><Warmup /></ProtectedShell>} />
+              <Route path="/logs" element={<ProtectedShell><Logs /></ProtectedShell>} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
       </AuthProvider>
     </ThemeProvider>
   </QueryClientProvider>
