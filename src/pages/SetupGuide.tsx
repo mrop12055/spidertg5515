@@ -2155,18 +2155,25 @@ echo.
 
 cd /d "%~dp0"
 
-echo  Installing requirements...
-py -m pip install telethon httpx pysocks --quiet 2>nul
-if errorlevel 1 (
-    python -m pip install telethon httpx pysocks --quiet 2>nul
+set "PYTHON_CMD="
+py --version >nul 2>nul
+if not errorlevel 1 set "PYTHON_CMD=py"
+if "%PYTHON_CMD%"=="" (
+    python --version >nul 2>nul
+    if not errorlevel 1 set "PYTHON_CMD=python"
 )
+if "%PYTHON_CMD%"=="" (
+    echo  ERROR: Python is not installed or not on PATH.
+    pause
+    exit /b 1
+)
+
+echo  Installing requirements...
+%PYTHON_CMD% -m pip install telethon httpx pysocks --quiet
 echo  Done!
 echo.
 
-py unified_runner.py
-if errorlevel 1 (
-    python unified_runner.py
-)
+%PYTHON_CMD% unified_runner.py
 
 pause
 `;
