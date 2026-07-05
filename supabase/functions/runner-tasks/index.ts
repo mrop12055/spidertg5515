@@ -387,8 +387,10 @@ async function handleGetTasks(supabase: any, body: any) {
     return ['active', 'cooldown', 'restricted'].includes(a.status);
   });
 
+  const ownedConnectableAccounts = connectableAccounts.filter((a: any) => isOwnedByRunner(a, server_id));
+
   // For livechat, we use all connectable accounts as "usable" for reply purposes
-  const usableAccounts = isLivechat ? connectableAccounts : sendableAccounts;
+  const usableAccounts = isLivechat ? ownedConnectableAccounts : sendableAccounts;
 
   if (connectableAccounts.length === 0) {
     return jsonResponse({ tasks: [], accounts: [], delay_after: 30, reason: "No usable accounts" });
