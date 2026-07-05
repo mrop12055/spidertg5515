@@ -165,16 +165,36 @@ serve(async (req) => {
 
     // Route: LOCK ACCOUNTS (runner claims accounts on connect)
     if (path === '/lock') {
-      const { account_ids: lockIds, server_id: lockServerId } = body;
-      if (lockIds?.length && lockServerId) {
+      const { account_ids: lockIds, server_id: lockServerId, runner: lockRunner } = body;
+      let lockedIds: string[] = [];
+      let rejectedIds: string[] = [];
+      if (Array.isArray(lockIds) && lockIds.length && lockServerId) {
+        const uniqueLockIds = [...new Set(lockIds.filter(Boolean))];
+        const staleLockThreshold = new Date(Date.now() - ACCOUNT_LOCK_STALE_SECONDS * 1000).toISOString();
         const nowIso = new Date().toISOString();
-        await supabase.from("telegram_accounts")
+
+        if (lockRunner) {
+          await supabase.from("runner_heartbeats").upsert(
+            { runner_name: lockRunner, last_seen: nowIso, status: 'online', server_id: lockServerId },
+            { onConflict: 'runner_name' }
+          );
+        }
+
+        const { data: lockedRows, error: lockError } = await supabase.from("telegram_accounts")
           .update({ locked_by: lockServerId, locked_at: nowIso })
-          .in("id", lockIds)
-          .or(`locked_by.is.null,locked_by.eq.${lockServerId}`);
-        console.log(`[session-lock] Locked ${lockIds.length} accounts for ${lockServerId}`);
+          .in("id", uniqueLockIds)
+          .or(`locked_by.is.null,locked_by.eq.${lockServerId},locked_at.lt.${staleLockThreshold}`)
+          .select("id");
+
+        if (lockError) {
+          console.error(`[session-lock] Lock error for ${lockServerId}:`, lockError.message);
+        }
+
+        lockedIds = (lockedRows || []).map((row: any) => row.id);
+        rejectedIds = uniqueLockIds.filter((id: string) => !lockedIds.includes(id));
+        console.log(`[session-lock] Locked ${lockedIds.length}/${uniqueLockIds.length} accounts for ${lockServerId}; rejected ${rejectedIds.length}`);
       }
-      return new Response(JSON.stringify({ success: true }), {
+      return new Response(JSON.stringify({ success: true, locked_ids: lockedIds, rejected_ids: rejectedIds }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
