@@ -1484,6 +1484,10 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
             if not await asyncio.wait_for(client.is_user_authorized(), timeout=10):
                 await client.disconnect()
+                client_last_seen[aid] = time.time()
+                with _session_mutex:
+                    if session_connecting_owner_by_key.get(session_key) == aid:
+                        session_connecting_owner_by_key.pop(session_key, None)
                 await update_account_status(aid, "disconnected", "Session not authorized/revoked", auto_disabled=True)
                 return None, "Not authorized"
             
