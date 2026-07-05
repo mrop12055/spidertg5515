@@ -2081,10 +2081,18 @@ if __name__ == "__main__":
         print(f"\\n[BOOT] #{BOOT_COUNT} at {boot_time}")
         if BOOT_COUNT > 1:
             print(f"  ↑ This is a RESTART (boot #{BOOT_COUNT}), not a periodic refresh")
-            # CRITICAL: Clear stale clients from previous event loop
+            # CRITICAL: Disconnect stale clients before clearing local state.
+            try:
+                asyncio.run(disconnect_all_local_clients("restart cleanup"))
+            except Exception:
+                pass
             print(f"  [CLEANUP] Clearing {len(clients)} stale clients from previous loop...")
             clients.clear()
             accounts.clear()
+            session_owner_by_key.clear()
+            session_key_by_account.clear()
+            session_connecting_owner_by_key.clear()
+            confirmed_account_locks.clear()
             # Release session locks from previous crash so we can re-acquire them
             try:
                 import httpx as _hx
