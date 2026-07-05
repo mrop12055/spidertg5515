@@ -223,7 +223,7 @@ def account_session_key(acc: dict) -> str:
     if not session_data:
         return f"phone:{phone_key}:no-session"
     digest = hashlib.sha256(session_data.encode("utf-8", "ignore")).hexdigest()
-    return f"phone:{phone_key}:session:{digest}"
+    return f"session:{digest}"
 
 
 def dedupe_accounts_by_session(accs: List[dict]) -> Tuple[List[dict], int]:
