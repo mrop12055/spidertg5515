@@ -1761,6 +1761,21 @@ async def setup_handlers():
         sys.stdout.flush()
 
 
+async def disconnect_all_local_clients(reason: str = "cleanup"):
+    """Disconnect every local TelegramClient before clearing state or releasing locks."""
+    items = list(clients.items())
+    if items:
+        print(f"  [CLEANUP] Disconnecting {len(items)} local client(s) ({reason})...")
+        sys.stdout.flush()
+    for aid, c in items:
+        phone = (accounts.get(aid, {}).get("phone_number") or "????")[-4:]
+        try:
+            await asyncio.wait_for(c.disconnect(), timeout=5)
+        except Exception:
+            pass
+        await drop_client(aid, phone, reason)
+
+
 # ==============================================================================
 # UNIFIED TASK PROCESSOR
 # ==============================================================================
