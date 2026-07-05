@@ -38,6 +38,8 @@ interface CachedSettings {
 }
 let settingsCache: CachedSettings | null = null;
 const SETTINGS_CACHE_TTL_MS = 30 * 1000;
+const DUPLICATE_RUNNER_WINDOW_SECONDS = 180;
+const ACCOUNT_LOCK_STALE_SECONDS = 60;
 
 async function getCachedSettings(supabase: any): Promise<Record<string, any>[]> {
   const now = Date.now();
@@ -97,6 +99,20 @@ function parseSettings(settingsData: Record<string, any>[]) {
   return config;
 }
 
+function isLockAvailableForRunner(account: any, serverId?: string | null): boolean {
+  if (!account.locked_by) return true;
+  if (serverId && account.locked_by === serverId) return true;
+  if (account.locked_at) {
+    const ageMs = Date.now() - new Date(account.locked_at).getTime();
+    return ageMs > ACCOUNT_LOCK_STALE_SECONDS * 1000;
+  }
+  return false;
+}
+
+function isOwnedByRunner(account: any, serverId?: string | null): boolean {
+  return Boolean(serverId && account.locked_by === serverId);
+}
+
 // Get API credentials for account (per-account only - no pool fallback)
 async function getApiCredentialsForAccount(supabase: any, account: any) {
   if (account.api_id && account.api_hash) {
@@ -149,16 +165,36 @@ serve(async (req) => {
 
     // Route: LOCK ACCOUNTS (runner claims accounts on connect)
     if (path === '/lock') {
-      const { account_ids: lockIds, server_id: lockServerId } = body;
-      if (lockIds?.length && lockServerId) {
+      const { account_ids: lockIds, server_id: lockServerId, runner: lockRunner } = body;
+      let lockedIds: string[] = [];
+      let rejectedIds: string[] = [];
+      if (Array.isArray(lockIds) && lockIds.length && lockServerId) {
+        const uniqueLockIds = [...new Set(lockIds.filter(Boolean))];
+        const staleLockThreshold = new Date(Date.now() - ACCOUNT_LOCK_STALE_SECONDS * 1000).toISOString();
         const nowIso = new Date().toISOString();
-        await supabase.from("telegram_accounts")
+
+        if (lockRunner) {
+          await supabase.from("runner_heartbeats").upsert(
+            { runner_name: lockRunner, last_seen: nowIso, status: 'online', server_id: lockServerId },
+            { onConflict: 'runner_name' }
+          );
+        }
+
+        const { data: lockedRows, error: lockError } = await supabase.from("telegram_accounts")
           .update({ locked_by: lockServerId, locked_at: nowIso })
-          .in("id", lockIds)
-          .or(`locked_by.is.null,locked_by.eq.${lockServerId}`);
-        console.log(`[session-lock] Locked ${lockIds.length} accounts for ${lockServerId}`);
+          .in("id", uniqueLockIds)
+          .or(`locked_by.is.null,locked_by.eq.${lockServerId},locked_at.lt.${staleLockThreshold}`)
+          .select("id");
+
+        if (lockError) {
+          console.error(`[session-lock] Lock error for ${lockServerId}:`, lockError.message);
+        }
+
+        lockedIds = (lockedRows || []).map((row: any) => row.id);
+        rejectedIds = uniqueLockIds.filter((id: string) => !lockedIds.includes(id));
+        console.log(`[session-lock] Locked ${lockedIds.length}/${uniqueLockIds.length} accounts for ${lockServerId}; rejected ${rejectedIds.length}`);
       }
-      return new Response(JSON.stringify({ success: true }), {
+      return new Response(JSON.stringify({ success: true, locked_ids: lockedIds, rejected_ids: rejectedIds }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
@@ -219,12 +255,12 @@ async function handleGetTasks(supabase: any, body: any) {
     
     lastOfflineAt = heartbeat?.last_offline_at || null;
     
-    // BLOCK duplicate runner: if another instance was active within the last 15 seconds, reject this one
+    // BLOCK duplicate runner: keep the window long enough for large startup/catch-up phases.
     const existingServerId = heartbeat?.server_id;
     const lastSeen = heartbeat?.last_seen;
     if (existingServerId && server_id && existingServerId !== server_id && existingServerId !== 'legacy' && lastSeen) {
       const lastSeenAge = (Date.now() - new Date(lastSeen).getTime()) / 1000;
-      if (lastSeenAge < 15) {
+      if (lastSeenAge < DUPLICATE_RUNNER_WINDOW_SECONDS) {
         console.warn(`[runner-tasks/get] ⛔ BLOCKING DUPLICATE RUNNER! Active: ${existingServerId} (${lastSeenAge.toFixed(0)}s ago), Rejected: ${server_id}`);
         return new Response(JSON.stringify({
           tasks: [],
@@ -238,10 +274,9 @@ async function handleGetTasks(supabase: any, body: any) {
       }
     }
     
-    // Now record the heartbeat (this updates last_seen + server_id)
-    supabase.from("runner_heartbeats")
-      .upsert({ runner_name: runner, last_seen: nowIso, status: 'online', server_id: server_id || 'legacy' }, { onConflict: 'runner_name' })
-      .then(() => {});
+    // Now record the heartbeat (this updates last_seen + server_id) before any long account work.
+    await supabase.from("runner_heartbeats")
+      .upsert({ runner_name: runner, last_seen: nowIso, status: 'online', server_id: server_id || 'legacy' }, { onConflict: 'runner_name' });
   }
 
 
@@ -335,7 +370,9 @@ async function handleGetTasks(supabase: any, body: any) {
   // Proxy is optional: if account has proxy_id assigned, it must be active; otherwise run direct (VPS IP)
   const hasUsableProxy = (a: any) => !a.proxy_id || (a.proxies && a.proxies.status === 'active');
 
-  const sendableAccounts = filteredAccounts.filter((a: any) => {
+  const ownedAccounts = filteredAccounts.filter((a: any) => isOwnedByRunner(a, server_id));
+
+  const sendableAccounts = ownedAccounts.filter((a: any) => {
     if (!hasUsableProxy(a)) return false;
     if (a.status !== 'active') return false; // Only active accounts can send to new recipients
     const limit = config.campaignMessagesPerAccountPerDay || a.daily_limit || config.dailyLimit;
@@ -540,6 +577,7 @@ async function handleGetTasks(supabase: any, body: any) {
         // Proxy is optional — accounts without a proxy connect directly.
         // Only skip when a proxy IS assigned but is not active (broken proxy).
         if (!sender?.session_data) continue;
+        if (!isOwnedByRunner(sender, server_id)) continue;
         if (sender?.proxies && sender.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, sender);
@@ -605,6 +643,7 @@ async function handleGetTasks(supabase: any, body: any) {
         const account: any = accountMap.get(msg.account_id);
         // Proxy is optional — accounts without a proxy send directly via runner IP.
         if (!account) continue;
+        if (!isOwnedByRunner(account, server_id)) continue;
         if (account.proxies && account.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, account);
@@ -659,6 +698,7 @@ async function handleGetTasks(supabase: any, body: any) {
       for (const task of actionTasks) {
         const account = task.account;
         if (!account?.session_data) continue;
+        if (!isOwnedByRunner(account, server_id)) continue;
         if (account.proxies && account.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, account);
