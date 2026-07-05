@@ -575,6 +575,7 @@ async function handleGetTasks(supabase: any, body: any) {
         // Proxy is optional — accounts without a proxy connect directly.
         // Only skip when a proxy IS assigned but is not active (broken proxy).
         if (!sender?.session_data) continue;
+        if (!isLockAvailableForRunner(sender, server_id)) continue;
         if (sender?.proxies && sender.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, sender);
@@ -640,6 +641,7 @@ async function handleGetTasks(supabase: any, body: any) {
         const account: any = accountMap.get(msg.account_id);
         // Proxy is optional — accounts without a proxy send directly via runner IP.
         if (!account) continue;
+        if (!isLockAvailableForRunner(account, server_id)) continue;
         if (account.proxies && account.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, account);
@@ -694,6 +696,7 @@ async function handleGetTasks(supabase: any, body: any) {
       for (const task of actionTasks) {
         const account = task.account;
         if (!account?.session_data) continue;
+        if (!isLockAvailableForRunner(account, server_id)) continue;
         if (account.proxies && account.proxies.status !== 'active') continue;
 
         const creds = await getApiCredentialsForAccount(supabase, account);
