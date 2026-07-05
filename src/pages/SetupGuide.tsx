@@ -2060,14 +2060,11 @@ async def main():
             sys.stdout.flush()
             await asyncio.sleep(5)
     
-    # Shutdown - release all session locks FIRST, then disconnect
+    # Shutdown - disconnect local clients before releasing locks so another runner
+    # never connects while our Telethon update loops are still closing.
     print("\\n  [SHUTDOWN]...")
+    await disconnect_all_local_clients("shutdown")
     await unlock_all_accounts()
-    for c in clients.values():
-        try:
-            await asyncio.wait_for(c.disconnect(), timeout=5)
-        except:
-            pass
     print("  Done!")
 
 
