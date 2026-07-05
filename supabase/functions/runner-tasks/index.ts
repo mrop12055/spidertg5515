@@ -255,12 +255,12 @@ async function handleGetTasks(supabase: any, body: any) {
     
     lastOfflineAt = heartbeat?.last_offline_at || null;
     
-    // BLOCK duplicate runner: if another instance was active within the last 15 seconds, reject this one
+    // BLOCK duplicate runner: keep the window long enough for large startup/catch-up phases.
     const existingServerId = heartbeat?.server_id;
     const lastSeen = heartbeat?.last_seen;
     if (existingServerId && server_id && existingServerId !== server_id && existingServerId !== 'legacy' && lastSeen) {
       const lastSeenAge = (Date.now() - new Date(lastSeen).getTime()) / 1000;
-      if (lastSeenAge < 15) {
+      if (lastSeenAge < DUPLICATE_RUNNER_WINDOW_SECONDS) {
         console.warn(`[runner-tasks/get] ⛔ BLOCKING DUPLICATE RUNNER! Active: ${existingServerId} (${lastSeenAge.toFixed(0)}s ago), Rejected: ${server_id}`);
         return new Response(JSON.stringify({
           tasks: [],
@@ -274,10 +274,9 @@ async function handleGetTasks(supabase: any, body: any) {
       }
     }
     
-    // Now record the heartbeat (this updates last_seen + server_id)
-    supabase.from("runner_heartbeats")
-      .upsert({ runner_name: runner, last_seen: nowIso, status: 'online', server_id: server_id || 'legacy' }, { onConflict: 'runner_name' })
-      .then(() => {});
+    // Now record the heartbeat (this updates last_seen + server_id) before any long account work.
+    await supabase.from("runner_heartbeats")
+      .upsert({ runner_name: runner, last_seen: nowIso, status: 'online', server_id: server_id || 'legacy' }, { onConflict: 'runner_name' });
   }
 
 
