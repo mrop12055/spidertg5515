@@ -14,7 +14,7 @@ const SetupGuide: React.FC = () => {
   // ========== ULTRA-SIMPLIFIED RUNNER ==========
   // Campaign = send message, Conversation = send message, Warmup = send message
   // They're ALL the same: send_message(account, recipient, content)
-  const runnerBuild = "2026-07-04-single-client-v19";
+  const runnerBuild = "2026-07-05-session-lock-v20";
 
   const unifiedRunnerPy = `#!/usr/bin/env python3
 """
@@ -45,6 +45,7 @@ import random
 import time
 import signal
 import traceback as tb_module
+import hashlib
 from typing import Dict, Optional, List, Any, Tuple
 from collections import defaultdict
 
@@ -115,6 +116,10 @@ SESSION_FOLDER = tempfile.mkdtemp(prefix="tg_")
 clients: Dict[str, Any] = {}      # account_id -> TelegramClient
 accounts: Dict[str, dict] = {}    # account_id -> account info
 client_last_seen: Dict[str, float] = {}  # account_id -> last successful activity timestamp
+session_owner_by_key: Dict[str, str] = {}  # session fingerprint -> account_id
+session_key_by_account: Dict[str, str] = {}  # account_id -> session fingerprint
+session_connecting_owner_by_key: Dict[str, str] = {}  # session fingerprint -> account_id currently connecting
+confirmed_account_locks = set()  # account_ids that backend confirmed are locked by this runner
 RUNNING = True
 
 # Unique instance ID to detect multiple runners fighting over same accounts
@@ -130,6 +135,7 @@ last_offline_at: Optional[str] = None
 
 _locks: Dict[str, asyncio.Lock] = {}
 _locks_mutex = threading.Lock()
+_session_mutex = threading.Lock()
 _http: Optional[httpx.AsyncClient] = None
 
 
@@ -206,6 +212,41 @@ def get_lock(aid: str) -> asyncio.Lock:
         return _locks[aid]
 
 
+def normalize_phone(phone: str) -> str:
+    return "".join(ch for ch in str(phone or "") if ch.isdigit())
+
+
+def account_session_key(acc: dict) -> str:
+    """Stable local fingerprint so duplicate rows cannot open the same Telegram auth key twice."""
+    phone_key = normalize_phone(acc.get("phone_number")) or str(acc.get("id") or "unknown")
+    session_data = acc.get("session_data") or ""
+    if not session_data:
+        return f"phone:{phone_key}:no-session"
+    digest = hashlib.sha256(session_data.encode("utf-8", "ignore")).hexdigest()
+    return f"phone:{phone_key}:session:{digest}"
+
+
+def dedupe_accounts_by_session(accs: List[dict]) -> Tuple[List[dict], int]:
+    """Keep only one account row per Telegram session/phone in this process."""
+    seen: Dict[str, str] = {}
+    unique: List[dict] = []
+    skipped = 0
+    for acc in accs:
+        aid = acc.get("id")
+        if not aid:
+            continue
+        key = account_session_key(acc)
+        existing = seen.get(key)
+        if existing and existing != aid:
+            phone = acc.get("phone_number", "????")
+            print(f"  [DUPLICATE] [{phone[-4:]}] Same Telegram session as account {existing[:8]} — skipping duplicate row {aid[:8]}")
+            skipped += 1
+            continue
+        seen[key] = aid
+        unique.append(acc)
+    return unique, skipped
+
+
 def get_http() -> httpx.AsyncClient:
     global _http
     if _http is None or _http.is_closed:
@@ -260,6 +301,13 @@ async def drop_client(aid: str, phone: str = "????", reason: str = "cleanup"):
     """
     old = clients.pop(aid, None)
     accounts.pop(aid, None)
+    session_key = session_key_by_account.pop(aid, None)
+    if session_key:
+        with _session_mutex:
+            if session_owner_by_key.get(session_key) == aid:
+                session_owner_by_key.pop(session_key, None)
+            if session_connecting_owner_by_key.get(session_key) == aid:
+                session_connecting_owner_by_key.pop(session_key, None)
     # Keep/set last_seen as a reconnect cooldown marker. If Telethon still has a
     # background update task alive, incoming events will refresh this timestamp.
     client_last_seen[aid] = time.time()
@@ -361,18 +409,40 @@ async def update_proxy_status(proxy_id: str, status: str, error_msg: str = None)
 
 
 async def lock_accounts(account_ids: list):
-    """Lock accounts in DB so no other runner instance can connect them."""
+    """Lock accounts in DB so no other runner instance can connect them. Returns confirmed IDs only."""
     if not account_ids:
-        return
+        return set()
+    unique_ids = list(dict.fromkeys([aid for aid in account_ids if aid]))
     try:
-        await get_http().post(
+        r = await get_http().post(
             f"{BACKEND_URL}/runner-tasks/lock",
             headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
-            json={"account_ids": account_ids, "server_id": RUNNER_INSTANCE_ID}, timeout=15
+            json={"account_ids": unique_ids, "server_id": RUNNER_INSTANCE_ID, "runner": "unified"}, timeout=15
         )
-        print(f"  [SESSION-LOCK] Locked {len(account_ids)} accounts for instance {RUNNER_INSTANCE_ID}")
+        data = r.json() if r.status_code == 200 else {}
+        locked_ids = set(data.get("locked_ids") or ([] if "locked_ids" in data else unique_ids if data.get("success") else []))
+        rejected_ids = set(data.get("rejected_ids") or [])
+        confirmed_account_locks.update(locked_ids)
+        if rejected_ids:
+            print(f"  [SESSION-LOCK] Locked {len(locked_ids)}/{len(unique_ids)}; {len(rejected_ids)} held by another runner")
+        else:
+            print(f"  [SESSION-LOCK] Locked/Renewed {len(locked_ids)} account(s) for instance {RUNNER_INSTANCE_ID}")
+        return locked_ids
     except Exception as e:
         print(f"  [SESSION-LOCK] Lock failed: {e}")
+        return set()
+
+
+async def renew_heartbeat():
+    """Keep duplicate-runner guard fresh during long startup/connect/catch-up phases."""
+    try:
+        await get_http().post(
+            f"{BACKEND_URL}/runner-tasks/heartbeat",
+            headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"},
+            json={"runner": "unified", "server_id": RUNNER_INSTANCE_ID}, timeout=10
+        )
+    except Exception as e:
+        print(f"  [HEARTBEAT] Failed: {e}")
 
 
 async def unlock_all_accounts():
@@ -384,6 +454,7 @@ async def unlock_all_accounts():
             json={"server_id": RUNNER_INSTANCE_ID}, timeout=15
         )
         print(f"  [SESSION-LOCK] Unlocked all accounts for instance {RUNNER_INSTANCE_ID}")
+        confirmed_account_locks.clear()
     except Exception as e:
         print(f"  [SESSION-LOCK] Unlock failed: {e}")
 
