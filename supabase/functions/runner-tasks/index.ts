@@ -38,6 +38,8 @@ interface CachedSettings {
 }
 let settingsCache: CachedSettings | null = null;
 const SETTINGS_CACHE_TTL_MS = 30 * 1000;
+const DUPLICATE_RUNNER_WINDOW_SECONDS = 180;
+const ACCOUNT_LOCK_STALE_SECONDS = 60;
 
 async function getCachedSettings(supabase: any): Promise<Record<string, any>[]> {
   const now = Date.now();
@@ -95,6 +97,20 @@ function parseSettings(settingsData: Record<string, any>[]) {
     }
   }
   return config;
+}
+
+function isLockAvailableForRunner(account: any, serverId?: string | null): boolean {
+  if (!account.locked_by) return true;
+  if (serverId && account.locked_by === serverId) return true;
+  if (account.locked_at) {
+    const ageMs = Date.now() - new Date(account.locked_at).getTime();
+    return ageMs > ACCOUNT_LOCK_STALE_SECONDS * 1000;
+  }
+  return false;
+}
+
+function isOwnedByRunner(account: any, serverId?: string | null): boolean {
+  return Boolean(serverId && account.locked_by === serverId);
 }
 
 // Get API credentials for account (per-account only - no pool fallback)
