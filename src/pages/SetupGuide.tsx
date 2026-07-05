@@ -1385,12 +1385,33 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         return None, "No ID"
     
     async with get_lock(aid):
+        session_key = account_session_key(acc)
         last_seen = client_last_seen.get(aid, 0)
         if aid not in clients and last_seen and (time.time() - last_seen) < CLIENT_RECONNECT_GRACE_SECONDS:
             wait_left = CLIENT_RECONNECT_GRACE_SECONDS - (time.time() - last_seen)
             print(f"  [SKIP] [{phone[-4:]}] Waiting {wait_left:.0f}s before reconnect to avoid duplicate session")
             sys.stdout.flush()
             return None, "Reconnect grace period"
+
+        with _session_mutex:
+            owner = session_owner_by_key.get(session_key)
+            connecting_owner = session_connecting_owner_by_key.get(session_key)
+            if owner and owner != aid:
+                print(f"  [SKIP] [{phone[-4:]}] Duplicate session already owned by account {owner[:8]}")
+                sys.stdout.flush()
+                return None, "Duplicate session already connected"
+            if connecting_owner and connecting_owner != aid:
+                print(f"  [SKIP] [{phone[-4:]}] Duplicate session already connecting as account {connecting_owner[:8]}")
+                sys.stdout.flush()
+                return None, "Duplicate session already connecting"
+
+        if aid not in confirmed_account_locks:
+            locked = await lock_accounts([aid])
+            if aid not in locked:
+                print(f"  [SKIP] [{phone[-4:]}] Backend lock denied; another runner may own this session")
+                sys.stdout.flush()
+                client_last_seen[aid] = time.time()
+                return None, "Account locked by another runner"
 
         # SINGLE-CLIENT RULE: Never create a second TelegramClient for the same
         # session while Telethon's old update-loop may still be shutting down.
@@ -1441,6 +1462,15 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
         
         client = None
         try:
+            with _session_mutex:
+                owner = session_owner_by_key.get(session_key)
+                connecting_owner = session_connecting_owner_by_key.get(session_key)
+                if owner and owner != aid:
+                    return None, "Duplicate session already connected"
+                if connecting_owner and connecting_owner != aid:
+                    return None, "Duplicate session already connecting"
+                session_connecting_owner_by_key[session_key] = aid
+
             client = TelegramClient(
                 path, int(acc["api_id"]), acc["api_hash"],
                 device_model=acc["device_model"],
@@ -1459,12 +1489,21 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
             clients[aid] = client
             accounts[aid] = acc
+            session_key_by_account[aid] = session_key
+            with _session_mutex:
+                session_owner_by_key[session_key] = aid
+                if session_connecting_owner_by_key.get(session_key) == aid:
+                    session_connecting_owner_by_key.pop(session_key, None)
             client_last_seen[aid] = time.time()
             print(f"  ✓ [{phone[-4:]}] Connected")
             return client, None
             
         except asyncio.TimeoutError:
             await safe_disconnect_client(client, phone)
+            client_last_seen[aid] = time.time()
+            with _session_mutex:
+                if session_connecting_owner_by_key.get(session_key) == aid:
+                    session_connecting_owner_by_key.pop(session_key, None)
             if using_proxy:
                 error_msg = f"Proxy connection timeout ({CONNECT_TIMEOUT_SECONDS}s) - proxy/provider overloaded or unreachable"
             else:
@@ -1478,6 +1517,10 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
         except (AuthKeyUnregisteredError, SessionRevokedError, AuthKeyDuplicatedError) as e:
             await safe_disconnect_client(client, phone)
+            client_last_seen[aid] = time.time()
+            with _session_mutex:
+                if session_connecting_owner_by_key.get(session_key) == aid:
+                    session_connecting_owner_by_key.pop(session_key, None)
             # Session invalid - account needs re-auth
             error_msg = f"Session invalid/duplicated: {str(e)[:80]}"
             print(f"  ✗ [{phone[-4:]}] SESSION INVALID/DUPLICATED")
@@ -1486,6 +1529,10 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
         except (UserDeactivatedBanError, PhoneNumberBannedError) as e:
             await safe_disconnect_client(client, phone)
+            client_last_seen[aid] = time.time()
+            with _session_mutex:
+                if session_connecting_owner_by_key.get(session_key) == aid:
+                    session_connecting_owner_by_key.pop(session_key, None)
             # Account banned
             error_msg = f"Account banned: {str(e)[:50]}"
             print(f"  ✗ [{phone[-4:]}] BANNED")
@@ -1494,6 +1541,10 @@ async def connect(acc: dict) -> Tuple[Optional[Any], Optional[str]]:
             
         except Exception as e:
             await safe_disconnect_client(client, phone)
+            client_last_seen[aid] = time.time()
+            with _session_mutex:
+                if session_connecting_owner_by_key.get(session_key) == aid:
+                    session_connecting_owner_by_key.pop(session_key, None)
             error_str = str(e)
             print(f"  ✗ [{phone[-4:]}] {error_str[:30]}")
             
@@ -1536,6 +1587,10 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     """
     if not accs:
         return 0, set()
+    accs, duplicate_count = dedupe_accounts_by_session(accs)
+    if duplicate_count:
+        print(f"  [DUPLICATE] Skipped {duplicate_count} duplicate account row(s) before connecting")
+        sys.stdout.flush()
     
     # Snapshot which accounts are already connected (defensive: some stale clients can block)
     already_connected = set()
@@ -1565,6 +1620,15 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
     
     print(f"  Connection throttle: {CONNECT_CONCURRENCY} at a time, timeout {CONNECT_TIMEOUT_SECONDS}s")
     sys.stdout.flush()
+    await renew_heartbeat()
+    locked_to_connect = await lock_accounts([acc.get("id") for acc in to_connect])
+    to_connect = [acc for acc in to_connect if acc.get("id") in locked_to_connect]
+    if not to_connect:
+        print("  [SESSION-LOCK] No accounts granted to this runner; skipping connect wave")
+        sys.stdout.flush()
+        if already_connected:
+            await lock_accounts(list(already_connected))
+        return len(already_connected), set()
     
     # Connect in small waves. Starting too many Telegram handshakes at once can
     # trigger WinError 121 even when the proxy or direct internet works manually.
@@ -1575,6 +1639,7 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
         total_batches = (len(to_connect) + CONNECT_CONCURRENCY - 1) // CONNECT_CONCURRENCY
         print(f"  [CONNECT] Wave {batch_no}/{total_batches}: {len(batch)} account(s)")
         sys.stdout.flush()
+        await renew_heartbeat()
         batch_results = await asyncio.gather(*[connect(a) for a in batch], return_exceptions=True)
         results.extend(batch_results)
         if start + CONNECT_CONCURRENCY < len(to_connect) and CONNECT_BATCH_PAUSE_SECONDS > 0:
@@ -1625,6 +1690,8 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
                         await bad_client.disconnect()
                 except:
                     pass
+                finally:
+                    await drop_client(aid, phone_short, "catch-up timeout")
             except Exception as e:
                 import traceback
                 phone_short = (accounts.get(aid, {}).get('phone_number') or '????')[-4:]
@@ -1633,9 +1700,7 @@ async def connect_all_from_response(accs: List[dict]) -> Tuple[int, set]:
                 sys.stdout.flush()
                 # Remove broken client so it doesn't crash handler registration or task loop
                 try:
-                    bad_client = clients.pop(aid, None)
-                    if bad_client:
-                        await bad_client.disconnect()
+                    await drop_client(aid, phone_short, "catch-up error")
                 except:
                     pass
                 print(f"  [CATCHUP] [{phone_short}] Removed (will reconnect next cycle)")
